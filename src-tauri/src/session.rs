@@ -4,12 +4,15 @@ use ulid::Ulid;
 
 use crate::db::{now_ms, DbConn};
 use crate::error::{AppError, AppResult};
+use crate::settings::DEFAULT_HISTORY_TURNS;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
     pub title: String,
     pub model: Option<String>,
+    pub system_prompt: String,
+    pub history_turns: i64,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -19,6 +22,8 @@ pub struct SessionSummary {
     pub id: String,
     pub title: String,
     pub model: Option<String>,
+    pub system_prompt: String,
+    pub history_turns: i64,
     pub updated_at: i64,
     pub message_count: i64,
 }
@@ -58,13 +63,15 @@ pub fn create(conn: &DbConn, title: Option<String>, model: Option<String>) -> Ap
     let now = now_ms();
     let title = title.unwrap_or_else(|| "New session".into());
     conn.execute(
-        "INSERT INTO sessions(id, title, model, created_at, updated_at) VALUES(?1, ?2, ?3, ?4, ?4)",
+        "INSERT INTO sessions(id, title, model, system_prompt, created_at, updated_at) VALUES(?1, ?2, ?3, '', ?4, ?4)",
         params![id, title, model, now],
     )?;
     Ok(Session {
         id,
         title,
         model,
+        system_prompt: String::new(),
+        history_turns: DEFAULT_HISTORY_TURNS,
         created_at: now,
         updated_at: now,
     })
@@ -84,6 +91,26 @@ pub fn rename(conn: &DbConn, id: &str, title: &str) -> AppResult<()> {
 
 pub fn delete(conn: &DbConn, id: &str) -> AppResult<()> {
     conn.execute("DELETE FROM sessions WHERE id=?1", params![id])?;
+    Ok(())
+}
+
+pub fn update_config(
+    conn: &DbConn,
+    id: &str,
+    system_prompt: &str,
+    history_turns: i64,
+) -> AppResult<()> {
+    if history_turns < 0 {
+        return Err(AppError::Invalid("history_turns must be non-negative".into()));
+    }
+    let updated = now_ms();
+    let n = conn.execute(
+        "UPDATE sessions SET system_prompt=?1, history_turns=?2, updated_at=?3 WHERE id=?4",
+        params![system_prompt, history_turns, updated, id],
+    )?;
+    if n == 0 {
+        return Err(AppError::NotFound(format!("session {id}")));
+    }
     Ok(())
 }
 
@@ -132,7 +159,7 @@ pub fn delete_message(conn: &DbConn, id: &str) -> AppResult<Vec<(String, Option<
 
 pub fn list(conn: &DbConn) -> AppResult<Vec<SessionSummary>> {
     let mut stmt = conn.prepare(
-        "SELECT s.id, s.title, s.model, s.updated_at,
+        "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.updated_at,
             (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt
          FROM sessions s
          ORDER BY s.updated_at DESC",
@@ -142,8 +169,10 @@ pub fn list(conn: &DbConn) -> AppResult<Vec<SessionSummary>> {
             id: r.get(0)?,
             title: r.get(1)?,
             model: r.get(2)?,
-            updated_at: r.get(3)?,
-            message_count: r.get(4)?,
+            system_prompt: r.get(3)?,
+            history_turns: r.get(4)?,
+            updated_at: r.get(5)?,
+            message_count: r.get(6)?,
         })
     })?;
     let mut out = Vec::new();
@@ -154,16 +183,19 @@ pub fn list(conn: &DbConn) -> AppResult<Vec<SessionSummary>> {
 }
 
 pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
-    let mut stmt =
-        conn.prepare("SELECT id, title, model, created_at, updated_at FROM sessions WHERE id=?1")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, title, model, system_prompt, history_turns, created_at, updated_at FROM sessions WHERE id=?1",
+    )?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
         Ok(Session {
             id: row.get(0)?,
             title: row.get(1)?,
             model: row.get(2)?,
-            created_at: row.get(3)?,
-            updated_at: row.get(4)?,
+            system_prompt: row.get(3)?,
+            history_turns: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
         })
     } else {
         Err(AppError::NotFound(format!("session {id}")))

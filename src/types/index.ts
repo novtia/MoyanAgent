@@ -1,7 +1,36 @@
+export interface ModelParamSettings {
+  temperature: number | null;
+  top_p: number | null;
+  max_tokens: number | null;
+  frequency_penalty: number | null;
+  presence_penalty: number | null;
+}
+
+export interface ModelServiceModel {
+  id: string;
+  name: string;
+  group: string;
+  capabilities: string[];
+  streaming: boolean;
+  params: ModelParamSettings;
+}
+
+export interface ModelProvider {
+  id: string;
+  name: string;
+  endpoint: string;
+  api_key: string;
+  /** When false, hidden from chat model picker and not used for requests. Default true. */
+  enabled?: boolean;
+  models: ModelServiceModel[];
+}
+
 export interface Settings {
   api_key: string;
   endpoint: string;
   model: string;
+  active_provider_id: string;
+  model_services: ModelProvider[];
   default_aspect_ratio: string;
   default_image_size: string;
   system_prompt: string;
@@ -17,6 +46,8 @@ export interface SettingsPatch {
   api_key?: string;
   endpoint?: string;
   model?: string;
+  active_provider_id?: string;
+  model_services?: ModelProvider[];
   default_aspect_ratio?: string;
   default_image_size?: string;
   system_prompt?: string;
@@ -32,6 +63,8 @@ export interface Session {
   id: string;
   title: string;
   model: string | null;
+  system_prompt: string;
+  history_turns: number;
   created_at: number;
   updated_at: number;
 }
@@ -40,6 +73,8 @@ export interface SessionSummary {
   id: string;
   title: string;
   model: string | null;
+  system_prompt: string;
+  history_turns: number;
   updated_at: number;
   message_count: number;
 }

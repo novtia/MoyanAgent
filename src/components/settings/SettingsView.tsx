@@ -16,7 +16,7 @@ export function SettingsView({
   const { t } = useTranslation();
 
   return (
-    <section className="settings">
+    <section className={`settings settings--${activeTab}`}>
       <SettingsSide
         activeTab={activeTab}
         onTabChange={onTabChange}
@@ -24,7 +24,9 @@ export function SettingsView({
       />
       <div className="settings-main">
         <div className="settings-panel" key={activeTab}>
-          <h1 className="settings-page-title">{t(TAB_TITLE_KEYS[activeTab])}</h1>
+          {activeTab !== "llm" && (
+            <h1 className="settings-page-title">{t(TAB_TITLE_KEYS[activeTab])}</h1>
+          )}
           {activeTab === "appearance" && (
             <AppearanceSection
               themeMode={themeMode}

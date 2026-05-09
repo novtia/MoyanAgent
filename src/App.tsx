@@ -74,7 +74,19 @@ export default function App() {
     if (settings.default_image_size) setImageSize(settings.default_image_size);
   }, [settings, setAspectRatio, setImageSize]);
 
-  const needsSetup = !settings?.api_key?.trim() || !settings?.endpoint?.trim();
+  const activeProvider = settings?.model_services?.find(
+    (provider) => provider.id === settings.active_provider_id,
+  );
+  const activeModel =
+    activeProvider && activeProvider.enabled !== false
+      ? activeProvider.models.find((model) => model.id === settings?.model)
+      : undefined;
+  const needsSetup =
+    !activeProvider ||
+    activeProvider.enabled === false ||
+    !activeProvider.api_key?.trim() ||
+    !activeProvider.endpoint?.trim() ||
+    !activeModel;
   const openChat = () => {
     window.location.hash = "#/";
     setRoute({ view: "chat" });

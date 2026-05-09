@@ -300,19 +300,19 @@
   position: relative;
 }
 .composer-pill.model {
-  max-width: 220px;
+  max-width: 280px;
 }
 .composer-pill.model > span {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 180px;
+  max-width: 240px;
 }
 .model-popover {
   position: absolute;
   bottom: calc(100% + 8px);
   right: 0;
-  width: 280px;
+  width: min(320px, calc(100vw - 24px));
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -329,24 +329,27 @@
   text-transform: uppercase;
   padding: 4px 6px 6px;
 }
-.model-popover-input {
-  padding: 0 4px 6px;
-}
-.model-popover-input input {
-  width: 100%;
-  background: var(--bg-soft);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 6px 8px;
-  font-family: 'JetBrains Mono', monospace;
+.model-popover-empty {
   font-size: 12px;
-  color: var(--ink-2);
-  outline: none;
+  line-height: 1.5;
+  color: var(--ink-mute);
+  padding: 10px 8px 12px;
 }
-.model-popover-input input:focus {
-  border-color: var(--ink);
-  background: var(--bg);
-  box-shadow: none;
+.model-popover-group {
+  padding-bottom: 6px;
+}
+.model-popover-group:last-child {
+  padding-bottom: 0;
+}
+.model-popover-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  padding: 8px 8px 4px;
+  letter-spacing: 0.02em;
+}
+.model-popover-group:first-child .model-popover-group-title {
+  padding-top: 2px;
 }
 .model-popover-list {
   display: flex;

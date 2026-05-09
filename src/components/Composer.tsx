@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../store/session";
@@ -7,7 +7,6 @@ import { srcOf } from "../api/tauri";
 import {
   ASPECT_RATIOS,
   IMAGE_SIZES,
-  MODEL_PRESETS,
   RATIO_PIXEL_HINT,
   shortModelName,
 } from "../config/generation";
@@ -46,18 +45,26 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
 
   const [paramsOpen, setParamsOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
-  const [modelDraft, setModelDraft] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const dragDepth = useRef(0);
-
-  useEffect(() => {
-    setModelDraft(settings?.model || "");
-  }, [settings?.model]);
 
   const hasPendingAttachments = composer.pendingAttachments.length > 0;
   const hasAttachments = composer.attachments.length > 0 || hasPendingAttachments;
 
-  const modelLabel = shortModelName(settings?.model);
+  const activeProvider = settings?.model_services?.find(
+    (provider) => provider.id === settings.active_provider_id,
+  );
+  const enabledProviders = useMemo(
+    () =>
+      (settings?.model_services ?? []).filter(
+        (p) => p.enabled !== false && p.models.length > 0,
+      ),
+    [settings?.model_services],
+  );
+  const modelLabel =
+    activeProvider && activeProvider.enabled !== false
+      ? `${activeProvider.name} · ${shortModelName(settings?.model)}`
+      : shortModelName(settings?.model);
   const ratioLabel = composer.aspectRatio === "auto" ? t("composer.ratioAuto") : composer.aspectRatio;
   const sizeLabel = composer.imageSize === "auto" ? t("composer.sizeAuto") : composer.imageSize;
   const ratioHint =
@@ -107,16 +114,14 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     return () => window.removeEventListener("mousedown", onDoc);
   }, [modelOpen]);
 
-  const commitModel = (val: string) => {
-    const v = val.trim();
-    if (!v || v === settings?.model) return;
-    update({ model: v });
-  };
-
-  const pickModel = (m: string) => {
-    setModelDraft(m);
+  const pickModel = (providerId: string, modelId: string) => {
     setModelOpen(false);
-    if (m !== settings?.model) update({ model: m });
+    if (
+      providerId !== settings?.active_provider_id ||
+      modelId !== settings?.model
+    ) {
+      update({ active_provider_id: providerId, model: modelId });
+    }
   };
 
   const onSubmit = async () => {
@@ -368,39 +373,36 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
               {modelOpen && (
                 <div className="model-popover" onMouseDown={(e) => e.stopPropagation()}>
                   <div className="model-popover-title">{t("composer.modelTitle")}</div>
-                  <div className="model-popover-input">
-                    <input
-                      type="text"
-                      value={modelDraft}
-                      placeholder={t("composer.modelInputPlaceholder")}
-                      spellCheck={false}
-                      onChange={(e) => setModelDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          commitModel(modelDraft);
-                          setModelOpen(false);
-                        }
-                        if (e.key === "Escape") {
-                          setModelDraft(settings?.model || "");
-                          setModelOpen(false);
-                        }
-                      }}
-                    />
-                  </div>
-                  <div className="model-popover-list">
-                    {MODEL_PRESETS.map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        className={`model-popover-item ${m === settings?.model ? "active" : ""}`}
-                        onClick={() => pickModel(m)}
-                      >
-                        <span className="model-popover-item-text">{m}</span>
-                        {m === settings?.model && <CheckIcon />}
-                      </button>
-                    ))}
-                  </div>
+                  {enabledProviders.length === 0 ? (
+                    <div className="model-popover-empty">{t("composer.modelPickerEmpty")}</div>
+                  ) : (
+                    enabledProviders.map((provider) => (
+                      <div key={provider.id} className="model-popover-group">
+                        <div className="model-popover-group-title">{provider.name}</div>
+                        <div className="model-popover-list">
+                          {provider.models.map((model) => {
+                            const m = model.id;
+                            const isActive =
+                              provider.id === settings?.active_provider_id &&
+                              m === settings?.model;
+                            return (
+                              <button
+                                key={`${provider.id}:${m}`}
+                                type="button"
+                                className={`model-popover-item ${isActive ? "active" : ""}`}
+                                onClick={() => pickModel(provider.id, m)}
+                              >
+                                <span className="model-popover-item-text">
+                                  {model.name || shortModelName(m)}
+                                </span>
+                                {isActive && <CheckIcon />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               )}
             </div>

@@ -33,6 +33,7 @@ interface SessionStore {
   createNew: () => Promise<string>;
   switchTo: (id: string) => Promise<void>;
   rename: (id: string, title: string) => Promise<void>;
+  updateConfig: (id: string, systemPrompt: string, historyTurns: number) => Promise<void>;
   remove: (id: string) => Promise<void>;
   ensureActive: () => Promise<string>;
 
@@ -110,6 +111,16 @@ export const useSession = create<SessionStore>((set, get) => {
     set({ active: update(active) });
   };
 
+  /** Replace active chat with server truth (avoids duplicate/stale merges after async gen or tab switches). */
+  const reloadActiveSessionIfViewing = async (sessionId: string) => {
+    if (get().activeId !== sessionId) return;
+    try {
+      set({ active: await api.loadSession(sessionId) });
+    } catch (e) {
+      console.warn(e);
+    }
+  };
+
   return ({
   sessions: [],
   activeId: null,
@@ -157,6 +168,24 @@ export const useSession = create<SessionStore>((set, get) => {
     if (get().activeId === id && get().active) {
       const a = get().active!;
       set({ active: { ...a, session: { ...a.session, title } } });
+    }
+  },
+
+  updateConfig: async (id, systemPrompt, historyTurns) => {
+    await api.updateSessionConfig(id, systemPrompt, historyTurns);
+    await get().refreshList();
+    if (get().activeId === id && get().active) {
+      const a = get().active!;
+      set({
+        active: {
+          ...a,
+          session: {
+            ...a.session,
+            system_prompt: systemPrompt,
+            history_turns: historyTurns,
+          },
+        },
+      });
     }
   },
 
@@ -398,20 +427,14 @@ export const useSession = create<SessionStore>((set, get) => {
   },
 
   deleteMessage: async (messageId) => {
+    const sid = get().active?.session.id;
     try {
       await api.deleteMessage(messageId);
     } catch (e) {
       console.warn(e);
+      return;
     }
-    const a = get().active;
-    if (a) {
-      set({
-        active: {
-          ...a,
-          messages: a.messages.filter((m) => m.id !== messageId),
-        },
-      });
-    }
+    if (sid) await reloadActiveSessionIfViewing(sid);
     await get().refreshList();
   },
 
@@ -452,48 +475,22 @@ export const useSession = create<SessionStore>((set, get) => {
     const c = get().composer;
     setSessionBusy(sid, true);
     try {
-      const result = await api.regenerateImage({
+      await api.regenerateImage({
         session_id: sid,
         user_message_id: messageId,
         aspect_ratio: c.aspectRatio,
         image_size: c.imageSize,
       });
-      updateActiveSession(sid, (active) => ({
-        ...active,
-        messages: [
-          ...active.messages.map((msg) =>
-            msg.id === messageId ? result.user_message : msg,
-          ),
-          result.assistant_message,
-        ],
-      }));
+      await reloadActiveSessionIfViewing(sid);
       await get().refreshList();
     } catch (e: unknown) {
       if (isGenerationCancelled(e)) {
-        if (get().activeId === sid) {
-          try {
-            set({ active: await api.loadSession(sid) });
-          } catch (reloadError) {
-            console.warn(reloadError);
-          }
-        }
+        await reloadActiveSessionIfViewing(sid);
         await get().refreshList();
         return;
       }
       console.error(e);
-      const errMsg: MessageAbs = {
-        id: `tmp-err-${Date.now()}`,
-        session_id: sid,
-        role: "error",
-        text: typeof e === "string" ? e : (e instanceof Error ? e.message : String(e)),
-        params: null,
-        created_at: Date.now(),
-        images: [],
-      };
-      updateActiveSession(sid, (active) => ({
-        ...active,
-        messages: [...active.messages, errMsg],
-      }));
+      await reloadActiveSessionIfViewing(sid);
     } finally {
       setSessionBusy(sid, false);
     }
@@ -574,28 +571,19 @@ export const useSession = create<SessionStore>((set, get) => {
     setSessionBusy(sid, true);
 
     try {
-      const result = await api.generateImage({
+      await api.generateImage({
         session_id: sid,
         prompt: text,
         attachment_ids: attachmentIds,
         aspect_ratio: aspectRatio,
         image_size: imageSize,
       });
-      updateActiveSession(sid, (active) => {
-        const filtered = active.messages.filter((m) => m.id !== optimisticId);
-        return {
-          ...active,
-          messages: [...filtered, result.user_message, result.assistant_message],
-        };
-      });
+      await reloadActiveSessionIfViewing(sid);
       await get().refreshList();
     } catch (e: unknown) {
       if (isGenerationCancelled(e)) {
         try {
-          const latest = await api.loadSession(sid);
-          if (get().activeId === sid) {
-            set({ active: latest });
-          }
+          await reloadActiveSessionIfViewing(sid);
           await get().refreshList();
         } catch (reloadError) {
           console.warn(reloadError);
@@ -603,19 +591,7 @@ export const useSession = create<SessionStore>((set, get) => {
         return;
       }
       console.error(e);
-      const errMsg: MessageAbs = {
-        id: `tmp-err-${Date.now()}`,
-        session_id: sid,
-        role: "error",
-        text: typeof e === "string" ? e : (e instanceof Error ? e.message : String(e)),
-        params: null,
-        created_at: Date.now(),
-        images: [],
-      };
-      updateActiveSession(sid, (active) => ({
-        ...active,
-        messages: [...active.messages, errMsg],
-      }));
+      await reloadActiveSessionIfViewing(sid);
     } finally {
       setSessionBusy(sid, false);
     }

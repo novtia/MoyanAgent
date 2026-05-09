@@ -1,10 +1,3 @@
-export const MODEL_PRESETS = [
-  "openai/gpt-5.4-image-2",
-  "google/gemini-3.1-flash-image-preview",
-  "google/gemini-2.5-flash-image",
-  "black-forest-labs/flux.2-pro",
-] as const;
-
 export const ASPECT_RATIOS = [
   "auto",
   "1:1",

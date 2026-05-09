@@ -10,6 +10,8 @@ pub type DbPool = Pool<SqliteConnectionManager>;
 pub type DbConn = r2d2::PooledConnection<SqliteConnectionManager>;
 
 const MIGRATION_001: &str = include_str!("../migrations/001_init.sql");
+const MIGRATION_002: &str = include_str!("../migrations/002_session_system_prompt.sql");
+const MIGRATION_003: &str = include_str!("../migrations/003_session_history_turns.sql");
 
 pub fn open_pool(db_path: &Path) -> AppResult<DbPool> {
     if let Some(parent) = db_path.parent() {
@@ -45,6 +47,14 @@ fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
     if cur < 1 {
         conn.execute_batch(MIGRATION_001)?;
         conn.execute("INSERT INTO schema_version(version) VALUES (1)", params![])?;
+    }
+    if cur < 2 {
+        conn.execute_batch(MIGRATION_002)?;
+        conn.execute("INSERT INTO schema_version(version) VALUES (2)", params![])?;
+    }
+    if cur < 3 {
+        conn.execute_batch(MIGRATION_003)?;
+        conn.execute("INSERT INTO schema_version(version) VALUES (3)", params![])?;
     }
     Ok(())
 }

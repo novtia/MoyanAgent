@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useSession } from "../store/session";
+import type { SessionSummary } from "../types";
 
 function timeAgo(ts: number, t: TFunction): string {
   const now = Date.now();
@@ -27,10 +28,16 @@ export function SessionList({ onOpenChat }: SessionListProps) {
   const switchTo = useSession((s) => s.switchTo);
   const rename = useSession((s) => s.rename);
   const remove = useSession((s) => s.remove);
+  const updateConfig = useSession((s) => s.updateConfig);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [hoverId, setHoverId] = useState<string | null>(null);
+  const [configTarget, setConfigTarget] = useState<SessionSummary | null>(null);
+  const [systemPromptDraft, setSystemPromptDraft] = useState("");
+  const [historyTurnsDraft, setHistoryTurnsDraft] = useState("10");
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [savingConfig, setSavingConfig] = useState(false);
 
   const submitRename = async () => {
     if (!editingId) return;
@@ -45,77 +52,182 @@ export function SessionList({ onOpenChat }: SessionListProps) {
     await remove(id);
   };
 
+  const openConfig = (session: SessionSummary) => {
+    setConfigTarget(session);
+    setSystemPromptDraft(session.system_prompt ?? "");
+    setHistoryTurnsDraft(String(session.history_turns ?? 10));
+    setConfigError(null);
+  };
+
+  const saveConfig = async () => {
+    if (!configTarget) return;
+    const parsed = Number.parseInt(historyTurnsDraft.trim(), 10);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 200) {
+      setConfigError("历史消息条数需为 0-200 的整数。");
+      return;
+    }
+    setSavingConfig(true);
+    try {
+      await updateConfig(configTarget.id, systemPromptDraft, parsed);
+      setConfigTarget(null);
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
   return (
-    <div className="chat-list">
-      {sessions.map((s) => {
-        const isActive = activeId === s.id;
-        const showActions = isActive || hoverId === s.id;
-        return (
-          <div
-            key={s.id}
-            className={`chat-item ${isActive ? "active" : ""}`}
-            onMouseEnter={() => setHoverId(s.id)}
-            onMouseLeave={() => setHoverId((id) => (id === s.id ? null : id))}
-            onClick={() => {
-              if (editingId !== s.id) {
-                switchTo(s.id);
-                onOpenChat?.();
-              }
-            }}
-          >
-            {editingId === s.id ? (
-              <input
-                className="chat-rename field-input field-input--compact"
-                value={draftTitle}
-                autoFocus
-                onChange={(e) => setDraftTitle(e.target.value)}
-                onBlur={submitRename}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submitRename();
-                  if (e.key === "Escape") {
-                    setEditingId(null);
-                    setDraftTitle("");
-                  }
-                }}
-                onClick={(e) => e.stopPropagation()}
-              />
-            ) : (
-              <>
-                <span className="chat-title" title={s.title}>
-                  {s.title}
-                </span>
-                {showActions ? (
-                  <span
-                    className="chat-actions"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <button
-                      type="button"
-                      title={t("sessions.renameTitle")}
-                      onClick={() => {
-                        setEditingId(s.id);
-                        setDraftTitle(s.title);
-                      }}
-                    >
-                      <PencilIcon />
-                    </button>
-                    <button
-                      type="button"
-                      title={t("sessions.deleteTitle")}
-                      onClick={() => onDelete(s.id, s.title)}
-                    >
-                      <TrashIcon />
-                    </button>
+    <>
+      <div className="chat-list">
+        {sessions.map((s) => {
+          const isActive = activeId === s.id;
+          const showActions = isActive || hoverId === s.id;
+          return (
+            <div
+              key={s.id}
+              className={`chat-item ${isActive ? "active" : ""}`}
+              onMouseEnter={() => setHoverId(s.id)}
+              onMouseLeave={() => setHoverId((id) => (id === s.id ? null : id))}
+              onClick={() => {
+                if (editingId !== s.id) {
+                  switchTo(s.id);
+                  onOpenChat?.();
+                }
+              }}
+            >
+              {editingId === s.id ? (
+                <input
+                  className="chat-rename field-input field-input--compact"
+                  value={draftTitle}
+                  autoFocus
+                  onChange={(e) => setDraftTitle(e.target.value)}
+                  onBlur={submitRename}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submitRename();
+                    if (e.key === "Escape") {
+                      setEditingId(null);
+                      setDraftTitle("");
+                    }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              ) : (
+                <>
+                  <span className="chat-title" title={s.title}>
+                    {s.title}
                   </span>
-                ) : (
-                  <span className="chat-meta">{timeAgo(s.updated_at, t)}</span>
-                )}
-              </>
-            )}
+                  {showActions ? (
+                    <span
+                      className="chat-actions"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        title="会话设置"
+                        onClick={() => openConfig(s)}
+                      >
+                        <DotsIcon />
+                      </button>
+                      <button
+                        type="button"
+                        title={t("sessions.renameTitle")}
+                        onClick={() => {
+                          setEditingId(s.id);
+                          setDraftTitle(s.title);
+                        }}
+                      >
+                        <PencilIcon />
+                      </button>
+                      <button
+                        type="button"
+                        title={t("sessions.deleteTitle")}
+                        onClick={() => onDelete(s.id, s.title)}
+                      >
+                        <TrashIcon />
+                      </button>
+                    </span>
+                  ) : (
+                    <span className="chat-meta">{timeAgo(s.updated_at, t)}</span>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {configTarget && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => setConfigTarget(null)}>
+          <div className="modal session-config-modal" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h3>会话设置</h3>
+              <button
+                type="button"
+                className="close"
+                onClick={() => setConfigTarget(null)}
+              >
+                关闭
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="session-config-form">
+                <div className="row">
+                  <label className="field-label">系统提示词</label>
+                  <textarea
+                    className="settings-system-prompt field-input field-input--lg"
+                    rows={7}
+                    value={systemPromptDraft}
+                    spellCheck={false}
+                    placeholder="仅作用于当前会话；留空则本会话不发送 system 提示词。"
+                    onChange={(e) => setSystemPromptDraft(e.target.value)}
+                  />
+                </div>
+                <div className="row">
+                  <label className="field-label">多轮会话历史条数</label>
+                  <input
+                    type="number"
+                    className="field-input field-input--mono"
+                    min={0}
+                    max={200}
+                    step={1}
+                    value={historyTurnsDraft}
+                    onChange={(e) => {
+                      setHistoryTurnsDraft(e.target.value);
+                      setConfigError(null);
+                    }}
+                  />
+                  <div className={`hint ${configError ? "is-error" : ""}`}>
+                    {configError ?? "0 表示不携带历史；该参数只影响当前会话。"}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button type="button" className="btn" onClick={() => setConfigTarget(null)}>
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={saveConfig}
+                disabled={savingConfig}
+              >
+                {savingConfig ? "保存中" : "保存"}
+              </button>
+            </div>
           </div>
-        );
-      })}
-    </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function DotsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor">
+      <circle cx="5" cy="12" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="19" cy="12" r="1.6" />
+    </svg>
   );
 }
 
@@ -127,6 +239,7 @@ function PencilIcon() {
     </svg>
   );
 }
+
 function TrashIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

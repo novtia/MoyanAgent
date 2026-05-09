@@ -70,6 +70,7 @@ const zhCN = {
     modelTitle: "模型",
     modelInputPlaceholder: "输入完整模型 ID",
     modelPickerTitle: "选择模型",
+    modelPickerEmpty: "没有可用的供应商或模型，请先在设置中启用供应商并添加模型。",
     sendInterrupt: "中断生成",
     sendUploading: "图片上传中",
     sendEdit: "编辑",
@@ -127,7 +128,7 @@ const zhCN = {
   settings: {
     backToApp: "返回应用",
     tabAppearance: "外观",
-    tabLlm: "LLM",
+    tabLlm: "模型服务",
     tabSystem: "系统",
     appearance: {
       themeTitle: "主题",

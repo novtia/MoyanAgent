@@ -35,6 +35,12 @@ export const api = {
     invoke<Session>("create_session", { args: { title, model } }),
   renameSession: (id: string, title: string) =>
     invoke<void>("rename_session", { id, title }),
+  updateSessionConfig: (id: string, systemPrompt: string, historyTurns: number) =>
+    invoke<void>("update_session_config", {
+      id,
+      systemPrompt,
+      historyTurns,
+    }),
   deleteSession: (id: string) => invoke<void>("delete_session", { id }),
   loadSession: (id: string) =>
     invoke<SessionWithMessagesAbs>("load_session", { id }),

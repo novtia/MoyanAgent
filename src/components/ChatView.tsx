@@ -13,7 +13,12 @@ interface ChatViewProps {
   needsSetup: boolean;
 }
 
-export function ChatView({ onEditAttachment, onPreviewImage, onOpenSettings, needsSetup }: ChatViewProps) {
+export function ChatView({
+  onEditAttachment,
+  onPreviewImage,
+  onOpenSettings,
+  needsSetup,
+}: ChatViewProps) {
   const { t } = useTranslation();
   const active = useSession((s) => s.active);
   const busy = useSession((s) => s.busy);
@@ -64,7 +69,9 @@ export function ChatView({ onEditAttachment, onPreviewImage, onOpenSettings, nee
                         if (
                           active &&
                           window.confirm(
-                            t("chat.deleteSessionConfirm", { title: active.session.title }),
+                            t("chat.deleteSessionConfirm", {
+                              title: active.session.title,
+                            }),
                           )
                         ) {
                           remove(active.session.id);

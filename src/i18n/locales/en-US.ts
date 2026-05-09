@@ -73,6 +73,7 @@ const enUS: Resource = {
     modelTitle: "Model",
     modelInputPlaceholder: "Full model ID",
     modelPickerTitle: "Choose model",
+    modelPickerEmpty: "No enabled providers with models. Enable a provider and add models in settings.",
     sendInterrupt: "Stop",
     sendUploading: "Images uploading",
     sendEdit: "Edit",
@@ -131,7 +132,7 @@ const enUS: Resource = {
   settings: {
     backToApp: "Back to app",
     tabAppearance: "Appearance",
-    tabLlm: "LLM",
+    tabLlm: "Model services",
     tabSystem: "System",
     appearance: {
       themeTitle: "Theme",

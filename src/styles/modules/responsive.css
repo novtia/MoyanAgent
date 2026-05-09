@@ -20,4 +20,44 @@
   .composer-dock {
     padding: 0 16px 16px;
   }
+  .settings-main {
+    padding: 24px 18px 48px;
+  }
+  .settings--llm .settings-main {
+    padding: 0;
+  }
+  .settings--llm .settings-panel {
+    height: 100%;
+  }
+  .settings-side {
+    width: 64px;
+    padding: 12px 8px;
+  }
+  .settings-back span,
+  .settings-nav-item span {
+    display: none;
+  }
+  .settings-back,
+  .settings-nav-item {
+    justify-content: center;
+  }
+  .model-service-layout {
+    grid-template-columns: 1fr;
+  }
+  .model-provider-pane {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    max-height: 260px;
+  }
+  .model-service-main {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+  .model-service-badges,
+  .model-service-current {
+    display: none;
+  }
+  .model-list-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }

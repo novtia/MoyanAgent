@@ -7,6 +7,8 @@ use crate::error::{AppError, AppResult};
 pub const KEY_API_KEY: &str = "api_key";
 pub const KEY_ENDPOINT: &str = "endpoint";
 pub const KEY_MODEL: &str = "model";
+pub const KEY_ACTIVE_PROVIDER_ID: &str = "active_provider_id";
+pub const KEY_MODEL_SERVICES: &str = "model_services";
 pub const KEY_DEFAULT_RATIO: &str = "default_aspect_ratio";
 pub const KEY_DEFAULT_SIZE: &str = "default_image_size";
 pub const KEY_SYSTEM_PROMPT: &str = "system_prompt";
@@ -20,10 +22,58 @@ pub const KEY_HISTORY_TURNS: &str = "history_turns";
 pub const DEFAULT_HISTORY_TURNS: i64 = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelParamSettings {
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
+    pub max_tokens: Option<i64>,
+    pub frequency_penalty: Option<f64>,
+    pub presence_penalty: Option<f64>,
+}
+
+impl Default for ModelParamSettings {
+    fn default() -> Self {
+        Self {
+            temperature: None,
+            top_p: None,
+            max_tokens: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelServiceModel {
+    pub id: String,
+    pub name: String,
+    pub group: String,
+    pub capabilities: Vec<String>,
+    pub streaming: bool,
+    pub params: ModelParamSettings,
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelProvider {
+    pub id: String,
+    pub name: String,
+    pub endpoint: String,
+    pub api_key: String,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    pub models: Vec<ModelServiceModel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub api_key: String,
     pub endpoint: String,
     pub model: String,
+    pub active_provider_id: String,
+    pub model_services: Vec<ModelProvider>,
     pub default_aspect_ratio: String,
     pub default_image_size: String,
     pub system_prompt: String,
@@ -43,6 +93,8 @@ impl Default for Settings {
             api_key: String::new(),
             endpoint: String::new(),
             model: String::new(),
+            active_provider_id: String::new(),
+            model_services: Vec::new(),
             default_aspect_ratio: String::new(),
             default_image_size: String::new(),
             system_prompt: String::new(),
@@ -82,6 +134,10 @@ pub struct SettingsPatch {
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
+    pub active_provider_id: Option<String>,
+    #[serde(default)]
+    pub model_services: Option<Vec<ModelProvider>>,
+    #[serde(default)]
     pub default_aspect_ratio: Option<String>,
     #[serde(default)]
     pub default_image_size: Option<String>,
@@ -107,18 +163,21 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
         Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
     })?;
     let mut s = Settings {
-        endpoint: "https://openrouter.ai/api/v1/chat/completions".into(),
-        model: "openai/gpt-5.4-image-2".into(),
         default_aspect_ratio: "auto".into(),
         default_image_size: "auto".into(),
         ..Default::default()
     };
+    let mut parsed_services: Option<Vec<ModelProvider>> = None;
     for r in rows {
         let (k, v) = r?;
         match k.as_str() {
             KEY_API_KEY => s.api_key = v,
             KEY_ENDPOINT => s.endpoint = v,
             KEY_MODEL => s.model = v,
+            KEY_ACTIVE_PROVIDER_ID => s.active_provider_id = v,
+            KEY_MODEL_SERVICES => {
+                parsed_services = serde_json::from_str::<Vec<ModelProvider>>(&v).ok()
+            }
             KEY_DEFAULT_RATIO => s.default_aspect_ratio = v,
             KEY_DEFAULT_SIZE => s.default_image_size = v,
             KEY_SYSTEM_PROMPT => s.system_prompt = v,
@@ -135,6 +194,53 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             _ => {}
         }
     }
+    s.model_services = normalize_services(parsed_services.unwrap_or_default());
+    if s.active_provider_id.trim().is_empty()
+        || !s
+            .model_services
+            .iter()
+            .any(|p| p.id == s.active_provider_id)
+    {
+        s.active_provider_id = s
+            .model_services
+            .first()
+            .map(|p| p.id.clone())
+            .unwrap_or_default();
+    }
+    if !s.active_provider_id.is_empty() {
+        let cur_ok = s
+            .model_services
+            .iter()
+            .find(|p| p.id == s.active_provider_id)
+            .map(|p| p.enabled)
+            .unwrap_or(false);
+        if !cur_ok {
+            if let Some(p) = s.model_services.iter().find(|p| p.enabled) {
+                s.active_provider_id = p.id.clone();
+            }
+        }
+    }
+    if let Some((endpoint, api_key, model)) = active_provider(&s).map(|provider| {
+        let model = if provider.models.iter().any(|model| model.id == s.model) {
+            s.model.clone()
+        } else {
+            provider
+                .models
+                .first()
+                .map(|model| model.id.clone())
+                .unwrap_or_default()
+        };
+        (provider.endpoint.clone(), provider.api_key.clone(), model)
+    })
+    {
+        s.endpoint = endpoint;
+        s.api_key = api_key;
+        s.model = model;
+    } else {
+        s.endpoint.clear();
+        s.api_key.clear();
+        s.model.clear();
+    }
     Ok(s)
 }
 
@@ -147,6 +253,106 @@ pub fn write_kv(conn: &DbConn, key: &str, value: &str) -> AppResult<()> {
     Ok(())
 }
 
+pub fn active_provider(s: &Settings) -> Option<&ModelProvider> {
+    if let Some(p) = s.model_services.iter().find(|p| p.id == s.active_provider_id) {
+        if p.enabled {
+            return Some(p);
+        }
+    }
+    s.model_services
+        .iter()
+        .find(|p| p.enabled)
+        .or_else(|| s.model_services.first())
+}
+
+pub fn active_model_params(s: &Settings) -> ModelParamSettings {
+    active_provider(s)
+        .and_then(|p| p.models.iter().find(|m| m.id == s.model))
+        .map(|m| m.params.clone())
+        .unwrap_or_default()
+}
+
+fn normalize_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {
+    for (provider_index, provider) in services.iter_mut().enumerate() {
+        if provider.id.trim().is_empty() {
+            provider.id = format!("provider-{}", provider_index + 1);
+        }
+        if provider.name.trim().is_empty() {
+            provider.name = provider.id.clone();
+        }
+        for model in &mut provider.models {
+            if model.name.trim().is_empty() {
+                model.name = short_model_name(&model.id);
+            }
+            if model.group.trim().is_empty() {
+                model.group = model_group(&model.id);
+            }
+            if model.capabilities.is_empty() {
+                model.capabilities = infer_capabilities(&model.id);
+            }
+        }
+    }
+    services
+}
+
+fn validate_services(services: &[ModelProvider]) -> AppResult<()> {
+    for provider in services {
+        for model in &provider.models {
+            if model.id.trim().is_empty() {
+                return Err(AppError::Invalid("model id cannot be empty".into()));
+            }
+            validate_optional_f64(model.params.temperature, "temperature")?;
+            validate_optional_f64(model.params.top_p, "top_p")?;
+            validate_optional_f64(model.params.frequency_penalty, "frequency_penalty")?;
+            validate_optional_f64(model.params.presence_penalty, "presence_penalty")?;
+            if let Some(n) = model.params.max_tokens {
+                if n < 0 {
+                    return Err(AppError::Invalid("max_tokens must be non-negative".into()));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_optional_f64(value: Option<f64>, label: &str) -> AppResult<()> {
+    if value.map(|n| !n.is_finite()).unwrap_or(false) {
+        return Err(AppError::Invalid(format!("{label} must be finite")));
+    }
+    Ok(())
+}
+
+fn short_model_name(id: &str) -> String {
+    id.rsplit('/').next().unwrap_or(id).to_string()
+}
+
+fn model_group(id: &str) -> String {
+    id.split('/').next().unwrap_or("custom").to_string()
+}
+
+fn infer_capabilities(id: &str) -> Vec<String> {
+    let id = id.to_ascii_lowercase();
+    let mut out = Vec::new();
+    if id.contains("image")
+        || id.contains("vision")
+        || id.contains("gemini")
+        || id.contains("flux")
+        || id.contains("gpt-5")
+    {
+        out.push("vision".into());
+    }
+    if id.contains("search") || id.contains("sonar") {
+        out.push("web".into());
+    }
+    if id.contains("reason") || id.contains("thinking") || id.contains("o1") || id.contains("o3") {
+        out.push("reasoning".into());
+    }
+    if out.is_empty() {
+        out.push("text".into());
+    }
+    out
+}
+
 pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
     if let Some(v) = patch.api_key {
         write_kv(conn, KEY_API_KEY, &v)?;
@@ -156,6 +362,15 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
     }
     if let Some(v) = patch.model {
         write_kv(conn, KEY_MODEL, &v)?;
+    }
+    if let Some(v) = patch.active_provider_id {
+        write_kv(conn, KEY_ACTIVE_PROVIDER_ID, &v)?;
+    }
+    if let Some(v) = patch.model_services {
+        validate_services(&v)?;
+        let json = serde_json::to_string(&normalize_services(v))
+            .map_err(|e| AppError::Invalid(e.to_string()))?;
+        write_kv(conn, KEY_MODEL_SERVICES, &json)?;
     }
     if let Some(v) = patch.default_aspect_ratio {
         write_kv(conn, KEY_DEFAULT_RATIO, &v)?;

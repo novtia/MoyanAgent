@@ -63,6 +63,19 @@
   width: 12px;
   height: 12px;
 }
+.session-config-modal {
+  width: min(640px, 92vw);
+}
+.session-config-form {
+  display: grid;
+  gap: 14px;
+}
+.session-config-form .row {
+  margin-bottom: 0;
+}
+.session-config-form .hint.is-error {
+  color: var(--field-error);
+}
 .chat-rename {
   /* Visual styling provided by .field-input + .field-input--compact below.
      This rule only handles layout (full-width inside the row). */

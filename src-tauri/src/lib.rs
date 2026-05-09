@@ -236,6 +236,17 @@ fn rename_session(
 }
 
 #[tauri::command]
+fn update_session_config(
+    state: tauri::State<Arc<AppState>>,
+    id: String,
+    system_prompt: String,
+    history_turns: i64,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    session::update_config(&conn, &id, &system_prompt, history_turns)
+}
+
+#[tauri::command]
 fn delete_session(
     state: tauri::State<Arc<AppState>>,
     app: AppHandle,
@@ -474,9 +485,21 @@ async fn generate_image(
     req: GenerateReq,
 ) -> Result<GenerateResult, AppError> {
     // 1) gather settings + attachment bytes + history synchronously
-    let (opts_settings, atts_bytes, attachment_image_ids, params_json, history) = {
+    let (
+        opts_settings,
+        model_params,
+        session_prompt,
+        atts_bytes,
+        attachment_image_ids,
+        params_json,
+        history,
+    ) = {
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
+        let session_config = session::get(&conn, &req.session_id)?;
+        let session_prompt = session_config.system_prompt.clone();
+        let history_turns = session_config.history_turns;
+        let model_params = settings::active_model_params(&s);
         if s.api_key.trim().is_empty() {
             return Err(AppError::Config("缺少 API Key，请先在设置中填入".into()));
         }
@@ -506,9 +529,9 @@ async fn generate_image(
             &conn,
             &req.session_id,
             None,
-            s.history_turns.max(0) as usize,
+            history_turns.max(0) as usize,
         )?;
-        (s, atts, ids, params.to_string(), hist)
+        (s, model_params, session_prompt, atts, ids, params.to_string(), hist)
     };
 
     // 2) insert user message + bind input attachments
@@ -549,13 +572,13 @@ async fn generate_image(
         attachments: atts_bytes,
         aspect_ratio: req.aspect_ratio.clone(),
         image_size: req.image_size.clone(),
-        system_prompt: opts_settings.system_prompt.clone(),
+        system_prompt: session_prompt,
         history,
-        temperature: opts_settings.temperature,
-        top_p: opts_settings.top_p,
-        max_tokens: opts_settings.max_tokens,
-        frequency_penalty: opts_settings.frequency_penalty,
-        presence_penalty: opts_settings.presence_penalty,
+        temperature: model_params.temperature,
+        top_p: model_params.top_p,
+        max_tokens: model_params.max_tokens,
+        frequency_penalty: model_params.frequency_penalty,
+        presence_penalty: model_params.presence_penalty,
     };
     let result = run_cancellable_generation(&state, &req.session_id, opts).await;
 
@@ -650,9 +673,13 @@ async fn regenerate_image(
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| AppError::Invalid("user message has no prompt text".into()))?;
 
-    let (opts_settings, atts_bytes, params_json, history) = {
+    let (opts_settings, model_params, session_prompt, atts_bytes, params_json, history) = {
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
+        let session_config = session::get(&conn, &req.session_id)?;
+        let session_prompt = session_config.system_prompt.clone();
+        let history_turns = session_config.history_turns;
+        let model_params = settings::active_model_params(&s);
         if s.api_key.trim().is_empty() {
             return Err(AppError::Config("缺少 API Key，请先在设置中填入".into()));
         }
@@ -687,9 +714,9 @@ async fn regenerate_image(
             &conn,
             &req.session_id,
             Some(user_msg_existing.created_at),
-            s.history_turns.max(0) as usize,
+            history_turns.max(0) as usize,
         )?;
-        (s, atts, params.to_string(), hist)
+        (s, model_params, session_prompt, atts, params.to_string(), hist)
     };
 
     let _ = app.emit(
@@ -709,13 +736,13 @@ async fn regenerate_image(
         attachments: atts_bytes,
         aspect_ratio: req.aspect_ratio.clone(),
         image_size: req.image_size.clone(),
-        system_prompt: opts_settings.system_prompt.clone(),
+        system_prompt: session_prompt,
         history,
-        temperature: opts_settings.temperature,
-        top_p: opts_settings.top_p,
-        max_tokens: opts_settings.max_tokens,
-        frequency_penalty: opts_settings.frequency_penalty,
-        presence_penalty: opts_settings.presence_penalty,
+        temperature: model_params.temperature,
+        top_p: model_params.top_p,
+        max_tokens: model_params.max_tokens,
+        frequency_penalty: model_params.frequency_penalty,
+        presence_penalty: model_params.presence_penalty,
     };
     let result = run_cancellable_generation(&state, &req.session_id, opts).await;
 
@@ -1011,6 +1038,7 @@ pub fn run() {
             list_sessions,
             create_session,
             rename_session,
+            update_session_config,
             delete_session,
             load_session,
             delete_message,
