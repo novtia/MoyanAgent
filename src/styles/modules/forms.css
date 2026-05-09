@@ -182,6 +182,6 @@ input.field-input--mono {
   background: var(--bg);
 }
 .chip.active {
-  color: #fff;
+  color: var(--bg);
   background: var(--ink);
 }

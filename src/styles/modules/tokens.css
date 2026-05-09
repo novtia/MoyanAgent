@@ -1,5 +1,7 @@
 /* ───── design tokens ───── */
 :root {
+  color-scheme: light;
+
   --bg: #ffffff;
   --bg-soft: #f7f8fa;
   --bg-sunk: #f1f3f6;
@@ -68,4 +70,51 @@
   --field-line-height: 1.5;
   --field-transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
   --field-error: #c0392b;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #101112;
+  --bg-soft: #17191c;
+  --bg-sunk: #0b0c0e;
+  --bg-side: #141517;
+  --bg-hover: #23262a;
+
+  --line: #292c31;
+  --line-strong: #3a3f46;
+
+  --ink: #f3f5f7;
+  --ink-2: #dce1e7;
+  --ink-soft: #aab2bd;
+  --ink-mute: #77808b;
+
+  --accent: #f3f5f7;
+  --accent-soft: #dce1e7;
+
+  --blue-50: #15233d;
+  --blue-100: #1d3155;
+  --blue-500: #5b8cff;
+  --blue-600: #7aa2ff;
+  --blue-700: #9ab8ff;
+
+  --green-50: #112a22;
+  --green-500: #31d09a;
+  --green-600: #5ee0b2;
+
+  --rose-50: #35151c;
+  --rose-500: #ff6685;
+
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.03), 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-2: 0 8px 22px -8px rgba(0, 0, 0, 0.44), 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow-pop: 0 18px 44px -12px rgba(0, 0, 0, 0.62);
+  --shadow-card: 0 14px 34px -16px rgba(0, 0, 0, 0.58), 0 1px 2px rgba(0, 0, 0, 0.3);
+
+  --field-bg: #15171a;
+  --field-bg-soft: #1c1f23;
+  --field-border: #343941;
+  --field-border-hover: #4a515b;
+  --field-border-focus: #f3f5f7;
+  --field-focus-ring: 0 0 0 3px rgba(243, 245, 247, 0.1);
+  --field-error: #ff7a91;
 }

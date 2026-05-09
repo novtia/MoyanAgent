@@ -1,5 +1,7 @@
+import type { ThemeMode } from "../../theme";
+
 export type SettingsTab = "appearance" | "llm" | "system";
-export type ThemeMode = "light" | "dark" | "system";
+export type { ThemeMode };
 
 export interface SettingsViewProps {
   activeTab: SettingsTab;

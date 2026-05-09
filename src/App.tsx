@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { Dropzone } from "./components/Dropzone";
@@ -9,6 +9,12 @@ import type { SettingsTab, ThemeMode } from "./components/SettingsView.js";
 import { TitleBar } from "./components/TitleBar";
 import { useSettings } from "./store/settings";
 import { useSession } from "./store/session";
+import {
+  THEME_STORAGE_KEY,
+  applyThemeMode,
+  readStoredThemeMode,
+  watchSystemTheme,
+} from "./theme";
 import type { AttachmentDraft, ImageRefAbs } from "./types";
 
 type AppRoute =
@@ -28,11 +34,6 @@ function parseRoute(): AppRoute {
   return { view: "chat" };
 }
 
-function initialTheme(): ThemeMode {
-  const stored = window.localStorage.getItem("atelier.theme");
-  return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
-}
-
 export default function App() {
   const loadSettings = useSettings((s) => s.load);
   const settings = useSettings((s) => s.settings);
@@ -45,7 +46,7 @@ export default function App() {
     null,
   );
   const [route, setRoute] = useState<AppRoute>(() => parseRoute());
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => initialTheme());
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   useEffect(() => {
@@ -59,13 +60,12 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
-  useEffect(() => {
-    window.localStorage.setItem("atelier.theme", themeMode);
-    if (themeMode === "system") {
-      document.documentElement.removeAttribute("data-theme");
-    } else {
-      document.documentElement.dataset.theme = themeMode;
-    }
+  useLayoutEffect(() => {
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    applyThemeMode(themeMode);
+
+    if (themeMode !== "system") return;
+    return watchSystemTheme(() => applyThemeMode("system"));
   }, [themeMode]);
 
   useEffect(() => {
