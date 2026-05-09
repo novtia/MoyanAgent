@@ -1,0 +1,161 @@
+/* ───── modal ───── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(11, 18, 32, 0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fade-in 0.15s ease;
+}
+.modal {
+  background: var(--bg);
+  border-radius: 14px;
+  box-shadow: 0 30px 80px -20px rgba(11, 18, 32, 0.4);
+  width: min(960px, 92vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform-origin: center;
+  animation: modal-expand 0.22s var(--ease-pop);
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--line);
+}
+.modal-head h3 {
+  margin: 0;
+  font-family: 'Instrument Sans', sans-serif;
+  font-weight: 500;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.modal-head .close {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+.modal-head .close:hover {
+  color: var(--rose-500);
+  border-color: var(--rose-500);
+  background: var(--rose-50);
+}
+.modal-body {
+  flex: 1;
+  overflow: auto;
+  padding: 18px 22px;
+}
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 22px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-soft);
+}
+.btn {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  padding: 7px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 0.12s;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.btn:hover {
+  border-color: var(--ink);
+  background: var(--bg-soft);
+}
+.btn.primary {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
+}
+.btn.primary:hover {
+  background: var(--accent-soft);
+}
+.btn.danger {
+  color: var(--rose-500);
+  border-color: var(--rose-500);
+  background: var(--rose-50);
+}
+.btn.danger:hover {
+  background: var(--rose-500);
+  color: #fff;
+}
+
+.input-affix {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+.input-affix input {
+  padding-right: 64px;
+}
+.input-affix .affix-btn {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: 1px solid var(--field-border);
+  color: var(--ink-soft);
+  padding: var(--field-padding-y-sm) var(--field-padding-x-sm);
+  font-family: inherit;
+  font-size: 11.5px;
+  border-radius: var(--field-radius-sm);
+  cursor: pointer;
+  transition: var(--field-transition);
+}
+.input-affix .affix-btn:hover {
+  color: var(--ink);
+  border-color: var(--field-border-hover);
+  background: var(--bg-soft);
+}
+
+.footnote {
+  font-size: 11px;
+  color: var(--ink-soft);
+  line-height: 1.55;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  display: flex;
+  gap: 8px;
+}
+.footnote code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  background: var(--bg-sunk);
+  color: var(--ink);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* The mask-painting canvas is positioned over its image via .editor-mask-wrap.
+   Kept as a top-level rule so the bare <canvas class="mask-canvas"> still
+   gets correct positioning regardless of nesting context. */
+.mask-canvas {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+}

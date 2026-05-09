@@ -1,0 +1,23 @@
+/* ───── responsive ───── */
+@media (max-width: 900px) {
+  .stage {
+    grid-template-columns: 56px 1fr;
+  }
+  .side-nav-item span,
+  .side-section-title,
+  .side-empty,
+  .chat-list,
+  .side-brand {
+    display: none;
+  }
+  .side-nav-item {
+    justify-content: center;
+    padding: 8px;
+  }
+  .messages {
+    padding: 8px 16px 24px;
+  }
+  .composer-dock {
+    padding: 0 16px 16px;
+  }
+}

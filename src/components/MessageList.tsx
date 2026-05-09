@@ -1,0 +1,622 @@
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useSession } from "../store/session";
+import { srcOf, api } from "../api/tauri";
+import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
+import { ATELIER_DRAG_TYPE } from "./SessionGallery";
+import type { AttachmentDraft, ImageRefAbs, MessageAbs } from "../types";
+
+interface MessageListProps {
+  onPreviewImage: (img: ImageRefAbs) => void;
+}
+
+interface MessageRowProps {
+  m: MessageAbs;
+  onPreviewImage: (img: ImageRefAbs) => void;
+}
+
+interface PlateActionsProps {
+  img: ImageRefAbs;
+  onPreview: () => void;
+  showDivider?: boolean;
+}
+
+export function MessageList({ onPreviewImage }: MessageListProps) {
+  const { t } = useTranslation();
+  const active = useSession((s) => s.active);
+  const busy = useSession((s) => s.busy);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    ref.current.scrollTop = ref.current.scrollHeight;
+  }, [active?.messages.length, busy]);
+
+  const messages = active?.messages || [];
+  const isEmpty = messages.length === 0 && !busy;
+
+  return (
+    <div className={`messages ${isEmpty ? "is-empty" : ""}`} ref={ref}>
+      {isEmpty && (
+        <div className="hero">
+          <h1 className="hero-title">{t("chat.heroTitle")}</h1>
+        </div>
+      )}
+
+      {!isEmpty && (
+        <div className="messages-inner">
+          {messages.map((m) => (
+            <MessageRow key={m.id} m={m} onPreviewImage={onPreviewImage} />
+          ))}
+          {busy && <DevelopingRow />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function nowStamp(ts: number) {
+  const d = new Date(ts);
+  return d.toTimeString().slice(0, 8);
+}
+
+async function copyText(text: string) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    console.warn(e);
+  }
+}
+
+function MessageRow({ m, onPreviewImage }: MessageRowProps) {
+  const { t } = useTranslation();
+  const inputs = useMemo(() => m.images.filter((i) => i.role === "input"), [m.images]);
+  const outputs = m.images.filter((i) => i.role === "output");
+  const resendMessage = useSession((s) => s.resendMessage);
+  const deleteMessage = useSession((s) => s.deleteMessage);
+  const editMessage = useSession((s) => s.editMessage);
+  const quoteMessage = useSession((s) => s.quoteMessage);
+  const busy = useSession((s) => s.busy);
+
+  const isUser = m.role === "user";
+  const isAssistant = m.role === "assistant";
+  const isError = m.role === "error";
+  const hasText = !!(m.text && m.text.trim());
+  const canEdit = isUser && (hasText || inputs.length > 0);
+  const canQuote = hasText || inputs.length > 0 || outputs.length > 0;
+
+  const MAX_EDIT_IMAGES = 8;
+
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(m.text || "");
+  const [draftImages, setDraftImages] = useState<ImageRefAbs[]>(inputs);
+  const [picking, setPicking] = useState(false);
+  const [editDragOver, setEditDragOver] = useState(false);
+  const editDragDepth = useRef(0);
+  const addedDraftIdsRef = useRef<Set<string>>(new Set());
+  const taRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (!editing) return;
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = ta.scrollHeight + "px";
+    ta.focus();
+    const len = ta.value.length;
+    ta.setSelectionRange(len, len);
+  }, [editing]);
+
+  useEffect(() => {
+    if (!editing) return;
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = ta.scrollHeight + "px";
+  }, [draft, editing]);
+
+  const cleanupAddedDrafts = async (ids: Iterable<string>) => {
+    for (const id of ids) {
+      try {
+        await api.removeAttachmentDraft(id);
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+  };
+
+  const beginEdit = () => {
+    if (!canEdit) return;
+    setDraft(m.text || "");
+    setDraftImages(inputs);
+    addedDraftIdsRef.current = new Set();
+    setEditing(true);
+  };
+  const cancelEdit = async () => {
+    const orphans = Array.from(addedDraftIdsRef.current);
+    addedDraftIdsRef.current = new Set();
+    setDraft(m.text || "");
+    setDraftImages(inputs);
+    setEditing(false);
+    if (orphans.length) await cleanupAddedDrafts(orphans);
+  };
+
+  const draftToImageRef = (d: AttachmentDraft): ImageRefAbs => ({
+    id: d.image_id,
+    role: "input",
+    rel_path: d.rel_path,
+    thumb_rel_path: d.thumb_rel_path,
+    abs_path: d.abs_path,
+    thumb_abs_path: d.thumb_abs_path,
+    mime: d.mime,
+    width: d.width,
+    height: d.height,
+    bytes: d.bytes,
+    ord: 0,
+  });
+
+  const ingestPaths = async (paths: string[]) => {
+    const room = MAX_EDIT_IMAGES - draftImages.length;
+    if (room <= 0) return;
+    const toIngest = paths.slice(0, room);
+    for (const p of toIngest) {
+      try {
+        const d = await api.addAttachmentFromPath(m.session_id, p);
+        const ref = draftToImageRef(d);
+        addedDraftIdsRef.current.add(ref.id);
+        setDraftImages((arr) => [...arr, ref]);
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+  };
+
+  const ingestExistingImage = async (absPath: string) => {
+    if (!absPath) return;
+    if (draftImages.length >= MAX_EDIT_IMAGES) return;
+    try {
+      const d = await api.addAttachmentFromPath(m.session_id, absPath);
+      const ref = draftToImageRef(d);
+      addedDraftIdsRef.current.add(ref.id);
+      setDraftImages((arr) => [...arr, ref]);
+    } catch (e) {
+      console.warn(e);
+    }
+  };
+
+  const addDraftImage = async () => {
+    if (picking) return;
+    if (draftImages.length >= MAX_EDIT_IMAGES) return;
+    setPicking(true);
+    try {
+      const selected = await openDialog({
+        multiple: true,
+        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }],
+      });
+      const paths = Array.isArray(selected) ? selected : selected ? [selected] : [];
+      if (paths.length) await ingestPaths(paths as string[]);
+    } finally {
+      setPicking(false);
+    }
+  };
+
+  const removeDraftImage = async (id: string) => {
+    setDraftImages((arr) => arr.filter((i) => i.id !== id));
+    if (addedDraftIdsRef.current.has(id)) {
+      addedDraftIdsRef.current.delete(id);
+      try {
+        await api.removeAttachmentDraft(id);
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+  };
+
+  const editHasDragPayload = (e: React.DragEvent) => {
+    const types = Array.from(e.dataTransfer?.types || []);
+    return types.includes("Files") || types.includes(ATELIER_DRAG_TYPE);
+  };
+  const onEditDragEnter = (e: React.DragEvent) => {
+    if (!editing || !editHasDragPayload(e)) return;
+    e.preventDefault();
+    editDragDepth.current += 1;
+    setEditDragOver(true);
+  };
+  const onEditDragOver = (e: React.DragEvent) => {
+    if (!editing || !editHasDragPayload(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  };
+  const onEditDragLeave = (e: React.DragEvent) => {
+    if (!editing || !editHasDragPayload(e)) return;
+    editDragDepth.current -= 1;
+    if (editDragDepth.current <= 0) {
+      editDragDepth.current = 0;
+      setEditDragOver(false);
+    }
+  };
+  const onEditDrop = (e: React.DragEvent) => {
+    if (!editing || !editHasDragPayload(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    editDragDepth.current = 0;
+    setEditDragOver(false);
+
+    const galleryPayload = e.dataTransfer?.getData(ATELIER_DRAG_TYPE);
+    if (galleryPayload) {
+      try {
+        const parsed = JSON.parse(galleryPayload) as { abs_path?: string };
+        if (parsed.abs_path) ingestExistingImage(parsed.abs_path);
+      } catch (err) {
+        console.warn(err);
+      }
+      return;
+    }
+
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (!files.length) return;
+    const paths = files
+      .map((f) => (f as File & { path?: string }).path || "")
+      .filter(Boolean);
+    if (paths.length) ingestPaths(paths);
+  };
+
+  const imageIdsEqual = (a: ImageRefAbs[], b: ImageRefAbs[]) => {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i].id !== b[i].id) return false;
+    return true;
+  };
+
+  const saveEdit = async () => {
+    const next = draft.trim();
+    const imagesChanged = !imageIdsEqual(draftImages, inputs);
+    if (!next && draftImages.length === 0) {
+      await cancelEdit();
+      return;
+    }
+    if (next === (m.text || "").trim() && !imagesChanged) {
+      setEditing(false);
+      return;
+    }
+    await editMessage(
+      m.id,
+      next,
+      imagesChanged ? draftImages.map((i) => i.id) : undefined,
+    );
+    addedDraftIdsRef.current = new Set();
+    setEditing(false);
+  };
+  const onResend = async () => {
+    if (busy) return;
+    await resendMessage(m.id);
+  };
+  const onDelete = async () => {
+    if (!window.confirm(t("message.deleteConfirm"))) return;
+    await deleteMessage(m.id);
+  };
+  const onCopy = () => {
+    copyText(m.text || "");
+  };
+
+  return (
+    <div className={`msg ${m.role} ${editing ? "is-editing" : ""}`}>
+      <div className="msg-col">
+        <div className="bubble">
+          {!isUser && (
+            <span className="stamp">
+              {isAssistant
+                ? t("message.stampImage", { time: nowStamp(m.created_at) })
+                : t("message.stampFailure", { time: nowStamp(m.created_at) })}
+            </span>
+          )}
+
+          {!editing && inputs.length > 0 && (
+            <div className="attached">
+              {inputs.map((img) => (
+                <img
+                  key={img.id}
+                  src={srcOf(img.thumb_abs_path || img.abs_path)}
+                  title={img.rel_path}
+                  onClick={() => onPreviewImage(img)}
+                />
+              ))}
+            </div>
+          )}
+
+          {!editing && hasText && !isError && <div className="text">{m.text}</div>}
+          {!editing && isError && <div className="text mono">{m.text}</div>}
+
+          {editing && (
+            <div
+              className={`bubble-edit ${editDragOver ? "drag-over" : ""}`}
+              onDragEnter={onEditDragEnter}
+              onDragOver={onEditDragOver}
+              onDragLeave={onEditDragLeave}
+              onDrop={onEditDrop}
+            >
+              {(draftImages.length > 0 || picking) && (
+                <div className="bubble-edit-images">
+                  {draftImages.map((img) => (
+                    <div className="bubble-edit-image" key={img.id} title={img.rel_path}>
+                      <img
+                        src={srcOf(img.thumb_abs_path || img.abs_path)}
+                        alt=""
+                        draggable={false}
+                      />
+                      <button
+                        type="button"
+                        className="bubble-edit-image-remove"
+                        title={t("message.editRemoveImage")}
+                        onClick={() => removeDraftImage(img.id)}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <textarea
+                ref={taRef}
+                className="bubble-edit-textarea field-input field-input--bare"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    cancelEdit();
+                  } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    saveEdit();
+                  }
+                }}
+              />
+              <div className="bubble-edit-actions">
+                <button
+                  type="button"
+                  className="bubble-edit-icon-btn"
+                  title={t("message.editAddImage")}
+                  onClick={addDraftImage}
+                  disabled={picking || draftImages.length >= MAX_EDIT_IMAGES}
+                >
+                  <PlusIcon />
+                </button>
+                <span className="bubble-edit-spacer" />
+                <button
+                  type="button"
+                  className="bubble-edit-btn ghost"
+                  onClick={cancelEdit}
+                >
+                  {t("message.editCancel")}
+                </button>
+                <button
+                  type="button"
+                  className="bubble-edit-btn primary"
+                  onClick={saveEdit}
+                  disabled={
+                    (draft.trim() === (m.text || "").trim() &&
+                      imageIdsEqual(draftImages, inputs)) ||
+                    (!draft.trim() && draftImages.length === 0)
+                  }
+                >
+                  {t("message.editSend")}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!editing && outputs.length > 0 && (
+            <div className="outputs">
+              {outputs.map((img) => (
+                <div className="plate" key={img.id} onClick={() => onPreviewImage(img)}>
+                  <img src={srcOf(img.abs_path)} alt="generated" />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {!editing && (
+          <div className="msg-action-bar">
+            {outputs.map((img, i) => (
+              <PlateActions
+                key={img.id}
+                img={img}
+                onPreview={() => onPreviewImage(img)}
+                showDivider={outputs.length > 1 && i < outputs.length - 1}
+              />
+            ))}
+            {outputs.length > 0 && (hasText || isUser) && (
+              <span className="divider" aria-hidden />
+            )}
+            {hasText && (
+              <button type="button" className="msg-action" onClick={onCopy}>
+                <CopyIcon />
+                <span>{t("message.actionCopy")}</span>
+              </button>
+            )}
+            {canEdit && (
+              <button
+                type="button"
+                className="msg-action"
+                onClick={beginEdit}
+              >
+                <EditIcon />
+                <span>{t("message.actionEdit")}</span>
+              </button>
+            )}
+            {isUser && hasText && (
+              <button
+                type="button"
+                className="msg-action"
+                onClick={onResend}
+                disabled={busy}
+              >
+                <ResendIcon />
+                <span>{t("message.actionResend")}</span>
+              </button>
+            )}
+            {canQuote && (
+              <button
+                type="button"
+                className="msg-action"
+                onClick={() => quoteMessage(m)}
+                title={t("message.quoteTitle")}
+              >
+                <QuoteIcon />
+                <span>{t("message.actionQuote")}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              className="msg-action danger"
+              onClick={onDelete}
+            >
+              <TrashIcon />
+              <span>{t("message.actionDelete")}</span>
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PlateActions({
+  img,
+  onPreview,
+  showDivider,
+}: PlateActionsProps) {
+  const { t } = useTranslation();
+  const downloadAs = async () => {
+    const ext = img.mime === "image/jpeg" ? "jpg" : img.mime === "image/webp" ? "webp" : "png";
+    const dest = await save({
+      defaultPath: `atelier-${Date.now()}.${ext}`,
+      filters: [{ name: "Image", extensions: [ext] }],
+    });
+    if (!dest) return;
+    await api.exportImage(img.id, dest as string);
+  };
+  const copyImage = async () => {
+    try {
+      const url = srcOf(img.abs_path);
+      const blob = await (await fetch(url)).blob();
+      if (
+        navigator.clipboard &&
+        (window as any).ClipboardItem &&
+        ["image/png", "image/jpeg", "image/webp"].includes(blob.type)
+      ) {
+        await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      } else {
+        throw new Error("clipboard not supported");
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+  };
+  return (
+    <>
+      <button type="button" className="msg-action" onClick={onPreview}>
+        <ZoomIcon />
+        <span>{t("message.actionPreview")}</span>
+      </button>
+      <button type="button" className="msg-action" onClick={downloadAs}>
+        <DownloadIcon />
+        <span>{t("message.actionDownload")}</span>
+      </button>
+      <button type="button" className="msg-action" onClick={copyImage}>
+        <CopyIcon />
+        <span>{t("message.actionCopyImage")}</span>
+      </button>
+      {showDivider && <span className="divider" aria-hidden />}
+    </>
+  );
+}
+
+function DevelopingRow() {
+  const { t } = useTranslation();
+  return (
+    <div className="msg assistant">
+      <div className="msg-col">
+        <div className="bubble">
+          <span className="stamp">{t("message.stampGenerating", { time: nowStamp(Date.now()) })}</span>
+          <div className="developing">
+            <span className="dots">
+              <span className="dot" />
+              <span className="dot" />
+              <span className="dot" />
+            </span>
+            <span>{t("message.generatingText")}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+    </svg>
+  );
+}
+function ZoomIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+      <path d="M11 8v6M8 11h6" />
+    </svg>
+  );
+}
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3v12" />
+      <polyline points="7 10 12 15 17 10" />
+      <path d="M5 19h14" />
+    </svg>
+  );
+}
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+function ResendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12a9 9 0 1 1-3-6.7" />
+      <polyline points="21 4 21 9 16 9" />
+    </svg>
+  );
+}
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+  );
+}
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+function QuoteIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 9H5a2 2 0 0 0-2 2v7h6v-5a2 2 0 0 0-2-2V9Z" />
+      <path d="M17 9h-2a2 2 0 0 0-2 2v7h6v-5a2 2 0 0 0-2-2V9Z" />
+    </svg>
+  );
+}

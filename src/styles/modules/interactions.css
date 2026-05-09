@@ -1,0 +1,176 @@
+/* ───── universal click feedback ───── */
+.titlebar-action,
+.chat-actions button,
+.ghost-btn,
+.chat-more-item,
+.msg-action,
+.bubble-edit-btn,
+.composer-btn,
+.composer-pill,
+.model-popover-item,
+.send-btn,
+.chip,
+.btn,
+.modal-head .close,
+.settings-back,
+.settings-nav-item,
+.settings-segment-btn,
+.settings-preset-item,
+.settings-icon-btn {
+  transform: translateY(0) scale(1);
+  transform-origin: center;
+  transition-property: background, color, border-color, box-shadow, transform;
+  transition-duration: 0.16s;
+  transition-timing-function: var(--ease-out);
+  will-change: transform;
+}
+
+.titlebar-action:active:not(:disabled),
+.chat-actions button:active:not(:disabled),
+.ghost-btn:active:not(:disabled),
+.chat-more-item:active:not(:disabled),
+.msg-action:active:not(:disabled),
+.bubble-edit-btn:active:not(:disabled),
+.composer-btn:active:not(:disabled),
+.composer-pill:active:not(:disabled),
+.model-popover-item:active:not(:disabled),
+.chip:active:not(:disabled),
+.btn:active:not(:disabled),
+.modal-head .close:active:not(:disabled),
+.settings-back:active:not(:disabled),
+.settings-segment-btn:active:not(:disabled),
+.settings-preset-item:active:not(:disabled),
+.settings-icon-btn:active:not(:disabled) {
+  transform: translateY(0.5px) scale(0.94);
+  transition-duration: 0.06s;
+}
+
+.settings-nav-item:active:not(:disabled) {
+  animation: nav-tap 0.32s var(--ease-pop);
+}
+
+/* Ripple flash overlay (uses a pseudo so it doesn't touch hit-testing) */
+.msg-action,
+.bubble-edit-btn,
+.composer-btn,
+.composer-pill,
+.btn,
+.settings-nav-item,
+.settings-segment-btn,
+.settings-icon-btn,
+.settings-preset-item,
+.chat-more-item,
+.model-popover-item {
+  position: relative;
+  isolation: isolate;
+}
+.msg-action::after,
+.bubble-edit-btn::after,
+.composer-btn::after,
+.composer-pill::after,
+.btn::after,
+.settings-nav-item::after,
+.settings-segment-btn::after,
+.settings-icon-btn::after,
+.settings-preset-item::after,
+.chat-more-item::after,
+.model-popover-item::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentColor;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+  transform: scale(0.6);
+  transform-origin: center;
+}
+.msg-action:active:not(:disabled)::after,
+.bubble-edit-btn:active:not(:disabled)::after,
+.composer-btn:active:not(:disabled)::after,
+.composer-pill:active:not(:disabled)::after,
+.btn:active:not(:disabled)::after,
+.settings-nav-item:active:not(:disabled)::after,
+.settings-segment-btn:active:not(:disabled)::after,
+.settings-icon-btn:active:not(:disabled)::after,
+.settings-preset-item:active:not(:disabled)::after,
+.chat-more-item:active:not(:disabled)::after,
+.model-popover-item:active:not(:disabled)::after {
+  animation: ripple-flash 0.42s ease-out;
+}
+
+/* Trigger pill: when the popover just opened, add a small punch */
+.composer-pill.active {
+  animation: pill-activate 0.34s var(--ease-pop);
+}
+
+/* Caret in the pill flips when the popover is open */
+.composer-pill svg:last-of-type {
+  transition: transform 0.22s var(--ease-pop);
+}
+.composer-pill.active svg:last-of-type {
+  transform: rotate(180deg);
+}
+
+/* Chip toggle: brief pop on click */
+.chip:active:not(:disabled) {
+  animation: click-pop 0.26s var(--ease-pop);
+}
+
+/* Send button: bigger, springier feedback */
+.send-btn:active:not(:disabled) {
+  animation: send-pop 0.32s var(--ease-pop);
+}
+
+/* Settings preset selection feels chunky */
+.settings-preset-item:active:not(:disabled) {
+  animation: click-pop 0.28s var(--ease-pop);
+}
+
+/* affix button keeps its translateY(-50%) anchor */
+.input-affix .affix-btn {
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease, transform 0.12s var(--ease-out);
+}
+.input-affix .affix-btn:active:not(:disabled) {
+  transform: translateY(-50%) scale(0.92);
+}
+
+/* Respect motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .composer-pill.active,
+  .send-btn:active:not(:disabled),
+  .chip:active:not(:disabled),
+  .settings-nav-item:active:not(:disabled),
+  .settings-preset-item:active:not(:disabled) {
+    animation: none;
+  }
+  .msg-action::after,
+  .bubble-edit-btn::after,
+  .composer-btn::after,
+  .composer-pill::after,
+  .btn::after,
+  .settings-nav-item::after,
+  .settings-segment-btn::after,
+  .settings-icon-btn::after,
+  .settings-preset-item::after,
+  .chat-more-item::after,
+  .model-popover-item::after {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .settings-main {
+    padding: 24px 20px 48px;
+  }
+  .settings-side {
+    width: 200px;
+  }
+  .settings-info-row {
+    grid-template-columns: 1fr auto;
+  }
+  .settings-info-label {
+    grid-column: 1 / -1;
+  }
+}

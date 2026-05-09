@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+
+# rust
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# editors
+.vscode/
+.idea/
+.DS_Store
+*.log
+
+# local data
+.env
+.env.local

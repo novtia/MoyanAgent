@@ -1,0 +1,36 @@
+﻿/* ─────────────────────────────────────────────────────────────
+   globals.css — modular entry point.
+
+   Each section of the design system lives in its own file under
+   ./modules. Import order matters:
+     1. tokens          — design tokens (CSS custom properties)
+     2. base            — element reset, body, shared @keyframes
+     3. layout          — app shell, sidebar, chat list, chat column
+     4. components      — messages, composer, forms, dropzone, modal
+     5. overlays        — preview lightbox, image editor
+     6. pages           — settings
+     7. interactions    — universal click/ripple feedback (cross-cutting)
+     8. responsive      — viewport-level overrides
+   ───────────────────────────────────────────────────────────── */
+
+@import './modules/tokens.css';
+@import './modules/base.css';
+
+@import './modules/app-shell.css';
+@import './modules/sidebar.css';
+@import './modules/chat-list.css';
+@import './modules/chat.css';
+
+@import './modules/messages.css';
+@import './modules/composer.css';
+@import './modules/forms.css';
+@import './modules/dropzone.css';
+@import './modules/modal.css';
+
+@import './modules/preview.css';
+@import './modules/editor.css';
+
+@import './modules/settings.css';
+
+@import './modules/interactions.css';
+@import './modules/responsive.css';

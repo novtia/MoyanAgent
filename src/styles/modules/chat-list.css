@@ -1,0 +1,70 @@
+/* ───── chat list ───── */
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.chat-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  transition: background 0.12s, border-color 0.12s;
+  min-height: 28px;
+}
+.chat-item:hover {
+  background: var(--bg-hover);
+}
+.chat-item.active {
+  background: var(--bg-hover);
+}
+.chat-title {
+  flex: 1;
+  font-size: 13px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-item.active .chat-title {
+  color: var(--ink);
+  font-weight: 500;
+}
+.chat-meta {
+  font-size: 10.5px;
+  color: var(--ink-mute);
+  flex-shrink: 0;
+}
+.chat-actions {
+  display: inline-flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.chat-actions button {
+  background: transparent;
+  border: none;
+  color: var(--ink-mute);
+  padding: 2px;
+  cursor: pointer;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.chat-actions button:hover {
+  color: var(--ink);
+  background: var(--bg-sunk);
+}
+.chat-actions svg {
+  width: 12px;
+  height: 12px;
+}
+.chat-rename {
+  /* Visual styling provided by .field-input + .field-input--compact below.
+     This rule only handles layout (full-width inside the row). */
+  width: 100%;
+}

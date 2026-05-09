@@ -1,0 +1,71 @@
+/* ───── design tokens ───── */
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f7f8fa;
+  --bg-sunk: #f1f3f6;
+  --bg-side: #fafafa;
+  --bg-hover: #efefef;
+
+  --line: #ececec;
+  --line-strong: #d8d8d8;
+
+  --ink: #0d0d0d;
+  --ink-2: #1f1f1f;
+  --ink-soft: #5a5a5a;
+  --ink-mute: #8a8a8a;
+
+  --accent: #0d0d0d;
+  --accent-soft: #2c2c2c;
+
+  --blue-50: #eef4ff;
+  --blue-100: #dbe7ff;
+  --blue-500: #2563eb;
+  --blue-600: #1d4ed8;
+  --blue-700: #1e3fb1;
+
+  --green-50: #ecfdf5;
+  --green-500: #10b981;
+  --green-600: #059669;
+
+  --rose-50: #fff5f7;
+  --rose-500: #e11d48;
+
+  --radius: 14px;
+  --radius-sm: 8px;
+  --radius-lg: 22px;
+
+  --shadow-1: 0 1px 0 rgba(15, 23, 42, 0.03), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-2: 0 4px 16px -6px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-pop: 0 12px 30px -10px rgba(11, 18, 32, 0.18);
+  --shadow-card: 0 6px 24px -8px rgba(11, 18, 32, 0.08), 0 1px 2px rgba(11, 18, 32, 0.04);
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-pop: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --titlebar-height: 32px;
+  --chat-content-width: 760px;
+  --chat-gallery-width: 320px;
+  --composer-card-padding-x: 14px;
+  --composer-textarea-padding-x: 4px;
+  --chat-content-padding-x: calc(1px + var(--composer-card-padding-x) + var(--composer-textarea-padding-x));
+
+  /* Unified form field tokens — used by all <input>, <textarea>, <select>
+     and any custom editable surface (chat rename, bubble edit, etc.) */
+  --field-bg: var(--bg);
+  --field-bg-soft: var(--bg-soft);
+  --field-border: var(--line);
+  --field-border-hover: var(--line-strong);
+  --field-border-focus: var(--ink);
+  --field-focus-ring: 0 0 0 3px var(--bg-sunk);
+  --field-radius: var(--radius-sm);
+  --field-radius-sm: 6px;
+  --field-padding-y: 8px;
+  --field-padding-x: 11px;
+  --field-padding-y-sm: 4px;
+  --field-padding-x-sm: 8px;
+  --field-padding-y-lg: 10px;
+  --field-padding-x-lg: 12px;
+  --field-font-size: 13px;
+  --field-line-height: 1.5;
+  --field-transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  --field-error: #c0392b;
+}

@@ -1,0 +1,403 @@
+/* ───── image preview · immersive lightbox ───── */
+.preview-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: radial-gradient(
+      ellipse at center,
+      rgba(18, 22, 30, 0.82) 0%,
+      rgba(8, 10, 14, 0.94) 70%
+    ),
+    rgba(8, 10, 14, 0.92);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: block;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  animation: preview-fade-in 0.18s var(--ease-out);
+}
+@keyframes preview-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.preview-canvas {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+  overflow: hidden;
+  touch-action: none;
+}
+.preview-canvas.is-grabbing {
+  cursor: grabbing;
+}
+.preview-canvas img {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: center center;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  display: block;
+  max-width: none;
+  max-height: none;
+  /* Subtle drop shadow gives the image a sense of floating */
+  filter: drop-shadow(0 18px 60px rgba(0, 0, 0, 0.45));
+}
+.preview-canvas img.is-loading {
+  opacity: 0;
+}
+.preview-canvas img.is-ready {
+  animation: preview-image-in 0.32s var(--ease-pop) both;
+}
+@keyframes preview-image-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.preview-canvas img.with-transition {
+  transition: transform 0.28s var(--ease-pop);
+}
+
+.preview-spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  animation: spin 0.85s linear infinite;
+  pointer-events: none;
+}
+
+/* ───── floating top chrome ───── */
+.preview-topbar {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+  z-index: 2;
+  animation: preview-chrome-in 0.32s var(--ease-pop) both;
+}
+@keyframes preview-chrome-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.preview-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: rgba(20, 24, 32, 0.55);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.82);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  pointer-events: auto;
+  white-space: nowrap;
+}
+.preview-info b {
+  color: #fff;
+  font-weight: 600;
+}
+.preview-info-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.32);
+  flex-shrink: 0;
+}
+.preview-info-dim {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+/* ───── floating bottom toolbar ───── */
+.preview-toolbar {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  background: rgba(20, 24, 32, 0.62);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 18px 50px -10px rgba(0, 0, 0, 0.55),
+    0 1px 0 rgba(255, 255, 255, 0.05) inset;
+  pointer-events: auto;
+  z-index: 2;
+  animation: preview-toolbar-in 0.36s var(--ease-pop) both;
+  transform: translateX(-50%);
+}
+@keyframes preview-toolbar-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 14px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.preview-toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 4px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* shared icon button used in topbar + toolbar */
+.preview-icon-btn {
+  pointer-events: auto;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: rgba(255, 255, 255, 0.78);
+  cursor: pointer;
+  padding: 0;
+  font-family: inherit;
+  transition: background 0.14s var(--ease-out), color 0.14s var(--ease-out),
+    border-color 0.14s var(--ease-out), transform 0.12s var(--ease-out);
+}
+.preview-icon-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.preview-icon-btn:active:not(:disabled) {
+  transform: scale(0.9);
+}
+.preview-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.preview-icon-btn:focus-visible {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.32);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.16);
+}
+.preview-icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* topbar chrome variant — has its own glass surface */
+.preview-icon-btn.is-chrome {
+  background: rgba(20, 24, 32, 0.55);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-color: rgba(255, 255, 255, 0.08);
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+}
+.preview-icon-btn.is-chrome:hover:not(:disabled) {
+  background: rgba(40, 46, 58, 0.78);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.preview-icon-btn.is-close.is-chrome:hover:not(:disabled) {
+  background: rgba(225, 29, 72, 0.85);
+  border-color: rgba(225, 29, 72, 0.95);
+  color: #fff;
+}
+
+/* primary action — light pill that pops on dark glass */
+.preview-icon-btn.is-primary {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(255, 255, 255, 0.94);
+  color: #0d0d0d;
+}
+.preview-icon-btn.is-primary:hover:not(:disabled) {
+  background: #fff;
+  border-color: #fff;
+  color: #0d0d0d;
+}
+
+/* zoom percent display + reset button */
+.preview-zoom {
+  min-width: 64px;
+  height: 34px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  color: rgba(255, 255, 255, 0.85);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.14s var(--ease-out), color 0.14s var(--ease-out),
+    border-color 0.14s var(--ease-out);
+  font-variant-numeric: tabular-nums;
+}
+.preview-zoom:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.preview-zoom:focus-visible {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+/* segmented fit/actual switch — borrows pill styling */
+.preview-seg {
+  display: inline-flex;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 9px;
+  padding: 2px;
+  gap: 0;
+}
+.preview-seg-btn {
+  height: 28px;
+  padding: 0 10px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.14s var(--ease-out), color 0.14s var(--ease-out);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.preview-seg-btn:hover:not(.is-active) {
+  color: #fff;
+}
+.preview-seg-btn.is-active {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+/* ephemeral toast (e.g. "copied") above the toolbar */
+.preview-toast {
+  position: absolute;
+  bottom: 78px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 14px;
+  background: rgba(20, 24, 32, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  z-index: 3;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  animation: preview-toast-in 1.6s var(--ease-out) both;
+}
+.preview-toast.is-error {
+  background: rgba(225, 29, 72, 0.92);
+  border-color: rgba(225, 29, 72, 0.96);
+  color: #fff;
+}
+@keyframes preview-toast-in {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  10%,
+  80% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -4px);
+  }
+}
+
+/* low-motion fallback */
+@media (prefers-reduced-motion: reduce) {
+  .preview-lightbox,
+  .preview-canvas img.is-ready,
+  .preview-topbar,
+  .preview-toolbar,
+  .preview-toast {
+    animation: none;
+  }
+  .preview-canvas img.with-transition {
+    transition: none;
+  }
+}
+
+/* small viewports — tighten the chrome */
+@media (max-width: 600px) {
+  .preview-topbar {
+    top: 8px;
+    left: 8px;
+    right: 8px;
+  }
+  .preview-toolbar {
+    bottom: 14px;
+    padding: 5px;
+    gap: 2px;
+  }
+  .preview-icon-btn {
+    width: 32px;
+    height: 32px;
+  }
+  .preview-icon-btn.is-chrome {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+  }
+  .preview-zoom {
+    min-width: 52px;
+    height: 30px;
+    padding: 0 8px;
+  }
+  .preview-seg-btn {
+    height: 26px;
+    padding: 0 8px;
+  }
+  .preview-info {
+    padding: 6px 12px;
+    font-size: 10.5px;
+  }
+}

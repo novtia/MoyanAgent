@@ -1,0 +1,604 @@
+/* ───── image editor · lightbox ───── */
+/* ImageEditor reuses .preview-lightbox as its base shell; the additions below
+   provide editor-specific chrome (tabs, dark toolbar with rich controls). */
+
+.editor-tabs-floating {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: rgba(20, 24, 32, 0.62);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 12px 30px -10px rgba(0, 0, 0, 0.5),
+    0 1px 0 rgba(255, 255, 255, 0.05) inset;
+  z-index: 2;
+  pointer-events: auto;
+  animation: editor-tabs-in 0.34s var(--ease-pop) both;
+}
+@keyframes editor-tabs-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.editor-tabs-floating-tab {
+  background: transparent;
+  border: none;
+  padding: 7px 16px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.68);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.14s var(--ease-out), color 0.14s var(--ease-out),
+    transform 0.12s var(--ease-out);
+}
+.editor-tabs-floating-tab:hover:not(.is-active):not(:disabled) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+.editor-tabs-floating-tab:active:not(:disabled) {
+  transform: scale(0.95);
+}
+.editor-tabs-floating-tab.is-active {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+.editor-tabs-floating-tab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.editor-tabs-floating-tab:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.18);
+}
+
+/* close button anchored top-right */
+.editor-close-fab {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 2;
+  animation: preview-chrome-in 0.32s var(--ease-pop) both;
+}
+
+/* ───── editor stage variants ───── */
+.editor-stage-full {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+}
+.editor-stage-image {
+  position: absolute;
+  inset: 78px 56px 110px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+  overflow: hidden;
+}
+.editor-stage-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  filter: drop-shadow(0 18px 60px rgba(0, 0, 0, 0.45));
+  user-select: none;
+  -webkit-user-drag: none;
+  animation: preview-image-in 0.32s var(--ease-pop) both;
+}
+
+/* mask painting wrap — anchors the canvas overlay to the image */
+.editor-mask-wrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  filter: drop-shadow(0 18px 60px rgba(0, 0, 0, 0.45));
+  animation: preview-image-in 0.32s var(--ease-pop) both;
+}
+.editor-mask-wrap img {
+  display: block;
+  filter: none;
+  animation: none;
+}
+.editor-mask-wrap .mask-canvas {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  border-radius: 0;
+}
+
+/* react-easy-crop dark theme tweaks (rendered inside .editor-stage-full) */
+.editor-stage-full .reactEasyCrop_Container {
+  background: transparent;
+}
+.editor-stage-full .reactEasyCrop_CropArea {
+  color: rgba(0, 0, 0, 0.55) !important;
+  border-color: rgba(255, 255, 255, 0.92) !important;
+}
+
+/* ───── editor bottom toolbar ───── */
+.editor-toolbar {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  background: rgba(20, 24, 32, 0.66);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 18px 50px -10px rgba(0, 0, 0, 0.55),
+    0 1px 0 rgba(255, 255, 255, 0.05) inset;
+  z-index: 2;
+  max-width: calc(100vw - 32px);
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: 6px;
+  animation: editor-toolbar-in 0.4s var(--ease-pop) both;
+}
+@keyframes editor-toolbar-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 16px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.editor-toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 3px;
+  background: rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+/* End-of-toolbar action group. Stays packed inline with the rest of the
+   toolbar so the primary "Apply" button sits flush against the preceding
+   controls — same visual anchor as Crop's "Apply crop" and Mask's "Apply". */
+.editor-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.editor-toolbar-actions .editor-chip {
+  font-family: inherit;
+  font-size: 12.5px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Icon-only chip variant used for compact toolbar entries (e.g. flip H/V).
+   Square aspect ratio, tooltip carries the text label. */
+.editor-chip.is-icon-only {
+  width: 30px;
+  padding: 0;
+  gap: 0;
+}
+
+.editor-toolbar-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  padding: 0 4px 0 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* dark chip used inside the editor toolbar (replaces the light-theme .chip) */
+.editor-chip {
+  height: 30px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(255, 255, 255, 0.78);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 500;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.14s var(--ease-out), color 0.14s var(--ease-out),
+    border-color 0.14s var(--ease-out), transform 0.12s var(--ease-out);
+}
+.editor-chip:hover:not(.is-active):not(:disabled) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+.editor-chip:active:not(:disabled) {
+  transform: scale(0.94);
+}
+.editor-chip.is-active {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+.editor-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.editor-chip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.16);
+}
+.editor-chip svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+/* segmented group container (e.g. Erase / Restore, Aspect ratios) */
+.editor-seg {
+  display: inline-flex;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 9px;
+  padding: 2px;
+  gap: 0;
+  flex-shrink: 0;
+}
+.editor-seg .editor-chip {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+}
+
+/* dark themed range slider (used for crop zoom + brush size) */
+.editor-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 130px;
+  height: 26px;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.editor-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.editor-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+}
+.editor-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+  margin-top: -5px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  transition: transform 0.14s var(--ease-out);
+}
+.editor-range:not(:disabled)::-webkit-slider-thumb:hover {
+  transform: scale(1.18);
+}
+.editor-range:not(:disabled)::-webkit-slider-thumb:active {
+  transform: scale(0.95);
+}
+.editor-range::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  border: none;
+}
+.editor-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+/* Dark themed numeric input. The selector is intentionally `input.editor-num`
+   (not just `.editor-num`) so it has the same specificity as the global
+   `input[type='number']` rule defined earlier in this file — without that,
+   the global `width: 100%` would steamroll our 76px width. */
+input.editor-num {
+  width: 76px;
+  height: 30px;
+  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #fff;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.14s, background 0.14s, box-shadow 0.14s;
+  flex-shrink: 0;
+}
+input.editor-num:hover:not(:disabled):not(:focus) {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+input.editor-num:focus {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.42);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
+}
+input.editor-num:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+input.editor-num::-webkit-outer-spin-button,
+input.editor-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Resolution input group — compact W × H pill that reads as one control.
+   Two transparent inputs share the same glass surround, with a thin × glyph
+   between them. Highlighting is on the outer pill so focusing either input
+   lights up the whole group. */
+.editor-resolution {
+  display: inline-flex;
+  align-items: stretch;
+  height: 30px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  flex-shrink: 0;
+  transition: border-color 0.14s, background 0.14s, box-shadow 0.14s;
+  overflow: hidden;
+}
+.editor-resolution:hover {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.editor-resolution:focus-within {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.42);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
+}
+.editor-resolution.is-disabled {
+  opacity: 0.45;
+}
+
+.editor-resolution-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px 0 8px;
+  position: relative;
+}
+
+.editor-resolution-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.42);
+  user-select: none;
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+/* Inputs inside the resolution group are bare — the surrounding pill draws
+   the visual frame, and the × separator handles divisions. */
+input.editor-resolution-input {
+  width: 56px;
+  height: 100%;
+  padding: 0 4px;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: center;
+  outline: none;
+  flex-shrink: 0;
+  transition: background 0.12s;
+  border-radius: 0;
+}
+input.editor-resolution-input:hover:not(:disabled):not(:focus) {
+  background: rgba(255, 255, 255, 0.04);
+}
+input.editor-resolution-input:focus {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: none;
+}
+input.editor-resolution-input:disabled {
+  cursor: not-allowed;
+}
+input.editor-resolution-input::-webkit-outer-spin-button,
+input.editor-resolution-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input.editor-resolution-input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.editor-resolution-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  padding: 0 2px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.32);
+  user-select: none;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.editor-resolution:focus-within .editor-resolution-x {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* primary apply button — light pill with busy spinner */
+.editor-apply {
+  position: relative;
+  height: 30px;
+  min-width: 86px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.94);
+  color: #0d0d0d;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.14s var(--ease-out),
+    border-color 0.14s var(--ease-out), transform 0.12s var(--ease-out),
+    opacity 0.14s var(--ease-out);
+  flex-shrink: 0;
+}
+.editor-apply:hover:not(:disabled) {
+  background: #fff;
+}
+.editor-apply:active:not(:disabled) {
+  transform: scale(0.96);
+}
+/* When disabled, keep the white-pill silhouette (so the button still reads as
+   "this is the primary action"), but desaturate to a flat dim white so it's
+   clearly inert. Avoid `opacity` because it dims the entire shape, including
+   the rounded edge, which makes the button look broken or half-faded. */
+.editor-apply:disabled {
+  background: rgba(255, 255, 255, 0.45);
+  border-color: rgba(255, 255, 255, 0.45);
+  color: rgba(13, 13, 13, 0.55);
+  cursor: not-allowed;
+}
+.editor-apply:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.28);
+}
+.editor-apply.is-busy {
+  position: relative;
+  color: transparent;
+}
+.editor-apply.is-busy::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border: 2px solid rgba(13, 13, 13, 0.28);
+  border-top-color: #0d0d0d;
+  border-radius: 50%;
+  animation: spin 0.85s linear infinite;
+}
+
+/* hint pill that floats just above the toolbar (e.g. mask hint) */
+.editor-hint {
+  position: absolute;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(640px, calc(100vw - 48px));
+  text-align: center;
+  padding: 8px 14px;
+  background: rgba(20, 24, 32, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11.5px;
+  line-height: 1.5;
+  z-index: 2;
+  pointer-events: none;
+  animation: editor-hint-in 0.32s var(--ease-pop) both;
+}
+@keyframes editor-hint-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-tabs-floating,
+  .editor-toolbar,
+  .editor-hint,
+  .editor-stage-image img,
+  .editor-mask-wrap {
+    animation: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .editor-stage-image {
+    inset: 70px 16px 100px;
+  }
+  .editor-toolbar {
+    bottom: 12px;
+    padding: 5px;
+  }
+  .editor-tabs-floating {
+    top: 8px;
+    padding: 3px;
+  }
+  .editor-tabs-floating-tab {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+  .editor-chip {
+    height: 28px;
+    padding: 0 10px;
+  }
+  .editor-range {
+    width: 100px;
+  }
+  .editor-num {
+    width: 64px;
+    height: 28px;
+  }
+  .editor-apply {
+    height: 28px;
+    padding: 0 14px;
+  }
+  .editor-hint {
+    bottom: 72px;
+    font-size: 11px;
+  }
+}

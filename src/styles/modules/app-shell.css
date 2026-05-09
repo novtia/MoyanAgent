@@ -1,0 +1,111 @@
+/* ───── app shell + titlebar ───── */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.titlebar {
+  flex-shrink: 0;
+  height: var(--titlebar-height);
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-side);
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.titlebar-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+  padding: 0 4px 0 6px;
+  flex-shrink: 0;
+}
+.titlebar-action {
+  width: 28px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--ink-soft);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.titlebar-action:hover {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+.titlebar-drag {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 8px;
+}
+.titlebar-title {
+  font-size: 12px;
+  color: var(--ink-mute);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.titlebar-controls {
+  display: inline-flex;
+  align-items: stretch;
+  height: 100%;
+  flex-shrink: 0;
+}
+.titlebar-btn {
+  width: 46px;
+  height: 100%;
+  background: transparent;
+  border: none;
+  color: var(--ink-2);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.titlebar-btn:hover {
+  background: var(--bg-hover);
+}
+.titlebar-btn.close:hover {
+  background: #e81123;
+  color: #fff;
+}
+.titlebar-btn:focus {
+  outline: none;
+}
+
+/* ───── stage ───── */
+.stage {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  transition: grid-template-columns 0.18s ease;
+}
+.app-shell.sidebar-collapsed .stage {
+  grid-template-columns: 0 1fr;
+}
+.app-shell.sidebar-collapsed .side {
+  width: 0;
+  border-right: none;
+  overflow: hidden;
+  visibility: hidden;
+}

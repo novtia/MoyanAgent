@@ -1,0 +1,444 @@
+/* ───── composer dock (bottom floating) ───── */
+.composer-dock {
+  flex-shrink: 0;
+  padding: 0 24px 22px;
+  display: flex;
+  justify-content: center;
+  background: linear-gradient(180deg, transparent, var(--bg) 30%);
+  position: relative;
+}
+.composer-card {
+  width: 100%;
+  max-width: var(--chat-content-width);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 12px var(--composer-card-padding-x) 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.composer-textarea:focus {
+  outline: none;
+  box-shadow: none;
+  border: none;
+}
+.composer-card.drag-over {
+  border-color: var(--ink);
+  border-style: dashed;
+  box-shadow: 0 0 0 4px var(--bg-sunk);
+}
+.composer-card.drag-over::after {
+  content: '松手即可作为参考图';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font-size: 13px;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(2px);
+  border-radius: var(--radius-lg);
+}
+.composer-card {
+  position: relative;
+}
+
+.setup-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin: -4px -4px 4px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  text-align: left;
+  transition: background 0.12s;
+}
+.setup-banner:hover {
+  background: var(--bg-hover);
+}
+.setup-banner-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-soft);
+}
+.setup-banner-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.setup-banner-text {
+  flex: 1;
+  color: var(--ink-2);
+}
+.setup-banner-cta {
+  background: var(--ink);
+  color: #fff;
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 2px 6px;
+  border-bottom: 1px dashed var(--line);
+}
+.attachment {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--bg-sunk);
+  flex-shrink: 0;
+  animation: pop-in 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.attachment img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.attachment.pending {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  color: var(--ink-mute);
+}
+.attachment-placeholder {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--bg-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.attachment-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--ink-mute);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+.attachment .remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(11, 18, 32, 0.78);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.attachment .remove:hover {
+  background: var(--rose-500);
+}
+.attachment .edit {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(11, 18, 32, 0.78);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.attachment .edit svg {
+  width: 9px;
+  height: 9px;
+}
+.attachment .badge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, transparent, rgba(11, 18, 32, 0.65));
+  color: #fff;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  padding: 8px 4px 3px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-textarea {
+  width: 100%;
+  min-height: 28px;
+  max-height: 200px;
+  border: none;
+  resize: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  padding: 4px var(--composer-textarea-padding-x);
+  outline: none;
+}
+.composer-textarea::placeholder {
+  color: var(--ink-mute);
+}
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 4px;
+}
+.composer-bar-left,
+.composer-bar-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.composer-btn {
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: all 0.12s;
+}
+.composer-btn:hover {
+  border-color: var(--line-strong);
+  background: var(--bg-soft);
+  color: var(--ink);
+}
+.composer-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.composer-params {
+  position: relative;
+}
+.composer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-2);
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.composer-pill:hover,
+.composer-pill.active {
+  border-color: var(--line-strong);
+  background: var(--bg-soft);
+}
+.composer-pill svg {
+  width: 12px;
+  height: 12px;
+  color: var(--ink-soft);
+}
+
+.composer-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--ink-mute);
+}
+
+.composer-model {
+  position: relative;
+}
+.composer-pill.model {
+  max-width: 220px;
+}
+.composer-pill.model > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+.model-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  width: 280px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+  padding: 8px;
+  z-index: 60;
+  transform-origin: bottom right;
+  animation: popover-expand 0.2s var(--ease-pop);
+}
+.model-popover-title {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  padding: 4px 6px 6px;
+}
+.model-popover-input {
+  padding: 0 4px 6px;
+}
+.model-popover-input input {
+  width: 100%;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink-2);
+  outline: none;
+}
+.model-popover-input input:focus {
+  border-color: var(--ink);
+  background: var(--bg);
+  box-shadow: none;
+}
+.model-popover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.model-popover-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 7px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink-2);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.model-popover-item:hover {
+  background: var(--bg-hover);
+}
+.model-popover-item.active {
+  color: var(--ink);
+  font-weight: 600;
+  background: var(--bg-soft);
+}
+.model-popover-item-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.model-popover-item svg {
+  flex-shrink: 0;
+  color: var(--ink);
+}
+
+.send-btn {
+  width: 30px;
+  height: 30px;
+  background: var(--ink);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: all 0.12s;
+}
+.send-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  transform: translateY(-1px);
+}
+.send-btn.busy {
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+}
+.send-btn.busy:hover {
+  background: var(--rose-500);
+  transform: translateY(0);
+}
+.send-btn:disabled {
+  background: var(--bg-sunk);
+  color: var(--ink-mute);
+  cursor: not-allowed;
+}
+.send-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.send-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+}
+.send-stop-icon {
+  display: none;
+}
+.send-btn.busy:hover .send-spinner {
+  display: none;
+}
+.send-btn.busy:hover .send-stop-icon {
+  display: block;
+}

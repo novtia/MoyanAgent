@@ -1,0 +1,187 @@
+/* ───── params popover ───── */
+.params-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 360px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+  padding: 14px;
+  z-index: 60;
+  transform-origin: bottom left;
+  animation: popover-expand 0.2s var(--ease-pop);
+}
+.params-popover .row:last-child {
+  margin-bottom: 0;
+}
+
+/* shared form bits */
+.row {
+  margin-bottom: 12px;
+}
+.row label.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  margin-bottom: 6px;
+}
+.row .hint {
+  color: var(--ink-mute);
+  font-size: 11px;
+  margin-top: 5px;
+  line-height: 1.45;
+}
+
+input[type='text'],
+input[type='password'],
+input[type='number'],
+input[type='email'],
+input[type='search'],
+input[type='url'],
+select,
+textarea,
+.field-input {
+  width: 100%;
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+  color: var(--ink);
+  padding: var(--field-padding-y) var(--field-padding-x);
+  font-family: inherit;
+  font-size: var(--field-font-size);
+  line-height: var(--field-line-height);
+  border-radius: var(--field-radius);
+  outline: none;
+  transition: var(--field-transition);
+  appearance: none;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path fill='none' stroke='%235b6473' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5 6 7.5l3-3'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+  cursor: pointer;
+}
+input:hover:not(:focus):not(:disabled),
+select:hover:not(:focus):not(:disabled),
+textarea:hover:not(:focus):not(:disabled),
+.field-input:hover:not(:focus):not(:disabled) {
+  border-color: var(--field-border-hover);
+}
+input:focus,
+select:focus,
+textarea:focus,
+.field-input:focus,
+.field-input.is-focused {
+  border-color: var(--field-border-focus);
+  box-shadow: var(--field-focus-ring);
+}
+input:disabled,
+select:disabled,
+textarea:disabled,
+.field-input:disabled {
+  background: var(--bg-soft);
+  color: var(--ink-mute);
+  cursor: not-allowed;
+}
+input::placeholder,
+textarea::placeholder,
+.field-input::placeholder {
+  color: var(--ink-mute);
+}
+
+/* Compact field — same look, tighter density (used by inline rename, etc.) */
+.field-input.field-input--compact,
+input.field-input--compact,
+textarea.field-input--compact {
+  padding: var(--field-padding-y-sm) var(--field-padding-x-sm);
+  font-size: 12.5px;
+  border-radius: var(--field-radius-sm);
+}
+/* Comfortable field — looser padding for multi-line prose inputs */
+.field-input.field-input--lg,
+textarea.field-input--lg {
+  padding: var(--field-padding-y-lg) var(--field-padding-x-lg);
+}
+/* Monospace numeric / token-ish field */
+.field-input.field-input--mono,
+input.field-input--mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+}
+/* Borderless variant — relies on its container for the visual frame
+   (used by inline message editor inside a bubble) */
+.field-input.field-input--bare {
+  background: transparent;
+  border-color: transparent;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  transition: none;
+}
+.field-input.field-input--bare:hover:not(:disabled),
+.field-input.field-input--bare:focus {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.chips {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+}
+.chips.cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.chips.cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+.chips.ratio-grid {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 3px;
+}
+.chips.ratio-grid .chip {
+  padding: 6px 2px;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+.chip {
+  text-align: center;
+  padding: 6px 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.12s ease;
+  text-transform: uppercase;
+  border-radius: 4px;
+  font-weight: 500;
+  background: transparent;
+  border: none;
+}
+.chip:hover {
+  color: var(--ink);
+  background: var(--bg);
+}
+.chip.active {
+  color: #fff;
+  background: var(--ink);
+}
