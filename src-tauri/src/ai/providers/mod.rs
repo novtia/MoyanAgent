@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 mod claude;
 mod gemini;
+mod grok;
 mod openai;
 
 use crate::ai::chat::{ChatRequest, GenerateResponse};
@@ -14,11 +15,13 @@ pub const OPENAI_SDK: &str = "openai";
 pub const OPENAI_RESPONSES_SDK: &str = "openai-responses";
 pub const GEMINI_SDK: &str = "gemini";
 pub const CLAUDE_SDK: &str = "claude";
+pub const GROK_SDK: &str = "grok";
 pub const SUPPORTED_SDKS: &[&str] = &[
     OPENAI_SDK,
     OPENAI_RESPONSES_SDK,
     GEMINI_SDK,
     CLAUDE_SDK,
+    GROK_SDK,
 ];
 
 pub type ProviderFuture<'a> =
@@ -68,6 +71,7 @@ impl Default for ProviderFactory {
             .register(openai::OpenAiResponsesProvider::new())
             .register(gemini::GeminiProvider::new())
             .register(claude::ClaudeProvider::new())
+            .register(grok::GrokProvider::new())
     }
 }
 

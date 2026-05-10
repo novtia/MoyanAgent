@@ -12,6 +12,7 @@ export const PROVIDER_ICON_PATHS = {
   openai: "/provider-icons/openai.svg",
   gemini: "/provider-icons/gemini.svg",
   claude: "/provider-icons/claude.svg",
+  grok: "/provider-icons/grok.svg",
   deepseek: "/provider-icons/deepseek.svg",
 } as const;
 
@@ -239,6 +240,27 @@ export const PROVIDER_SDK_OPTIONS: readonly ProviderSdkConfig[] = [
       ]),
     ],
   },
+  {
+    id: "grok",
+    label: "xAI Grok Image",
+    description:
+      "xAI 原生图片 API（/v1/images/generations 与 /v1/images/edits），非 OpenAI Chat 兼容层。",
+    defaultName: "xAI Grok",
+    defaultEndpoint: "https://api.x.ai/v1/images/generations",
+    endpointPlaceholder: "https://api.x.ai/v1/images/generations",
+    endpointHint:
+      "使用 xAI 图片生成完整地址；编辑请求会自动改用同前缀下的 …/images/edits。也可填 https://api.x.ai/v1 作为前缀。",
+    apiKeyPlaceholder: "xai-...",
+    apiKeyHint: "填写 xAI（Grok）API Key。",
+    modelIdPlaceholder: "grok-imagine-image-quality",
+    modelIdHint: "填写 Grok Imagine 图片模型 ID（见 xAI 文档）。",
+    models: [
+      sdkModel("grok-imagine-image-quality", "Grok Imagine (quality)", "grok", [
+        "vision",
+        "text",
+      ]),
+    ],
+  },
 ];
 
 export const BUILTIN_PROVIDER_PRESETS: readonly ModelProvider[] = [
@@ -277,6 +299,20 @@ export const BUILTIN_PROVIDER_PRESETS: readonly ModelProvider[] = [
     sdk: "claude",
     avatar: PROVIDER_ICON_PATHS.claude,
     enabled: false,
+  }),
+  makeProvider({
+    id: "grok",
+    name: "xAI Grok",
+    sdk: "grok",
+    avatar: PROVIDER_ICON_PATHS.grok,
+    endpoint: "https://api.x.ai/v1/images/generations",
+    enabled: false,
+    models: [
+      sdkModel("grok-imagine-image-quality", "Grok Imagine (quality)", "grok", [
+        "vision",
+        "text",
+      ]),
+    ],
   }),
   makeProvider({
     id: "deepseek",

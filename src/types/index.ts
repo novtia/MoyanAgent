@@ -19,7 +19,8 @@ export type ModelProviderSdk =
   | "openai"
   | "openai-responses"
   | "gemini"
-  | "claude";
+  | "claude"
+  | "grok";
 
 export interface ModelProvider {
   id: string;

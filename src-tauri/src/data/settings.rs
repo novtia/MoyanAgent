@@ -413,6 +413,21 @@ fn builtin_services() -> Vec<ModelProvider> {
             ],
         },
         ModelProvider {
+            id: "grok".into(),
+            name: "xAI Grok".into(),
+            sdk: crate::ai::providers::GROK_SDK.into(),
+            avatar: "/provider-icons/grok.svg".into(),
+            endpoint: "https://api.x.ai/v1/images/generations".into(),
+            api_key: String::new(),
+            enabled: false,
+            models: vec![builtin_model(
+                "grok-imagine-image-quality",
+                "Grok Imagine (quality)",
+                "grok",
+                &["vision", "text"],
+            )],
+        },
+        ModelProvider {
             id: "deepseek".into(),
             name: "DeepSeek".into(),
             sdk: crate::ai::providers::OPENAI_SDK.into(),
