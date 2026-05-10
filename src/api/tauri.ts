@@ -6,6 +6,7 @@ import type {
   GenerateResult,
   ImageRefAbs,
   MessageAbs,
+  SessionSearchResult,
   SessionSummary,
   SessionWithMessagesAbs,
   Session,
@@ -31,6 +32,8 @@ export const api = {
 
   // sessions
   listSessions: () => invoke<SessionSummary[]>("list_sessions"),
+  searchSessions: (query: string, limit = 20) =>
+    invoke<SessionSearchResult[]>("search_sessions", { query, limit }),
   createSession: (title?: string, model?: string) =>
     invoke<Session>("create_session", { args: { title, model } }),
   renameSession: (id: string, title: string) =>

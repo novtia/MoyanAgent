@@ -44,6 +44,9 @@
   margin-bottom: 18px;
   animation: rise 0.32s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
+.msg.is-focused .bubble {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
 @keyframes rise {
   from {
     opacity: 0;

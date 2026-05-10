@@ -6,6 +6,7 @@ import { ImageEditor } from "./components/editor/ImageEditor";
 import { ImagePreview } from "./components/ImagePreview";
 import { SettingsView } from "./components/SettingsView.js";
 import type { SettingsTab, ThemeMode } from "./components/SettingsView.js";
+import { SearchDialog } from "./components/search/SearchDialog";
 import { TitleBar } from "./components/TitleBar";
 import { useSettings } from "./store/settings";
 import { useSession } from "./store/session";
@@ -48,6 +49,7 @@ export default function App() {
   const [route, setRoute] = useState<AppRoute>(() => parseRoute());
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -58,6 +60,17 @@ export default function App() {
     const onHashChange = () => setRoute(parseRoute());
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
   useLayoutEffect(() => {
@@ -116,6 +129,7 @@ export default function App() {
             <>
               <Sidebar
                 onOpenChat={openChat}
+                onOpenSearch={() => setSearchOpen(true)}
                 onOpenSettings={() => openSettings("appearance")}
                 settingsActive={false}
               />
@@ -132,6 +146,11 @@ export default function App() {
         </div>
       </div>
       <Dropzone />
+      <SearchDialog
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onOpenChat={openChat}
+      />
       {editorTarget && (
         <ImageEditor
           target={editorTarget}

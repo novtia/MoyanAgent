@@ -22,6 +22,7 @@ interface MessageListProps {
 interface MessageRowProps {
   m: MessageAbs;
   onPreviewImage: (img: ImageRefAbs) => void;
+  focused: boolean;
 }
 
 interface PlateActionsProps {
@@ -35,11 +36,30 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
   const active = useSession((s) => s.active);
   const busy = useSession((s) => s.busy);
   const ref = useRef<HTMLDivElement | null>(null);
+  const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!ref.current) return;
     ref.current.scrollTop = ref.current.scrollHeight;
   }, [active?.messages.length, busy]);
+
+  useEffect(() => {
+    const onFocusMessage = (event: Event) => {
+      const messageId = (event as CustomEvent<{ messageId?: string }>).detail?.messageId;
+      if (!messageId) return;
+      setFocusedMessageId(messageId);
+      window.setTimeout(() => setFocusedMessageId((id) => (id === messageId ? null : id)), 1600);
+    };
+    window.addEventListener("atelier:focus-message", onFocusMessage);
+    return () => window.removeEventListener("atelier:focus-message", onFocusMessage);
+  }, []);
+
+  useEffect(() => {
+    if (!focusedMessageId || !ref.current) return;
+    const selector = `[data-message-id="${focusedMessageId.replace(/["\\]/g, "\\$&")}"]`;
+    const node = ref.current.querySelector<HTMLElement>(selector);
+    node?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [focusedMessageId, active?.session.id, active?.messages.length]);
 
   const messages = active?.messages || [];
   const isEmpty = messages.length === 0 && !busy;
@@ -59,6 +79,7 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
               key={`${m.id}:${index}`}
               m={m}
               onPreviewImage={onPreviewImage}
+              focused={focusedMessageId === m.id}
             />
           ))}
           {busy && <DevelopingRow />}
@@ -82,7 +103,7 @@ async function copyText(text: string) {
   }
 }
 
-function MessageRow({ m, onPreviewImage }: MessageRowProps) {
+function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
   const { t } = useTranslation();
   const inputs = useMemo(() => m.images.filter((i) => i.role === "input"), [m.images]);
   const outputs = m.images.filter((i) => i.role === "output");
@@ -333,7 +354,10 @@ function MessageRow({ m, onPreviewImage }: MessageRowProps) {
   };
 
   return (
-    <div className={`msg ${m.role} ${editing ? "is-editing" : ""}`}>
+    <div
+      className={`msg ${m.role} ${editing ? "is-editing" : ""} ${focused ? "is-focused" : ""}`}
+      data-message-id={m.id}
+    >
       <div className="msg-col">
         <div className="bubble">
           {!isUser && (

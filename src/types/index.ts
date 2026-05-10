@@ -79,6 +79,15 @@ export interface SessionSummary {
   message_count: number;
 }
 
+export interface SessionSearchResult extends SessionSummary {
+  match_message_id: string | null;
+  match_role: "user" | "assistant" | "error" | string | null;
+  match_text: string | null;
+  match_created_at: number | null;
+  match_count: number;
+  title_match: boolean;
+}
+
 export interface ImageRefAbs {
   id: string;
   role: "input" | "output" | "edited" | string;

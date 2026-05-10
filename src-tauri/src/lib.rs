@@ -217,6 +217,16 @@ fn list_sessions(
 }
 
 #[tauri::command]
+fn search_sessions(
+    state: tauri::State<Arc<AppState>>,
+    query: String,
+    limit: i64,
+) -> Result<Vec<session::SessionSearchResult>, AppError> {
+    let conn = state.conn()?;
+    session::search(&conn, &query, limit)
+}
+
+#[tauri::command]
 fn create_session(
     state: tauri::State<Arc<AppState>>,
     args: CreateSessionArgs,
@@ -1036,6 +1046,7 @@ pub fn run() {
             get_app_info,
             open_path,
             list_sessions,
+            search_sessions,
             create_session,
             rename_session,
             update_session_config,

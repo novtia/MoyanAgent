@@ -5,10 +5,16 @@ import { useSession } from "../store/session";
 interface SidebarProps {
   onOpenSettings: () => void;
   onOpenChat: () => void;
+  onOpenSearch: () => void;
   settingsActive: boolean;
 }
 
-export function Sidebar({ onOpenSettings, onOpenChat, settingsActive }: SidebarProps) {
+export function Sidebar({
+  onOpenSettings,
+  onOpenChat,
+  onOpenSearch,
+  settingsActive,
+}: SidebarProps) {
   const { t } = useTranslation();
   const createNew = useSession((s) => s.createNew);
   const sessions = useSession((s) => s.sessions);
@@ -29,7 +35,7 @@ export function Sidebar({ onOpenSettings, onOpenChat, settingsActive }: SidebarP
             <NewChatIcon />
             <span>{t("sidebar.newChat")}</span>
           </button>
-          <button type="button" className="side-nav-item" disabled>
+          <button type="button" className="side-nav-item" onClick={onOpenSearch}>
             <SearchIcon />
             <span>{t("sidebar.search")}</span>
           </button>
@@ -53,10 +59,12 @@ export function Sidebar({ onOpenSettings, onOpenChat, settingsActive }: SidebarP
 
         <div className="side-section">
           <div className="side-section-title">{t("sidebar.chats")}</div>
-          <SessionList onOpenChat={onOpenChat} />
-          {sessions.length === 0 && (
-            <div className="side-empty">{t("sidebar.empty")}</div>
-          )}
+          <div className="side-section-scroll">
+            <SessionList onOpenChat={onOpenChat} />
+            {sessions.length === 0 && (
+              <div className="side-empty">{t("sidebar.empty")}</div>
+            )}
+          </div>
         </div>
       </div>
 
