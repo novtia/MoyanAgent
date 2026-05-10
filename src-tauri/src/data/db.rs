@@ -9,9 +9,9 @@ use crate::error::AppResult;
 pub type DbPool = Pool<SqliteConnectionManager>;
 pub type DbConn = r2d2::PooledConnection<SqliteConnectionManager>;
 
-const MIGRATION_001: &str = include_str!("../migrations/001_init.sql");
-const MIGRATION_002: &str = include_str!("../migrations/002_session_system_prompt.sql");
-const MIGRATION_003: &str = include_str!("../migrations/003_session_history_turns.sql");
+const MIGRATION_001: &str = include_str!("../../migrations/001_init.sql");
+const MIGRATION_002: &str = include_str!("../../migrations/002_session_system_prompt.sql");
+const MIGRATION_003: &str = include_str!("../../migrations/003_session_history_turns.sql");
 
 pub fn open_pool(db_path: &Path) -> AppResult<DbPool> {
     if let Some(parent) = db_path.parent() {

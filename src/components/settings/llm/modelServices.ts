@@ -82,6 +82,7 @@ export function makeProvider(patch: Partial<ModelProvider> = {}): ModelProvider 
   return {
     id: patch.id || makeLocalId("provider"),
     name,
+    sdk: patch.sdk ?? "openrouter",
     endpoint: patch.endpoint ?? "",
     api_key: patch.api_key ?? "",
     enabled: patch.enabled !== false,
@@ -95,6 +96,7 @@ export function normalizeProviders(providers: ModelProvider[]) {
     enabled: provider.enabled !== false,
     id: provider.id || makeLocalId("provider"),
     name: provider.name || "未命名供应商",
+    sdk: provider.sdk || "openrouter",
     models: provider.models.map((model) =>
       makeModel(model.id, {
         ...model,

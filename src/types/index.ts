@@ -18,6 +18,8 @@ export interface ModelServiceModel {
 export interface ModelProvider {
   id: string;
   name: string;
+  /** Backend SDK adapter. Defaults to OpenRouter when omitted. */
+  sdk?: "openrouter" | string;
   endpoint: string;
   api_key: string;
   /** When false, hidden from chat model picker and not used for requests. Default true. */
@@ -107,7 +109,15 @@ export interface MessageAbs {
   session_id: string;
   role: "user" | "assistant" | "error" | string;
   text: string | null;
-  params: { aspect_ratio?: string; image_size?: string } | null;
+  params: {
+    aspect_ratio?: string;
+    image_size?: string;
+    usage?: {
+      prompt_tokens?: number | null;
+      completion_tokens?: number | null;
+      total_tokens?: number | null;
+    };
+  } | null;
   created_at: number;
   images: ImageRefAbs[];
 }

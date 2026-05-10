@@ -2,9 +2,9 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-use crate::db::{now_ms, DbConn};
+use crate::data::db::{now_ms, DbConn};
+use crate::data::settings::DEFAULT_HISTORY_TURNS;
 use crate::error::{AppError, AppResult};
-use crate::settings::DEFAULT_HISTORY_TURNS;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -118,7 +118,9 @@ pub fn update_config(
     history_turns: i64,
 ) -> AppResult<()> {
     if history_turns < 0 {
-        return Err(AppError::Invalid("history_turns must be non-negative".into()));
+        return Err(AppError::Invalid(
+            "history_turns must be non-negative".into(),
+        ));
     }
     let updated = now_ms();
     let n = conn.execute(

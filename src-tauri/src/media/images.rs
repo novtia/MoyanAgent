@@ -7,10 +7,9 @@ use serde::Serialize;
 use tauri::AppHandle;
 use ulid::Ulid;
 
-use crate::db::DbConn;
+use crate::data::db::DbConn;
+use crate::data::{paths, session};
 use crate::error::{AppError, AppResult};
-use crate::paths;
-use crate::session;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AttachmentDraft {
@@ -245,7 +244,7 @@ pub fn write_output_image(
     bytes: &[u8],
     mime: &str,
     ord: i64,
-) -> AppResult<crate::session::ImageRef> {
+) -> AppResult<session::ImageRef> {
     let session_dir = paths::session_dir(app, session_id)?;
     let id = Ulid::new().to_string();
     let ext = ext_from_mime(mime);
@@ -264,7 +263,7 @@ pub fn write_output_image(
         .ok()
         .map(|i| (Some(i.width()), Some(i.height())))
         .unwrap_or((None, None));
-    crate::session::insert_image(
+    session::insert_image(
         conn,
         session_id,
         Some(message_id),
@@ -285,7 +284,7 @@ pub fn write_edited_image(
     session_id: &str,
     bytes: &[u8],
     mime: &str,
-) -> AppResult<crate::session::ImageRef> {
+) -> AppResult<session::ImageRef> {
     let session_dir = paths::session_dir(app, session_id)?;
     let id = Ulid::new().to_string();
     let ext = ext_from_mime(mime);
@@ -304,7 +303,7 @@ pub fn write_edited_image(
         .ok()
         .map(|i| (Some(i.width()), Some(i.height())))
         .unwrap_or((None, None));
-    crate::session::insert_image(
+    session::insert_image(
         conn,
         session_id,
         None,
@@ -319,7 +318,7 @@ pub fn write_edited_image(
     )
 }
 
-pub fn read_image_bytes(app: &AppHandle, image: &crate::session::ImageRef) -> AppResult<Vec<u8>> {
+pub fn read_image_bytes(app: &AppHandle, image: &session::ImageRef) -> AppResult<Vec<u8>> {
     let abs = paths::abs_from_rel(app, &image.rel_path)?;
     Ok(std::fs::read(&abs)?)
 }

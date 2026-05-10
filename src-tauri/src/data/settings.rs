@@ -1,7 +1,7 @@
 use rusqlite::params;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::db::DbConn;
+use crate::data::db::DbConn;
 use crate::error::{AppError, AppResult};
 
 pub const KEY_API_KEY: &str = "api_key";
@@ -56,10 +56,16 @@ fn default_enabled() -> bool {
     true
 }
 
+fn default_provider_sdk() -> String {
+    crate::ai::providers::OPENROUTER_SDK.into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelProvider {
     pub id: String,
     pub name: String,
+    #[serde(default = "default_provider_sdk")]
+    pub sdk: String,
     pub endpoint: String,
     pub api_key: String,
     #[serde(default = "default_enabled")]
@@ -231,8 +237,7 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
                 .unwrap_or_default()
         };
         (provider.endpoint.clone(), provider.api_key.clone(), model)
-    })
-    {
+    }) {
         s.endpoint = endpoint;
         s.api_key = api_key;
         s.model = model;
@@ -254,7 +259,11 @@ pub fn write_kv(conn: &DbConn, key: &str, value: &str) -> AppResult<()> {
 }
 
 pub fn active_provider(s: &Settings) -> Option<&ModelProvider> {
-    if let Some(p) = s.model_services.iter().find(|p| p.id == s.active_provider_id) {
+    if let Some(p) = s
+        .model_services
+        .iter()
+        .find(|p| p.id == s.active_provider_id)
+    {
         if p.enabled {
             return Some(p);
         }
@@ -279,6 +288,9 @@ fn normalize_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {
         }
         if provider.name.trim().is_empty() {
             provider.name = provider.id.clone();
+        }
+        if provider.sdk.trim().is_empty() {
+            provider.sdk = default_provider_sdk();
         }
         for model in &mut provider.models {
             if model.name.trim().is_empty() {

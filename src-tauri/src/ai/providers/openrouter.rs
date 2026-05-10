@@ -1,51 +1,161 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use reqwest::StatusCode;
-use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::ai::chat::{AttachmentBytes, ChatRequest, GenerateResponse, HistoryTurn, ImageResult};
+use crate::ai::providers::{ChatProvider, ProviderFuture, OPENROUTER_SDK};
+use crate::ai::tokens;
 use crate::error::{AppError, AppResult};
 
-pub struct ImageResult {
-    pub bytes: Vec<u8>,
-    pub mime: String,
+pub struct OpenRouterProvider;
+
+impl OpenRouterProvider {
+    pub fn new() -> Self {
+        Self
+    }
 }
 
-pub struct GenerateResponse {
-    pub images: Vec<ImageResult>,
-    pub text: Option<String>,
+impl ChatProvider for OpenRouterProvider {
+    fn sdk(&self) -> &'static str {
+        OPENROUTER_SDK
+    }
+
+    fn chat<'a>(&'a self, request: ChatRequest) -> ProviderFuture<'a> {
+        Box::pin(async move { generate(request).await })
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct AttachmentBytes {
-    pub bytes: Vec<u8>,
-    pub mime: String,
+async fn generate(request: ChatRequest) -> AppResult<GenerateResponse> {
+    let mut body = build_request_body(&request);
+    let provider_label = provider_label(&request);
+
+    const UPSTREAM_TIMEOUT_SECS: u64 = 15 * 60;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(UPSTREAM_TIMEOUT_SECS))
+        .build()?;
+
+    const MAX_ATTEMPTS: usize = 3;
+    let mut modality_stage: u8 = 0;
+
+    let final_txt = 'modalities: loop {
+        apply_modalities_stage(&mut body, &request.model, modality_stage);
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            let resp = client
+                .post(&request.provider.endpoint)
+                .bearer_auth(&request.provider.api_key)
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await;
+
+            let resp = match resp {
+                Ok(r) => r,
+                Err(err) => {
+                    if attempt < MAX_ATTEMPTS && should_retry_transport(&err) {
+                        sleep_for_attempt(attempt).await;
+                        continue;
+                    }
+                    return Err(err.into());
+                }
+            };
+
+            let status = resp.status();
+            let txt = resp.text().await?;
+            if status.is_success() {
+                break 'modalities txt;
+            }
+
+            let msg = upstream_error_message(&txt);
+            if attempt < MAX_ATTEMPTS && is_retryable_status(status) {
+                sleep_for_attempt(attempt).await;
+                continue;
+            }
+            if upstream_rejects_modalities(status, &msg) && modality_stage < 2 {
+                modality_stage += 1;
+                continue 'modalities;
+            }
+            return Err(AppError::Upstream(format!(
+                "{} HTTP {}: {}",
+                provider_label, status, msg
+            )));
+        }
+        unreachable!("HTTP attempts should return or branch before completing the inner loop");
+    };
+
+    if final_txt.is_empty() {
+        return Err(AppError::Upstream(
+            "upstream returned an empty response body".into(),
+        ));
+    }
+
+    let v: Value = parse_response_json(&final_txt)?;
+    if let Some(msg) = top_level_error_message(&v) {
+        return Err(AppError::Upstream(msg));
+    }
+
+    let images = extract_images(&v);
+    let text = extract_text(&v);
+    if images.is_empty() && text.as_deref().map(str::is_empty).unwrap_or(true) {
+        return Err(AppError::Upstream(format!(
+            "upstream response did not contain generated image or text. {}",
+            empty_response_details(&v)
+        )));
+    }
+
+    Ok(GenerateResponse {
+        images,
+        text,
+        usage: tokens::extract_usage(&v),
+    })
 }
 
-/// One prior turn of the conversation, fed back to the model as context.
-/// `role` is "user" or "assistant". For user turns, `images` should typically be
-/// the input/edited references; for assistant turns, the previously generated outputs.
-#[derive(Debug, Clone)]
-pub struct HistoryTurn {
-    pub role: String,
-    pub text: Option<String>,
-    pub images: Vec<AttachmentBytes>,
+fn provider_label(request: &ChatRequest) -> String {
+    if request.provider.name.trim().is_empty() {
+        request.provider.id.clone()
+    } else {
+        format!("{} ({})", request.provider.name, request.provider.id)
+    }
 }
 
-pub struct GenerateOptions {
-    pub endpoint: String,
-    pub api_key: String,
-    pub model: String,
-    pub prompt: String,
-    pub attachments: Vec<AttachmentBytes>,
-    pub aspect_ratio: String,
-    pub image_size: String,
-    pub system_prompt: String,
-    pub history: Vec<HistoryTurn>,
-    pub temperature: Option<f64>,
-    pub top_p: Option<f64>,
-    pub max_tokens: Option<i64>,
-    pub frequency_penalty: Option<f64>,
-    pub presence_penalty: Option<f64>,
+fn build_request_body(request: &ChatRequest) -> Value {
+    let user_content: Value = if request.attachments.is_empty() {
+        Value::String(request.prompt.clone())
+    } else {
+        let mut arr: Vec<Value> = Vec::with_capacity(request.attachments.len() + 1);
+        arr.push(json!({"type":"text","text":request.prompt}));
+        for attachment in &request.attachments {
+            arr.push(json!({
+                "type":"image_url",
+                "image_url": { "url": data_url(attachment) }
+            }));
+        }
+        Value::Array(arr)
+    };
+
+    let mut messages: Vec<Value> = Vec::new();
+    let sys = request.system_prompt.trim();
+    if !sys.is_empty() {
+        messages.push(json!({ "role": "system", "content": sys }));
+    }
+    for turn in &request.history {
+        if let Some(message) = history_turn_to_message(turn) {
+            messages.push(message);
+        }
+    }
+    messages.push(json!({ "role": "user", "content": user_content }));
+
+    let mut body = json!({
+        "model": request.model,
+        "messages": messages,
+    });
+
+    let map = body.as_object_mut().unwrap();
+    request.parameters.apply_model_params(map);
+    if let Some(image_config) = request.parameters.image_config() {
+        map.insert("image_config".into(), image_config);
+    }
+    body
 }
 
 fn data_url(att: &AttachmentBytes) -> String {
@@ -57,6 +167,7 @@ fn history_turn_to_message(turn: &HistoryTurn) -> Option<Value> {
     if role.is_empty() {
         return None;
     }
+
     let text = turn
         .text
         .as_deref()
@@ -74,10 +185,10 @@ fn history_turn_to_message(turn: &HistoryTurn) -> Option<Value> {
     if !text.is_empty() {
         arr.push(json!({ "type": "text", "text": text }));
     }
-    for a in &turn.images {
+    for image in &turn.images {
         arr.push(json!({
             "type": "image_url",
-            "image_url": { "url": data_url(a) }
+            "image_url": { "url": data_url(image) }
         }));
     }
     Some(json!({ "role": role, "content": Value::Array(arr) }))
@@ -97,180 +208,50 @@ fn should_retry_transport(err: &reqwest::Error) -> bool {
     err.is_timeout() || err.is_connect() || err.is_request()
 }
 
-pub async fn generate(opts: GenerateOptions) -> AppResult<GenerateResponse> {
-    let user_content: Value = if opts.attachments.is_empty() {
-        Value::String(opts.prompt.clone())
-    } else {
-        let mut arr: Vec<Value> = Vec::with_capacity(opts.attachments.len() + 1);
-        arr.push(json!({"type":"text","text":opts.prompt}));
-        for a in &opts.attachments {
-            arr.push(json!({
-                "type":"image_url",
-                "image_url": { "url": data_url(a) }
-            }));
-        }
-        Value::Array(arr)
-    };
-
-    let mut messages: Vec<Value> = Vec::new();
-    let sys = opts.system_prompt.trim();
-    if !sys.is_empty() {
-        messages.push(json!({ "role": "system", "content": sys }));
-    }
-    for turn in &opts.history {
-        if let Some(m) = history_turn_to_message(turn) {
-            messages.push(m);
-        }
-    }
-    messages.push(json!({ "role": "user", "content": user_content }));
-
-    let mut body = json!({
-        "model": opts.model,
-        "messages": messages,
-    });
-    {
-        let map = body.as_object_mut().unwrap();
-        if let Some(v) = opts.temperature {
-            map.insert("temperature".into(), json!(v));
-        }
-        if let Some(v) = opts.top_p {
-            map.insert("top_p".into(), json!(v));
-        }
-        if let Some(v) = opts.max_tokens {
-            map.insert("max_tokens".into(), json!(v));
-        }
-        if let Some(v) = opts.frequency_penalty {
-            map.insert("frequency_penalty".into(), json!(v));
-        }
-        if let Some(v) = opts.presence_penalty {
-            map.insert("presence_penalty".into(), json!(v));
-        }
-    }
-    let mut image_config = serde_json::Map::new();
-    if opts.aspect_ratio != "auto" {
-        image_config.insert(
-            "aspect_ratio".into(),
-            Value::String(opts.aspect_ratio.clone()),
-        );
-    }
-    if opts.image_size != "auto" {
-        image_config.insert("image_size".into(), Value::String(opts.image_size.clone()));
-    }
-    if !image_config.is_empty() {
-        body.as_object_mut()
-            .unwrap()
-            .insert("image_config".into(), Value::Object(image_config));
-    }
-
-    // Whole-request timeout (connect + send body + wait for full response).
-    const UPSTREAM_TIMEOUT_SECS: u64 = 15 * 60;
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(UPSTREAM_TIMEOUT_SECS))
-        .build()?;
-
-    const MAX_ATTEMPTS: usize = 3;
-    let mut modality_stage: u8 = 0;
-
-    let final_txt = 'modalities: loop {
-        apply_modalities_stage(&mut body, &opts.model, modality_stage);
-
-        for attempt in 1..=MAX_ATTEMPTS {
-            let resp = client
-                .post(&opts.endpoint)
-                .bearer_auth(&opts.api_key)
-                .header("Content-Type", "application/json")
-                .json(&body)
-                .send()
-                .await;
-
-            let resp = match resp {
-                Ok(r) => r,
-                Err(err) => {
-                    if attempt < MAX_ATTEMPTS && should_retry_transport(&err) {
-                        let backoff_ms = 500u64 * (1u64 << (attempt - 1));
-                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
-                        continue;
-                    }
-                    return Err(err.into());
-                }
-            };
-
-            let status = resp.status();
-            let txt = resp.text().await?;
-            if status.is_success() {
-                break 'modalities txt;
-            }
-
-            let msg = match serde_json::from_str::<Value>(&txt) {
-                Ok(v) => v
-                    .pointer("/error/message")
-                    .and_then(|x| x.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| txt.clone()),
-                Err(_) => txt.clone(),
-            };
-            if attempt < MAX_ATTEMPTS && is_retryable_status(status) {
-                let backoff_ms = 500u64 * (1u64 << (attempt - 1));
-                tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
-                continue;
-            }
-            if upstream_rejects_modalities(status, &msg) && modality_stage < 2 {
-                modality_stage += 1;
-                continue 'modalities;
-            }
-            return Err(AppError::Upstream(format!("HTTP {}: {}", status, msg)));
-        }
-        unreachable!("HTTP attempts should return or branch before completing the inner loop");
-    };
-
-    if final_txt.is_empty() {
-        return Err(AppError::Upstream("上游返回为空响应".into()));
-    }
-
-    let v: Value = parse_response_json(&final_txt)?;
-    if let Some(msg) = top_level_error_message(&v) {
-        return Err(AppError::Upstream(msg));
-    }
-    let images = extract_images(&v);
-    let text = extract_text(&v);
-    if images.is_empty() && text.as_deref().map(|s| s.is_empty()).unwrap_or(true) {
-        return Err(AppError::Upstream(format!(
-            "上游返回为空：既没有图像也没有文本{}",
-            empty_response_details(&v)
-        )));
-    }
-    Ok(GenerateResponse { images, text })
+async fn sleep_for_attempt(attempt: usize) {
+    let backoff_ms = 500u64 * (1u64 << (attempt - 1));
+    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
 }
 
 fn parse_response_json(txt: &str) -> AppResult<Value> {
     serde_json::from_str(txt).map_err(|err| {
         AppError::Upstream(format!(
-            "上游返回的 JSON 无法解析（{}，body_bytes={}）。这通常是请求超时、连接被截断或上游返回了非 JSON 内容；请重试，或降低 image_size/换更快的模型。",
+            "failed to parse upstream JSON response: {}; body_bytes={}",
             err,
             txt.len()
         ))
     })
 }
 
+fn upstream_error_message(txt: &str) -> String {
+    match serde_json::from_str::<Value>(txt) {
+        Ok(v) => v
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| txt.to_string()),
+        Err(_) => txt.to_string(),
+    }
+}
+
 fn top_level_error_message(v: &Value) -> Option<String> {
     let error = v.get("error")?;
     let message = error
         .get("message")
-        .and_then(|x| x.as_str())
-        .unwrap_or("上游返回错误");
+        .and_then(Value::as_str)
+        .unwrap_or("unknown upstream error");
     let code = error
         .get("code")
         .map(|x| {
             x.as_str()
-                .map(|s| s.to_string())
+                .map(str::to_string)
                 .unwrap_or_else(|| x.to_string())
         })
         .filter(|s| !s.trim().is_empty() && s != "null");
 
     Some(match code {
-        Some(code) => format!("上游错误 {}: {}", code, message),
-        None => format!("上游错误: {}", message),
+        Some(code) => format!("upstream error {}: {}", code, message),
+        None => format!("upstream error: {}", message),
     })
 }
 
@@ -315,17 +296,17 @@ fn is_image_only_model(model: &str) -> bool {
 fn extract_text(v: &Value) -> Option<String> {
     let msg = v.pointer("/choices/0/message")?;
 
-    if let Some(s) = msg.get("content").and_then(|x| x.as_str()) {
+    if let Some(s) = msg.get("content").and_then(Value::as_str) {
         let trimmed = s.trim();
         if !trimmed.is_empty() {
             return Some(trimmed.to_string());
         }
     }
 
-    if let Some(arr) = msg.get("content").and_then(|x| x.as_array()) {
+    if let Some(arr) = msg.get("content").and_then(Value::as_array) {
         let mut parts: Vec<String> = Vec::new();
         for it in arr {
-            if let Some(s) = it.get("text").and_then(|x| x.as_str()) {
+            if let Some(s) = it.get("text").and_then(Value::as_str) {
                 if !s.trim().is_empty() {
                     parts.push(s.trim().to_string());
                 }
@@ -336,7 +317,7 @@ fn extract_text(v: &Value) -> Option<String> {
         }
     }
 
-    if let Some(s) = msg.get("reasoning").and_then(|x| x.as_str()) {
+    if let Some(s) = msg.get("reasoning").and_then(Value::as_str) {
         let trimmed = s.trim();
         if !trimmed.is_empty() {
             return Some(trimmed.to_string());
@@ -374,10 +355,12 @@ fn parse_data_url(url: &str) -> Option<ImageResult> {
 }
 
 fn parse_b64_image(payload: &str) -> Option<ImageResult> {
-    B64.decode(payload.as_bytes()).ok().map(|bytes| ImageResult {
-        bytes,
-        mime: "image/png".to_string(),
-    })
+    B64.decode(payload.as_bytes())
+        .ok()
+        .map(|bytes| ImageResult {
+            bytes,
+            mime: "image/png".to_string(),
+        })
 }
 
 fn image_url_from_value(value: &Value) -> Option<&str> {
@@ -390,7 +373,7 @@ fn image_url_from_value(value: &Value) -> Option<&str> {
     ]
     .into_iter()
     .flatten()
-    .find_map(|x| x.as_str())
+    .find_map(Value::as_str)
 }
 
 fn image_from_value(value: &Value) -> Option<ImageResult> {
@@ -401,7 +384,7 @@ fn image_from_value(value: &Value) -> Option<ImageResult> {
     }
     value
         .get("b64_json")
-        .and_then(|x| x.as_str())
+        .and_then(Value::as_str)
         .and_then(parse_b64_image)
 }
 
@@ -412,7 +395,7 @@ fn extract_images(v: &Value) -> Vec<ImageResult> {
         None => return out,
     };
 
-    if let Some(arr) = msg.get("images").and_then(|x| x.as_array()) {
+    if let Some(arr) = msg.get("images").and_then(Value::as_array) {
         for it in arr {
             if let Some(r) = image_from_value(it) {
                 out.push(r);
@@ -423,7 +406,7 @@ fn extract_images(v: &Value) -> Vec<ImageResult> {
         }
     }
 
-    if let Some(arr) = msg.get("content").and_then(|x| x.as_array()) {
+    if let Some(arr) = msg.get("content").and_then(Value::as_array) {
         for part in arr {
             if let Some(r) = image_from_value(part) {
                 out.push(r);
@@ -434,7 +417,7 @@ fn extract_images(v: &Value) -> Vec<ImageResult> {
         }
     }
 
-    if let Some(s) = msg.get("content").and_then(|x| x.as_str()) {
+    if let Some(s) = msg.get("content").and_then(Value::as_str) {
         let needle = "data:image/";
         let mut i = 0;
         while let Some(start) = s[i..].find(needle).map(|p| p + i) {
@@ -458,7 +441,7 @@ fn extract_images(v: &Value) -> Vec<ImageResult> {
 fn push_response_detail(details: &mut Vec<String>, label: &str, value: &Value) {
     let raw = value
         .as_str()
-        .map(|s| s.to_string())
+        .map(str::to_string)
         .unwrap_or_else(|| value.to_string());
     let trimmed = raw.trim();
     if trimmed.is_empty() || trimmed == "null" {
@@ -484,7 +467,12 @@ fn empty_response_details(v: &Value) -> String {
         "/choices/0/native_finish_reason",
         "native_finish_reason",
     );
-    push_response_detail_at(&mut details, v, "/choices/0/error/code", "choice_error_code");
+    push_response_detail_at(
+        &mut details,
+        v,
+        "/choices/0/error/code",
+        "choice_error_code",
+    );
     push_response_detail_at(
         &mut details,
         v,
@@ -502,13 +490,6 @@ fn empty_response_details(v: &Value) -> String {
     if details.is_empty() {
         String::new()
     } else {
-        format!("（{}）", details.join("，"))
+        format!("details: {}", details.join("; "))
     }
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct OrError {
-    message: Option<String>,
-    code: Option<i64>,
 }
