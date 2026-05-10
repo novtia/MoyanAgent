@@ -6,6 +6,7 @@ import { ImageEditor } from "./components/editor/ImageEditor";
 import { ImagePreview } from "./components/ImagePreview";
 import { SettingsView } from "./components/SettingsView.js";
 import type { SettingsTab, ThemeMode } from "./components/SettingsView.js";
+import { ContextMenuHost } from "./components/context-menu";
 import { SearchDialog } from "./components/search/SearchDialog";
 import { TitleBar } from "./components/TitleBar";
 import { useSettings } from "./store/settings";
@@ -174,6 +175,7 @@ export default function App() {
           onClose={() => setPreview(null)}
         />
       )}
+      <ContextMenuHost />
     </>
   );
 }

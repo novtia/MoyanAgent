@@ -8,6 +8,7 @@ import type {
 export const DEFAULT_PROVIDER_SDK = "openai" satisfies ModelProviderSdk;
 
 export const PROVIDER_ICON_PATHS = {
+  openrouter: "/provider-icons/openrouter.svg",
   openai: "/provider-icons/openai.svg",
   gemini: "/provider-icons/gemini.svg",
   claude: "/provider-icons/claude.svg",
@@ -245,7 +246,7 @@ export const BUILTIN_PROVIDER_PRESETS: readonly ModelProvider[] = [
     id: "openrouter",
     name: "OpenRouter",
     sdk: "openai",
-    avatar: "",
+    avatar: PROVIDER_ICON_PATHS.openrouter,
     endpoint: "https://openrouter.ai/api/v1/chat/completions",
     enabled: true,
     models: [
@@ -296,6 +297,11 @@ export const BUILTIN_PROVIDER_PRESETS: readonly ModelProvider[] = [
     ],
   }),
 ];
+
+/** Matches backend `builtin_services()` ids — system-inserted providers must not be removable in the UI. */
+export function isBuiltinProvider(provider: Pick<ModelProvider, "id">): boolean {
+  return BUILTIN_PROVIDER_PRESETS.some((b) => b.id === provider.id);
+}
 
 export function normalizeProviderSdk(sdk?: string | null): string {
   const normalized = sdk?.trim().toLowerCase();

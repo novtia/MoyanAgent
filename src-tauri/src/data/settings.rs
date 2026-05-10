@@ -325,7 +325,7 @@ fn builtin_services() -> Vec<ModelProvider> {
             id: "openrouter".into(),
             name: "OpenRouter".into(),
             sdk: crate::ai::providers::OPENAI_SDK.into(),
-            avatar: String::new(),
+            avatar: "/provider-icons/openrouter.svg".into(),
             endpoint: "https://openrouter.ai/api/v1/chat/completions".into(),
             api_key: String::new(),
             enabled: true,

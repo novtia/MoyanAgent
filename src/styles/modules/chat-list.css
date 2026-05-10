@@ -39,30 +39,6 @@
   color: var(--ink-mute);
   flex-shrink: 0;
 }
-.chat-actions {
-  display: inline-flex;
-  gap: 2px;
-  flex-shrink: 0;
-}
-.chat-actions button {
-  background: transparent;
-  border: none;
-  color: var(--ink-mute);
-  padding: 2px;
-  cursor: pointer;
-  border-radius: 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.chat-actions button:hover {
-  color: var(--ink);
-  background: var(--bg-sunk);
-}
-.chat-actions svg {
-  width: 12px;
-  height: 12px;
-}
 .session-config-modal {
   width: min(640px, 92vw);
 }

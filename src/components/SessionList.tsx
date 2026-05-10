@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
+import { openContextMenu } from "./context-menu";
 import { useSession } from "../store/session";
 import type { SessionSummary } from "../types";
 
@@ -32,7 +33,6 @@ export function SessionList({ onOpenChat }: SessionListProps) {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
-  const [hoverId, setHoverId] = useState<string | null>(null);
   const [configTarget, setConfigTarget] = useState<SessionSummary | null>(null);
   const [systemPromptDraft, setSystemPromptDraft] = useState("");
   const [historyTurnsDraft, setHistoryTurnsDraft] = useState("10");
@@ -59,6 +59,31 @@ export function SessionList({ onOpenChat }: SessionListProps) {
     setConfigError(null);
   };
 
+  const openSessionMenu = (event: ReactMouseEvent, session: SessionSummary) => {
+    openContextMenu(event, [
+      {
+        id: "session-settings",
+        label: "会话设置",
+        onSelect: () => openConfig(session),
+      },
+      {
+        id: "session-rename",
+        label: t("sessions.renameTitle"),
+        onSelect: () => {
+          setEditingId(session.id);
+          setDraftTitle(session.title);
+        },
+      },
+      { type: "separator" },
+      {
+        id: "session-delete",
+        label: t("sessions.deleteTitle"),
+        danger: true,
+        onSelect: () => onDelete(session.id, session.title),
+      },
+    ]);
+  };
+
   const saveConfig = async () => {
     if (!configTarget) return;
     const parsed = Number.parseInt(historyTurnsDraft.trim(), 10);
@@ -80,13 +105,11 @@ export function SessionList({ onOpenChat }: SessionListProps) {
       <div className="chat-list">
         {sessions.map((s) => {
           const isActive = activeId === s.id;
-          const showActions = isActive || hoverId === s.id;
           return (
             <div
               key={s.id}
               className={`chat-item ${isActive ? "active" : ""}`}
-              onMouseEnter={() => setHoverId(s.id)}
-              onMouseLeave={() => setHoverId((id) => (id === s.id ? null : id))}
+              onContextMenu={(event) => openSessionMenu(event, s)}
               onClick={() => {
                 if (editingId !== s.id) {
                   switchTo(s.id);
@@ -109,45 +132,14 @@ export function SessionList({ onOpenChat }: SessionListProps) {
                     }
                   }}
                   onClick={(e) => e.stopPropagation()}
+                  onContextMenu={(e) => e.stopPropagation()}
                 />
               ) : (
                 <>
                   <span className="chat-title" title={s.title}>
                     {s.title}
                   </span>
-                  {showActions ? (
-                    <span
-                      className="chat-actions"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <button
-                        type="button"
-                        title="会话设置"
-                        onClick={() => openConfig(s)}
-                      >
-                        <DotsIcon />
-                      </button>
-                      <button
-                        type="button"
-                        title={t("sessions.renameTitle")}
-                        onClick={() => {
-                          setEditingId(s.id);
-                          setDraftTitle(s.title);
-                        }}
-                      >
-                        <PencilIcon />
-                      </button>
-                      <button
-                        type="button"
-                        title={t("sessions.deleteTitle")}
-                        onClick={() => onDelete(s.id, s.title)}
-                      >
-                        <TrashIcon />
-                      </button>
-                    </span>
-                  ) : (
-                    <span className="chat-meta">{timeAgo(s.updated_at, t)}</span>
-                  )}
+                  <span className="chat-meta">{timeAgo(s.updated_at, t)}</span>
                 </>
               )}
             </div>
@@ -218,33 +210,5 @@ export function SessionList({ onOpenChat }: SessionListProps) {
         </div>
       )}
     </>
-  );
-}
-
-function DotsIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor">
-      <circle cx="5" cy="12" r="1.6" />
-      <circle cx="12" cy="12" r="1.6" />
-      <circle cx="19" cy="12" r="1.6" />
-    </svg>
-  );
-}
-
-function PencilIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 20h9" />
-      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
-    </svg>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="3 6 5 6 21 6" />
-      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-    </svg>
   );
 }

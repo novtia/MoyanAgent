@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
+import { openContextMenu } from "../../context-menu";
 import { useSettings } from "../../../store/settings";
 import type { ModelProvider, ModelServiceModel } from "../../../types";
 import { CheckIcon, CopyIcon } from "../icons";
@@ -14,6 +21,7 @@ import {
   type ProviderValidationErrors,
   getProviderSdkConfig,
   groupFromModelId,
+  isBuiltinProvider,
   isKnownProviderSdk,
   makeModel,
   makeProvider,
@@ -111,6 +119,7 @@ function ProviderAvatarPicker({
 }
 
 export function ModelServiceSection() {
+  const { t } = useTranslation();
   const settings = useSettings((s) => s.settings);
   const update = useSettings((s) => s.update);
   const [selectedProviderId, setSelectedProviderId] = useState("");
@@ -118,6 +127,9 @@ export function ModelServiceSection() {
   const [providerDraft, setProviderDraft] =
     useState<ProviderDraft>(EMPTY_PROVIDER_DRAFT);
   const [showKey, setShowKey] = useState(false);
+  const [editProviderTarget, setEditProviderTarget] = useState<ModelProvider | null>(
+    null,
+  );
   const [manageMode, setManageMode] = useState(false);
   const [editingModel, setEditingModel] = useState<ModelServiceModel | null>(null);
   const [addProviderOpen, setAddProviderOpen] = useState(false);
@@ -263,22 +275,6 @@ export function ModelServiceSection() {
     selectedProvider,
   ]);
 
-  const changeProviderSdk = (sdk: string) => {
-    setProviderDraft((draft) => {
-      const currentSdkConfig = getProviderSdkConfig(draft.sdk);
-      const nextSdkConfig = getProviderSdkConfig(sdk);
-      const endpoint = draft.endpoint.trim();
-      return {
-        ...draft,
-        sdk: normalizeProviderSdk(sdk),
-        endpoint:
-          !endpoint || endpoint === currentSdkConfig.defaultEndpoint
-            ? nextSdkConfig.defaultEndpoint
-            : draft.endpoint,
-      };
-    });
-  };
-
   const persistProviders = async (
     nextProviders: ModelProvider[],
     patch: { active_provider_id?: string; model?: string } = {},
@@ -300,6 +296,38 @@ export function ModelServiceSection() {
       active_provider_id: provider.id,
       model: nextModel,
     });
+  };
+
+  const editProvider = (provider: ModelProvider) => {
+    void selectProvider(provider);
+    setEditProviderTarget(provider);
+  };
+
+  const saveEditedProvider = async (draft: {
+    name: string;
+    sdk: string;
+    avatar: string;
+  }) => {
+    if (!editProviderTarget) return;
+    const id = editProviderTarget.id;
+    const latest =
+      providers.find((p) => p.id === id) ?? editProviderTarget;
+    const newSdk = normalizeProviderSdk(draft.sdk);
+    const oldConfig = getProviderSdkConfig(latest.sdk);
+    const newConfig = getProviderSdkConfig(newSdk);
+    const endpoint = latest.endpoint.trim();
+    const nextEndpoint =
+      !endpoint || endpoint === oldConfig.defaultEndpoint
+        ? newConfig.defaultEndpoint
+        : latest.endpoint;
+    const nextName = draft.name.trim() || latest.name;
+    await patchProvider(id, {
+      name: nextName,
+      sdk: newSdk,
+      avatar: providerAvatar({ name: nextName, avatar: draft.avatar }),
+      endpoint: nextEndpoint,
+    });
+    setEditProviderTarget(null);
   };
 
   const setProviderEnabled = async (providerId: string, enabled: boolean) => {
@@ -335,6 +363,60 @@ export function ModelServiceSection() {
       }
     }
     await persistProviders(next, extra);
+  };
+
+  const deleteProvider = async (provider: ModelProvider) => {
+    if (isBuiltinProvider(provider)) {
+      window.alert("系统默认供应商不能删除。");
+      return;
+    }
+    if (!window.confirm(`删除供应商 ${provider.name}？其 API 配置和模型列表也会删除。`)) {
+      return;
+    }
+
+    const next = providers.filter((item) => item.id !== provider.id);
+    const enabledFallback = next.find((item) => item.enabled !== false) ?? null;
+    const patch: { active_provider_id?: string; model?: string } = {};
+
+    if (provider.id === activeProviderId) {
+      patch.active_provider_id = enabledFallback?.id ?? "";
+      patch.model = enabledFallback?.models[0]?.id ?? "";
+    }
+
+    await persistProviders(next, patch);
+
+    if (selectedProviderId === provider.id) {
+      const unchangedActive =
+        provider.id === activeProviderId
+          ? null
+          : next.find((item) => item.id === activeProviderId) ?? null;
+      setSelectedProviderId(
+        unchangedActive?.id ?? enabledFallback?.id ?? next[0]?.id ?? "",
+      );
+    }
+
+    if (editProviderTarget?.id === provider.id) {
+      setEditProviderTarget(null);
+    }
+  };
+
+  const openProviderMenu = (event: ReactMouseEvent, provider: ModelProvider) => {
+    const builtin = isBuiltinProvider(provider);
+    openContextMenu(event, [
+      {
+        id: "provider-edit",
+        label: t("common.edit"),
+        onSelect: () => editProvider(provider),
+      },
+      { type: "separator" },
+      {
+        id: "provider-delete",
+        label: t("common.delete"),
+        danger: true,
+        disabled: builtin,
+        onSelect: () => deleteProvider(provider),
+      },
+    ]);
   };
 
   const addProvider = async () => {
@@ -449,6 +531,7 @@ export function ModelServiceSection() {
                   className={`model-provider-item ${
                     provider.id === selectedProvider?.id ? "active" : ""
                   } ${!provOn ? "is-disabled" : ""}`}
+                  onContextMenu={(event) => openProviderMenu(event, provider)}
                 >
                   <button
                     type="button"
@@ -490,17 +573,6 @@ export function ModelServiceSection() {
               <div className="model-provider-title-row">
                 <div className="model-provider-heading">
                   <span>{providerDraft.name || selectedProvider.name}</span>
-                  <span
-                    className={`model-provider-sdk-badge ${
-                      selectedProviderValidation.sdk ? "is-error" : ""
-                    }`}
-                  >
-                    {providerSdkLabel(providerDraft.sdk)}
-                  </span>
-                  {selectedProvider.id === activeProviderId &&
-                    selectedProvider.enabled !== false && (
-                      <span className="model-provider-active-badge">当前供应商</span>
-                    )}
                 </div>
                 <div className="model-provider-title-tools">
                   <ProviderEnableSwitch
@@ -524,57 +596,6 @@ export function ModelServiceSection() {
               </div>
 
               <div className="model-provider-fields">
-                <div className="row">
-                  <label className="field-label">Provider SDK</label>
-                  <select
-                    value={normalizeProviderSdk(providerDraft.sdk)}
-                    onChange={(e) => changeProviderSdk(e.target.value)}
-                  >
-                    {!isKnownProviderSdk(providerDraft.sdk) && (
-                      <option value={normalizeProviderSdk(providerDraft.sdk)}>
-                        {normalizeProviderSdk(providerDraft.sdk)}（未注册）
-                      </option>
-                    )}
-                    {PROVIDER_SDK_OPTIONS.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <div
-                    className={`hint ${
-                      selectedProviderValidation.sdk ? "is-error" : ""
-                    }`}
-                  >
-                    {selectedProviderValidation.sdk ?? selectedSdkConfig.description}
-                  </div>
-                </div>
-                <div className="row">
-                  <label className="field-label">供应商头像</label>
-                  <ProviderAvatarPicker
-                    name={providerDraft.name || selectedProvider.name}
-                    avatar={providerDraft.avatar}
-                    onChange={(avatar) =>
-                      setProviderDraft((draft) => ({
-                        ...draft,
-                        avatar,
-                      }))
-                    }
-                  />
-                </div>
-                <div className="row">
-                  <label className="field-label">供应商名称</label>
-                  <input
-                    type="text"
-                    value={providerDraft.name}
-                    onChange={(e) =>
-                      setProviderDraft((draft) => ({
-                        ...draft,
-                        name: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
                 <div className="row">
                   <label className="field-label">API 密钥</label>
                   <div className="input-affix">
@@ -762,6 +783,17 @@ export function ModelServiceSection() {
         />
       )}
 
+      {editProviderTarget && (
+        <EditProviderModal
+          provider={
+            providers.find((p) => p.id === editProviderTarget.id) ??
+            editProviderTarget
+          }
+          onClose={() => setEditProviderTarget(null)}
+          onSave={saveEditedProvider}
+        />
+      )}
+
       {addModelOpen && selectedProvider && (
         <AddModelModal
           sdkConfig={getProviderSdkConfig(selectedProvider.sdk)}
@@ -890,6 +922,119 @@ function AddProviderModal({ onClose, onAdd }: AddProviderModalProps) {
             onClick={submit}
           >
             添加
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface EditProviderModalProps {
+  provider: ModelProvider;
+  onClose: () => void;
+  onSave: (draft: { name: string; sdk: string; avatar: string }) => void | Promise<void>;
+}
+
+function EditProviderModal({ provider, onClose, onSave }: EditProviderModalProps) {
+  const [sdk, setSdk] = useState(() => normalizeProviderSdk(provider.sdk));
+  const [name, setName] = useState(() => provider.name);
+  const [avatar, setAvatar] = useState(() => provider.avatar ?? "");
+
+  useEffect(() => {
+    setSdk(normalizeProviderSdk(provider.sdk));
+    setName(provider.name);
+    setAvatar(provider.avatar ?? "");
+  }, [provider.id, provider.sdk, provider.name, provider.avatar]);
+
+  const sdkConfig = getProviderSdkConfig(sdk);
+  const canSubmit = !!name.trim() && isKnownProviderSdk(sdk);
+
+  const changeSdk = (nextSdk: string) => {
+    setSdk(getProviderSdkConfig(nextSdk).id);
+  };
+
+  const submit = () => {
+    if (!canSubmit) return;
+    void onSave({
+      name: name.trim(),
+      sdk,
+      avatar: avatar.trim(),
+    });
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <div
+        className="modal model-settings-modal add-provider-modal"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="modal-head">
+          <h3>编辑供应商</h3>
+          <button type="button" className="close" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+        <div className="modal-body">
+          <div className="model-settings-form">
+            <div className="provider-avatar-preview">
+              <ProviderAvatarDisplay
+                name={name.trim() || sdkConfig.defaultName}
+                avatar={avatar}
+                className="provider-avatar-preview-image"
+              />
+              <div>
+                <strong>{name.trim() || sdkConfig.defaultName}</strong>
+                <em>{sdkConfig.label}</em>
+              </div>
+            </div>
+            <div className="row">
+              <label className="field-label">
+                <span className="required-star">*</span> 供应商名称
+              </label>
+              <input
+                type="text"
+                value={name}
+                autoFocus
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="row">
+              <label className="field-label">
+                <span className="required-star">*</span> 类型（SDK）
+              </label>
+              <select value={sdk} onChange={(e) => changeSdk(e.target.value)}>
+                {!isKnownProviderSdk(sdk) && (
+                  <option value={sdk}>{sdk}（未注册）</option>
+                )}
+                {PROVIDER_SDK_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <div className="hint">{sdkConfig.description}</div>
+            </div>
+            <div className="row">
+              <label className="field-label">供应商头像</label>
+              <ProviderAvatarPicker
+                name={name.trim() || sdkConfig.defaultName}
+                avatar={avatar}
+                onChange={setAvatar}
+              />
+            </div>
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button type="button" className="btn" onClick={onClose}>
+            取消
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={!canSubmit}
+            onClick={submit}
+          >
+            保存
           </button>
         </div>
       </div>
