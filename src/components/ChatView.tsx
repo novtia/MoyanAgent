@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useSession } from "../store/session";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
+import { EmptyChat } from "./EmptyChat";
 import { SessionGallery } from "./SessionGallery";
 import type { AttachmentDraft, ImageRefAbs } from "../types";
 
@@ -110,13 +111,22 @@ export function ChatView({
           </div>
         </div>
 
-        <MessageList onPreviewImage={onPreviewImage} />
-
-        <Composer
-          onEditAttachment={onEditAttachment}
-          onOpenSettings={onOpenSettings}
-          needsSetup={needsSetup}
-        />
+        {isEmpty ? (
+          <EmptyChat
+            onEditAttachment={onEditAttachment}
+            onOpenSettings={onOpenSettings}
+            needsSetup={needsSetup}
+          />
+        ) : (
+          <>
+            <MessageList onPreviewImage={onPreviewImage} />
+            <Composer
+              onEditAttachment={onEditAttachment}
+              onOpenSettings={onOpenSettings}
+              needsSetup={needsSetup}
+            />
+          </>
+        )}
       </div>
 
       <SessionGallery

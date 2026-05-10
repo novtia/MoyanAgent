@@ -39,6 +39,40 @@
   letter-spacing: -0.01em;
 }
 
+.empty-chat {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 32px 24px 104px;
+}
+.empty-chat-inner {
+  /* Same max width as messages + composer card so empty-state input lines up with normal chat. */
+  width: min(100%, var(--chat-content-width));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 52px;
+  transform: translateY(-14px);
+}
+.empty-chat-title {
+  margin: 0;
+  color: var(--ink);
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1.25;
+  text-align: center;
+  letter-spacing: 0;
+}
+.empty-chat .composer-dock {
+  width: 100%;
+  padding: 0;
+  background: transparent;
+}
+
 .msg {
   display: flex;
   margin-bottom: 18px;

@@ -126,7 +126,6 @@ pub async fn generate(opts: GenerateOptions) -> AppResult<GenerateResponse> {
 
     let mut body = json!({
         "model": opts.model,
-        "modalities": requested_modalities(&opts.model),
         "messages": messages,
     });
     {
@@ -163,55 +162,67 @@ pub async fn generate(opts: GenerateOptions) -> AppResult<GenerateResponse> {
             .insert("image_config".into(), Value::Object(image_config));
     }
 
+    // Whole-request timeout (connect + send body + wait for full response).
+    const UPSTREAM_TIMEOUT_SECS: u64 = 15 * 60;
+
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(360))
+        .timeout(std::time::Duration::from_secs(UPSTREAM_TIMEOUT_SECS))
         .build()?;
 
     const MAX_ATTEMPTS: usize = 3;
-    let mut final_txt = String::new();
-    for attempt in 1..=MAX_ATTEMPTS {
-        let resp = client
-            .post(&opts.endpoint)
-            .bearer_auth(&opts.api_key)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await;
+    let mut modality_stage: u8 = 0;
 
-        let resp = match resp {
-            Ok(r) => r,
-            Err(err) => {
-                if attempt < MAX_ATTEMPTS && should_retry_transport(&err) {
-                    let backoff_ms = 500u64 * (1u64 << (attempt - 1));
-                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
-                    continue;
+    let final_txt = 'modalities: loop {
+        apply_modalities_stage(&mut body, &opts.model, modality_stage);
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            let resp = client
+                .post(&opts.endpoint)
+                .bearer_auth(&opts.api_key)
+                .header("Content-Type", "application/json")
+                .json(&body)
+                .send()
+                .await;
+
+            let resp = match resp {
+                Ok(r) => r,
+                Err(err) => {
+                    if attempt < MAX_ATTEMPTS && should_retry_transport(&err) {
+                        let backoff_ms = 500u64 * (1u64 << (attempt - 1));
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                        continue;
+                    }
+                    return Err(err.into());
                 }
-                return Err(err.into());
+            };
+
+            let status = resp.status();
+            let txt = resp.text().await?;
+            if status.is_success() {
+                break 'modalities txt;
             }
-        };
 
-        let status = resp.status();
-        let txt = resp.text().await?;
-        final_txt = txt.clone();
-        if status.is_success() {
-            break;
+            let msg = match serde_json::from_str::<Value>(&txt) {
+                Ok(v) => v
+                    .pointer("/error/message")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| txt.clone()),
+                Err(_) => txt.clone(),
+            };
+            if attempt < MAX_ATTEMPTS && is_retryable_status(status) {
+                let backoff_ms = 500u64 * (1u64 << (attempt - 1));
+                tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                continue;
+            }
+            if upstream_rejects_modalities(status, &msg) && modality_stage < 2 {
+                modality_stage += 1;
+                continue 'modalities;
+            }
+            return Err(AppError::Upstream(format!("HTTP {}: {}", status, msg)));
         }
-
-        let msg = match serde_json::from_str::<Value>(&txt) {
-            Ok(v) => v
-                .pointer("/error/message")
-                .and_then(|x| x.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| txt.clone()),
-            Err(_) => txt.clone(),
-        };
-        if attempt < MAX_ATTEMPTS && is_retryable_status(status) {
-            let backoff_ms = 500u64 * (1u64 << (attempt - 1));
-            tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
-            continue;
-        }
-        return Err(AppError::Upstream(format!("HTTP {}: {}", status, msg)));
-    }
+        unreachable!("HTTP attempts should return or branch before completing the inner loop");
+    };
 
     if final_txt.is_empty() {
         return Err(AppError::Upstream("上游返回为空响应".into()));
@@ -269,6 +280,28 @@ fn requested_modalities(model: &str) -> Value {
     } else {
         json!(["image", "text"])
     }
+}
+
+fn apply_modalities_stage(body: &mut Value, model: &str, stage: u8) {
+    let Some(map) = body.as_object_mut() else {
+        return;
+    };
+    match stage {
+        0 => {
+            map.insert("modalities".into(), requested_modalities(model));
+        }
+        1 => {
+            map.insert("modalities".into(), json!(["image"]));
+        }
+        _ => {
+            map.remove("modalities");
+        }
+    }
+}
+
+fn upstream_rejects_modalities(status: StatusCode, msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    (status == StatusCode::NOT_FOUND || status == StatusCode::BAD_REQUEST) && m.contains("modalit")
 }
 
 fn is_image_only_model(model: &str) -> bool {

@@ -208,7 +208,8 @@
 
 .composer-textarea {
   width: 100%;
-  min-height: 28px;
+  /* Two text lines at line-height 1.55 plus vertical padding (matches box sizing). */
+  min-height: calc(3.1em + 8px);
   max-height: 200px;
   border: none;
   resize: none;

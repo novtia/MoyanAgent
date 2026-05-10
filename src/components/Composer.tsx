@@ -11,6 +11,7 @@ import {
   shortModelName,
 } from "../config/generation";
 import type { AttachmentDraft } from "../types";
+import { ComposerTextarea } from "./ComposerTextarea";
 import { ATELIER_DRAG_TYPE } from "./SessionGallery";
 
 function nativeFilePath(file: File) {
@@ -71,13 +72,6 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     composer.aspectRatio === "auto"
       ? null
       : RATIO_PIXEL_HINT[composer.aspectRatio];
-
-  useEffect(() => {
-    const ta = taRef.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
-  }, [composer.prompt]);
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -266,10 +260,8 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
           </div>
         )}
 
-        <textarea
+        <ComposerTextarea
           ref={taRef}
-          rows={1}
-          className="composer-textarea"
           placeholder={
             hasAttachments
               ? t("composer.placeholderWithAttachments")
