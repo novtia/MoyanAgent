@@ -3,6 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+mod ark_images;
 mod claude;
 mod gemini;
 mod grok;
@@ -16,12 +17,14 @@ pub const OPENAI_RESPONSES_SDK: &str = "openai-responses";
 pub const GEMINI_SDK: &str = "gemini";
 pub const CLAUDE_SDK: &str = "claude";
 pub const GROK_SDK: &str = "grok";
+pub const ARK_IMAGES_SDK: &str = "ark-images";
 pub const SUPPORTED_SDKS: &[&str] = &[
     OPENAI_SDK,
     OPENAI_RESPONSES_SDK,
     GEMINI_SDK,
     CLAUDE_SDK,
     GROK_SDK,
+    ARK_IMAGES_SDK,
 ];
 
 pub type ProviderFuture<'a> =
@@ -72,6 +75,7 @@ impl Default for ProviderFactory {
             .register(gemini::GeminiProvider::new())
             .register(claude::ClaudeProvider::new())
             .register(grok::GrokProvider::new())
+            .register(ark_images::ArkImagesProvider::new())
     }
 }
 

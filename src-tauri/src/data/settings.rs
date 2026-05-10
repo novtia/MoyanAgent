@@ -428,6 +428,21 @@ fn builtin_services() -> Vec<ModelProvider> {
             )],
         },
         ModelProvider {
+            id: "volcengine-ark".into(),
+            name: "豆包生图".into(),
+            sdk: crate::ai::providers::ARK_IMAGES_SDK.into(),
+            avatar: "/provider-icons/doubao-color.svg".into(),
+            endpoint: "https://ark.cn-beijing.volces.com/api/v3/images/generations".into(),
+            api_key: String::new(),
+            enabled: false,
+            models: vec![builtin_model(
+                "doubao-seedream-5-0-260128",
+                "豆包 Seedream 5.0",
+                "doubao",
+                &["vision", "text"],
+            )],
+        },
+        ModelProvider {
             id: "deepseek".into(),
             name: "DeepSeek".into(),
             sdk: crate::ai::providers::OPENAI_SDK.into(),

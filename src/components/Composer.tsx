@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../store/session";
@@ -16,6 +16,23 @@ import { ATELIER_DRAG_TYPE } from "./SessionGallery";
 
 function nativeFilePath(file: File) {
   return (file as File & { path?: string }).path || "";
+}
+
+/** Popover uses `bottom: calc(100% + POPOVER_GAP)` — its bottom sits this many px above the anchor box top. */
+const MODEL_POPOVER_GAP = 8;
+
+/** Min space (px) above topbar for upward popover; otherwise open downward. */
+const MODEL_POPOVER_MIN_SPACE_ABOVE = 100;
+
+function scrollableAncestors(el: HTMLElement | null): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const oy = getComputedStyle(node).overflowY;
+    if (/(auto|scroll|overlay)/.test(oy)) out.push(node);
+    node = node.parentElement;
+  }
+  return out;
 }
 
 interface ComposerProps {
@@ -46,6 +63,8 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
 
   const [paramsOpen, setParamsOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
+  const [modelPopoverMaxPx, setModelPopoverMaxPx] = useState(480);
+  const [modelPopoverBelow, setModelPopoverBelow] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const dragDepth = useRef(0);
 
@@ -106,6 +125,54 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     };
     window.addEventListener("mousedown", onDoc);
     return () => window.removeEventListener("mousedown", onDoc);
+  }, [modelOpen]);
+
+  useLayoutEffect(() => {
+    if (!modelOpen) return;
+    const root = modelRef.current;
+    if (!root) return;
+
+    const updateMaxHeight = () => {
+      const topbar = document.querySelector(".chat-topbar");
+      const topbarBottom = topbar?.getBoundingClientRect().bottom ?? 0;
+      const marginBelowTopbar = 8;
+      const topLimit = topbar ? topbarBottom + marginBelowTopbar : marginBelowTopbar;
+      const r = root.getBoundingClientRect();
+      const anchorTop = r.top;
+      const popoverBottom = anchorTop - MODEL_POPOVER_GAP;
+      const rawAbove = Math.floor(popoverBottom - topLimit);
+
+      if (rawAbove >= MODEL_POPOVER_MIN_SPACE_ABOVE) {
+        setModelPopoverBelow(false);
+        const capped = Math.min(480, Math.max(0, rawAbove));
+        setModelPopoverMaxPx(capped);
+        return;
+      }
+
+      const shell =
+        (document.querySelector(".chat-main") as HTMLElement | null) ?? document.documentElement;
+      const bottomLimit = shell.getBoundingClientRect().bottom;
+      const marginAboveBottom = 12;
+      const anchorBottom = r.bottom;
+      const popoverTop = anchorBottom + MODEL_POPOVER_GAP;
+      const rawBelow = Math.floor(bottomLimit - marginAboveBottom - popoverTop);
+      setModelPopoverBelow(true);
+      setModelPopoverMaxPx(Math.min(480, Math.max(0, rawBelow)));
+    };
+
+    updateMaxHeight();
+
+    const scrollNodes = scrollableAncestors(root);
+    for (const n of scrollNodes) {
+      n.addEventListener("scroll", updateMaxHeight, { passive: true });
+    }
+    window.addEventListener("resize", updateMaxHeight);
+    return () => {
+      for (const n of scrollNodes) {
+        n.removeEventListener("scroll", updateMaxHeight);
+      }
+      window.removeEventListener("resize", updateMaxHeight);
+    };
   }, [modelOpen]);
 
   const pickModel = (providerId: string, modelId: string) => {
@@ -364,37 +431,43 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                 <CaretIcon />
               </button>
               {modelOpen && (
-                <div className="model-popover" onMouseDown={(e) => e.stopPropagation()}>
+                <div
+                  className={`model-popover ${modelPopoverBelow ? "model-popover-below" : ""}`}
+                  style={{ maxHeight: modelPopoverMaxPx }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
                   <div className="model-popover-title">{t("composer.modelTitle")}</div>
                   {enabledProviders.length === 0 ? (
                     <div className="model-popover-empty">{t("composer.modelPickerEmpty")}</div>
                   ) : (
-                    enabledProviders.map((provider) => (
-                      <div key={provider.id} className="model-popover-group">
-                        <div className="model-popover-group-title">{provider.name}</div>
-                        <div className="model-popover-list">
-                          {provider.models.map((model) => {
-                            const m = model.id;
-                            const isActive =
-                              provider.id === settings?.active_provider_id &&
-                              m === settings?.model;
-                            return (
-                              <button
-                                key={`${provider.id}:${m}`}
-                                type="button"
-                                className={`model-popover-item ${isActive ? "active" : ""}`}
-                                onClick={() => pickModel(provider.id, m)}
-                              >
-                                <span className="model-popover-item-text">
-                                  {model.name || shortModelName(m)}
-                                </span>
-                                {isActive && <CheckIcon />}
-                              </button>
-                            );
-                          })}
+                    <div className="model-popover-body">
+                      {enabledProviders.map((provider) => (
+                        <div key={provider.id} className="model-popover-group">
+                          <div className="model-popover-group-title">{provider.name}</div>
+                          <div className="model-popover-list">
+                            {provider.models.map((model) => {
+                              const m = model.id;
+                              const isActive =
+                                provider.id === settings?.active_provider_id &&
+                                m === settings?.model;
+                              return (
+                                <button
+                                  key={`${provider.id}:${m}`}
+                                  type="button"
+                                  className={`model-popover-item ${isActive ? "active" : ""}`}
+                                  onClick={() => pickModel(provider.id, m)}
+                                >
+                                  <span className="model-popover-item-text">
+                                    {model.name || shortModelName(m)}
+                                  </span>
+                                  {isActive && <CheckIcon />}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      ))}
+                    </div>
                   )}
                 </div>
               )}

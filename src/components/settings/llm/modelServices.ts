@@ -13,6 +13,7 @@ export const PROVIDER_ICON_PATHS = {
   gemini: "/provider-icons/gemini.svg",
   claude: "/provider-icons/claude.svg",
   grok: "/provider-icons/grok.svg",
+  doubao: "/provider-icons/doubao-color.svg",
   deepseek: "/provider-icons/deepseek.svg",
 } as const;
 
@@ -104,7 +105,9 @@ export function inferCapabilities(model: string) {
     id.includes("gemini") ||
     id.includes("claude") ||
     id.includes("gpt-5") ||
-    id.includes("gpt-4")
+    id.includes("gpt-4") ||
+    id.includes("seedream") ||
+    id.includes("doubao")
   ) {
     caps.add("vision");
   }
@@ -261,6 +264,29 @@ export const PROVIDER_SDK_OPTIONS: readonly ProviderSdkConfig[] = [
       ]),
     ],
   },
+  {
+    id: "ark-images",
+    label: "豆包生图",
+    description:
+      "豆包 Seedream 等模型的图片生成接口（POST …/api/v3/images/generations）。不能与 chat/completions 混用；若误填对话地址，后端会自动改为生图地址。",
+    defaultName: "豆包生图",
+    defaultEndpoint:
+      "https://ark.cn-beijing.volces.com/api/v3/images/generations",
+    endpointPlaceholder:
+      "https://ark.cn-beijing.volces.com/api/v3/images/generations",
+    endpointHint:
+      "在豆包/方舟控制台使用「图片生成」对应的 Endpoint；若只填到 …/api/v3 也会自动补上 /images/generations。误填 …/chat/completions 时也会自动替换为生图路径。",
+    apiKeyPlaceholder: "API Key",
+    apiKeyHint: "与豆包（火山引擎方舟）控制台中的 API Key 一致（Bearer）。",
+    modelIdPlaceholder: "doubao-seedream-5-0-260128",
+    modelIdHint: "填写控制台中该生图模型的接入点 ID（如 doubao-seedream-*）。",
+    models: [
+      sdkModel("doubao-seedream-5-0-260128", "豆包 Seedream 5.0", "doubao", [
+        "vision",
+        "text",
+      ]),
+    ],
+  },
 ];
 
 export const BUILTIN_PROVIDER_PRESETS: readonly ModelProvider[] = [
@@ -309,6 +335,21 @@ export const BUILTIN_PROVIDER_PRESETS: readonly ModelProvider[] = [
     enabled: false,
     models: [
       sdkModel("grok-imagine-image-quality", "Grok Imagine (quality)", "grok", [
+        "vision",
+        "text",
+      ]),
+    ],
+  }),
+  makeProvider({
+    id: "volcengine-ark",
+    name: "豆包生图",
+    sdk: "ark-images",
+    avatar: PROVIDER_ICON_PATHS.doubao,
+    endpoint:
+      "https://ark.cn-beijing.volces.com/api/v3/images/generations",
+    enabled: false,
+    models: [
+      sdkModel("doubao-seedream-5-0-260128", "豆包 Seedream 5.0", "doubao", [
         "vision",
         "text",
       ]),

@@ -321,6 +321,10 @@
   bottom: calc(100% + 8px);
   right: 0;
   width: min(320px, calc(100vw - 24px));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -330,7 +334,13 @@
   transform-origin: bottom right;
   animation: popover-expand 0.2s var(--ease-pop);
 }
+.model-popover.model-popover-below {
+  bottom: auto;
+  top: calc(100% + 8px);
+  transform-origin: top right;
+}
 .model-popover-title {
+  flex-shrink: 0;
   font-size: 10.5px;
   letter-spacing: 0.06em;
   color: var(--ink-mute);
@@ -338,10 +348,19 @@
   padding: 4px 6px 6px;
 }
 .model-popover-empty {
+  flex-shrink: 0;
   font-size: 12px;
   line-height: 1.5;
   color: var(--ink-mute);
   padding: 10px 8px 12px;
+}
+.model-popover-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .model-popover-group {
   padding-bottom: 6px;
