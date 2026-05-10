@@ -48,10 +48,18 @@ export function SystemSection() {
         <div className="settings-card-title">{t("settings.system.infoTitle")}</div>
         <div className="settings-card-desc">{t("settings.system.infoDesc")}</div>
 
-        <div className="settings-info-list">
-          <div className="settings-info-row">
-            <span className="settings-info-label">{t("settings.system.version")}</span>
-            <span className="settings-info-value">{info?.version || "—"}</span>
+        <div className="model-provider-fields">
+          <div className="row settings-system-version-field">
+            <label className="field-label" htmlFor="settings-app-version">
+              {t("settings.system.version")}
+            </label>
+            <input
+              id="settings-app-version"
+              type="text"
+              readOnly
+              value={info?.version || "—"}
+              aria-readonly="true"
+            />
           </div>
         </div>
       </div>

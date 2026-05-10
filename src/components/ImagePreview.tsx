@@ -192,16 +192,27 @@ export function ImagePreview({ absPath, mime, imageId, onClose }: ImagePreviewPr
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, zoomIn, zoomOut, fit, actualSize, flashAnim]);
 
-  const onWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const ax = e.clientX - rect.left - rect.width / 2;
-    const ay = e.clientY - rect.top - rect.height / 2;
-    // Pinch-zoom on trackpads sets ctrlKey; treat both wheel + pinch the same.
-    const factor = Math.exp(-e.deltaY * 0.0015);
-    zoomBy(factor, { x: ax, y: ay });
-  };
+  // React's onWheel is passive on many roots — preventDefault only works with { passive: false }.
+  const onWheelNative = useCallback(
+    (e: WheelEvent) => {
+      e.preventDefault();
+      const el = canvasRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const ax = e.clientX - rect.left - rect.width / 2;
+      const ay = e.clientY - rect.top - rect.height / 2;
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      zoomBy(factor, { x: ax, y: ay });
+    },
+    [zoomBy],
+  );
+
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    el.addEventListener("wheel", onWheelNative, { passive: false });
+    return () => el.removeEventListener("wheel", onWheelNative);
+  }, [onWheelNative]);
 
   // Hit-test the image's current bounding box (in canvas-local coords)
   const isPointOnImage = useCallback(
@@ -315,7 +326,6 @@ export function ImagePreview({ absPath, mime, imageId, onClose }: ImagePreviewPr
       <div
         ref={canvasRef}
         className={`preview-canvas${dragging ? " is-grabbing" : ""}`}
-        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={finishDrag}

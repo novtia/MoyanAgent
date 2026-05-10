@@ -6,6 +6,15 @@ import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { ATELIER_DRAG_TYPE } from "./SessionGallery";
 import type { AttachmentDraft, ImageRefAbs, MessageAbs } from "../types";
 
+function nativeFilePath(file: File) {
+  return (file as File & { path?: string }).path || "";
+}
+
+async function fileToBytes(file: File): Promise<Uint8Array> {
+  const buf = await file.arrayBuffer();
+  return new Uint8Array(buf);
+}
+
 interface MessageListProps {
   onPreviewImage: (img: ImageRefAbs) => void;
 }
@@ -45,8 +54,12 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
 
       {!isEmpty && (
         <div className="messages-inner">
-          {messages.map((m) => (
-            <MessageRow key={m.id} m={m} onPreviewImage={onPreviewImage} />
+          {messages.map((m, index) => (
+            <MessageRow
+              key={`${m.id}:${index}`}
+              m={m}
+              onPreviewImage={onPreviewImage}
+            />
           ))}
           {busy && <DevelopingRow />}
         </div>
@@ -172,6 +185,29 @@ function MessageRow({ m, onPreviewImage }: MessageRowProps) {
     }
   };
 
+  const ingestFiles = async (files: File[]) => {
+    const room = MAX_EDIT_IMAGES - draftImages.length;
+    if (room <= 0) return;
+    const toIngest = files.slice(0, room);
+    for (const file of toIngest) {
+      try {
+        const path = nativeFilePath(file);
+        const d = path
+          ? await api.addAttachmentFromPath(m.session_id, path)
+          : await api.addAttachmentFromBytes(
+              m.session_id,
+              file.name || "image",
+              await fileToBytes(file),
+            );
+        const ref = draftToImageRef(d);
+        addedDraftIdsRef.current.add(ref.id);
+        setDraftImages((arr) => [...arr, ref]);
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+  };
+
   const ingestExistingImage = async (absPath: string) => {
     if (!absPath) return;
     if (draftImages.length >= MAX_EDIT_IMAGES) return;
@@ -256,10 +292,7 @@ function MessageRow({ m, onPreviewImage }: MessageRowProps) {
 
     const files = Array.from(e.dataTransfer?.files || []);
     if (!files.length) return;
-    const paths = files
-      .map((f) => (f as File & { path?: string }).path || "")
-      .filter(Boolean);
-    if (paths.length) ingestPaths(paths);
+    ingestFiles(files);
   };
 
   const imageIdsEqual = (a: ImageRefAbs[], b: ImageRefAbs[]) => {
@@ -313,9 +346,9 @@ function MessageRow({ m, onPreviewImage }: MessageRowProps) {
 
           {!editing && inputs.length > 0 && (
             <div className="attached">
-              {inputs.map((img) => (
+              {inputs.map((img, i) => (
                 <img
-                  key={img.id}
+                  key={`in:${img.id}:${i}`}
                   src={srcOf(img.thumb_abs_path || img.abs_path)}
                   title={img.rel_path}
                   onClick={() => onPreviewImage(img)}
@@ -330,6 +363,7 @@ function MessageRow({ m, onPreviewImage }: MessageRowProps) {
           {editing && (
             <div
               className={`bubble-edit ${editDragOver ? "drag-over" : ""}`}
+              data-local-file-dropzone="true"
               onDragEnter={onEditDragEnter}
               onDragOver={onEditDragOver}
               onDragLeave={onEditDragLeave}
@@ -337,8 +371,12 @@ function MessageRow({ m, onPreviewImage }: MessageRowProps) {
             >
               {(draftImages.length > 0 || picking) && (
                 <div className="bubble-edit-images">
-                  {draftImages.map((img) => (
-                    <div className="bubble-edit-image" key={img.id} title={img.rel_path}>
+                  {draftImages.map((img, i) => (
+                    <div
+                      className="bubble-edit-image"
+                      key={`draft:${img.id}:${i}`}
+                      title={img.rel_path}
+                    >
                       <img
                         src={srcOf(img.thumb_abs_path || img.abs_path)}
                         alt=""
@@ -407,8 +445,12 @@ function MessageRow({ m, onPreviewImage }: MessageRowProps) {
 
           {!editing && outputs.length > 0 && (
             <div className="outputs">
-              {outputs.map((img) => (
-                <div className="plate" key={img.id} onClick={() => onPreviewImage(img)}>
+              {outputs.map((img, i) => (
+                <div
+                  className="plate"
+                  key={`out:${img.id}:${i}`}
+                  onClick={() => onPreviewImage(img)}
+                >
                   <img src={srcOf(img.abs_path)} alt="generated" />
                 </div>
               ))}
@@ -420,7 +462,7 @@ function MessageRow({ m, onPreviewImage }: MessageRowProps) {
           <div className="msg-action-bar">
             {outputs.map((img, i) => (
               <PlateActions
-                key={img.id}
+                key={`plate:${img.id}:${i}`}
                 img={img}
                 onPreview={() => onPreviewImage(img)}
                 showDivider={outputs.length > 1 && i < outputs.length - 1}

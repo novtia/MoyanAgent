@@ -274,6 +274,7 @@ fn requested_modalities(model: &str) -> Value {
 fn is_image_only_model(model: &str) -> bool {
     let m = model.trim().to_ascii_lowercase();
     m.starts_with("black-forest-labs/")
+        || m.starts_with("bytedance-seed/")
         || m.starts_with("sourceful/")
         || m.starts_with("recraft/")
 }

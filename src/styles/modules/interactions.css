@@ -16,7 +16,8 @@
 .settings-nav-item,
 .settings-segment-btn,
 .settings-preset-item,
-.settings-icon-btn {
+.settings-icon-btn,
+.settings-toggle {
   transform: translateY(0) scale(1);
   transform-origin: center;
   transition-property: background, color, border-color, box-shadow, transform;
@@ -42,6 +43,10 @@
 .settings-preset-item:active:not(:disabled),
 .settings-icon-btn:active:not(:disabled) {
   transform: translateY(0.5px) scale(0.94);
+  transition-duration: 0.06s;
+}
+.settings-toggle:active:not(:disabled) {
+  transform: translateY(0.5px) scale(0.96);
   transition-duration: 0.06s;
 }
 

@@ -206,6 +206,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     <div className="composer-dock">
       <div
         className={`composer-card ${dragOver ? "drag-over" : ""}`}
+        data-local-file-dropzone="true"
         onDragEnter={onDragEnter}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}

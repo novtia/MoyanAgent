@@ -15,7 +15,6 @@
 }
 .dropzone.active {
   opacity: 1;
-  pointer-events: all;
 }
 .dropzone-inner {
   width: 100%;

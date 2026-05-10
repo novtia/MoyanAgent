@@ -13,19 +13,39 @@ export function Dropzone() {
       if (!e.dataTransfer) return false;
       return Array.from(e.dataTransfer.types || []).includes("Files");
     };
+    const isLocalFileDropzone = (e: DragEvent) =>
+      e.composedPath().some(
+        (target) =>
+          target instanceof HTMLElement &&
+          target.dataset.localFileDropzone === "true",
+      );
     const onEnter = (e: DragEvent) => {
       if (!hasFiles(e)) return;
+      if (isLocalFileDropzone(e)) {
+        depth = 0;
+        setActive(false);
+        return;
+      }
       e.preventDefault();
       depth++;
       setActive(true);
     };
     const onOver = (e: DragEvent) => {
       if (!hasFiles(e)) return;
+      if (isLocalFileDropzone(e)) {
+        depth = 0;
+        setActive(false);
+        return;
+      }
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     };
     const onLeave = (e: DragEvent) => {
       if (!hasFiles(e)) return;
+      if (isLocalFileDropzone(e)) {
+        setActive(false);
+        return;
+      }
       depth--;
       if (depth <= 0) {
         depth = 0;
@@ -34,6 +54,11 @@ export function Dropzone() {
     };
     const onDrop = (e: DragEvent) => {
       if (!hasFiles(e)) return;
+      if (isLocalFileDropzone(e)) {
+        depth = 0;
+        setActive(false);
+        return;
+      }
       e.preventDefault();
       depth = 0;
       setActive(false);
