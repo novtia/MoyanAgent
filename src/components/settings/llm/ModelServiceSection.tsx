@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "../../../store/settings";
 import type { ModelProvider, ModelServiceModel } from "../../../types";
@@ -7,30 +7,120 @@ import { NUMERIC_FIELDS } from "./modelParams";
 import { NumericParamField } from "./NumericParamField";
 import {
   CAPABILITY_OPTIONS,
+  DEFAULT_PROVIDER_SDK,
   EMPTY_MODEL_PARAMS,
+  PROVIDER_SDK_OPTIONS,
+  type ProviderSdkConfig,
+  type ProviderValidationErrors,
+  getProviderSdkConfig,
   groupFromModelId,
+  isKnownProviderSdk,
   makeModel,
   makeProvider,
+  normalizeProviderSdk,
   normalizeProviders,
-  shortModelName,
+  providerAvatar,
+  providerSdkLabel,
   shortProviderMark,
+  shortModelName,
+  validateProviderConfig,
 } from "./modelServices";
 
-type ProviderDraft = Pick<ModelProvider, "name" | "endpoint" | "api_key">;
+type ProviderDraft = Pick<ModelProvider, "name" | "endpoint" | "api_key"> & {
+  sdk: string;
+  avatar: string;
+};
+
+const EMPTY_PROVIDER_DRAFT: ProviderDraft = {
+  name: "",
+  sdk: DEFAULT_PROVIDER_SDK,
+  avatar: "",
+  endpoint: "",
+  api_key: "",
+};
+
+function ProviderAvatarDisplay({
+  name,
+  avatar,
+  className = "model-provider-avatar",
+}: {
+  name: string;
+  avatar?: string;
+  className?: string;
+}) {
+  const src = providerAvatar({ name, avatar });
+  return (
+    <span className={`${className}${src ? " has-image" : ""}`}>
+      {src ? <img src={src} alt="" /> : shortProviderMark(name)}
+    </span>
+  );
+}
+
+function readAvatarFile(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    if (!file.type.startsWith("image/")) {
+      reject(new Error("请选择图片文件。"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(new Error("头像图片读取失败。"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function ProviderAvatarPicker({
+  name,
+  avatar,
+  onChange,
+}: {
+  name: string;
+  avatar: string;
+  onChange: (avatar: string) => void;
+}) {
+  const hasAvatar = !!providerAvatar({ name, avatar });
+  const pickAvatar = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    try {
+      onChange(await readAvatarFile(file));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "头像图片读取失败。");
+    }
+  };
+
+  return (
+    <div className="provider-avatar-control">
+      <ProviderAvatarDisplay
+        name={name}
+        avatar={avatar}
+        className="provider-avatar-preview-image"
+      />
+      <label className="btn provider-avatar-upload">
+        上传图片
+        <input type="file" accept="image/*" onChange={pickAvatar} />
+      </label>
+      {hasAvatar && (
+        <button type="button" className="btn" onClick={() => onChange("")}>
+          移除
+        </button>
+      )}
+    </div>
+  );
+}
 
 export function ModelServiceSection() {
   const settings = useSettings((s) => s.settings);
   const update = useSettings((s) => s.update);
   const [selectedProviderId, setSelectedProviderId] = useState("");
   const [providerSearch, setProviderSearch] = useState("");
-  const [providerDraft, setProviderDraft] = useState<ProviderDraft>({
-    name: "",
-    endpoint: "",
-    api_key: "",
-  });
+  const [providerDraft, setProviderDraft] =
+    useState<ProviderDraft>(EMPTY_PROVIDER_DRAFT);
   const [showKey, setShowKey] = useState(false);
   const [manageMode, setManageMode] = useState(false);
   const [editingModel, setEditingModel] = useState<ModelServiceModel | null>(null);
+  const [addProviderOpen, setAddProviderOpen] = useState(false);
   const [addModelOpen, setAddModelOpen] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
 
@@ -45,6 +135,15 @@ export function ModelServiceSection() {
     providers.find((p) => p.id === activeProviderId) ??
     providers[0] ??
     null;
+  const selectedSdkConfig = getProviderSdkConfig(
+    providerDraft.sdk || selectedProvider?.sdk,
+  );
+  const selectedProviderValidation: ProviderValidationErrors = selectedProvider
+    ? validateProviderConfig(
+        providerDraft,
+        selectedProvider.enabled !== false,
+      )
+    : {};
 
   useEffect(() => {
     if (!providers.length) {
@@ -59,23 +158,28 @@ export function ModelServiceSection() {
 
   useEffect(() => {
     if (!selectedProvider) {
-      setProviderDraft({ name: "", endpoint: "", api_key: "" });
+      setProviderDraft(EMPTY_PROVIDER_DRAFT);
       return;
     }
     setProviderDraft({
       name: selectedProvider.name,
+      sdk: normalizeProviderSdk(selectedProvider.sdk),
+      avatar: selectedProvider.avatar ?? "",
       endpoint: selectedProvider.endpoint,
       api_key: selectedProvider.api_key,
     });
   }, [
     selectedProvider?.id,
     selectedProvider?.name,
+    selectedProvider?.sdk,
+    selectedProvider?.avatar,
     selectedProvider?.endpoint,
     selectedProvider?.api_key,
   ]);
 
   useEffect(() => {
     setAddModelOpen(false);
+    setAddProviderOpen(false);
     setCollapsedGroups(new Set());
   }, [selectedProvider?.id]);
 
@@ -94,8 +198,11 @@ export function ModelServiceSection() {
 
   useEffect(() => {
     if (!selectedProvider) return;
+    const draftSdk = normalizeProviderSdk(providerDraft.sdk);
     const dirty =
       providerDraft.name !== selectedProvider.name ||
+      draftSdk !== normalizeProviderSdk(selectedProvider.sdk) ||
+      providerDraft.avatar !== (selectedProvider.avatar ?? "") ||
       providerDraft.endpoint !== selectedProvider.endpoint ||
       providerDraft.api_key !== selectedProvider.api_key;
     if (!dirty) return;
@@ -103,6 +210,8 @@ export function ModelServiceSection() {
     const id = selectedProvider.id;
     const draftSnap = {
       name: providerDraft.name,
+      sdk: draftSdk,
+      avatar: providerDraft.avatar,
       endpoint: providerDraft.endpoint,
       api_key: providerDraft.api_key,
     };
@@ -116,6 +225,8 @@ export function ModelServiceSection() {
         if (!prov) return;
         if (
           draftSnap.name === prov.name &&
+          draftSnap.sdk === normalizeProviderSdk(prov.sdk) &&
+          draftSnap.avatar === (prov.avatar ?? "") &&
           draftSnap.endpoint === prov.endpoint &&
           draftSnap.api_key === prov.api_key
         ) {
@@ -126,6 +237,11 @@ export function ModelServiceSection() {
             ? {
                 ...provider,
                 name: draftSnap.name.trim() || provider.name,
+                sdk: draftSnap.sdk,
+                avatar: providerAvatar({
+                  name: draftSnap.name.trim() || provider.name,
+                  avatar: draftSnap.avatar,
+                }),
                 endpoint: draftSnap.endpoint.trim(),
                 api_key: draftSnap.api_key,
               }
@@ -138,7 +254,30 @@ export function ModelServiceSection() {
       })();
     }, 480);
     return () => window.clearTimeout(t);
-  }, [providerDraft.name, providerDraft.endpoint, providerDraft.api_key, selectedProvider]);
+  }, [
+    providerDraft.name,
+    providerDraft.sdk,
+    providerDraft.avatar,
+    providerDraft.endpoint,
+    providerDraft.api_key,
+    selectedProvider,
+  ]);
+
+  const changeProviderSdk = (sdk: string) => {
+    setProviderDraft((draft) => {
+      const currentSdkConfig = getProviderSdkConfig(draft.sdk);
+      const nextSdkConfig = getProviderSdkConfig(sdk);
+      const endpoint = draft.endpoint.trim();
+      return {
+        ...draft,
+        sdk: normalizeProviderSdk(sdk),
+        endpoint:
+          !endpoint || endpoint === currentSdkConfig.defaultEndpoint
+            ? nextSdkConfig.defaultEndpoint
+            : draft.endpoint,
+      };
+    });
+  };
 
   const persistProviders = async (
     nextProviders: ModelProvider[],
@@ -199,12 +338,25 @@ export function ModelServiceSection() {
   };
 
   const addProvider = async () => {
-    const provider = makeProvider({ name: `供应商 ${providers.length + 1}` });
+    setAddProviderOpen(true);
+  };
+
+  const submitNewProvider = async (draft: {
+    name: string;
+    sdk: string;
+    avatar: string;
+  }) => {
+    const provider = makeProvider({
+      name: draft.name,
+      sdk: draft.sdk,
+      avatar: draft.avatar,
+    });
     await persistProviders([...providers, provider], {
       active_provider_id: provider.id,
-      model: "",
+      model: provider.models[0]?.id ?? "",
     });
     setSelectedProviderId(provider.id);
+    setAddProviderOpen(false);
   };
 
   const patchProvider = async (
@@ -303,11 +455,15 @@ export function ModelServiceSection() {
                     className="model-provider-item-body"
                     onClick={() => selectProvider(provider)}
                   >
-                    <span className="model-provider-avatar">
-                      {shortProviderMark(provider.name)}
-                    </span>
+                    <ProviderAvatarDisplay
+                      name={provider.name}
+                      avatar={provider.avatar}
+                    />
                     <span className="model-provider-name">
                       <span className="model-provider-name-text">{provider.name}</span>
+                      <span className="model-provider-sdk">
+                        {providerSdkLabel(provider.sdk)}
+                      </span>
                     </span>
                   </button>
                   <ProviderEnableSwitch
@@ -334,6 +490,13 @@ export function ModelServiceSection() {
               <div className="model-provider-title-row">
                 <div className="model-provider-heading">
                   <span>{providerDraft.name || selectedProvider.name}</span>
+                  <span
+                    className={`model-provider-sdk-badge ${
+                      selectedProviderValidation.sdk ? "is-error" : ""
+                    }`}
+                  >
+                    {providerSdkLabel(providerDraft.sdk)}
+                  </span>
                   {selectedProvider.id === activeProviderId &&
                     selectedProvider.enabled !== false && (
                       <span className="model-provider-active-badge">当前供应商</span>
@@ -362,6 +525,44 @@ export function ModelServiceSection() {
 
               <div className="model-provider-fields">
                 <div className="row">
+                  <label className="field-label">Provider SDK</label>
+                  <select
+                    value={normalizeProviderSdk(providerDraft.sdk)}
+                    onChange={(e) => changeProviderSdk(e.target.value)}
+                  >
+                    {!isKnownProviderSdk(providerDraft.sdk) && (
+                      <option value={normalizeProviderSdk(providerDraft.sdk)}>
+                        {normalizeProviderSdk(providerDraft.sdk)}（未注册）
+                      </option>
+                    )}
+                    {PROVIDER_SDK_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <div
+                    className={`hint ${
+                      selectedProviderValidation.sdk ? "is-error" : ""
+                    }`}
+                  >
+                    {selectedProviderValidation.sdk ?? selectedSdkConfig.description}
+                  </div>
+                </div>
+                <div className="row">
+                  <label className="field-label">供应商头像</label>
+                  <ProviderAvatarPicker
+                    name={providerDraft.name || selectedProvider.name}
+                    avatar={providerDraft.avatar}
+                    onChange={(avatar) =>
+                      setProviderDraft((draft) => ({
+                        ...draft,
+                        avatar,
+                      }))
+                    }
+                  />
+                </div>
+                <div className="row">
                   <label className="field-label">供应商名称</label>
                   <input
                     type="text"
@@ -382,7 +583,7 @@ export function ModelServiceSection() {
                       value={providerDraft.api_key}
                       autoComplete="off"
                       spellCheck={false}
-                      placeholder="sk-..."
+                      placeholder={selectedSdkConfig.apiKeyPlaceholder}
                       onChange={(e) =>
                         setProviderDraft((draft) => ({
                           ...draft,
@@ -398,6 +599,13 @@ export function ModelServiceSection() {
                       {showKey ? "隐藏" : "显示"}
                     </button>
                   </div>
+                  <div
+                    className={`hint ${
+                      selectedProviderValidation.api_key ? "is-error" : ""
+                    }`}
+                  >
+                    {selectedProviderValidation.api_key ?? selectedSdkConfig.apiKeyHint}
+                  </div>
                 </div>
                 <div className="row">
                   <label className="field-label">API 地址</label>
@@ -405,7 +613,7 @@ export function ModelServiceSection() {
                     type="url"
                     value={providerDraft.endpoint}
                     spellCheck={false}
-                    placeholder="https://.../chat/completions"
+                    placeholder={selectedSdkConfig.endpointPlaceholder}
                     onChange={(e) =>
                       setProviderDraft((draft) => ({
                         ...draft,
@@ -413,6 +621,14 @@ export function ModelServiceSection() {
                       }))
                     }
                   />
+                  <div
+                    className={`hint ${
+                      selectedProviderValidation.endpoint ? "is-error" : ""
+                    }`}
+                  >
+                    {selectedProviderValidation.endpoint ??
+                      selectedSdkConfig.endpointHint}
+                  </div>
                 </div>
               </div>
 
@@ -422,7 +638,7 @@ export function ModelServiceSection() {
                     模型 <span>{selectedProvider.models.length}</span>
                   </div>
                   <div className="model-list-desc">
-                    点击模型设为当前使用，设置按钮打开该模型的独立参数。
+                    {selectedSdkConfig.modelIdHint}
                   </div>
                 </div>
                 <div className="model-list-actions">
@@ -539,8 +755,16 @@ export function ModelServiceSection() {
         </section>
       </div>
 
+      {addProviderOpen && (
+        <AddProviderModal
+          onClose={() => setAddProviderOpen(false)}
+          onAdd={submitNewProvider}
+        />
+      )}
+
       {addModelOpen && selectedProvider && (
         <AddModelModal
+          sdkConfig={getProviderSdkConfig(selectedProvider.sdk)}
           existingIds={selectedProvider.models.map((m) => m.id)}
           onClose={() => setAddModelOpen(false)}
           onAdd={submitNewModel}
@@ -549,6 +773,7 @@ export function ModelServiceSection() {
 
       {editingModel && selectedProvider && (
         <ModelSettingsModal
+          sdkConfig={getProviderSdkConfig(selectedProvider.sdk)}
           model={editingModel}
           existingIds={selectedProvider.models
             .filter((model) => model.id !== editingModel.id)
@@ -562,13 +787,129 @@ export function ModelServiceSection() {
   );
 }
 
+interface AddProviderModalProps {
+  onClose: () => void;
+  onAdd: (provider: { name: string; sdk: string; avatar: string }) => void | Promise<void>;
+}
+
+function AddProviderModal({ onClose, onAdd }: AddProviderModalProps) {
+  const initialConfig = getProviderSdkConfig(DEFAULT_PROVIDER_SDK);
+  const [sdk, setSdk] = useState(initialConfig.id);
+  const [name, setName] = useState(initialConfig.defaultName);
+  const [avatar, setAvatar] = useState("");
+  const [nameTouched, setNameTouched] = useState(false);
+
+  const sdkConfig = getProviderSdkConfig(sdk);
+  const canSubmit = !!name.trim() && isKnownProviderSdk(sdk);
+
+  const changeSdk = (nextSdk: string) => {
+    const nextConfig = getProviderSdkConfig(nextSdk);
+    setSdk(nextConfig.id);
+    if (!nameTouched) setName(nextConfig.defaultName);
+  };
+
+  const submit = () => {
+    if (!canSubmit) return;
+    void onAdd({
+      name: name.trim(),
+      sdk,
+      avatar: avatar.trim(),
+    });
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <div
+        className="modal model-settings-modal add-provider-modal"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="modal-head">
+          <h3>添加供应商</h3>
+          <button type="button" className="close" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+        <div className="modal-body">
+          <div className="model-settings-form">
+            <div className="provider-avatar-preview">
+              <ProviderAvatarDisplay
+                name={name.trim() || sdkConfig.defaultName}
+                avatar={avatar}
+                className="provider-avatar-preview-image"
+              />
+              <div>
+                <strong>{name.trim() || sdkConfig.defaultName}</strong>
+                <em>{sdkConfig.label}</em>
+              </div>
+            </div>
+            <div className="row">
+              <label className="field-label">
+                <span className="required-star">*</span> 供应商名称
+              </label>
+              <input
+                type="text"
+                value={name}
+                autoFocus
+                onChange={(e) => {
+                  setNameTouched(true);
+                  setName(e.target.value);
+                }}
+              />
+            </div>
+            <div className="row">
+              <label className="field-label">
+                <span className="required-star">*</span> 类型（SDK）
+              </label>
+              <select value={sdk} onChange={(e) => changeSdk(e.target.value)}>
+                {PROVIDER_SDK_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <div className="hint">{sdkConfig.description}</div>
+            </div>
+            <div className="row">
+              <label className="field-label">供应商头像</label>
+              <ProviderAvatarPicker
+                name={name.trim() || sdkConfig.defaultName}
+                avatar={avatar}
+                onChange={setAvatar}
+              />
+            </div>
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button type="button" className="btn" onClick={onClose}>
+            取消
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={!canSubmit}
+            onClick={submit}
+          >
+            添加
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface AddModelModalProps {
+  sdkConfig: ProviderSdkConfig;
   existingIds: string[];
   onClose: () => void;
   onAdd: (model: ModelServiceModel) => void | Promise<void>;
 }
 
-function AddModelModal({ existingIds, onClose, onAdd }: AddModelModalProps) {
+function AddModelModal({
+  sdkConfig,
+  existingIds,
+  onClose,
+  onAdd,
+}: AddModelModalProps) {
   const [draftId, setDraftId] = useState("");
   const [draftName, setDraftName] = useState("");
   const [draftGroup, setDraftGroup] = useState("");
@@ -628,11 +969,12 @@ function AddModelModal({ existingIds, onClose, onAdd }: AddModelModalProps) {
                 type="text"
                 value={draftId}
                 spellCheck={false}
-                placeholder="provider/model-name"
+                placeholder={sdkConfig.modelIdPlaceholder}
                 autoFocus
                 onChange={(e) => onIdChange(e.target.value)}
               />
               {duplicate && <div className="hint is-error">该模型 ID 已存在。</div>}
+              {!duplicate && <div className="hint">{sdkConfig.modelIdHint}</div>}
             </div>
             <div className="row">
               <label className="field-label">模型名称</label>
@@ -673,6 +1015,7 @@ function AddModelModal({ existingIds, onClose, onAdd }: AddModelModalProps) {
 }
 
 interface ModelSettingsModalProps {
+  sdkConfig: ProviderSdkConfig;
   model: ModelServiceModel;
   existingIds: string[];
   onClose: () => void;
@@ -681,6 +1024,7 @@ interface ModelSettingsModalProps {
 }
 
 function ModelSettingsModal({
+  sdkConfig,
   model,
   existingIds,
   onClose,
@@ -739,7 +1083,7 @@ function ModelSettingsModal({
                 type="text"
                 value={draft.id}
                 spellCheck={false}
-                placeholder="provider/model-name"
+                placeholder={sdkConfig.modelIdPlaceholder}
                 onChange={(e) =>
                   patchDraft({
                     id: e.target.value,
@@ -751,6 +1095,7 @@ function ModelSettingsModal({
                 }
               />
               {duplicate && <div className="hint is-error">该模型 ID 已存在。</div>}
+              {!duplicate && <div className="hint">{sdkConfig.modelIdHint}</div>}
             </div>
             <div className="row">
               <label className="field-label">模型名称</label>

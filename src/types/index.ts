@@ -15,11 +15,18 @@ export interface ModelServiceModel {
   params: ModelParamSettings;
 }
 
+export type ModelProviderSdk =
+  | "openai"
+  | "openai-responses"
+  | "gemini"
+  | "claude";
+
 export interface ModelProvider {
   id: string;
   name: string;
-  /** Backend SDK adapter. Defaults to OpenRouter when omitted. */
-  sdk?: "openrouter" | string;
+  /** Backend SDK adapter. Defaults to OpenAI chat completions when omitted. */
+  sdk?: ModelProviderSdk | (string & {});
+  avatar?: string;
   endpoint: string;
   api_key: string;
   /** When false, hidden from chat model picker and not used for requests. Default true. */

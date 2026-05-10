@@ -3,12 +3,23 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-mod openrouter;
+mod claude;
+mod gemini;
+mod openai;
 
 use crate::ai::chat::{ChatRequest, GenerateResponse};
 use crate::error::{AppError, AppResult};
 
-pub const OPENROUTER_SDK: &str = "openrouter";
+pub const OPENAI_SDK: &str = "openai";
+pub const OPENAI_RESPONSES_SDK: &str = "openai-responses";
+pub const GEMINI_SDK: &str = "gemini";
+pub const CLAUDE_SDK: &str = "claude";
+pub const SUPPORTED_SDKS: &[&str] = &[
+    OPENAI_SDK,
+    OPENAI_RESPONSES_SDK,
+    GEMINI_SDK,
+    CLAUDE_SDK,
+];
 
 pub type ProviderFuture<'a> =
     Pin<Box<dyn Future<Output = AppResult<GenerateResponse>> + Send + 'a>>;
@@ -52,15 +63,26 @@ impl ProviderFactory {
 
 impl Default for ProviderFactory {
     fn default() -> Self {
-        Self::new().register(openrouter::OpenRouterProvider::new())
+        Self::new()
+            .register(openai::OpenAiProvider::new())
+            .register(openai::OpenAiResponsesProvider::new())
+            .register(gemini::GeminiProvider::new())
+            .register(claude::ClaudeProvider::new())
     }
 }
 
 pub fn normalize_sdk(sdk: &str) -> String {
-    let sdk = sdk.trim();
+    let sdk = sdk.trim().to_ascii_lowercase();
     if sdk.is_empty() {
-        OPENROUTER_SDK.to_string()
+        OPENAI_SDK.to_string()
+    } else if sdk == "openrouter" || sdk == "deepseek" {
+        OPENAI_SDK.to_string()
     } else {
-        sdk.to_ascii_lowercase()
+        sdk
     }
+}
+
+pub fn is_supported_sdk(sdk: &str) -> bool {
+    let sdk = normalize_sdk(sdk);
+    SUPPORTED_SDKS.contains(&sdk.as_str())
 }

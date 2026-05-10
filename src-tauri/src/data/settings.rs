@@ -57,7 +57,7 @@ fn default_enabled() -> bool {
 }
 
 fn default_provider_sdk() -> String {
-    crate::ai::providers::OPENROUTER_SDK.into()
+    crate::ai::providers::OPENAI_SDK.into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +66,8 @@ pub struct ModelProvider {
     pub name: String,
     #[serde(default = "default_provider_sdk")]
     pub sdk: String,
+    #[serde(default)]
+    pub avatar: String,
     pub endpoint: String,
     pub api_key: String,
     #[serde(default = "default_enabled")]
@@ -200,7 +202,8 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             _ => {}
         }
     }
-    s.model_services = normalize_services(parsed_services.unwrap_or_default());
+    s.model_services =
+        normalize_services(merge_builtin_services(parsed_services.unwrap_or_default()));
     if s.active_provider_id.trim().is_empty()
         || !s
             .model_services
@@ -281,6 +284,171 @@ pub fn active_model_params(s: &Settings) -> ModelParamSettings {
         .unwrap_or_default()
 }
 
+fn merge_builtin_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {
+    for builtin in builtin_services() {
+        if let Some(existing) = services
+            .iter_mut()
+            .find(|provider| provider.id == builtin.id)
+        {
+            if existing.name.trim().is_empty() {
+                existing.name = builtin.name.clone();
+            }
+            if existing.sdk.trim().is_empty()
+                || existing.sdk.trim().eq_ignore_ascii_case("openrouter")
+                || existing.sdk.trim().eq_ignore_ascii_case("deepseek")
+            {
+                existing.sdk = builtin.sdk.clone();
+            }
+            if !builtin.avatar.trim().is_empty()
+                && (existing.avatar.trim().is_empty() || !avatar_is_image(&existing.avatar))
+            {
+                existing.avatar = builtin.avatar.clone();
+            }
+            if existing.endpoint.trim().is_empty() {
+                existing.endpoint = builtin.endpoint.clone();
+            }
+            for model in builtin.models {
+                if !existing.models.iter().any(|item| item.id == model.id) {
+                    existing.models.push(model);
+                }
+            }
+        } else {
+            services.push(builtin);
+        }
+    }
+    services
+}
+
+fn builtin_services() -> Vec<ModelProvider> {
+    vec![
+        ModelProvider {
+            id: "openrouter".into(),
+            name: "OpenRouter".into(),
+            sdk: crate::ai::providers::OPENAI_SDK.into(),
+            avatar: String::new(),
+            endpoint: "https://openrouter.ai/api/v1/chat/completions".into(),
+            api_key: String::new(),
+            enabled: true,
+            models: vec![
+                builtin_model(
+                    "openai/gpt-5.4-image-2",
+                    "GPT Image 2",
+                    "openai",
+                    &["vision", "text"],
+                ),
+                builtin_model(
+                    "google/gemini-2.5-flash-image",
+                    "Gemini 2.5 Flash Image",
+                    "google",
+                    &["vision", "text"],
+                ),
+            ],
+        },
+        ModelProvider {
+            id: "openai".into(),
+            name: "OpenAI".into(),
+            sdk: crate::ai::providers::OPENAI_RESPONSES_SDK.into(),
+            avatar: "/provider-icons/openai.svg".into(),
+            endpoint: "https://api.openai.com/v1/responses".into(),
+            api_key: String::new(),
+            enabled: false,
+            models: vec![
+                builtin_model("gpt-image-1.5", "GPT Image 1.5", "openai", &["vision"]),
+                builtin_model("gpt-4.1", "GPT 4.1", "openai", &["vision", "text"]),
+                builtin_model("gpt-4o", "GPT 4o", "openai", &["vision", "text"]),
+            ],
+        },
+        ModelProvider {
+            id: "gemini".into(),
+            name: "Gemini".into(),
+            sdk: crate::ai::providers::GEMINI_SDK.into(),
+            avatar: "/provider-icons/gemini.svg".into(),
+            endpoint:
+                "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+                    .into(),
+            api_key: String::new(),
+            enabled: false,
+            models: vec![
+                builtin_model(
+                    "gemini-2.5-flash-image",
+                    "Gemini 2.5 Flash Image",
+                    "gemini",
+                    &["vision", "text"],
+                ),
+                builtin_model(
+                    "gemini-2.5-flash",
+                    "Gemini 2.5 Flash",
+                    "gemini",
+                    &["vision", "text"],
+                ),
+                builtin_model(
+                    "gemini-3-flash-preview",
+                    "Gemini 3 Flash Preview",
+                    "gemini",
+                    &["vision", "text", "reasoning"],
+                ),
+            ],
+        },
+        ModelProvider {
+            id: "claude".into(),
+            name: "Claude".into(),
+            sdk: crate::ai::providers::CLAUDE_SDK.into(),
+            avatar: "/provider-icons/claude.svg".into(),
+            endpoint: "https://api.anthropic.com/v1/messages".into(),
+            api_key: String::new(),
+            enabled: false,
+            models: vec![
+                builtin_model(
+                    "claude-sonnet-4-20250514",
+                    "Claude Sonnet 4",
+                    "claude",
+                    &["vision", "text", "reasoning"],
+                ),
+                builtin_model(
+                    "claude-opus-4-1-20250805",
+                    "Claude Opus 4.1",
+                    "claude",
+                    &["vision", "text", "reasoning"],
+                ),
+            ],
+        },
+        ModelProvider {
+            id: "deepseek".into(),
+            name: "DeepSeek".into(),
+            sdk: crate::ai::providers::OPENAI_SDK.into(),
+            avatar: "/provider-icons/deepseek.svg".into(),
+            endpoint: "https://api.deepseek.com/chat/completions".into(),
+            api_key: String::new(),
+            enabled: false,
+            models: vec![
+                builtin_model(
+                    "deepseek-v4-flash",
+                    "DeepSeek V4 Flash",
+                    "deepseek",
+                    &["text", "reasoning"],
+                ),
+                builtin_model(
+                    "deepseek-v4-pro",
+                    "DeepSeek V4 Pro",
+                    "deepseek",
+                    &["text", "reasoning"],
+                ),
+            ],
+        },
+    ]
+}
+
+fn builtin_model(id: &str, name: &str, group: &str, capabilities: &[&str]) -> ModelServiceModel {
+    ModelServiceModel {
+        id: id.into(),
+        name: name.into(),
+        group: group.into(),
+        capabilities: capabilities.iter().map(|cap| (*cap).into()).collect(),
+        streaming: true,
+        params: ModelParamSettings::default(),
+    }
+}
+
 fn normalize_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {
     for (provider_index, provider) in services.iter_mut().enumerate() {
         if provider.id.trim().is_empty() {
@@ -289,8 +457,10 @@ fn normalize_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {
         if provider.name.trim().is_empty() {
             provider.name = provider.id.clone();
         }
-        if provider.sdk.trim().is_empty() {
-            provider.sdk = default_provider_sdk();
+        provider.sdk = crate::ai::providers::normalize_sdk(&provider.sdk);
+        provider.avatar = provider.avatar.trim().to_string();
+        if !provider.avatar.is_empty() && !avatar_is_image(&provider.avatar) {
+            provider.avatar.clear();
         }
         for model in &mut provider.models {
             if model.name.trim().is_empty() {
@@ -307,8 +477,31 @@ fn normalize_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {
     services
 }
 
+fn avatar_is_image(avatar: &str) -> bool {
+    let avatar = avatar.trim().to_ascii_lowercase();
+    avatar.starts_with('/')
+        || avatar.starts_with("data:image/")
+        || avatar.starts_with("http://")
+        || avatar.starts_with("https://")
+        || avatar.ends_with(".apng")
+        || avatar.ends_with(".avif")
+        || avatar.ends_with(".gif")
+        || avatar.ends_with(".jpg")
+        || avatar.ends_with(".jpeg")
+        || avatar.ends_with(".png")
+        || avatar.ends_with(".svg")
+        || avatar.ends_with(".webp")
+}
+
 fn validate_services(services: &[ModelProvider]) -> AppResult<()> {
     for provider in services {
+        let sdk = crate::ai::providers::normalize_sdk(&provider.sdk);
+        if !crate::ai::providers::is_supported_sdk(&sdk) {
+            return Err(AppError::Invalid(format!(
+                "unsupported provider sdk: {}",
+                provider.sdk
+            )));
+        }
         for model in &provider.models {
             if model.id.trim().is_empty() {
                 return Err(AppError::Invalid("model id cannot be empty".into()));
