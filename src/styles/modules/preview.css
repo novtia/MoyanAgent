@@ -138,6 +138,61 @@
 .preview-info-dim {
   color: rgba(255, 255, 255, 0.55);
 }
+.preview-info-count {
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* ───── gallery prev / next ───── */
+.preview-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  background: rgba(20, 24, 32, 0.55);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: rgba(255, 255, 255, 0.88);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.14s var(--ease-out), border-color 0.14s var(--ease-out),
+    color 0.14s var(--ease-out), opacity 0.14s var(--ease-out), transform 0.12s var(--ease-out);
+}
+.preview-nav:hover:not(:disabled) {
+  background: rgba(40, 46, 58, 0.82);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+.preview-nav:active:not(:disabled) {
+  transform: translateY(-50%) scale(0.94);
+}
+.preview-nav:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+}
+.preview-nav:focus-visible {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.4);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12);
+}
+.preview-nav svg {
+  width: 18px;
+  height: 18px;
+}
+.preview-nav--prev {
+  left: max(16px, env(safe-area-inset-left, 0px));
+}
+.preview-nav--next {
+  right: max(16px, env(safe-area-inset-right, 0px));
+}
 
 /* ───── floating bottom toolbar ───── */
 .preview-toolbar {
@@ -368,6 +423,16 @@
 
 /* small viewports — tighten the chrome */
 @media (max-width: 600px) {
+  .preview-nav {
+    width: 40px;
+    height: 40px;
+  }
+  .preview-nav--prev {
+    left: 8px;
+  }
+  .preview-nav--next {
+    right: 8px;
+  }
   .preview-topbar {
     top: 8px;
     left: 8px;

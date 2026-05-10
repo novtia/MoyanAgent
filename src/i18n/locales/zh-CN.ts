@@ -115,6 +115,8 @@ const zhCN = {
   preview: {
     title: "预览",
     close: "关闭",
+    prevImage: "上一张",
+    nextImage: "下一张",
     zoomIn: "放大",
     zoomOut: "缩小",
     fit: "适合屏幕",

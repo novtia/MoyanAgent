@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../store/session";
 import { srcOf } from "../api/tauri";
+import { collectSessionGalleryImages } from "../sessionGallery";
 import type { ImageRefAbs } from "../types";
 
 export const ATELIER_DRAG_TYPE = "application/x-atelier-image";
@@ -40,36 +41,7 @@ export function SessionGallery({ open, onClose, onPreviewImage }: SessionGallery
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [innerWidth, setInnerWidth] = useState(0);
 
-  const images = useMemo(() => {
-    if (!active) return [] as ImageRefAbs[];
-    const all: ImageRefAbs[] = [];
-    const seenKey = new Set<string>();
-    const seenContent = new Set<string>();
-    const contentKey = (img: ImageRefAbs) => {
-      if (img.bytes && img.width && img.height) {
-        return `${img.bytes}|${img.width}x${img.height}|${img.mime}`;
-      }
-      return null;
-    };
-    const push = (img: ImageRefAbs) => {
-      const idKey = img.abs_path || img.id;
-      if (idKey && seenKey.has(idKey)) return;
-      const ck = contentKey(img);
-      if (ck && seenContent.has(ck)) return;
-      if (idKey) seenKey.add(idKey);
-      if (img.id) seenKey.add(img.id);
-      if (ck) seenContent.add(ck);
-      all.push(img);
-    };
-    for (let i = 0; i < active.messages.length; i++) {
-      const m = active.messages[i];
-      const ins = m.images.filter((x) => x.role === "input");
-      const outs = m.images.filter((x) => x.role === "output" || x.role === "edited");
-      ins.forEach(push);
-      outs.forEach(push);
-    }
-    return all;
-  }, [active]);
+  const images = useMemo(() => collectSessionGalleryImages(active), [active]);
 
   useEffect(() => {
     if (!open) return;

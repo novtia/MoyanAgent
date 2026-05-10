@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { srcOf, api } from "../api/tauri";
 import { save } from "@tauri-apps/plugin-dialog";
+import type { ImageRefAbs } from "../types";
 
 interface ImagePreviewProps {
-  absPath: string;
-  mime?: string;
-  imageId?: string;
+  items: ImageRefAbs[];
+  initialIndex: number;
   onClose: () => void;
 }
 
@@ -17,8 +17,26 @@ const KEY_PAN = 48; // px per arrow key
 
 type Toast = { kind: "info" | "error"; text: string; id: number } | null;
 
-export function ImagePreview({ absPath, mime, imageId, onClose }: ImagePreviewProps) {
+export function ImagePreview({ items, initialIndex, onClose }: ImagePreviewProps) {
   const { t } = useTranslation();
+
+  const [index, setIndex] = useState(() =>
+    items.length ? Math.max(0, Math.min(initialIndex, items.length - 1)) : 0,
+  );
+
+  useEffect(() => {
+    if (items.length === 0) return;
+    setIndex((i) => Math.max(0, Math.min(i, items.length - 1)));
+  }, [items.length]);
+
+  const clampedIndex = items.length ? Math.max(0, Math.min(index, items.length - 1)) : 0;
+  const current = items[clampedIndex];
+  const absPath = current?.abs_path ?? "";
+  const mime = current?.mime;
+  const imageId = current?.id;
+  const galleryCount = items.length;
+  const canGoPrev = galleryCount > 1 && clampedIndex > 0;
+  const canGoNext = galleryCount > 1 && clampedIndex < galleryCount - 1;
 
   const [scale, setScale] = useState(1);
   const [tx, setTx] = useState(0);
@@ -79,6 +97,16 @@ export function ImagePreview({ absPath, mime, imageId, onClose }: ImagePreviewPr
     };
   }, []);
 
+  useEffect(() => {
+    if (!absPath) return;
+    initialFit.current = false;
+    setImageReady(false);
+    setNatural(null);
+    setScale(1);
+    setTx(0);
+    setTy(0);
+  }, [absPath]);
+
   // Snap to fit on first load + each time stage / natural changes before user has interacted
   useEffect(() => {
     if (!natural || !stageSize) return;
@@ -102,6 +130,18 @@ export function ImagePreview({ absPath, mime, imageId, onClose }: ImagePreviewPr
     setTx(0);
     setTy(0);
   }, [flashAnim]);
+
+  const goPrev = useCallback(() => {
+    if (!canGoPrev) return;
+    flashAnim();
+    setIndex((i) => Math.max(0, i - 1));
+  }, [canGoPrev, flashAnim]);
+
+  const goNext = useCallback(() => {
+    if (!canGoNext) return;
+    flashAnim();
+    setIndex((i) => Math.min(items.length - 1, i + 1));
+  }, [canGoNext, flashAnim, items.length]);
 
   const zoomBy = useCallback((factor: number, anchor?: { x: number; y: number }) => {
     setScale((s) => {
@@ -163,6 +203,16 @@ export function ImagePreview({ absPath, mime, imageId, onClose }: ImagePreviewPr
         actualSize();
         return;
       }
+      if (galleryCount > 1 && k === "ArrowLeft" && canGoPrev) {
+        e.preventDefault();
+        goPrev();
+        return;
+      }
+      if (galleryCount > 1 && k === "ArrowRight" && canGoNext) {
+        e.preventDefault();
+        goNext();
+        return;
+      }
       if (k === "ArrowLeft") {
         e.preventDefault();
         flashAnim();
@@ -190,7 +240,19 @@ export function ImagePreview({ absPath, mime, imageId, onClose }: ImagePreviewPr
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, zoomIn, zoomOut, fit, actualSize, flashAnim]);
+  }, [
+    onClose,
+    zoomIn,
+    zoomOut,
+    fit,
+    actualSize,
+    flashAnim,
+    galleryCount,
+    canGoPrev,
+    canGoNext,
+    goPrev,
+    goNext,
+  ]);
 
   // React's onWheel is passive on many roots — preventDefault only works with { passive: false }.
   const onWheelNative = useCallback(
@@ -321,6 +383,10 @@ export function ImagePreview({ absPath, mime, imageId, onClose }: ImagePreviewPr
 
   const dragging = !!drag.current?.moved;
 
+  if (!current || !absPath) {
+    return null;
+  }
+
   return (
     <div className="preview-lightbox" role="dialog" aria-modal="true" aria-label={t("preview.title")}>
       <div
@@ -333,6 +399,7 @@ export function ImagePreview({ absPath, mime, imageId, onClose }: ImagePreviewPr
       >
         {!imageReady && <div className="preview-spinner" aria-hidden="true" />}
         <img
+          key={imageId || absPath}
           src={srcOf(absPath)}
           alt=""
           className={`${imageReady ? "is-ready" : "is-loading"}${animating ? " with-transition" : ""}`}
@@ -343,6 +410,53 @@ export function ImagePreview({ absPath, mime, imageId, onClose }: ImagePreviewPr
           onLoad={onImgLoad}
         />
       </div>
+
+      {galleryCount > 1 && (
+        <>
+          <button
+            type="button"
+            className="preview-nav preview-nav--prev"
+            onClick={(e) => {
+              e.stopPropagation();
+              goPrev();
+            }}
+            disabled={!canGoPrev}
+            title={t("preview.prevImage")}
+            aria-label={t("preview.prevImage")}
+          >
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path
+                d="M10 3L5 8l5 5"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="preview-nav preview-nav--next"
+            onClick={(e) => {
+              e.stopPropagation();
+              goNext();
+            }}
+            disabled={!canGoNext}
+            title={t("preview.nextImage")}
+            aria-label={t("preview.nextImage")}
+          >
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path
+                d="M6 3l5 5-5 5"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </>
+      )}
 
       <div className="preview-topbar">
         <div className="preview-info" aria-live="polite">
@@ -355,6 +469,14 @@ export function ImagePreview({ absPath, mime, imageId, onClose }: ImagePreviewPr
               </span>
               <span className="preview-info-dot" />
               <span>{percent}%</span>
+              {galleryCount > 1 && (
+                <>
+                  <span className="preview-info-dot" />
+                  <span className="preview-info-count">
+                    {clampedIndex + 1}/{galleryCount}
+                  </span>
+                </>
+              )}
             </>
           ) : (
             <span className="preview-info-dim">…</span>

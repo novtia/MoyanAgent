@@ -16,6 +16,7 @@ import {
   readStoredThemeMode,
   watchSystemTheme,
 } from "./theme";
+import { collectSessionGalleryImages, indexOfImageInGallery } from "./sessionGallery";
 import type { AttachmentDraft, ImageRefAbs } from "./types";
 
 type AppRoute =
@@ -43,9 +44,7 @@ export default function App() {
   const setImageSize = useSession((s) => s.setImageSize);
 
   const [editorTarget, setEditorTarget] = useState<AttachmentDraft | null>(null);
-  const [previewSrc, setPreviewSrc] = useState<{ abs: string; mime?: string; imageId?: string } | null>(
-    null,
-  );
+  const [preview, setPreview] = useState<{ items: ImageRefAbs[]; index: number } | null>(null);
   const [route, setRoute] = useState<AppRoute>(() => parseRoute());
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -135,9 +134,16 @@ export default function App() {
               />
               <ChatView
                 onEditAttachment={(a) => setEditorTarget(a)}
-                onPreviewImage={(img: ImageRefAbs) =>
-                  setPreviewSrc({ abs: img.abs_path, mime: img.mime, imageId: img.id })
-                }
+                onPreviewImage={(img: ImageRefAbs) => {
+                  const session = useSession.getState().active;
+                  const items = collectSessionGalleryImages(session);
+                  const idx = indexOfImageInGallery(items, img);
+                  if (idx >= 0) {
+                    setPreview({ items, index: idx });
+                  } else {
+                    setPreview({ items: [img], index: 0 });
+                  }
+                }}
                 onOpenSettings={() => openSettings("llm")}
                 needsSetup={needsSetup}
               />
@@ -161,12 +167,11 @@ export default function App() {
           }}
         />
       )}
-      {previewSrc && (
+      {preview && (
         <ImagePreview
-          absPath={previewSrc.abs}
-          mime={previewSrc.mime}
-          imageId={previewSrc.imageId}
-          onClose={() => setPreviewSrc(null)}
+          items={preview.items}
+          initialIndex={preview.index}
+          onClose={() => setPreview(null)}
         />
       )}
     </>

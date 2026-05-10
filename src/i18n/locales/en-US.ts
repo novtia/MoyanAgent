@@ -118,6 +118,8 @@ const enUS: Resource = {
   preview: {
     title: "Preview",
     close: "Close",
+    prevImage: "Previous image",
+    nextImage: "Next image",
     zoomIn: "Zoom in",
     zoomOut: "Zoom out",
     fit: "Fit to screen",

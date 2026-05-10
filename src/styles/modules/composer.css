@@ -221,6 +221,13 @@
   padding: 4px var(--composer-textarea-padding-x);
   outline: none;
 }
+/* Override forms.css `textarea:disabled` (higher specificity than `.composer-textarea` alone). */
+.composer-textarea:disabled {
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: not-allowed;
+  opacity: 1;
+}
 .composer-textarea::placeholder {
   color: var(--ink-mute);
 }
