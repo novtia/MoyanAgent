@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSession } from "../store/session";
+import { useSession } from "../../store/session";
 
 export function Dropzone() {
   const { t } = useTranslation();

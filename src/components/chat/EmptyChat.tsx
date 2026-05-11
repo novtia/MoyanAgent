@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import type { AttachmentDraft } from "../types";
+import type { AttachmentDraft } from "../../types";
 import { Composer } from "./Composer";
 
 interface EmptyChatProps {

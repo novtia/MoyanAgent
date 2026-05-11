@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { srcOf, api } from "../api/tauri";
+import { srcOf, api } from "../../api/tauri";
 import { save } from "@tauri-apps/plugin-dialog";
-import type { ImageRefAbs } from "../types";
+import type { ImageRefAbs } from "../../types";
 
 interface ImagePreviewProps {
   items: ImageRefAbs[];

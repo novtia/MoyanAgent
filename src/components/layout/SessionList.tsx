@@ -1,9 +1,9 @@
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { openContextMenu } from "./context-menu";
-import { useSession } from "../store/session";
-import type { SessionSummary } from "../types";
+import { openContextMenu } from "../context-menu";
+import { useSession } from "../../store/session";
+import type { SessionSummary } from "../../types";
 
 function timeAgo(ts: number, t: TFunction): string {
   const now = Date.now();

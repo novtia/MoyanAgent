@@ -1,14 +1,14 @@
 import { useEffect, useLayoutEffect, useState } from "react";
-import { Sidebar } from "./components/Sidebar";
-import { ChatView } from "./components/ChatView";
-import { Dropzone } from "./components/Dropzone";
+import { Sidebar } from "./components/layout/Sidebar";
+import { ChatView } from "./components/chat/ChatView";
+import { Dropzone } from "./components/media/Dropzone";
 import { ImageEditor } from "./components/editor/ImageEditor";
-import { ImagePreview } from "./components/ImagePreview";
-import { SettingsView } from "./components/SettingsView.js";
-import type { SettingsTab, ThemeMode } from "./components/SettingsView.js";
+import { ImagePreview } from "./components/media/ImagePreview";
+import { SettingsView } from "./components/settings";
+import type { SettingsTab, ThemeMode } from "./components/settings";
 import { ContextMenuHost } from "./components/context-menu";
 import { SearchDialog } from "./components/search/SearchDialog";
-import { TitleBar } from "./components/TitleBar";
+import { TitleBar } from "./components/layout/TitleBar";
 import { useSettings } from "./store/settings";
 import { useSession } from "./store/session";
 import {

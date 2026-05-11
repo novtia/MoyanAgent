@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSession } from "../store/session";
-import { srcOf, api } from "../api/tauri";
+import { useSession } from "../../store/session";
+import { srcOf, api } from "../../api/tauri";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { ATELIER_DRAG_TYPE } from "./SessionGallery";
-import type { AttachmentDraft, ImageRefAbs, MessageAbs } from "../types";
+import type { AttachmentDraft, ImageRefAbs, MessageAbs } from "../../types";
 
 function nativeFilePath(file: File) {
   return (file as File & { path?: string }).path || "";

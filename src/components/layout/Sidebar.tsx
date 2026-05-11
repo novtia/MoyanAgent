@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { SessionList } from "./SessionList";
-import { useSession } from "../store/session";
+import { useSession } from "../../store/session";
 
 interface SidebarProps {
   onOpenSettings: () => void;

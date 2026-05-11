@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSession } from "../store/session";
-import { srcOf } from "../api/tauri";
-import { collectSessionGalleryImages } from "../sessionGallery";
-import type { ImageRefAbs } from "../types";
+import { useSession } from "../../store/session";
+import { srcOf } from "../../api/tauri";
+import { collectSessionGalleryImages } from "../../sessionGallery";
+import type { ImageRefAbs } from "../../types";
 
 export const ATELIER_DRAG_TYPE = "application/x-atelier-image";
 

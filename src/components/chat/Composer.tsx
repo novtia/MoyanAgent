@@ -1,16 +1,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
-import { useSession } from "../store/session";
-import { useSettings } from "../store/settings";
-import { srcOf } from "../api/tauri";
+import { useSession } from "../../store/session";
+import { useSettings } from "../../store/settings";
+import { srcOf } from "../../api/tauri";
 import {
   ASPECT_RATIOS,
   IMAGE_SIZES,
   RATIO_PIXEL_HINT,
   shortModelName,
-} from "../config/generation";
-import type { AttachmentDraft } from "../types";
+} from "../../config/generation";
+import type { AttachmentDraft } from "../../types";
 import { ComposerTextarea } from "./ComposerTextarea";
 import { ATELIER_DRAG_TYPE } from "./SessionGallery";
 

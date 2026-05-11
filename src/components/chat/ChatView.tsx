@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSession } from "../store/session";
+import { useSession } from "../../store/session";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { EmptyChat } from "./EmptyChat";
 import { SessionGallery } from "./SessionGallery";
-import type { AttachmentDraft, ImageRefAbs } from "../types";
+import type { AttachmentDraft, ImageRefAbs } from "../../types";
 
 interface ChatViewProps {
   onEditAttachment: (a: AttachmentDraft) => void;
