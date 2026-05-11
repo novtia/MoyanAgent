@@ -86,8 +86,20 @@
   background: #e81123;
   color: #fff;
 }
+.titlebar-btn.close:hover .titlebar-win-icon {
+  filter: invert(1);
+}
 .titlebar-btn:focus {
   outline: none;
+}
+.titlebar-win-icon {
+  display: block;
+  flex-shrink: 0;
+  opacity: 0.88;
+  transition: opacity 0.12s ease;
+}
+.titlebar-btn:hover .titlebar-win-icon {
+  opacity: 1;
 }
 
 /* ───── stage ───── */

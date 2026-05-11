@@ -602,6 +602,11 @@
   display: block;
   object-fit: contain;
 }
+/* List only: keep avatar circle size, draw provider logos smaller inside it */
+.model-provider-item-body .model-provider-avatar.has-image img {
+  width: 65%;
+  height: 65%;
+}
 .model-provider-name {
   min-width: 0;
   display: flex;

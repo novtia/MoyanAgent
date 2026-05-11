@@ -7,6 +7,13 @@ interface TitleBarProps {
   sidebarCollapsed: boolean;
 }
 
+const WIN_ICONS = {
+  minimize: "/horizontal-line.svg",
+  maximize: "/maximize-button.svg",
+  restore: "/Restore%20Down.svg",
+  close: "/close.svg",
+} as const;
+
 export function TitleBar({ onToggleSidebar, sidebarCollapsed }: TitleBarProps) {
   const { t } = useTranslation();
   const [maximized, setMaximized] = useState(false);
@@ -65,9 +72,14 @@ export function TitleBar({ onToggleSidebar, sidebarCollapsed }: TitleBarProps) {
           title={t("titlebar.minimize")}
           onClick={onMinimize}
         >
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-            <rect x="1" y="4.5" width="8" height="1" fill="currentColor" />
-          </svg>
+          <img
+            className="titlebar-win-icon"
+            src={WIN_ICONS.minimize}
+            alt=""
+            width={11}
+            height={11}
+            draggable={false}
+          />
         </button>
         <button
           type="button"
@@ -76,16 +88,14 @@ export function TitleBar({ onToggleSidebar, sidebarCollapsed }: TitleBarProps) {
           title={maximized ? t("titlebar.restore") : t("titlebar.maximize")}
           onClick={onToggleMax}
         >
-          {maximized ? (
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <rect x="1.5" y="2.5" width="6" height="6" fill="none" stroke="currentColor" strokeWidth="1" />
-              <rect x="2.5" y="1.5" width="6" height="6" fill="none" stroke="currentColor" strokeWidth="1" />
-            </svg>
-          ) : (
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-              <rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
-            </svg>
-          )}
+          <img
+            className="titlebar-win-icon"
+            src={maximized ? WIN_ICONS.restore : WIN_ICONS.maximize}
+            alt=""
+            width={11}
+            height={11}
+            draggable={false}
+          />
         </button>
         <button
           type="button"
@@ -94,9 +104,14 @@ export function TitleBar({ onToggleSidebar, sidebarCollapsed }: TitleBarProps) {
           title={t("titlebar.close")}
           onClick={onClose}
         >
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-            <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-          </svg>
+          <img
+            className="titlebar-win-icon"
+            src={WIN_ICONS.close}
+            alt=""
+            width={11}
+            height={11}
+            draggable={false}
+          />
         </button>
       </div>
     </div>
