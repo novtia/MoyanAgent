@@ -92,6 +92,47 @@ fn build_body(request: &ChatRequest) -> Value {
         &request.attachments,
     ));
 
+    // Thread the prior model functionCall + functionResponse pair so
+    // Gemini sees a complete call/response chain.
+    if let Some(pending) = &request.pending_assistant_turn {
+        let mut parts: Vec<Value> = Vec::new();
+        if let Some(text) = pending.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            parts.push(json!({ "text": text }));
+        }
+        for tc in &pending.tool_calls {
+            parts.push(json!({
+                "functionCall": { "name": tc.name, "args": tc.arguments }
+            }));
+        }
+        if !parts.is_empty() {
+            contents.push(json!({ "role": "model", "parts": parts }));
+        }
+    }
+    if !request.tool_results.is_empty() {
+        let parts: Vec<Value> = request
+            .tool_results
+            .iter()
+            .map(|tr| {
+                // Gemini wants the tool name (not the id) on functionResponse.
+                // The id-→name mapping lives in the just-emitted pending turn.
+                let name = request
+                    .pending_assistant_turn
+                    .as_ref()
+                    .and_then(|p| p.tool_calls.iter().find(|c| c.id == tr.tool_call_id))
+                    .map(|c| c.name.clone())
+                    .unwrap_or_else(|| tr.tool_call_id.clone());
+                let response = match &tr.content {
+                    Value::Object(_) | Value::Array(_) => tr.content.clone(),
+                    other => json!({ "result": other }),
+                };
+                json!({
+                    "functionResponse": { "name": name, "response": response }
+                })
+            })
+            .collect();
+        contents.push(json!({ "role": "user", "parts": parts }));
+    }
+
     let mut body = json!({ "contents": contents });
     let map = body.as_object_mut().unwrap();
 
@@ -100,6 +141,24 @@ fn build_body(request: &ChatRequest) -> Value {
         map.insert(
             "system_instruction".into(),
             json!({ "parts": [{ "text": sys }] }),
+        );
+    }
+
+    if !request.tools.is_empty() {
+        let function_declarations: Vec<Value> = request
+            .tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.schema,
+                })
+            })
+            .collect();
+        map.insert(
+            "tools".into(),
+            json!([{ "functionDeclarations": function_declarations }]),
         );
     }
 
@@ -184,6 +243,8 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
 
     let mut texts = Vec::new();
     let mut images = Vec::new();
+    let mut tool_calls: Vec<crate::ai::chat::ProviderToolCall> = Vec::new();
+    let mut counter: u32 = 0;
     if let Some(parts) = v
         .pointer("/candidates/0/content/parts")
         .and_then(Value::as_array)
@@ -198,12 +259,27 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
             if let Some(image) = image_from_part(part) {
                 images.push(image);
             }
+            if let Some(fc) = part.get("functionCall") {
+                let name = fc.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                let args = fc.get("args").cloned().unwrap_or(Value::Null);
+                // Gemini doesn't supply call ids; synthesise stable ones
+                // per-response so tool_result can correlate.
+                counter += 1;
+                tool_calls.push(crate::ai::chat::ProviderToolCall {
+                    id: format!("gemini-{counter}"),
+                    name,
+                    arguments: args,
+                });
+            }
         }
     }
 
-    if texts.is_empty() && images.is_empty() {
+    if texts.is_empty() && images.is_empty() && tool_calls.is_empty() {
         return Err(AppError::Upstream(format!(
-            "upstream response did not contain generated image or text. {}",
+            "upstream response did not contain generated image, text or tool calls. {}",
             empty_response_details(&v)
         )));
     }
@@ -216,7 +292,7 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
             Some(texts.join("\n\n"))
         },
         usage: usage(&v),
-        tool_calls: Vec::new(),
+        tool_calls,
     })
 }
 

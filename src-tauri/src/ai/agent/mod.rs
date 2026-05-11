@@ -30,7 +30,9 @@
 //!
 //!     tools/         ── tool trait + built-in tools
 //!       (mod.rs)     Tool trait, ToolPool, ToolInvocation, ...
-//!       fs           FileReadTool (FileWrite, FileEdit, ... to follow)
+//!       fs           FileReadTool
+//!       edit         FileWriteTool, FileEditTool
+//!       bash         BashTool
 //!       agent_tool   the `Agent` meta-tool: spawn sub-agents
 //!
 //!     exec/          ── execution; the only layer that knows providers
@@ -89,6 +91,8 @@ mod re_exports {
     #![allow(unused_imports)]
     // tools
     pub use super::tools::agent_tool::{AgentInvocation, AgentTool, AgentToolResult};
+    pub use super::tools::bash::BashTool;
+    pub use super::tools::edit::{FileEditTool, FileWriteTool};
     pub use super::tools::fs::FileReadTool;
     pub use super::tools::{Tool, ToolInvocation, ToolPool, ToolResult, ToolSpec};
     // core

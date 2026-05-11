@@ -855,8 +855,39 @@ fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) -> Value {
     }
     messages.push(json!({ "role": "user", "content": user_content }));
 
-    // Append any tool_result replies after the synthesized user turn so
-    // they match OpenAI's expected message ordering.
+    // Echo back the assistant turn that emitted the tool calls so
+    // OpenAI's call/response symmetry check passes.
+    if let Some(pending) = &request.pending_assistant_turn {
+        let text = pending.text.as_deref().unwrap_or("");
+        let tool_calls: Vec<Value> = pending
+            .tool_calls
+            .iter()
+            .map(|c| {
+                json!({
+                    "id": c.id,
+                    "type": "function",
+                    "function": {
+                        "name": c.name,
+                        "arguments": serde_json::to_string(&c.arguments).unwrap_or_else(|_| "{}".into()),
+                    }
+                })
+            })
+            .collect();
+        let mut msg = json!({ "role": "assistant" });
+        let m = msg.as_object_mut().unwrap();
+        if !text.is_empty() {
+            m.insert("content".into(), Value::String(text.to_string()));
+        } else {
+            m.insert("content".into(), Value::Null);
+        }
+        if !tool_calls.is_empty() {
+            m.insert("tool_calls".into(), Value::Array(tool_calls));
+        }
+        messages.push(msg);
+    }
+
+    // Append any tool_result replies. OpenAI expects them after the
+    // assistant message that emitted the corresponding tool_calls.
     for tr in &request.tool_results {
         let content = match &tr.content {
             Value::String(s) => Value::String(s.clone()),

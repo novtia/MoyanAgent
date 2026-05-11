@@ -49,5 +49,6 @@ pub fn build_chat_request(
         parameters,
         tools: Vec::new(),
         tool_results: Vec::new(),
+        pending_assistant_turn: None,
     })
 }

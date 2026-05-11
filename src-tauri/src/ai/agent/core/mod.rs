@@ -4,6 +4,7 @@
 //! - [`context`]      `ToolUseContext` — the per-agent isolation boundary
 //! - [`task`]         `Task` / `TaskStore` lifecycle container
 //! - [`attachment`]   hidden user-meta messages + `NotificationQueue`
+//! - [`worktree`]     git worktree isolation for sub-agents
 //!
 //! These modules have **no dependencies on memory, tools, or exec** —
 //! they're the bedrock that every other layer composes against.
@@ -12,3 +13,4 @@ pub mod attachment;
 pub mod context;
 pub mod permission;
 pub mod task;
+pub mod worktree;

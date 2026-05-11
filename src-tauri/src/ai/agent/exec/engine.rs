@@ -120,6 +120,8 @@ pub struct ProviderQueryEngine {
     resolver: Arc<dyn PermissionResolver>,
     /// Default max turns when [`QueryRequest::max_turns`] is `None`.
     default_max_turns: u32,
+    /// Compaction policy applied between turns. `None` ⇒ disabled.
+    compaction: Option<crate::ai::agent::memory::compaction::CompactionPolicy>,
 }
 
 impl Default for ProviderQueryEngine {
@@ -128,6 +130,7 @@ impl Default for ProviderQueryEngine {
             provider: Arc::new(ProviderEngine::new()),
             resolver: Arc::new(AllowAllResolver),
             default_max_turns: 8,
+            compaction: Some(Default::default()),
         }
     }
 }
@@ -138,11 +141,20 @@ impl ProviderQueryEngine {
             provider,
             resolver,
             default_max_turns: 8,
+            compaction: Some(Default::default()),
         }
     }
 
     pub fn with_max_turns(mut self, max_turns: u32) -> Self {
         self.default_max_turns = max_turns;
+        self
+    }
+
+    pub fn with_compaction(
+        mut self,
+        policy: Option<crate::ai::agent::memory::compaction::CompactionPolicy>,
+    ) -> Self {
+        self.compaction = policy;
         self
     }
 }
@@ -218,6 +230,23 @@ impl QueryEngine for ProviderQueryEngine {
                 usage = response.usage.clone();
                 final_images = response.images.clone();
 
+                // Compaction window: run *before* enqueuing the next
+                // turn so the model never sees an over-budget history.
+                if let Some(policy) = self.compaction.as_ref() {
+                    if crate::ai::agent::memory::compaction::should_compact(
+                        chat.history.len(),
+                        &usage,
+                        policy,
+                    ) {
+                        let _ = crate::ai::agent::memory::compaction::compact(
+                            &mut chat,
+                            self.provider.as_ref(),
+                            policy,
+                        )
+                        .await;
+                    }
+                }
+
                 if tool_uses.is_empty() {
                     // Model produced no tool_use blocks → loop terminates.
                     return Ok(QueryResult {
@@ -233,8 +262,17 @@ impl QueryEngine for ProviderQueryEngine {
                 // on `chat.tool_results` so the provider serialiser can
                 // emit them in its native shape (e.g. OpenAI
                 // `role: "tool"` messages) on the next turn.
+                //
+                // We also stash the assistant's *own* turn (the one
+                // that emitted these tool calls) so providers that
+                // require call/response symmetry (Anthropic, strict
+                // OpenAI) can thread it back into the message stream.
                 chat.tool_results.clear();
-                for req in tool_uses {
+                chat.pending_assistant_turn = Some(crate::ai::chat::PendingAssistantTurn {
+                    text: response.text.clone(),
+                    tool_calls: response.tool_calls.clone(),
+                });
+                for req in &tool_uses {
                     events.push(MessageEvent::ToolUse {
                         id: req.id.clone(),
                         tool: req.tool_name.clone(),
@@ -271,7 +309,7 @@ impl QueryEngine for ProviderQueryEngine {
 
                     events.push(MessageEvent::ToolResult {
                         id: req.id.clone(),
-                        tool: req.tool_name,
+                        tool: req.tool_name.clone(),
                         output: result.content,
                         is_error: result.is_error,
                     });

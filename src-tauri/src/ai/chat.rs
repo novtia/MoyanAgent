@@ -77,8 +77,25 @@ pub struct ToolResultMessage {
     /// Consumed by providers that flag tool errors explicitly (e.g.
     /// Anthropic's `tool_result.is_error`). OpenAI ignores it — error
     /// state is implicit in the textual content.
-    #[allow(dead_code)]
     pub is_error: bool,
+}
+
+/// The immediately preceding assistant turn that emitted tool calls.
+///
+/// Providers that require the full call/response chain in the message
+/// stream (OpenAI strict mode, Anthropic, Gemini) emit this between the
+/// existing `history` and any `tool_results` so the conversation reads:
+///
+/// ```text
+/// ... history ... → user prompt → assistant{text + tool_calls} → tool_results
+/// ```
+///
+/// `None` ⇒ this is the first turn (or a turn after no tool_use), so no
+/// extra message is required.
+#[derive(Debug, Clone, Default)]
+pub struct PendingAssistantTurn {
+    pub text: Option<String>,
+    pub tool_calls: Vec<ProviderToolCall>,
 }
 
 #[derive(Debug, Clone)]
@@ -97,4 +114,8 @@ pub struct ChatRequest {
     /// entry is inserted into the provider message stream in the order
     /// listed; ordering matches the parent turn's tool_use ids.
     pub tool_results: Vec<ToolResultMessage>,
+    /// The assistant turn that produced the `tool_results` above. Must
+    /// be threaded back into the message stream — see
+    /// [`PendingAssistantTurn`].
+    pub pending_assistant_turn: Option<PendingAssistantTurn>,
 }

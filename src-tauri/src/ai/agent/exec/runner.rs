@@ -15,11 +15,12 @@
 
 use std::sync::Arc;
 
-use crate::ai::agent::config::definition::AgentDefinition;
+use crate::ai::agent::config::definition::{AgentDefinition, Isolation};
 use crate::ai::agent::core::attachment::Attachment;
 use crate::ai::agent::core::context::{AbortHandle, ToolUseContext};
 use crate::ai::agent::core::permission::PermissionMode;
 use crate::ai::agent::core::task::{Task, TaskId, TaskStore};
+use crate::ai::agent::core::worktree::WorktreeHandle;
 use crate::ai::agent::exec::query::{QueryEngine, QueryRequest, QueryResult};
 use crate::ai::agent::tools::ToolPool;
 use crate::ai::agent::types::{AgentId, AgentRunMode, QuerySource, TokenUsage};
@@ -80,7 +81,26 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         || definition.background;
     let task_id = task_store.register(task);
 
-    let cwd = std::env::current_dir().unwrap_or_default();
+    let host_cwd = std::env::current_dir().unwrap_or_default();
+
+    // Optional git-worktree isolation. The handle's `Drop` removes the
+    // worktree on the way out, including the error path — keep it
+    // alive for the entire `drive` call below.
+    let worktree = match definition.isolation {
+        Isolation::Worktree => match WorktreeHandle::acquire(&host_cwd) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                task_store.fail(&task_id, format!("worktree setup failed: {e}"));
+                return Err(e);
+            }
+        },
+        Isolation::None | Isolation::Remote => None,
+    };
+    let cwd = worktree
+        .as_ref()
+        .map(|h| h.path.clone())
+        .unwrap_or_else(|| host_cwd.clone());
+
     let permission_mode = permission_override
         .or(definition.permission_mode)
         .unwrap_or(PermissionMode::Default);
@@ -123,8 +143,10 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
     .await;
 
     // Cleanup window. Mirrors the `finally` block in `runAgent.ts`:
-    // MCP teardown, prompt-cache release, file cache eviction, transcript flush.
+    // MCP teardown, prompt-cache release, file cache eviction,
+    // transcript flush, and `git worktree remove` via Drop.
     drop(abort);
+    drop(worktree);
 
     match result {
         Ok(qr) => {

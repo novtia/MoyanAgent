@@ -12,10 +12,14 @@
 //! can run in parallel inside [`crate::ai::agent::exec::query::QueryEngine`].
 //!
 //! Submodules:
-//! - [`fs`]          filesystem tools (FileRead, ...)
+//! - [`fs`]          filesystem read (FileRead)
+//! - [`edit`]        filesystem mutation (Write, Edit)
+//! - [`bash`]        shell execution (Bash)
 //! - [`agent_tool`]  the `Agent` meta-tool that spawns sub-agents
 
 pub mod agent_tool;
+pub mod bash;
+pub mod edit;
 pub mod fs;
 
 use std::collections::HashMap;

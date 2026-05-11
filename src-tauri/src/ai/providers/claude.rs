@@ -79,6 +79,49 @@ fn build_body(request: &ChatRequest) -> Value {
         &request.attachments,
     ));
 
+    // Thread the prior assistant tool_use turn + its tool_result
+    // replies through the message stream. Anthropic strictly requires
+    // call/response symmetry.
+    if let Some(pending) = &request.pending_assistant_turn {
+        let mut content: Vec<Value> = Vec::new();
+        if let Some(text) = pending.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            content.push(json!({ "type": "text", "text": text }));
+        }
+        for tc in &pending.tool_calls {
+            content.push(json!({
+                "type": "tool_use",
+                "id": tc.id,
+                "name": tc.name,
+                "input": tc.arguments,
+            }));
+        }
+        if !content.is_empty() {
+            messages.push(json!({ "role": "assistant", "content": content }));
+        }
+    }
+    if !request.tool_results.is_empty() {
+        let blocks: Vec<Value> = request
+            .tool_results
+            .iter()
+            .map(|tr| {
+                let content = match &tr.content {
+                    Value::String(s) => Value::String(s.clone()),
+                    other => Value::String(other.to_string()),
+                };
+                let mut b = json!({
+                    "type": "tool_result",
+                    "tool_use_id": tr.tool_call_id,
+                    "content": content,
+                });
+                if tr.is_error {
+                    b.as_object_mut().unwrap().insert("is_error".into(), Value::Bool(true));
+                }
+                b
+            })
+            .collect();
+        messages.push(json!({ "role": "user", "content": blocks }));
+    }
+
     let mut body = json!({
         "model": request.model,
         "max_tokens": request.parameters.model.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
@@ -88,6 +131,20 @@ fn build_body(request: &ChatRequest) -> Value {
     let sys = request.system_prompt.trim();
     if !sys.is_empty() {
         map.insert("system".into(), Value::String(sys.to_string()));
+    }
+    if !request.tools.is_empty() {
+        let tools: Vec<Value> = request
+            .tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": t.schema,
+                })
+            })
+            .collect();
+        map.insert("tools".into(), Value::Array(tools));
     }
     apply_params(map, request);
     body
@@ -157,30 +214,55 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
         return Err(AppError::Upstream(msg.to_string()));
     }
 
-    let mut parts = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
+    let mut tool_calls: Vec<crate::ai::chat::ProviderToolCall> = Vec::new();
     if let Some(content) = v.get("content").and_then(Value::as_array) {
         for item in content {
-            if let Some(text) = item.get("text").and_then(Value::as_str) {
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    parts.push(trimmed.to_string());
+            match item.get("type").and_then(Value::as_str) {
+                Some("text") => {
+                    if let Some(text) = item.get("text").and_then(Value::as_str) {
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            parts.push(trimmed.to_string());
+                        }
+                    }
                 }
+                Some("tool_use") => {
+                    let id = item.get("id").and_then(Value::as_str).unwrap_or_default();
+                    let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+                    if id.is_empty() || name.is_empty() {
+                        continue;
+                    }
+                    let input = item.get("input").cloned().unwrap_or(Value::Null);
+                    tool_calls.push(crate::ai::chat::ProviderToolCall {
+                        id: id.to_string(),
+                        name: name.to_string(),
+                        arguments: input,
+                    });
+                }
+                _ => {}
             }
         }
     }
 
-    if parts.is_empty() {
+    let text = if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    };
+
+    if text.is_none() && tool_calls.is_empty() {
         return Err(AppError::Upstream(format!(
-            "upstream response did not contain generated text. {}",
+            "upstream response did not contain generated text or tool_use. {}",
             empty_response_details(&v)
         )));
     }
 
     Ok(GenerateResponse {
         images: Vec::new(),
-        text: Some(parts.join("\n\n")),
+        text,
         usage: usage(&v),
-        tool_calls: Vec::new(),
+        tool_calls,
     })
 }
 

@@ -1394,6 +1394,9 @@ pub fn run() {
             // referentially below.
             let tools: Arc<ToolPool> = Arc::new(ToolPool::new());
             tools.register(FileReadTool::new());
+            tools.register(crate::ai::agent::tools::edit::FileWriteTool::new());
+            tools.register(crate::ai::agent::tools::edit::FileEditTool::new());
+            tools.register(crate::ai::agent::tools::bash::BashTool::new());
 
             // Build the agent-callable `Agent` tool. The chat factory
             // lets it materialise a sub-agent `ChatRequest` from the
