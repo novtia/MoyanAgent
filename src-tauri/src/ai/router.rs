@@ -1,5 +1,5 @@
 use crate::ai::chat::{
-    AttachmentBytes, ChatRequest, GenerateResponse, HistoryTurn, ProviderConfig,
+    AttachmentBytes, ChatRequest, GenerateResponse, HistoryTurn, ProviderConfig, TextDeltaCallback,
 };
 use crate::ai::parameters::GenerationParameters;
 use crate::ai::providers;
@@ -46,4 +46,13 @@ pub fn build_chat_request(
 
 pub async fn chat(request: ChatRequest) -> AppResult<GenerateResponse> {
     providers::ProviderFactory::default().chat(request).await
+}
+
+pub async fn chat_stream(
+    request: ChatRequest,
+    on_text_delta: TextDeltaCallback,
+) -> AppResult<GenerateResponse> {
+    providers::ProviderFactory::default()
+        .chat_stream(request, on_text_delta)
+        .await
 }

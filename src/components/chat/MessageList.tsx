@@ -37,11 +37,15 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
   const busy = useSession((s) => s.busy);
   const ref = useRef<HTMLDivElement | null>(null);
   const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null);
+  const messages = active?.messages || [];
+  const lastMessageTextLength =
+    messages.length > 0 ? messages[messages.length - 1].text?.length ?? 0 : 0;
+  const hasStreamingAssistant = messages.some((m) => m.id.startsWith("tmp-assistant-"));
 
   useEffect(() => {
     if (!ref.current) return;
     ref.current.scrollTop = ref.current.scrollHeight;
-  }, [active?.messages.length, busy]);
+  }, [messages.length, lastMessageTextLength, busy]);
 
   useEffect(() => {
     const onFocusMessage = (event: Event) => {
@@ -61,7 +65,6 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
     node?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [focusedMessageId, active?.session.id, active?.messages.length]);
 
-  const messages = active?.messages || [];
   const isEmpty = messages.length === 0 && !busy;
 
   return (
@@ -82,7 +85,7 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
               focused={focusedMessageId === m.id}
             />
           ))}
-          {busy && <DevelopingRow />}
+          {busy && !hasStreamingAssistant && <DevelopingRow />}
         </div>
       )}
     </div>
@@ -116,6 +119,7 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
   const isUser = m.role === "user";
   const isAssistant = m.role === "assistant";
   const isError = m.role === "error";
+  const isStreamingDraft = m.id.startsWith("tmp-assistant-");
   const hasText = !!(m.text && m.text.trim());
   const canEdit = isUser && (hasText || inputs.length > 0);
   const canQuote = hasText || inputs.length > 0 || outputs.length > 0;
@@ -362,7 +366,9 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
         <div className="bubble">
           {!isUser && (
             <span className="stamp">
-              {isAssistant
+              {isStreamingDraft
+                ? t("message.stampGenerating", { time: nowStamp(m.created_at) })
+                : isAssistant
                 ? t("message.stampImage", { time: nowStamp(m.created_at) })
                 : t("message.stampFailure", { time: nowStamp(m.created_at) })}
             </span>
@@ -482,7 +488,7 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
           )}
         </div>
 
-        {!editing && (
+        {!editing && !isStreamingDraft && (
           <div className="msg-action-bar">
             {outputs.map((img, i) => (
               <PlateActions

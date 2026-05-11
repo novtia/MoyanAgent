@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use crate::data::db::{now_ms, DbConn};
-use crate::data::settings::{validate_model_param_settings, ModelParamSettings, DEFAULT_HISTORY_TURNS};
+use crate::data::settings::{
+    validate_model_param_settings, ModelParamSettings, DEFAULT_HISTORY_TURNS,
+};
 use crate::error::{AppError, AppResult};
 
 fn decode_llm_params(raw: Option<String>) -> ModelParamSettings {
@@ -133,9 +135,8 @@ pub fn update_config(
         ));
     }
     validate_model_param_settings(llm_params)?;
-    let params_json = serde_json::to_string(llm_params).map_err(|e| {
-        AppError::Invalid(format!("failed to serialize llm_params: {e}"))
-    })?;
+    let params_json = serde_json::to_string(llm_params)
+        .map_err(|e| AppError::Invalid(format!("failed to serialize llm_params: {e}")))?;
     let updated = now_ms();
     let n = conn.execute(
         "UPDATE sessions SET system_prompt=?1, history_turns=?2, llm_params=?3, updated_at=?4 WHERE id=?5",

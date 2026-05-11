@@ -1,12 +1,13 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use futures_util::StreamExt;
 use reqwest::StatusCode;
 use serde_json::{json, Map, Value};
 
-use crate::ai::chat::{AttachmentBytes, ChatRequest, GenerateResponse, HistoryTurn, ImageResult};
-use crate::ai::parameters::GenerationParameters;
-use crate::ai::providers::{
-    ChatProvider, ProviderFuture, OPENAI_RESPONSES_SDK, OPENAI_SDK,
+use crate::ai::chat::{
+    AttachmentBytes, ChatRequest, GenerateResponse, HistoryTurn, ImageResult, TextDeltaCallback,
 };
+use crate::ai::parameters::GenerationParameters;
+use crate::ai::providers::{ChatProvider, ProviderFuture, OPENAI_RESPONSES_SDK, OPENAI_SDK};
 use crate::ai::{tokens, tokens::TokenUsage};
 use crate::error::{AppError, AppResult};
 
@@ -29,6 +30,14 @@ impl ChatProvider for OpenAiProvider {
     fn chat<'a>(&'a self, request: ChatRequest) -> ProviderFuture<'a> {
         Box::pin(async move { generate_chat(request, true).await })
     }
+
+    fn chat_stream<'a>(
+        &'a self,
+        request: ChatRequest,
+        on_text_delta: TextDeltaCallback,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move { generate_chat_stream(request, true, on_text_delta).await })
+    }
 }
 
 pub struct OpenAiResponsesProvider;
@@ -46,6 +55,14 @@ impl ChatProvider for OpenAiResponsesProvider {
 
     fn chat<'a>(&'a self, request: ChatRequest) -> ProviderFuture<'a> {
         Box::pin(async move { generate_responses(request).await })
+    }
+
+    fn chat_stream<'a>(
+        &'a self,
+        request: ChatRequest,
+        on_text_delta: TextDeltaCallback,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move { generate_responses_stream(request, on_text_delta).await })
     }
 }
 
@@ -76,6 +93,34 @@ async fn generate_chat(
     parse_openai_like_response(&final_txt)
 }
 
+async fn generate_chat_stream(
+    request: ChatRequest,
+    allow_image_parts: bool,
+    on_text_delta: TextDeltaCallback,
+) -> AppResult<GenerateResponse> {
+    if !allow_image_parts && !request.attachments.is_empty() {
+        return Err(AppError::Config(
+            "the selected provider sdk does not support image attachments".into(),
+        ));
+    }
+
+    let mut body = build_chat_body(&request, allow_image_parts);
+    set_streaming(&mut body);
+    let provider_label = provider_label(&request);
+    let openrouter_compat = is_openrouter_endpoint(&request.provider.endpoint);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(UPSTREAM_TIMEOUT_SECS))
+        .build()?;
+
+    if openrouter_compat {
+        post_openrouter_chat_stream(&client, &request, &mut body, &provider_label, on_text_delta)
+            .await
+    } else {
+        post_stream_with_retries(&client, &request, &body, &provider_label, on_text_delta).await
+    }
+}
+
 async fn generate_responses(request: ChatRequest) -> AppResult<GenerateResponse> {
     let body = build_responses_body(&request);
     let provider_label = provider_label(&request);
@@ -86,6 +131,22 @@ async fn generate_responses(request: ChatRequest) -> AppResult<GenerateResponse>
 
     let final_txt = post_with_retries(&client, &request, &body, &provider_label).await?;
     parse_responses_response(&final_txt)
+}
+
+async fn generate_responses_stream(
+    request: ChatRequest,
+    on_text_delta: TextDeltaCallback,
+) -> AppResult<GenerateResponse> {
+    let mut body = build_responses_body(&request);
+    set_streaming(&mut body);
+    let provider_label = provider_label(&request);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(UPSTREAM_TIMEOUT_SECS))
+        .build()?;
+
+    post_responses_stream_with_retries(&client, &request, &body, &provider_label, on_text_delta)
+        .await
 }
 
 async fn post_openrouter_chat(
@@ -142,6 +203,153 @@ async fn post_openrouter_chat(
     }
 }
 
+async fn post_openrouter_chat_stream(
+    client: &reqwest::Client,
+    request: &ChatRequest,
+    body: &mut Value,
+    provider_label: &str,
+    on_text_delta: TextDeltaCallback,
+) -> AppResult<GenerateResponse> {
+    let mut modality_stage: u8 = 0;
+    'modalities: loop {
+        apply_openrouter_modalities_stage(body, &request.model, modality_stage);
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            let resp = client
+                .post(&request.provider.endpoint)
+                .bearer_auth(&request.provider.api_key)
+                .header("Content-Type", "application/json")
+                .json(body)
+                .send()
+                .await;
+
+            let resp = match resp {
+                Ok(r) => r,
+                Err(err) => {
+                    if attempt < MAX_ATTEMPTS && should_retry_transport(&err) {
+                        sleep_for_attempt(attempt).await;
+                        continue;
+                    }
+                    return Err(err.into());
+                }
+            };
+
+            let status = resp.status();
+            if status.is_success() {
+                return parse_openai_chat_success(resp, on_text_delta.clone()).await;
+            }
+
+            let txt = resp.text().await?;
+            let msg = upstream_error_message(&txt);
+            if attempt < MAX_ATTEMPTS && is_retryable_status(status) {
+                sleep_for_attempt(attempt).await;
+                continue;
+            }
+            if upstream_rejects_modalities(status, &msg) && modality_stage < 2 {
+                modality_stage += 1;
+                continue 'modalities;
+            }
+            return Err(AppError::Upstream(format!(
+                "{} HTTP {}: {}",
+                provider_label, status, msg
+            )));
+        }
+        unreachable!("HTTP attempts should return or branch before completing the loop");
+    }
+}
+
+async fn post_stream_with_retries(
+    client: &reqwest::Client,
+    request: &ChatRequest,
+    body: &Value,
+    provider_label: &str,
+    on_text_delta: TextDeltaCallback,
+) -> AppResult<GenerateResponse> {
+    for attempt in 1..=MAX_ATTEMPTS {
+        let resp = client
+            .post(&request.provider.endpoint)
+            .bearer_auth(&request.provider.api_key)
+            .header("Content-Type", "application/json")
+            .json(body)
+            .send()
+            .await;
+
+        let resp = match resp {
+            Ok(r) => r,
+            Err(err) => {
+                if attempt < MAX_ATTEMPTS && should_retry_transport(&err) {
+                    sleep_for_attempt(attempt).await;
+                    continue;
+                }
+                return Err(err.into());
+            }
+        };
+
+        let status = resp.status();
+        if status.is_success() {
+            return parse_openai_chat_success(resp, on_text_delta).await;
+        }
+
+        let txt = resp.text().await?;
+        let msg = upstream_error_message(&txt);
+        if attempt < MAX_ATTEMPTS && is_retryable_status(status) {
+            sleep_for_attempt(attempt).await;
+            continue;
+        }
+        return Err(AppError::Upstream(format!(
+            "{} HTTP {}: {}",
+            provider_label, status, msg
+        )));
+    }
+    unreachable!("HTTP attempts should return or branch before completing the loop");
+}
+
+async fn post_responses_stream_with_retries(
+    client: &reqwest::Client,
+    request: &ChatRequest,
+    body: &Value,
+    provider_label: &str,
+    on_text_delta: TextDeltaCallback,
+) -> AppResult<GenerateResponse> {
+    for attempt in 1..=MAX_ATTEMPTS {
+        let resp = client
+            .post(&request.provider.endpoint)
+            .bearer_auth(&request.provider.api_key)
+            .header("Content-Type", "application/json")
+            .json(body)
+            .send()
+            .await;
+
+        let resp = match resp {
+            Ok(r) => r,
+            Err(err) => {
+                if attempt < MAX_ATTEMPTS && should_retry_transport(&err) {
+                    sleep_for_attempt(attempt).await;
+                    continue;
+                }
+                return Err(err.into());
+            }
+        };
+
+        let status = resp.status();
+        if status.is_success() {
+            return parse_responses_success(resp, on_text_delta).await;
+        }
+
+        let txt = resp.text().await?;
+        let msg = upstream_error_message(&txt);
+        if attempt < MAX_ATTEMPTS && is_retryable_status(status) {
+            sleep_for_attempt(attempt).await;
+            continue;
+        }
+        return Err(AppError::Upstream(format!(
+            "{} HTTP {}: {}",
+            provider_label, status, msg
+        )));
+    }
+    unreachable!("HTTP attempts should return or branch before completing the loop");
+}
+
 async fn post_with_retries(
     client: &reqwest::Client,
     request: &ChatRequest,
@@ -185,6 +393,354 @@ async fn post_with_retries(
         )));
     }
     unreachable!("HTTP attempts should return or branch before completing the loop");
+}
+
+async fn parse_openai_chat_success(
+    resp: reqwest::Response,
+    on_text_delta: TextDeltaCallback,
+) -> AppResult<GenerateResponse> {
+    if is_json_response(&resp) {
+        let final_txt = resp.text().await?;
+        let parsed = parse_openai_like_response(&final_txt)?;
+        emit_final_text_if_needed(&parsed, &on_text_delta);
+        return Ok(parsed);
+    }
+    consume_openai_chat_stream(resp, on_text_delta).await
+}
+
+async fn parse_responses_success(
+    resp: reqwest::Response,
+    on_text_delta: TextDeltaCallback,
+) -> AppResult<GenerateResponse> {
+    if is_json_response(&resp) {
+        let final_txt = resp.text().await?;
+        let parsed = parse_responses_response(&final_txt)?;
+        emit_final_text_if_needed(&parsed, &on_text_delta);
+        return Ok(parsed);
+    }
+    consume_responses_stream(resp, on_text_delta).await
+}
+
+async fn consume_openai_chat_stream(
+    resp: reqwest::Response,
+    on_text_delta: TextDeltaCallback,
+) -> AppResult<GenerateResponse> {
+    let mut stream = resp.bytes_stream();
+    let mut buffer = Vec::new();
+    let mut text = String::new();
+    let mut images = Vec::new();
+    let mut usage = TokenUsage::default();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        buffer.extend_from_slice(&chunk);
+        while let Some((event_end, sep_len)) = find_sse_event_end(&buffer) {
+            let drained: Vec<u8> = buffer.drain(..event_end + sep_len).collect();
+            let event = String::from_utf8_lossy(&drained[..event_end]);
+            if handle_openai_chat_sse_event(
+                &event,
+                &mut text,
+                &mut images,
+                &mut usage,
+                &on_text_delta,
+            )? {
+                return finalize_stream_response(text, images, usage);
+            }
+        }
+    }
+
+    if !buffer.is_empty() {
+        let event = String::from_utf8_lossy(&buffer);
+        handle_openai_chat_sse_event(&event, &mut text, &mut images, &mut usage, &on_text_delta)?;
+    }
+
+    finalize_stream_response(text, images, usage)
+}
+
+async fn consume_responses_stream(
+    resp: reqwest::Response,
+    on_text_delta: TextDeltaCallback,
+) -> AppResult<GenerateResponse> {
+    let mut stream = resp.bytes_stream();
+    let mut buffer = Vec::new();
+    let mut text = String::new();
+    let mut images = Vec::new();
+    let mut usage = TokenUsage::default();
+    let mut final_response: Option<Value> = None;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        buffer.extend_from_slice(&chunk);
+        while let Some((event_end, sep_len)) = find_sse_event_end(&buffer) {
+            let drained: Vec<u8> = buffer.drain(..event_end + sep_len).collect();
+            let event = String::from_utf8_lossy(&drained[..event_end]);
+            handle_responses_sse_event(
+                &event,
+                &mut text,
+                &mut images,
+                &mut usage,
+                &mut final_response,
+                &on_text_delta,
+            )?;
+        }
+    }
+
+    if !buffer.is_empty() {
+        let event = String::from_utf8_lossy(&buffer);
+        handle_responses_sse_event(
+            &event,
+            &mut text,
+            &mut images,
+            &mut usage,
+            &mut final_response,
+            &on_text_delta,
+        )?;
+    }
+
+    if let Some(response) = final_response {
+        let mut final_images = Vec::new();
+        collect_response_images(&response, &mut final_images);
+        if !final_images.is_empty() {
+            images = final_images;
+        }
+
+        let final_usage = tokens::extract_usage(&response);
+        merge_usage(&mut usage, final_usage);
+
+        if text.trim().is_empty() {
+            if let Some(final_text) = extract_responses_text(&response) {
+                (on_text_delta)(final_text.clone());
+                text = final_text;
+            }
+        }
+    }
+
+    finalize_stream_response(text, images, usage)
+}
+
+fn set_streaming(body: &mut Value) {
+    if let Some(map) = body.as_object_mut() {
+        map.insert("stream".into(), Value::Bool(true));
+    }
+}
+
+fn is_json_response(resp: &reqwest::Response) -> bool {
+    resp.headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| {
+            let v = v.to_ascii_lowercase();
+            v.contains("application/json") && !v.contains("text/event-stream")
+        })
+        .unwrap_or(false)
+}
+
+fn emit_final_text_if_needed(resp: &GenerateResponse, on_text_delta: &TextDeltaCallback) {
+    if let Some(text) = resp.text.as_deref() {
+        if !text.is_empty() {
+            (on_text_delta)(text.to_string());
+        }
+    }
+}
+
+fn find_sse_event_end(buffer: &[u8]) -> Option<(usize, usize)> {
+    for i in 0..buffer.len().saturating_sub(3) {
+        if &buffer[i..i + 4] == b"\r\n\r\n" {
+            return Some((i, 4));
+        }
+    }
+    for i in 0..buffer.len().saturating_sub(1) {
+        if &buffer[i..i + 2] == b"\n\n" {
+            return Some((i, 2));
+        }
+    }
+    None
+}
+
+fn sse_data_payload(event: &str) -> Option<String> {
+    let mut data = Vec::new();
+    for raw_line in event.lines() {
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        if let Some(rest) = line.strip_prefix("data:") {
+            data.push(rest.strip_prefix(' ').unwrap_or(rest));
+        }
+    }
+    if data.is_empty() {
+        None
+    } else {
+        Some(data.join("\n"))
+    }
+}
+
+fn handle_openai_chat_sse_event(
+    event: &str,
+    text: &mut String,
+    images: &mut Vec<ImageResult>,
+    usage: &mut TokenUsage,
+    on_text_delta: &TextDeltaCallback,
+) -> AppResult<bool> {
+    let Some(data) = sse_data_payload(event) else {
+        return Ok(false);
+    };
+    let data = data.trim();
+    if data.is_empty() {
+        return Ok(false);
+    }
+    if data == "[DONE]" {
+        return Ok(true);
+    }
+
+    let v: Value = serde_json::from_str(data).map_err(|err| {
+        AppError::Upstream(format!(
+            "failed to parse upstream SSE event: {err}; data={data}"
+        ))
+    })?;
+    if let Some(msg) = top_level_error_message(&v) {
+        return Err(AppError::Upstream(msg));
+    }
+
+    let (delta, mut new_images) = extract_openai_chat_stream_update(&v);
+    if !delta.is_empty() {
+        text.push_str(&delta);
+        (on_text_delta)(delta);
+    }
+    images.append(&mut new_images);
+    merge_usage(usage, tokens::extract_usage(&v));
+    Ok(false)
+}
+
+fn handle_responses_sse_event(
+    event: &str,
+    text: &mut String,
+    images: &mut Vec<ImageResult>,
+    usage: &mut TokenUsage,
+    final_response: &mut Option<Value>,
+    on_text_delta: &TextDeltaCallback,
+) -> AppResult<()> {
+    let Some(data) = sse_data_payload(event) else {
+        return Ok(());
+    };
+    let data = data.trim();
+    if data.is_empty() || data == "[DONE]" {
+        return Ok(());
+    }
+
+    let v: Value = serde_json::from_str(data).map_err(|err| {
+        AppError::Upstream(format!(
+            "failed to parse upstream SSE event: {err}; data={data}"
+        ))
+    })?;
+    if let Some(msg) = top_level_error_message(&v) {
+        return Err(AppError::Upstream(msg));
+    }
+
+    if let Some(delta) = responses_stream_text_delta(&v) {
+        text.push_str(&delta);
+        (on_text_delta)(delta);
+    }
+
+    collect_response_images(&v, images);
+    merge_usage(usage, tokens::extract_usage(&v));
+    if let Some(response) = v.get("response").cloned() {
+        merge_usage(usage, tokens::extract_usage(&response));
+        if v.get("type")
+            .and_then(Value::as_str)
+            .map(|typ| typ == "response.completed")
+            .unwrap_or(false)
+        {
+            *final_response = Some(response);
+        }
+    }
+    Ok(())
+}
+
+fn responses_stream_text_delta(v: &Value) -> Option<String> {
+    let typ = v.get("type").and_then(Value::as_str).unwrap_or("");
+    if matches!(
+        typ,
+        "response.output_text.delta" | "response.refusal.delta" | "response.reasoning_text.delta"
+    ) {
+        return v.get("delta").and_then(Value::as_str).map(str::to_string);
+    }
+    None
+}
+
+fn extract_openai_chat_stream_update(v: &Value) -> (String, Vec<ImageResult>) {
+    let mut text_parts = Vec::new();
+    let mut images = Vec::new();
+
+    if let Some(choices) = v.get("choices").and_then(Value::as_array) {
+        for choice in choices {
+            if let Some(delta) = choice.get("delta") {
+                collect_openai_delta_text(delta, &mut text_parts);
+                collect_response_images(delta, &mut images);
+            }
+            if let Some(message) = choice.get("message") {
+                collect_openai_delta_text(message, &mut text_parts);
+                collect_response_images(message, &mut images);
+            }
+        }
+    }
+
+    (text_parts.concat(), images)
+}
+
+fn collect_openai_delta_text(v: &Value, out: &mut Vec<String>) {
+    if let Some(content) = v.get("content") {
+        match content {
+            Value::String(s) => out.push(s.clone()),
+            Value::Array(parts) => {
+                for part in parts {
+                    collect_content_part_text(part, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_content_part_text(v: &Value, out: &mut Vec<String>) {
+    if let Some(s) = v.get("text").and_then(Value::as_str) {
+        out.push(s.to_string());
+        return;
+    }
+    if let Some(s) = v.get("content").and_then(Value::as_str) {
+        out.push(s.to_string());
+    }
+}
+
+fn merge_usage(target: &mut TokenUsage, next: TokenUsage) {
+    if next.prompt_tokens.is_some() {
+        target.prompt_tokens = next.prompt_tokens;
+    }
+    if next.completion_tokens.is_some() {
+        target.completion_tokens = next.completion_tokens;
+    }
+    if next.total_tokens.is_some() {
+        target.total_tokens = next.total_tokens;
+    }
+}
+
+fn finalize_stream_response(
+    text: String,
+    images: Vec<ImageResult>,
+    usage: TokenUsage,
+) -> AppResult<GenerateResponse> {
+    let text = if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    };
+    if images.is_empty() && text.as_deref().map(str::is_empty).unwrap_or(true) {
+        return Err(AppError::Upstream(
+            "upstream stream did not contain generated image or text".into(),
+        ));
+    }
+    Ok(GenerateResponse {
+        images,
+        text,
+        usage,
+    })
 }
 
 fn provider_label(request: &ChatRequest) -> String {

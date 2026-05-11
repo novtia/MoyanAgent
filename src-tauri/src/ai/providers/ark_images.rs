@@ -36,9 +36,7 @@ impl ChatProvider for ArkImagesProvider {
 async fn generate(request: ChatRequest) -> AppResult<GenerateResponse> {
     let prompt = build_prompt(&request);
     if prompt.trim().is_empty() {
-        return Err(AppError::Config(
-            "豆包生图需要非空的提示词".into(),
-        ));
+        return Err(AppError::Config("豆包生图需要非空的提示词".into()));
     }
 
     let n = request.attachments.len();
@@ -144,7 +142,10 @@ fn build_body(request: &ChatRequest, prompt: &str) -> Value {
 
     if !request.attachments.is_empty() {
         if request.attachments.len() == 1 {
-            map.insert("image".into(), Value::String(data_url(&request.attachments[0])));
+            map.insert(
+                "image".into(),
+                Value::String(data_url(&request.attachments[0])),
+            );
         } else {
             let imgs: Vec<Value> = request
                 .attachments

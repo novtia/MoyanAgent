@@ -58,8 +58,14 @@ async fn generate(request: ChatRequest) -> AppResult<GenerateResponse> {
         .timeout(std::time::Duration::from_secs(UPSTREAM_TIMEOUT_SECS))
         .build()?;
 
-    let txt = post_with_retries(&client, &request.provider.api_key, &url, &body, &provider_label)
-        .await?;
+    let txt = post_with_retries(
+        &client,
+        &request.provider.api_key,
+        &url,
+        &body,
+        &provider_label,
+    )
+    .await?;
     parse_and_fetch_images(&client, &txt, &provider_label).await
 }
 
@@ -261,7 +267,11 @@ fn xai_error_body_to_message(v: &Value) -> Option<String> {
         if msg.is_empty() {
             return None;
         }
-        let code = v.get("code").and_then(Value::as_str).map(str::trim).filter(|c| !c.is_empty());
+        let code = v
+            .get("code")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|c| !c.is_empty());
         return Some(match code {
             Some(c) if c != msg => format!("{} ({})", msg, c),
             _ => msg.to_string(),

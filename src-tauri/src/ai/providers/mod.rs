@@ -9,7 +9,7 @@ mod gemini;
 mod grok;
 mod openai;
 
-use crate::ai::chat::{ChatRequest, GenerateResponse};
+use crate::ai::chat::{ChatRequest, GenerateResponse, TextDeltaCallback};
 use crate::error::{AppError, AppResult};
 
 pub const OPENAI_SDK: &str = "openai";
@@ -33,6 +33,14 @@ pub type ProviderFuture<'a> =
 pub trait ChatProvider: Send + Sync {
     fn sdk(&self) -> &'static str;
     fn chat<'a>(&'a self, request: ChatRequest) -> ProviderFuture<'a>;
+
+    fn chat_stream<'a>(
+        &'a self,
+        request: ChatRequest,
+        _on_text_delta: TextDeltaCallback,
+    ) -> ProviderFuture<'a> {
+        self.chat(request)
+    }
 }
 
 #[derive(Clone)]
@@ -64,6 +72,21 @@ impl ProviderFactory {
             ))
         })?;
         provider.chat(request).await
+    }
+
+    pub async fn chat_stream(
+        &self,
+        request: ChatRequest,
+        on_text_delta: TextDeltaCallback,
+    ) -> AppResult<GenerateResponse> {
+        let sdk = normalize_sdk(&request.provider.sdk);
+        let provider = self.providers.get(sdk.as_str()).ok_or_else(|| {
+            AppError::Config(format!(
+                "unsupported provider sdk: {}",
+                request.provider.sdk
+            ))
+        })?;
+        provider.chat_stream(request, on_text_delta).await
     }
 }
 

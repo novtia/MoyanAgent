@@ -1,5 +1,9 @@
+use std::sync::Arc;
+
 use crate::ai::parameters::GenerationParameters;
 use crate::ai::tokens::TokenUsage;
+
+pub type TextDeltaCallback = Arc<dyn Fn(String) + Send + Sync + 'static>;
 
 #[derive(Debug, Clone)]
 pub struct ImageResult {

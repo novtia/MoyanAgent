@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { listen } from "@tauri-apps/api/event";
 import type {
   AttachmentDraft,
   MessageAbs,
@@ -20,6 +21,12 @@ interface PendingAttachmentDraft {
   id: string;
   label: string;
   bytes: number | null;
+}
+
+interface GenerationStreamPayload {
+  session_id: string;
+  request_message_id?: string;
+  delta?: string;
 }
 
 interface SessionStore {
@@ -481,6 +488,7 @@ export const useSession = create<SessionStore>((set, get) => {
 
     const c = get().composer;
     setSessionBusy(sid, true);
+    ensureGenerationStreamListener();
     try {
       await api.regenerateImage({
         session_id: sid,
@@ -576,6 +584,7 @@ export const useSession = create<SessionStore>((set, get) => {
       composer: { ...get().composer, prompt: "", attachments: [], pendingAttachments: [] },
     });
     setSessionBusy(sid, true);
+    ensureGenerationStreamListener();
 
     try {
       await api.generateImage({
@@ -615,3 +624,54 @@ export const useSession = create<SessionStore>((set, get) => {
   },
   });
 });
+
+let generationStreamListenerStarted = false;
+
+function ensureGenerationStreamListener() {
+  if (generationStreamListenerStarted) return;
+  generationStreamListenerStarted = true;
+  listen<GenerationStreamPayload>("gen://stream", (event) => {
+    const payload = event.payload;
+    const sessionId = payload.session_id;
+    const delta = payload.delta || "";
+    if (!sessionId || !delta) return;
+
+    const state = useSession.getState();
+    if (state.activeId !== sessionId || !state.active) return;
+
+    const requestId = payload.request_message_id || sessionId;
+    const messageId = `tmp-assistant-${requestId}`;
+    const existingIndex = state.active.messages.findIndex((m) => m.id === messageId);
+    const messages = [...state.active.messages];
+
+    if (existingIndex >= 0) {
+      const existing = messages[existingIndex];
+      messages[existingIndex] = {
+        ...existing,
+        text: `${existing.text || ""}${delta}`,
+      };
+    } else {
+      messages.push({
+        id: messageId,
+        session_id: sessionId,
+        role: "assistant",
+        text: delta,
+        params: null,
+        created_at: Date.now(),
+        images: [],
+      });
+    }
+
+    useSession.setState({
+      active: {
+        ...state.active,
+        messages,
+      },
+    });
+  }).catch((e) => {
+    generationStreamListenerStarted = false;
+    console.warn(e);
+  });
+}
+
+ensureGenerationStreamListener();

@@ -127,14 +127,38 @@ async fn run_cancellable_generation(
     state: &AppState,
     session_id: &str,
     request: chat::ChatRequest,
+    on_text_delta: Option<chat::TextDeltaCallback>,
 ) -> AppResult<chat::GenerateResponse> {
     let cancel_rx = register_generation_cancel(state, session_id)?;
     let result = tokio::select! {
-        result = router::chat(request) => result,
+        result = async {
+            if let Some(on_text_delta) = on_text_delta {
+                router::chat_stream(request, on_text_delta).await
+            } else {
+                router::chat(request).await
+            }
+        } => result,
         _ = cancel_rx => Err(AppError::Canceled),
     };
     clear_generation_cancel(state, session_id);
     result
+}
+
+fn stream_text_callback(
+    app: AppHandle,
+    session_id: String,
+    request_message_id: String,
+) -> chat::TextDeltaCallback {
+    Arc::new(move |delta| {
+        let _ = app.emit(
+            "gen://stream",
+            serde_json::json!({
+                "session_id": &session_id,
+                "request_message_id": &request_message_id,
+                "delta": delta,
+            }),
+        );
+    })
 }
 
 // ───────── Settings ─────────
@@ -578,7 +602,11 @@ async fn generate_image(
     );
 
     // 3) call the unified chat router
-    let result = run_cancellable_generation(&state, &req.session_id, chat_request).await;
+    let on_text_delta =
+        stream_text_callback(app.clone(), req.session_id.clone(), user_msg.id.clone());
+    let result =
+        run_cancellable_generation(&state, &req.session_id, chat_request, Some(on_text_delta))
+            .await;
 
     let _ = app.emit(
         "gen://status",
@@ -730,7 +758,14 @@ async fn regenerate_image(
         }),
     );
 
-    let result = run_cancellable_generation(&state, &req.session_id, chat_request).await;
+    let on_text_delta = stream_text_callback(
+        app.clone(),
+        req.session_id.clone(),
+        req.user_message_id.clone(),
+    );
+    let result =
+        run_cancellable_generation(&state, &req.session_id, chat_request, Some(on_text_delta))
+            .await;
 
     let _ = app.emit(
         "gen://status",
