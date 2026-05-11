@@ -8,12 +8,16 @@ import {
 import { useTranslation } from "react-i18next";
 import { openContextMenu } from "../../context-menu";
 import { useSettings } from "../../../store/settings";
-import type { ModelProvider, ModelServiceModel } from "../../../types";
+import type {
+  LlmModelCatalog,
+  ModelProvider,
+  ModelServiceModel,
+} from "../../../types";
+import { api } from "../../../api/tauri";
 import { CheckIcon, CopyIcon } from "../icons";
 import {
   CAPABILITY_OPTIONS,
   DEFAULT_PROVIDER_SDK,
-  PROVIDER_SDK_OPTIONS,
   type ProviderSdkConfig,
   type ProviderValidationErrors,
   getProviderSdkConfig,
@@ -132,6 +136,28 @@ export function ModelServiceSection() {
   const [addProviderOpen, setAddProviderOpen] = useState(false);
   const [addModelOpen, setAddModelOpen] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
+  const [llmCatalog, setLlmCatalog] = useState<LlmModelCatalog | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .getLlmModelCatalog()
+      .then((c) => {
+        if (!cancelled) setLlmCatalog(c);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setCatalogError(err instanceof Error ? err.message : String(err));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const sdkOptions = llmCatalog?.providerSdkOptions ?? [];
+  const builtinPresets = llmCatalog?.builtinProviderPresets ?? [];
 
   const providers = useMemo(
     () => normalizeProviders(settings?.model_services ?? []),
@@ -146,11 +172,13 @@ export function ModelServiceSection() {
     null;
   const selectedSdkConfig = getProviderSdkConfig(
     providerDraft.sdk || selectedProvider?.sdk,
+    sdkOptions,
   );
   const selectedProviderValidation: ProviderValidationErrors = selectedProvider
     ? validateProviderConfig(
         providerDraft,
         selectedProvider.enabled !== false,
+        sdkOptions,
       )
     : {};
 
@@ -310,8 +338,8 @@ export function ModelServiceSection() {
     const latest =
       providers.find((p) => p.id === id) ?? editProviderTarget;
     const newSdk = normalizeProviderSdk(draft.sdk);
-    const oldConfig = getProviderSdkConfig(latest.sdk);
-    const newConfig = getProviderSdkConfig(newSdk);
+    const oldConfig = getProviderSdkConfig(latest.sdk, sdkOptions);
+    const newConfig = getProviderSdkConfig(newSdk, sdkOptions);
     const endpoint = latest.endpoint.trim();
     const nextEndpoint =
       !endpoint || endpoint === oldConfig.defaultEndpoint
@@ -363,7 +391,7 @@ export function ModelServiceSection() {
   };
 
   const deleteProvider = async (provider: ModelProvider) => {
-    if (isBuiltinProvider(provider)) {
+    if (isBuiltinProvider(provider, builtinPresets)) {
       window.alert("系统默认供应商不能删除。");
       return;
     }
@@ -398,7 +426,7 @@ export function ModelServiceSection() {
   };
 
   const openProviderMenu = (event: ReactMouseEvent, provider: ModelProvider) => {
-    const builtin = isBuiltinProvider(provider);
+    const builtin = isBuiltinProvider(provider, builtinPresets);
     openContextMenu(event, [
       {
         id: "provider-edit",
@@ -425,11 +453,14 @@ export function ModelServiceSection() {
     sdk: string;
     avatar: string;
   }) => {
-    const provider = makeProvider({
-      name: draft.name,
-      sdk: draft.sdk,
-      avatar: draft.avatar,
-    });
+    const provider = makeProvider(
+      {
+        name: draft.name,
+        sdk: draft.sdk,
+        avatar: draft.avatar,
+      },
+      sdkOptions,
+    );
     await persistProviders([...providers, provider], {
       active_provider_id: provider.id,
       model: provider.models[0]?.id ?? "",
@@ -508,6 +539,21 @@ export function ModelServiceSection() {
     return Array.from(groups.entries());
   }, [selectedProvider?.models]);
 
+  if (catalogError) {
+    return (
+      <div className="model-service-card">
+        <div className="hint is-error">无法加载模型目录：{catalogError}</div>
+      </div>
+    );
+  }
+  if (!llmCatalog) {
+    return (
+      <div className="model-service-card">
+        <div className="model-empty-state model-empty-state--center">加载模型目录中…</div>
+      </div>
+    );
+  }
+
   return (
     <div className="model-service-card">
       <div className="model-service-layout">
@@ -542,7 +588,7 @@ export function ModelServiceSection() {
                     <span className="model-provider-name">
                       <span className="model-provider-name-text">{provider.name}</span>
                       <span className="model-provider-sdk">
-                        {providerSdkLabel(provider.sdk)}
+                        {providerSdkLabel(provider.sdk, sdkOptions)}
                       </span>
                     </span>
                   </button>
@@ -775,6 +821,7 @@ export function ModelServiceSection() {
 
       {addProviderOpen && (
         <AddProviderModal
+          sdkOptions={sdkOptions}
           onClose={() => setAddProviderOpen(false)}
           onAdd={submitNewProvider}
         />
@@ -782,6 +829,7 @@ export function ModelServiceSection() {
 
       {editProviderTarget && (
         <EditProviderModal
+          sdkOptions={sdkOptions}
           provider={
             providers.find((p) => p.id === editProviderTarget.id) ??
             editProviderTarget
@@ -793,7 +841,7 @@ export function ModelServiceSection() {
 
       {addModelOpen && selectedProvider && (
         <AddModelModal
-          sdkConfig={getProviderSdkConfig(selectedProvider.sdk)}
+          sdkConfig={getProviderSdkConfig(selectedProvider.sdk, sdkOptions)}
           existingIds={selectedProvider.models.map((m) => m.id)}
           onClose={() => setAddModelOpen(false)}
           onAdd={submitNewModel}
@@ -802,7 +850,7 @@ export function ModelServiceSection() {
 
       {editingModel && selectedProvider && (
         <ModelSettingsModal
-          sdkConfig={getProviderSdkConfig(selectedProvider.sdk)}
+          sdkConfig={getProviderSdkConfig(selectedProvider.sdk, sdkOptions)}
           model={editingModel}
           existingIds={selectedProvider.models
             .filter((model) => model.id !== editingModel.id)
@@ -817,22 +865,23 @@ export function ModelServiceSection() {
 }
 
 interface AddProviderModalProps {
+  sdkOptions: readonly ProviderSdkConfig[];
   onClose: () => void;
   onAdd: (provider: { name: string; sdk: string; avatar: string }) => void | Promise<void>;
 }
 
-function AddProviderModal({ onClose, onAdd }: AddProviderModalProps) {
-  const initialConfig = getProviderSdkConfig(DEFAULT_PROVIDER_SDK);
+function AddProviderModal({ sdkOptions, onClose, onAdd }: AddProviderModalProps) {
+  const initialConfig = getProviderSdkConfig(DEFAULT_PROVIDER_SDK, sdkOptions);
   const [sdk, setSdk] = useState(initialConfig.id);
   const [name, setName] = useState(initialConfig.defaultName);
   const [avatar, setAvatar] = useState("");
   const [nameTouched, setNameTouched] = useState(false);
 
-  const sdkConfig = getProviderSdkConfig(sdk);
-  const canSubmit = !!name.trim() && isKnownProviderSdk(sdk);
+  const sdkConfig = getProviderSdkConfig(sdk, sdkOptions);
+  const canSubmit = !!name.trim() && isKnownProviderSdk(sdk, sdkOptions);
 
   const changeSdk = (nextSdk: string) => {
-    const nextConfig = getProviderSdkConfig(nextSdk);
+    const nextConfig = getProviderSdkConfig(nextSdk, sdkOptions);
     setSdk(nextConfig.id);
     if (!nameTouched) setName(nextConfig.defaultName);
   };
@@ -890,7 +939,7 @@ function AddProviderModal({ onClose, onAdd }: AddProviderModalProps) {
                 <span className="required-star">*</span> 类型（SDK）
               </label>
               <select value={sdk} onChange={(e) => changeSdk(e.target.value)}>
-                {PROVIDER_SDK_OPTIONS.map((option) => (
+                {sdkOptions.map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.label}
                   </option>
@@ -927,12 +976,13 @@ function AddProviderModal({ onClose, onAdd }: AddProviderModalProps) {
 }
 
 interface EditProviderModalProps {
+  sdkOptions: readonly ProviderSdkConfig[];
   provider: ModelProvider;
   onClose: () => void;
   onSave: (draft: { name: string; sdk: string; avatar: string }) => void | Promise<void>;
 }
 
-function EditProviderModal({ provider, onClose, onSave }: EditProviderModalProps) {
+function EditProviderModal({ sdkOptions, provider, onClose, onSave }: EditProviderModalProps) {
   const [sdk, setSdk] = useState(() => normalizeProviderSdk(provider.sdk));
   const [name, setName] = useState(() => provider.name);
   const [avatar, setAvatar] = useState(() => provider.avatar ?? "");
@@ -943,11 +993,11 @@ function EditProviderModal({ provider, onClose, onSave }: EditProviderModalProps
     setAvatar(provider.avatar ?? "");
   }, [provider.id, provider.sdk, provider.name, provider.avatar]);
 
-  const sdkConfig = getProviderSdkConfig(sdk);
-  const canSubmit = !!name.trim() && isKnownProviderSdk(sdk);
+  const sdkConfig = getProviderSdkConfig(sdk, sdkOptions);
+  const canSubmit = !!name.trim() && isKnownProviderSdk(sdk, sdkOptions);
 
   const changeSdk = (nextSdk: string) => {
-    setSdk(getProviderSdkConfig(nextSdk).id);
+    setSdk(getProviderSdkConfig(nextSdk, sdkOptions).id);
   };
 
   const submit = () => {
@@ -1000,10 +1050,10 @@ function EditProviderModal({ provider, onClose, onSave }: EditProviderModalProps
                 <span className="required-star">*</span> 类型（SDK）
               </label>
               <select value={sdk} onChange={(e) => changeSdk(e.target.value)}>
-                {!isKnownProviderSdk(sdk) && (
+                {!isKnownProviderSdk(sdk, sdkOptions) && (
                   <option value={sdk}>{sdk}（未注册）</option>
                 )}
-                {PROVIDER_SDK_OPTIONS.map((option) => (
+                {sdkOptions.map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.label}
                   </option>

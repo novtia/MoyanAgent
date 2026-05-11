@@ -5,6 +5,7 @@ import type {
   EditOp,
   GenerateResult,
   ImageRefAbs,
+  LlmModelCatalog,
   MessageAbs,
   ModelParamSettings,
   SessionSearchResult,
@@ -20,6 +21,7 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   updateSettings: (patch: SettingsPatch) =>
     invoke<Settings>("update_settings", { patch }),
+  getLlmModelCatalog: () => invoke<LlmModelCatalog>("get_llm_model_catalog"),
 
   // app info
   getAppInfo: () =>

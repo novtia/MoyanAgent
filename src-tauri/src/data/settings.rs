@@ -200,8 +200,10 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             _ => {}
         }
     }
-    s.model_services =
-        normalize_services(merge_builtin_services(parsed_services.unwrap_or_default()));
+    s.model_services = normalize_services(merge_builtin_services(
+        conn,
+        parsed_services.unwrap_or_default(),
+    )?);
     if s.active_provider_id.trim().is_empty()
         || !s
             .model_services
@@ -288,8 +290,12 @@ pub fn validate_model_param_settings(p: &ModelParamSettings) -> AppResult<()> {
     Ok(())
 }
 
-fn merge_builtin_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {
-    for builtin in builtin_services() {
+fn merge_builtin_services(
+    conn: &DbConn,
+    mut services: Vec<ModelProvider>,
+) -> AppResult<Vec<ModelProvider>> {
+    let builtin_list = crate::data::llm_catalog::supplier_presets_as_providers(conn)?;
+    for builtin in builtin_list {
         if let Some(existing) = services
             .iter_mut()
             .find(|provider| provider.id == builtin.id)
@@ -311,174 +317,13 @@ fn merge_builtin_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider
             if existing.endpoint.trim().is_empty() {
                 existing.endpoint = builtin.endpoint.clone();
             }
-            for model in builtin.models {
-                if !existing.models.iter().any(|item| item.id == model.id) {
-                    existing.models.push(model);
-                }
-            }
+            // Do not merge `builtin.models` into an existing provider: users may remove
+            // default/catalog models; re-adding them on every read made deletes ineffective.
         } else {
             services.push(builtin);
         }
     }
-    services
-}
-
-fn builtin_services() -> Vec<ModelProvider> {
-    vec![
-        ModelProvider {
-            id: "openrouter".into(),
-            name: "OpenRouter".into(),
-            sdk: crate::ai::providers::OPENAI_SDK.into(),
-            avatar: "/provider-icons/openrouter.svg".into(),
-            endpoint: "https://openrouter.ai/api/v1/chat/completions".into(),
-            api_key: String::new(),
-            enabled: true,
-            models: vec![
-                builtin_model(
-                    "openai/gpt-5.4-image-2",
-                    "GPT Image 2",
-                    "openai",
-                    &["vision", "text"],
-                ),
-                builtin_model(
-                    "google/gemini-2.5-flash-image",
-                    "Gemini 2.5 Flash Image",
-                    "google",
-                    &["vision", "text"],
-                ),
-            ],
-        },
-        ModelProvider {
-            id: "openai".into(),
-            name: "OpenAI".into(),
-            sdk: crate::ai::providers::OPENAI_RESPONSES_SDK.into(),
-            avatar: "/provider-icons/openai.svg".into(),
-            endpoint: "https://api.openai.com/v1/responses".into(),
-            api_key: String::new(),
-            enabled: false,
-            models: vec![
-                builtin_model("gpt-image-1.5", "GPT Image 1.5", "openai", &["vision"]),
-                builtin_model("gpt-4.1", "GPT 4.1", "openai", &["vision", "text"]),
-                builtin_model("gpt-4o", "GPT 4o", "openai", &["vision", "text"]),
-            ],
-        },
-        ModelProvider {
-            id: "gemini".into(),
-            name: "Gemini".into(),
-            sdk: crate::ai::providers::GEMINI_SDK.into(),
-            avatar: "/provider-icons/gemini.svg".into(),
-            endpoint:
-                "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-                    .into(),
-            api_key: String::new(),
-            enabled: false,
-            models: vec![
-                builtin_model(
-                    "gemini-2.5-flash-image",
-                    "Gemini 2.5 Flash Image",
-                    "gemini",
-                    &["vision", "text"],
-                ),
-                builtin_model(
-                    "gemini-2.5-flash",
-                    "Gemini 2.5 Flash",
-                    "gemini",
-                    &["vision", "text"],
-                ),
-                builtin_model(
-                    "gemini-3-flash-preview",
-                    "Gemini 3 Flash Preview",
-                    "gemini",
-                    &["vision", "text", "reasoning"],
-                ),
-            ],
-        },
-        ModelProvider {
-            id: "claude".into(),
-            name: "Claude".into(),
-            sdk: crate::ai::providers::CLAUDE_SDK.into(),
-            avatar: "/provider-icons/claude.svg".into(),
-            endpoint: "https://api.anthropic.com/v1/messages".into(),
-            api_key: String::new(),
-            enabled: false,
-            models: vec![
-                builtin_model(
-                    "claude-sonnet-4-20250514",
-                    "Claude Sonnet 4",
-                    "claude",
-                    &["vision", "text", "reasoning"],
-                ),
-                builtin_model(
-                    "claude-opus-4-1-20250805",
-                    "Claude Opus 4.1",
-                    "claude",
-                    &["vision", "text", "reasoning"],
-                ),
-            ],
-        },
-        ModelProvider {
-            id: "grok".into(),
-            name: "xAI Grok".into(),
-            sdk: crate::ai::providers::GROK_SDK.into(),
-            avatar: "/provider-icons/grok.svg".into(),
-            endpoint: "https://api.x.ai/v1/images/generations".into(),
-            api_key: String::new(),
-            enabled: false,
-            models: vec![builtin_model(
-                "grok-imagine-image-quality",
-                "Grok Imagine (quality)",
-                "grok",
-                &["vision", "text"],
-            )],
-        },
-        ModelProvider {
-            id: "volcengine-ark".into(),
-            name: "豆包生图".into(),
-            sdk: crate::ai::providers::ARK_IMAGES_SDK.into(),
-            avatar: "/provider-icons/doubao-color.svg".into(),
-            endpoint: "https://ark.cn-beijing.volces.com/api/v3/images/generations".into(),
-            api_key: String::new(),
-            enabled: false,
-            models: vec![builtin_model(
-                "doubao-seedream-5-0-260128",
-                "豆包 Seedream 5.0",
-                "doubao",
-                &["vision", "text"],
-            )],
-        },
-        ModelProvider {
-            id: "deepseek".into(),
-            name: "DeepSeek".into(),
-            sdk: crate::ai::providers::OPENAI_SDK.into(),
-            avatar: "/provider-icons/deepseek.svg".into(),
-            endpoint: "https://api.deepseek.com/chat/completions".into(),
-            api_key: String::new(),
-            enabled: false,
-            models: vec![
-                builtin_model(
-                    "deepseek-v4-flash",
-                    "DeepSeek V4 Flash",
-                    "deepseek",
-                    &["text", "reasoning"],
-                ),
-                builtin_model(
-                    "deepseek-v4-pro",
-                    "DeepSeek V4 Pro",
-                    "deepseek",
-                    &["text", "reasoning"],
-                ),
-            ],
-        },
-    ]
-}
-
-fn builtin_model(id: &str, name: &str, group: &str, capabilities: &[&str]) -> ModelServiceModel {
-    ModelServiceModel {
-        id: id.into(),
-        name: name.into(),
-        group: group.into(),
-        capabilities: capabilities.iter().map(|cap| (*cap).into()).collect(),
-    }
+    Ok(services)
 }
 
 fn normalize_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {

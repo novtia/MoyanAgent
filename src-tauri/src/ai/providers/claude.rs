@@ -214,9 +214,11 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
         return Err(AppError::Upstream(msg.to_string()));
     }
 
+    let content_array = assistant_content_blocks(&v);
     let mut parts: Vec<String> = Vec::new();
     let mut tool_calls: Vec<crate::ai::chat::ProviderToolCall> = Vec::new();
-    if let Some(content) = v.get("content").and_then(Value::as_array) {
+    let mut other_content_types: Vec<String> = Vec::new();
+    if let Some(content) = content_array {
         for item in content {
             match item.get("type").and_then(Value::as_str) {
                 Some("text") => {
@@ -240,7 +242,8 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
                         arguments: input,
                     });
                 }
-                _ => {}
+                Some(t) => other_content_types.push(t.to_string()),
+                None => other_content_types.push("(no type)".to_string()),
             }
         }
     }
@@ -254,7 +257,7 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
     if text.is_none() && tool_calls.is_empty() {
         return Err(AppError::Upstream(format!(
             "upstream response did not contain generated text or tool_use. {}",
-            empty_response_details(&v)
+            empty_response_details(&v, content_array, &other_content_types)
         )));
     }
 
@@ -264,6 +267,16 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
         usage: usage(&v),
         tool_calls,
     })
+}
+
+/// Anthropic Messages API returns `content` on the root object; some proxies nest it under `message`.
+fn assistant_content_blocks(v: &Value) -> Option<&Vec<Value>> {
+    if let Some(arr) = v.get("content").and_then(Value::as_array) {
+        return Some(arr);
+    }
+    v.get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(Value::as_array)
 }
 
 fn usage(v: &Value) -> TokenUsage {
@@ -291,17 +304,47 @@ fn upstream_error_message(txt: &str) -> String {
     }
 }
 
-fn empty_response_details(v: &Value) -> String {
+fn empty_response_details(
+    v: &Value,
+    content: Option<&Vec<Value>>,
+    other_types: &[String],
+) -> String {
     let mut details = Vec::new();
     if let Some(stop_reason) = v.get("stop_reason").and_then(Value::as_str) {
         details.push(format!("stop_reason={stop_reason}"));
     }
-    if v.get("content").is_none() {
-        details.push("missing content".to_string());
+
+    match content {
+        None => {
+            if v.get("choices").is_some() {
+                details.push(
+                    "body has \"choices\" (OpenAI shape); use OpenAI SDK provider for this endpoint"
+                        .to_string(),
+                );
+            } else {
+                details.push(
+                    "no assistant content[] (need top-level \"content\" or \"message\".\"content\" per Anthropic Messages API)"
+                        .to_string(),
+                );
+            }
+        }
+        Some(arr) if arr.is_empty() => {
+            details.push("assistant content[] is empty".to_string());
+        }
+        Some(_) => {}
     }
-    if details.is_empty() {
-        String::new()
-    } else {
-        format!("details: {}", details.join("; "))
+
+    if !other_types.is_empty() {
+        details.push(format!(
+            "non-text blocks only (ignored): {}",
+            other_types.join(", ")
+        ));
     }
+
+    if let Some(obj) = v.as_object() {
+        let keys = obj.keys().take(12).cloned().collect::<Vec<_>>().join(", ");
+        details.push(format!("top-level keys: {keys}"));
+    }
+
+    format!("details: {}", details.join("; "))
 }

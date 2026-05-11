@@ -17,7 +17,7 @@ use crate::ai::agent::{
 };
 use crate::ai::{chat, parameters, router};
 use crate::data::db::DbPool;
-use crate::data::{db, paths, session, settings};
+use crate::data::{db, llm_catalog, paths, session, settings};
 use crate::error::{AppError, AppResult};
 use crate::media::{editor, images};
 
@@ -351,6 +351,14 @@ fn update_settings(
 ) -> Result<settings::Settings, AppError> {
     let conn = state.conn()?;
     settings::apply_patch(&conn, patch)
+}
+
+#[tauri::command]
+fn get_llm_model_catalog(
+    state: tauri::State<Arc<AppState>>,
+) -> Result<llm_catalog::LlmModelCatalogDto, AppError> {
+    let conn = state.conn()?;
+    llm_catalog::fetch_for_frontend(&conn)
 }
 
 // ───────── App info ─────────
@@ -1441,6 +1449,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             update_settings,
+            get_llm_model_catalog,
             get_app_info,
             open_path,
             list_sessions,

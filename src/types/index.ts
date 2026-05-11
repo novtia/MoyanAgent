@@ -34,6 +34,27 @@ export interface ModelProvider {
   models: ModelServiceModel[];
 }
 
+/** SDK adapter metadata + default models (from app catalog / DB). */
+export interface ProviderSdkConfig {
+  id: string;
+  label: string;
+  description: string;
+  defaultName: string;
+  defaultEndpoint: string;
+  endpointPlaceholder: string;
+  endpointHint: string;
+  apiKeyPlaceholder: string;
+  apiKeyHint: string;
+  modelIdPlaceholder: string;
+  modelIdHint: string;
+  models: ModelServiceModel[];
+}
+
+export interface LlmModelCatalog {
+  providerSdkOptions: ProviderSdkConfig[];
+  builtinProviderPresets: ModelProvider[];
+}
+
 export interface Settings {
   api_key: string;
   endpoint: string;

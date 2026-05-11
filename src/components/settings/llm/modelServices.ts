@@ -3,7 +3,10 @@ import type {
   ModelProvider,
   ModelProviderSdk,
   ModelServiceModel,
+  ProviderSdkConfig,
 } from "../../../types";
+
+export type { ProviderSdkConfig };
 
 export const DEFAULT_PROVIDER_SDK = "openai" satisfies ModelProviderSdk;
 
@@ -17,20 +20,21 @@ export const PROVIDER_ICON_PATHS = {
   deepseek: "/provider-icons/deepseek.svg",
 } as const;
 
-export interface ProviderSdkConfig {
-  id: ModelProviderSdk;
-  label: string;
-  description: string;
-  defaultName: string;
-  defaultEndpoint: string;
-  endpointPlaceholder: string;
-  endpointHint: string;
-  apiKeyPlaceholder: string;
-  apiKeyHint: string;
-  modelIdPlaceholder: string;
-  modelIdHint: string;
-  models: ModelServiceModel[];
-}
+/** Last-resort row if catalog has not loaded (empty list). */
+const MINIMAL_SDK_OPTION: ProviderSdkConfig = {
+  id: "openai",
+  label: "OpenAI Chat",
+  description: "",
+  defaultName: "OpenAI Chat",
+  defaultEndpoint: "https://api.openai.com/v1/chat/completions",
+  endpointPlaceholder: "https://.../chat/completions",
+  endpointHint: "",
+  apiKeyPlaceholder: "sk-...",
+  apiKeyHint: "",
+  modelIdPlaceholder: "model-name",
+  modelIdHint: "",
+  models: [],
+};
 
 export const EMPTY_MODEL_PARAMS: ModelParamSettings = {
   temperature: null,
@@ -140,241 +144,11 @@ export function makeModel(
   };
 }
 
-function sdkModel(
-  id: string,
-  name: string,
-  group: string,
-  capabilities: string[],
-) {
-  return makeModel(id, { name, group, capabilities });
-}
-
-export const PROVIDER_SDK_OPTIONS: readonly ProviderSdkConfig[] = [
-  {
-    id: "openai",
-    label: "OpenAI Chat",
-    description: "OpenAI Chat Completions 兼容协议，OpenRouter 也走这个 SDK。",
-    defaultName: "OpenAI Chat",
-    defaultEndpoint: "https://api.openai.com/v1/chat/completions",
-    endpointPlaceholder: "https://.../chat/completions",
-    endpointHint: "填写完整 chat/completions 地址；OpenRouter 使用 https://openrouter.ai/api/v1/chat/completions。",
-    apiKeyPlaceholder: "sk-...",
-    apiKeyHint: "填写该供应商的 API Key。",
-    modelIdPlaceholder: "model-name",
-    modelIdHint: "填写该供应商的模型 ID；OpenRouter 使用 provider/model-name。",
-    models: [
-      sdkModel("gpt-4o", "GPT 4o", "openai", ["vision", "text"]),
-      sdkModel("gpt-4.1", "GPT 4.1", "openai", ["vision", "text"]),
-    ],
-  },
-  {
-    id: "openai-responses",
-    label: "OpenAI Responses",
-    description: "OpenAI Responses API，支持文本和图片输入，适合 OpenAI 原生新接口。",
-    defaultName: "OpenAI",
-    defaultEndpoint: "https://api.openai.com/v1/responses",
-    endpointPlaceholder: "https://api.openai.com/v1/responses",
-    endpointHint: "OpenAI Responses API 的完整地址。",
-    apiKeyPlaceholder: "sk-...",
-    apiKeyHint: "填写 OpenAI API Key。",
-    modelIdPlaceholder: "gpt-4.1",
-    modelIdHint: "填写 OpenAI Responses 支持的模型 ID。",
-    models: [
-      sdkModel("gpt-image-1.5", "GPT Image 1.5", "openai", ["vision"]),
-      sdkModel("gpt-4.1", "GPT 4.1", "openai", ["vision", "text"]),
-      sdkModel("gpt-4o", "GPT 4o", "openai", ["vision", "text"]),
-    ],
-  },
-  {
-    id: "gemini",
-    label: "Gemini",
-    description: "Google Gemini generateContent API，支持文本、图片输入和 Gemini 图片输出。",
-    defaultName: "Gemini",
-    defaultEndpoint:
-      "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-    endpointPlaceholder:
-      "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-    endpointHint: "保留 {model} 占位符；后端会替换为当前模型 ID。",
-    apiKeyPlaceholder: "AIza...",
-    apiKeyHint: "填写 Gemini API Key。",
-    modelIdPlaceholder: "gemini-2.5-flash-image",
-    modelIdHint: "填写 Gemini 模型 ID。",
-    models: [
-      sdkModel("gemini-2.5-flash-image", "Gemini 2.5 Flash Image", "gemini", [
-        "vision",
-        "text",
-      ]),
-      sdkModel("gemini-2.5-flash", "Gemini 2.5 Flash", "gemini", [
-        "vision",
-        "text",
-      ]),
-      sdkModel("gemini-3-flash-preview", "Gemini 3 Flash Preview", "gemini", [
-        "vision",
-        "text",
-        "reasoning",
-      ]),
-    ],
-  },
-  {
-    id: "claude",
-    label: "Claude",
-    description: "Anthropic Messages API，支持文本和图片输入。",
-    defaultName: "Claude",
-    defaultEndpoint: "https://api.anthropic.com/v1/messages",
-    endpointPlaceholder: "https://api.anthropic.com/v1/messages",
-    endpointHint: "Anthropic Messages API 的完整地址。",
-    apiKeyPlaceholder: "sk-ant-...",
-    apiKeyHint: "填写 Anthropic API Key。",
-    modelIdPlaceholder: "claude-sonnet-4-20250514",
-    modelIdHint: "填写 Anthropic 模型 ID。",
-    models: [
-      sdkModel("claude-sonnet-4-20250514", "Claude Sonnet 4", "claude", [
-        "vision",
-        "text",
-        "reasoning",
-      ]),
-      sdkModel("claude-opus-4-1-20250805", "Claude Opus 4.1", "claude", [
-        "vision",
-        "text",
-        "reasoning",
-      ]),
-    ],
-  },
-  {
-    id: "grok",
-    label: "xAI Grok Image",
-    description:
-      "xAI 原生图片 API（/v1/images/generations 与 /v1/images/edits），非 OpenAI Chat 兼容层。",
-    defaultName: "xAI Grok",
-    defaultEndpoint: "https://api.x.ai/v1/images/generations",
-    endpointPlaceholder: "https://api.x.ai/v1/images/generations",
-    endpointHint:
-      "使用 xAI 图片生成完整地址；编辑请求会自动改用同前缀下的 …/images/edits。也可填 https://api.x.ai/v1 作为前缀。",
-    apiKeyPlaceholder: "xai-...",
-    apiKeyHint: "填写 xAI（Grok）API Key。",
-    modelIdPlaceholder: "grok-imagine-image-quality",
-    modelIdHint: "填写 Grok Imagine 图片模型 ID（见 xAI 文档）。",
-    models: [
-      sdkModel("grok-imagine-image-quality", "Grok Imagine (quality)", "grok", [
-        "vision",
-        "text",
-      ]),
-    ],
-  },
-  {
-    id: "ark-images",
-    label: "豆包生图",
-    description:
-      "豆包 Seedream 等模型的图片生成接口（POST …/api/v3/images/generations）。不能与 chat/completions 混用；若误填对话地址，后端会自动改为生图地址。",
-    defaultName: "豆包生图",
-    defaultEndpoint:
-      "https://ark.cn-beijing.volces.com/api/v3/images/generations",
-    endpointPlaceholder:
-      "https://ark.cn-beijing.volces.com/api/v3/images/generations",
-    endpointHint:
-      "在豆包/方舟控制台使用「图片生成」对应的 Endpoint；若只填到 …/api/v3 也会自动补上 /images/generations。误填 …/chat/completions 时也会自动替换为生图路径。",
-    apiKeyPlaceholder: "API Key",
-    apiKeyHint: "与豆包（火山引擎方舟）控制台中的 API Key 一致（Bearer）。",
-    modelIdPlaceholder: "doubao-seedream-5-0-260128",
-    modelIdHint: "填写控制台中该生图模型的接入点 ID（如 doubao-seedream-*）。",
-    models: [
-      sdkModel("doubao-seedream-5-0-260128", "豆包 Seedream 5.0", "doubao", [
-        "vision",
-        "text",
-      ]),
-    ],
-  },
-];
-
-export const BUILTIN_PROVIDER_PRESETS: readonly ModelProvider[] = [
-  makeProvider({
-    id: "openrouter",
-    name: "OpenRouter",
-    sdk: "openai",
-    avatar: PROVIDER_ICON_PATHS.openrouter,
-    endpoint: "https://openrouter.ai/api/v1/chat/completions",
-    enabled: true,
-    models: [
-      sdkModel("openai/gpt-5.4-image-2", "GPT Image 2", "openai", [
-        "vision",
-        "text",
-      ]),
-      sdkModel("google/gemini-2.5-flash-image", "Gemini 2.5 Flash Image", "google", [
-        "vision",
-        "text",
-      ]),
-    ],
-  }),
-  makeProvider({
-    id: "openai",
-    sdk: "openai-responses",
-    avatar: PROVIDER_ICON_PATHS.openai,
-    enabled: false,
-  }),
-  makeProvider({
-    id: "gemini",
-    sdk: "gemini",
-    avatar: PROVIDER_ICON_PATHS.gemini,
-    enabled: false,
-  }),
-  makeProvider({
-    id: "claude",
-    sdk: "claude",
-    avatar: PROVIDER_ICON_PATHS.claude,
-    enabled: false,
-  }),
-  makeProvider({
-    id: "grok",
-    name: "xAI Grok",
-    sdk: "grok",
-    avatar: PROVIDER_ICON_PATHS.grok,
-    endpoint: "https://api.x.ai/v1/images/generations",
-    enabled: false,
-    models: [
-      sdkModel("grok-imagine-image-quality", "Grok Imagine (quality)", "grok", [
-        "vision",
-        "text",
-      ]),
-    ],
-  }),
-  makeProvider({
-    id: "volcengine-ark",
-    name: "豆包生图",
-    sdk: "ark-images",
-    avatar: PROVIDER_ICON_PATHS.doubao,
-    endpoint:
-      "https://ark.cn-beijing.volces.com/api/v3/images/generations",
-    enabled: false,
-    models: [
-      sdkModel("doubao-seedream-5-0-260128", "豆包 Seedream 5.0", "doubao", [
-        "vision",
-        "text",
-      ]),
-    ],
-  }),
-  makeProvider({
-    id: "deepseek",
-    name: "DeepSeek",
-    sdk: "openai",
-    avatar: PROVIDER_ICON_PATHS.deepseek,
-    endpoint: "https://api.deepseek.com/chat/completions",
-    enabled: false,
-    models: [
-      sdkModel("deepseek-v4-flash", "DeepSeek V4 Flash", "deepseek", [
-        "text",
-        "reasoning",
-      ]),
-      sdkModel("deepseek-v4-pro", "DeepSeek V4 Pro", "deepseek", [
-        "text",
-        "reasoning",
-      ]),
-    ],
-  }),
-];
-
-/** Matches backend `builtin_services()` ids — system-inserted providers must not be removable in the UI. */
-export function isBuiltinProvider(provider: Pick<ModelProvider, "id">): boolean {
-  return BUILTIN_PROVIDER_PRESETS.some((b) => b.id === provider.id);
+export function isBuiltinProvider(
+  provider: Pick<ModelProvider, "id">,
+  builtinPresets: readonly Pick<ModelProvider, "id">[],
+): boolean {
+  return builtinPresets.some((b) => b.id === provider.id);
 }
 
 export function normalizeProviderSdk(sdk?: string | null): string {
@@ -385,24 +159,33 @@ export function normalizeProviderSdk(sdk?: string | null): string {
   return normalized;
 }
 
-export function isKnownProviderSdk(sdk?: string | null): sdk is ModelProviderSdk {
+export function isKnownProviderSdk(
+  sdk: string | null | undefined,
+  sdkOptions: readonly ProviderSdkConfig[],
+): sdk is ModelProviderSdk {
   const normalized = normalizeProviderSdk(sdk);
-  return PROVIDER_SDK_OPTIONS.some((option) => option.id === normalized);
+  return sdkOptions.some((option) => option.id === normalized);
 }
 
-export function getProviderSdkConfig(sdk?: string | null): ProviderSdkConfig {
+export function getProviderSdkConfig(
+  sdk: string | null | undefined,
+  sdkOptions: readonly ProviderSdkConfig[],
+): ProviderSdkConfig {
   const normalized = normalizeProviderSdk(sdk);
   return (
-    PROVIDER_SDK_OPTIONS.find((option) => option.id === normalized) ??
-    PROVIDER_SDK_OPTIONS[0]
+    sdkOptions.find((option) => option.id === normalized) ??
+    sdkOptions[0] ??
+    MINIMAL_SDK_OPTION
   );
 }
 
-export function providerSdkLabel(sdk?: string | null) {
+export function providerSdkLabel(
+  sdk: string | null | undefined,
+  sdkOptions: readonly ProviderSdkConfig[],
+) {
   const normalized = normalizeProviderSdk(sdk);
   return (
-    PROVIDER_SDK_OPTIONS.find((option) => option.id === normalized)?.label ??
-    normalized
+    sdkOptions.find((option) => option.id === normalized)?.label ?? normalized
   );
 }
 
@@ -414,12 +197,13 @@ export interface ProviderValidationErrors {
 
 export function validateProviderConfig(
   provider: Pick<ModelProvider, "sdk" | "endpoint" | "api_key">,
-  required = true,
+  required: boolean,
+  sdkOptions: readonly ProviderSdkConfig[],
 ): ProviderValidationErrors {
   const errors: ProviderValidationErrors = {};
   const sdk = normalizeProviderSdk(provider.sdk);
 
-  if (!isKnownProviderSdk(sdk)) {
+  if (!isKnownProviderSdk(sdk, sdkOptions)) {
     errors.sdk = `当前后端未注册 ${sdk} SDK。`;
   }
 
@@ -444,9 +228,12 @@ export function validateProviderConfig(
   return errors;
 }
 
-export function makeProvider(patch: Partial<ModelProvider> = {}): ModelProvider {
+export function makeProvider(
+  patch: Partial<ModelProvider> = {},
+  sdkOptions: readonly ProviderSdkConfig[],
+): ModelProvider {
   const sdk = normalizeProviderSdk(patch.sdk);
-  const sdkConfig = getProviderSdkConfig(sdk);
+  const sdkConfig = getProviderSdkConfig(sdk, sdkOptions);
   const name = patch.name?.trim() || sdkConfig.defaultName || "新供应商";
   return {
     id: patch.id || makeLocalId("provider"),
@@ -456,7 +243,7 @@ export function makeProvider(patch: Partial<ModelProvider> = {}): ModelProvider 
     endpoint: patch.endpoint ?? sdkConfig.defaultEndpoint,
     api_key: patch.api_key ?? "",
     enabled: patch.enabled !== false,
-    models: patch.models ?? sdkConfig.models.map((model) => makeModel(model.id, model)),
+    models: patch.models ?? [],
   };
 }
 

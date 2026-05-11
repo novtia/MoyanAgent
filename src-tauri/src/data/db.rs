@@ -9,10 +9,28 @@ use crate::error::AppResult;
 pub type DbPool = Pool<SqliteConnectionManager>;
 pub type DbConn = r2d2::PooledConnection<SqliteConnectionManager>;
 
-const MIGRATION_001: &str = include_str!("../../migrations/001_init.sql");
-const MIGRATION_002: &str = include_str!("../../migrations/002_session_system_prompt.sql");
-const MIGRATION_003: &str = include_str!("../../migrations/003_session_history_turns.sql");
-const MIGRATION_004: &str = include_str!("../../migrations/004_session_llm_params.sql");
+const MIGRATION_001: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations/001_init.sql"));
+const MIGRATION_002: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/002_session_system_prompt.sql"
+));
+const MIGRATION_003: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/003_session_history_turns.sql"
+));
+const MIGRATION_004: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/004_session_llm_params.sql"
+));
+const MIGRATION_005: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/005_agent_events.sql"
+));
+const MIGRATION_006: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/006_llm_catalog.sql"
+));
 
 pub fn open_pool(db_path: &Path) -> AppResult<DbPool> {
     if let Some(parent) = db_path.parent() {
@@ -60,6 +78,14 @@ fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
     if cur < 4 {
         conn.execute_batch(MIGRATION_004)?;
         conn.execute("INSERT INTO schema_version(version) VALUES (4)", params![])?;
+    }
+    if cur < 5 {
+        conn.execute_batch(MIGRATION_005)?;
+        conn.execute("INSERT INTO schema_version(version) VALUES (5)", params![])?;
+    }
+    if cur < 6 {
+        conn.execute_batch(MIGRATION_006)?;
+        conn.execute("INSERT INTO schema_version(version) VALUES (6)", params![])?;
     }
     Ok(())
 }
