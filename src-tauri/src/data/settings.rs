@@ -48,8 +48,6 @@ pub struct ModelServiceModel {
     pub name: String,
     pub group: String,
     pub capabilities: Vec<String>,
-    pub streaming: bool,
-    pub params: ModelParamSettings,
 }
 
 fn default_enabled() -> bool {
@@ -277,11 +275,17 @@ pub fn active_provider(s: &Settings) -> Option<&ModelProvider> {
         .or_else(|| s.model_services.first())
 }
 
-pub fn active_model_params(s: &Settings) -> ModelParamSettings {
-    active_provider(s)
-        .and_then(|p| p.models.iter().find(|m| m.id == s.model))
-        .map(|m| m.params.clone())
-        .unwrap_or_default()
+pub fn validate_model_param_settings(p: &ModelParamSettings) -> AppResult<()> {
+    validate_optional_f64(p.temperature, "temperature")?;
+    validate_optional_f64(p.top_p, "top_p")?;
+    validate_optional_f64(p.frequency_penalty, "frequency_penalty")?;
+    validate_optional_f64(p.presence_penalty, "presence_penalty")?;
+    if let Some(n) = p.max_tokens {
+        if n < 0 {
+            return Err(AppError::Invalid("max_tokens must be non-negative".into()));
+        }
+    }
+    Ok(())
 }
 
 fn merge_builtin_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {
@@ -474,8 +478,6 @@ fn builtin_model(id: &str, name: &str, group: &str, capabilities: &[&str]) -> Mo
         name: name.into(),
         group: group.into(),
         capabilities: capabilities.iter().map(|cap| (*cap).into()).collect(),
-        streaming: true,
-        params: ModelParamSettings::default(),
     }
 }
 
@@ -535,15 +537,6 @@ fn validate_services(services: &[ModelProvider]) -> AppResult<()> {
         for model in &provider.models {
             if model.id.trim().is_empty() {
                 return Err(AppError::Invalid("model id cannot be empty".into()));
-            }
-            validate_optional_f64(model.params.temperature, "temperature")?;
-            validate_optional_f64(model.params.top_p, "top_p")?;
-            validate_optional_f64(model.params.frequency_penalty, "frequency_penalty")?;
-            validate_optional_f64(model.params.presence_penalty, "presence_penalty")?;
-            if let Some(n) = model.params.max_tokens {
-                if n < 0 {
-                    return Err(AppError::Invalid("max_tokens must be non-negative".into()));
-                }
             }
         }
     }

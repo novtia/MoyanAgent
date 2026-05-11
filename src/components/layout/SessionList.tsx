@@ -3,7 +3,10 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { openContextMenu } from "../context-menu";
 import { useSession } from "../../store/session";
-import type { SessionSummary } from "../../types";
+import type { ModelParamSettings, SessionSummary } from "../../types";
+import { EMPTY_MODEL_PARAMS } from "../settings/llm/modelServices";
+import { NUMERIC_FIELDS } from "../settings/llm/modelParams";
+import { NumericParamField } from "../settings/llm/NumericParamField";
 
 function timeAgo(ts: number, t: TFunction): string {
   const now = Date.now();
@@ -36,6 +39,7 @@ export function SessionList({ onOpenChat }: SessionListProps) {
   const [configTarget, setConfigTarget] = useState<SessionSummary | null>(null);
   const [systemPromptDraft, setSystemPromptDraft] = useState("");
   const [historyTurnsDraft, setHistoryTurnsDraft] = useState("10");
+  const [llmParamsDraft, setLlmParamsDraft] = useState<ModelParamSettings>(EMPTY_MODEL_PARAMS);
   const [configError, setConfigError] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
 
@@ -56,6 +60,10 @@ export function SessionList({ onOpenChat }: SessionListProps) {
     setConfigTarget(session);
     setSystemPromptDraft(session.system_prompt ?? "");
     setHistoryTurnsDraft(String(session.history_turns ?? 10));
+    setLlmParamsDraft({
+      ...EMPTY_MODEL_PARAMS,
+      ...(session.llm_params ?? EMPTY_MODEL_PARAMS),
+    });
     setConfigError(null);
   };
 
@@ -93,7 +101,10 @@ export function SessionList({ onOpenChat }: SessionListProps) {
     }
     setSavingConfig(true);
     try {
-      await updateConfig(configTarget.id, systemPromptDraft, parsed);
+      await updateConfig(configTarget.id, systemPromptDraft, parsed, {
+        ...EMPTY_MODEL_PARAMS,
+        ...llmParamsDraft,
+      });
       setConfigTarget(null);
     } finally {
       setSavingConfig(false);
@@ -190,6 +201,29 @@ export function SessionList({ onOpenChat }: SessionListProps) {
                   <div className={`hint ${configError ? "is-error" : ""}`}>
                     {configError ?? "0 表示不携带历史；该参数只影响当前会话。"}
                   </div>
+                </div>
+
+                <div className="row session-config-llm-params">
+                  <div className="field-label">模型采样参数</div>
+                  <div className="settings-params-grid">
+                    {NUMERIC_FIELDS.map((field) => (
+                      <NumericParamField
+                        key={field.key}
+                        def={field}
+                        value={llmParamsDraft[field.key]}
+                        onCommit={(next) =>
+                          setLlmParamsDraft((current) => ({
+                            ...current,
+                            [field.key]: next,
+                          }))
+                        }
+                        invalidLabel={t("settings.llm.paramInvalid")}
+                        label={t(field.labelKey)}
+                        hint={t(field.hintKey)}
+                      />
+                    ))}
+                  </div>
+                  <div className="hint">仅作用于当前会话的请求体；留空则不在请求中发送对应字段。</div>
                 </div>
               </div>
             </div>

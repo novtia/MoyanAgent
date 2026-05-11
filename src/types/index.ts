@@ -11,8 +11,6 @@ export interface ModelServiceModel {
   name: string;
   group: string;
   capabilities: string[];
-  streaming: boolean;
-  params: ModelParamSettings;
 }
 
 export type ModelProviderSdk =
@@ -76,6 +74,7 @@ export interface Session {
   model: string | null;
   system_prompt: string;
   history_turns: number;
+  llm_params: ModelParamSettings;
   created_at: number;
   updated_at: number;
 }
@@ -86,6 +85,7 @@ export interface SessionSummary {
   model: string | null;
   system_prompt: string;
   history_turns: number;
+  llm_params: ModelParamSettings;
   updated_at: number;
   message_count: number;
 }

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   AttachmentDraft,
   MessageAbs,
+  ModelParamSettings,
   SessionSummary,
   SessionWithMessagesAbs,
 } from "../types";
@@ -33,7 +34,12 @@ interface SessionStore {
   createNew: () => Promise<string>;
   switchTo: (id: string) => Promise<void>;
   rename: (id: string, title: string) => Promise<void>;
-  updateConfig: (id: string, systemPrompt: string, historyTurns: number) => Promise<void>;
+  updateConfig: (
+    id: string,
+    systemPrompt: string,
+    historyTurns: number,
+    llmParams: ModelParamSettings,
+  ) => Promise<void>;
   remove: (id: string) => Promise<void>;
   ensureActive: () => Promise<string>;
 
@@ -171,8 +177,8 @@ export const useSession = create<SessionStore>((set, get) => {
     }
   },
 
-  updateConfig: async (id, systemPrompt, historyTurns) => {
-    await api.updateSessionConfig(id, systemPrompt, historyTurns);
+  updateConfig: async (id, systemPrompt, historyTurns, llmParams) => {
+    await api.updateSessionConfig(id, systemPrompt, historyTurns, llmParams);
     await get().refreshList();
     if (get().activeId === id && get().active) {
       const a = get().active!;
@@ -183,6 +189,7 @@ export const useSession = create<SessionStore>((set, get) => {
             ...a.session,
             system_prompt: systemPrompt,
             history_turns: historyTurns,
+            llm_params: llmParams,
           },
         },
       });

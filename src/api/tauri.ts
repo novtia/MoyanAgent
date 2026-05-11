@@ -6,6 +6,7 @@ import type {
   GenerateResult,
   ImageRefAbs,
   MessageAbs,
+  ModelParamSettings,
   SessionSearchResult,
   SessionSummary,
   SessionWithMessagesAbs,
@@ -38,11 +39,17 @@ export const api = {
     invoke<Session>("create_session", { args: { title, model } }),
   renameSession: (id: string, title: string) =>
     invoke<void>("rename_session", { id, title }),
-  updateSessionConfig: (id: string, systemPrompt: string, historyTurns: number) =>
+  updateSessionConfig: (
+    id: string,
+    systemPrompt: string,
+    historyTurns: number,
+    llmParams: ModelParamSettings,
+  ) =>
     invoke<void>("update_session_config", {
       id,
       systemPrompt,
       historyTurns,
+      llmParams,
     }),
   deleteSession: (id: string) => invoke<void>("delete_session", { id }),
   loadSession: (id: string) =>

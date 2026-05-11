@@ -3,8 +3,13 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use crate::data::db::{now_ms, DbConn};
-use crate::data::settings::DEFAULT_HISTORY_TURNS;
+use crate::data::settings::{validate_model_param_settings, ModelParamSettings, DEFAULT_HISTORY_TURNS};
 use crate::error::{AppError, AppResult};
+
+fn decode_llm_params(raw: Option<String>) -> ModelParamSettings {
+    raw.and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -13,6 +18,7 @@ pub struct Session {
     pub model: Option<String>,
     pub system_prompt: String,
     pub history_turns: i64,
+    pub llm_params: ModelParamSettings,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -24,6 +30,7 @@ pub struct SessionSummary {
     pub model: Option<String>,
     pub system_prompt: String,
     pub history_turns: i64,
+    pub llm_params: ModelParamSettings,
     pub updated_at: i64,
     pub message_count: i64,
 }
@@ -35,6 +42,7 @@ pub struct SessionSearchResult {
     pub model: Option<String>,
     pub system_prompt: String,
     pub history_turns: i64,
+    pub llm_params: ModelParamSettings,
     pub updated_at: i64,
     pub message_count: i64,
     pub match_message_id: Option<String>,
@@ -89,6 +97,7 @@ pub fn create(conn: &DbConn, title: Option<String>, model: Option<String>) -> Ap
         model,
         system_prompt: String::new(),
         history_turns: DEFAULT_HISTORY_TURNS,
+        llm_params: ModelParamSettings::default(),
         created_at: now,
         updated_at: now,
     })
@@ -116,16 +125,21 @@ pub fn update_config(
     id: &str,
     system_prompt: &str,
     history_turns: i64,
+    llm_params: &ModelParamSettings,
 ) -> AppResult<()> {
     if history_turns < 0 {
         return Err(AppError::Invalid(
             "history_turns must be non-negative".into(),
         ));
     }
+    validate_model_param_settings(llm_params)?;
+    let params_json = serde_json::to_string(llm_params).map_err(|e| {
+        AppError::Invalid(format!("failed to serialize llm_params: {e}"))
+    })?;
     let updated = now_ms();
     let n = conn.execute(
-        "UPDATE sessions SET system_prompt=?1, history_turns=?2, updated_at=?3 WHERE id=?4",
-        params![system_prompt, history_turns, updated, id],
+        "UPDATE sessions SET system_prompt=?1, history_turns=?2, llm_params=?3, updated_at=?4 WHERE id=?5",
+        params![system_prompt, history_turns, params_json, updated, id],
     )?;
     if n == 0 {
         return Err(AppError::NotFound(format!("session {id}")));
@@ -178,20 +192,22 @@ pub fn delete_message(conn: &DbConn, id: &str) -> AppResult<Vec<(String, Option<
 
 pub fn list(conn: &DbConn) -> AppResult<Vec<SessionSummary>> {
     let mut stmt = conn.prepare(
-        "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.updated_at,
+        "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.updated_at,
             (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt
          FROM sessions s
          ORDER BY s.updated_at DESC",
     )?;
     let rows = stmt.query_map(params![], |r| {
+        let raw: Option<String> = r.get(5)?;
         Ok(SessionSummary {
             id: r.get(0)?,
             title: r.get(1)?,
             model: r.get(2)?,
             system_prompt: r.get(3)?,
             history_turns: r.get(4)?,
-            updated_at: r.get(5)?,
-            message_count: r.get(6)?,
+            llm_params: decode_llm_params(raw),
+            updated_at: r.get(6)?,
+            message_count: r.get(7)?,
         })
     })?;
     let mut out = Vec::new();
@@ -218,7 +234,7 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
 
     if query.is_empty() {
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.updated_at,
+            "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.updated_at,
                 (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt,
                 NULL AS match_message_id, NULL AS match_role, NULL AS match_text,
                 NULL AS match_created_at, 0 AS match_count, 0 AS title_match
@@ -236,7 +252,7 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
 
     let pattern = format!("%{}%", escape_like(query));
     let mut stmt = conn.prepare(
-        "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.updated_at,
+        "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.updated_at,
             (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt,
             (SELECT mm.id FROM messages mm
              WHERE mm.session_id = s.id AND COALESCE(mm.text, '') LIKE ?1 ESCAPE '\\'
@@ -273,38 +289,42 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
 }
 
 fn map_search_result(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSearchResult> {
-    let title_match: i64 = row.get(12)?;
+    let title_match: i64 = row.get(13)?;
+    let raw: Option<String> = row.get(5)?;
     Ok(SessionSearchResult {
         id: row.get(0)?,
         title: row.get(1)?,
         model: row.get(2)?,
         system_prompt: row.get(3)?,
         history_turns: row.get(4)?,
-        updated_at: row.get(5)?,
-        message_count: row.get(6)?,
-        match_message_id: row.get(7)?,
-        match_role: row.get(8)?,
-        match_text: row.get(9)?,
-        match_created_at: row.get(10)?,
-        match_count: row.get(11)?,
+        llm_params: decode_llm_params(raw),
+        updated_at: row.get(6)?,
+        message_count: row.get(7)?,
+        match_message_id: row.get(8)?,
+        match_role: row.get(9)?,
+        match_text: row.get(10)?,
+        match_created_at: row.get(11)?,
+        match_count: row.get(12)?,
         title_match: title_match != 0,
     })
 }
 
 pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, model, system_prompt, history_turns, created_at, updated_at FROM sessions WHERE id=?1",
+        "SELECT id, title, model, system_prompt, history_turns, llm_params, created_at, updated_at FROM sessions WHERE id=?1",
     )?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
+        let raw: Option<String> = row.get(5)?;
         Ok(Session {
             id: row.get(0)?,
             title: row.get(1)?,
             model: row.get(2)?,
             system_prompt: row.get(3)?,
             history_turns: row.get(4)?,
-            created_at: row.get(5)?,
-            updated_at: row.get(6)?,
+            llm_params: decode_llm_params(raw),
+            created_at: row.get(6)?,
+            updated_at: row.get(7)?,
         })
     } else {
         Err(AppError::NotFound(format!("session {id}")))

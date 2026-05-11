@@ -10,12 +10,9 @@ import { openContextMenu } from "../../context-menu";
 import { useSettings } from "../../../store/settings";
 import type { ModelProvider, ModelServiceModel } from "../../../types";
 import { CheckIcon, CopyIcon } from "../icons";
-import { NUMERIC_FIELDS } from "./modelParams";
-import { NumericParamField } from "./NumericParamField";
 import {
   CAPABILITY_OPTIONS,
   DEFAULT_PROVIDER_SDK,
-  EMPTY_MODEL_PARAMS,
   PROVIDER_SDK_OPTIONS,
   type ProviderSdkConfig,
   type ProviderValidationErrors,
@@ -1176,17 +1173,10 @@ function ModelSettingsModal({
   onSave,
   onDelete,
 }: ModelSettingsModalProps) {
-  const { t } = useTranslation();
-  const [draft, setDraft] = useState<ModelServiceModel>(() => ({
-    ...model,
-    params: { ...EMPTY_MODEL_PARAMS, ...(model.params ?? {}) },
-  }));
+  const [draft, setDraft] = useState<ModelServiceModel>(() => ({ ...model }));
 
   useEffect(() => {
-    setDraft({
-      ...model,
-      params: { ...EMPTY_MODEL_PARAMS, ...(model.params ?? {}) },
-    });
+    setDraft({ ...model });
   }, [model]);
 
   const trimmedId = draft.id.trim();
@@ -1276,39 +1266,6 @@ function ModelSettingsModal({
                 ))}
               </div>
             </div>
-
-            <div className="model-modal-section model-modal-toggle-row">
-              <span>支持增量文本输出</span>
-              <button
-                type="button"
-                className={`model-service-switch ${draft.streaming ? "on" : ""}`}
-                onClick={() => patchDraft({ streaming: !draft.streaming })}
-              >
-                <span />
-              </button>
-            </div>
-
-            <div className="model-modal-section">
-              <div className="model-modal-section-title">模型参数</div>
-              <div className="settings-params-grid">
-                {NUMERIC_FIELDS.map((field) => (
-                  <NumericParamField
-                    key={field.key}
-                    def={field}
-                    value={draft.params[field.key]}
-                    onCommit={(next) =>
-                      setDraft((current) => ({
-                        ...current,
-                        params: { ...current.params, [field.key]: next },
-                      }))
-                    }
-                    invalidLabel={t("settings.llm.paramInvalid")}
-                    label={t(field.labelKey)}
-                    hint={t(field.hintKey)}
-                  />
-                ))}
-              </div>
-            </div>
           </div>
         </div>
         <div className="modal-foot">
@@ -1328,7 +1285,6 @@ function ModelSettingsModal({
                 id: trimmedId,
                 name: draft.name.trim() || shortModelName(trimmedId),
                 group: draft.group.trim() || "custom",
-                params: { ...EMPTY_MODEL_PARAMS, ...(draft.params ?? {}) },
               })
             }
           >

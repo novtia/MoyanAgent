@@ -131,15 +131,12 @@ export function makeModel(
   id: string,
   patch: Partial<ModelServiceModel> = {},
 ): ModelServiceModel {
-  const { params, ...rest } = patch;
   return {
     id,
     name: shortModelName(id),
     group: groupFromModelId(id),
     capabilities: inferCapabilities(id),
-    streaming: true,
-    ...rest,
-    params: { ...EMPTY_MODEL_PARAMS, ...(params ?? {}) },
+    ...patch,
   };
 }
 
@@ -473,11 +470,6 @@ export function normalizeProviders(providers: ModelProvider[]) {
     avatar: providerAvatar(provider),
     endpoint: provider.endpoint ?? "",
     api_key: provider.api_key ?? "",
-    models: provider.models.map((model) =>
-      makeModel(model.id, {
-        ...model,
-        params: { ...EMPTY_MODEL_PARAMS, ...(model.params ?? {}) },
-      }),
-    ),
+    models: provider.models.map((model) => makeModel(model.id, model)),
   }));
 }

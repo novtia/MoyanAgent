@@ -243,15 +243,28 @@ fn rename_session(
     session::rename(&conn, &id, &title)
 }
 
-#[tauri::command]
-fn update_session_config(
-    state: tauri::State<Arc<AppState>>,
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateSessionConfigArgs {
     id: String,
     system_prompt: String,
     history_turns: i64,
+    llm_params: settings::ModelParamSettings,
+}
+
+#[tauri::command]
+fn update_session_config(
+    state: tauri::State<Arc<AppState>>,
+    args: UpdateSessionConfigArgs,
 ) -> Result<(), AppError> {
     let conn = state.conn()?;
-    session::update_config(&conn, &id, &system_prompt, history_turns)
+    session::update_config(
+        &conn,
+        &args.id,
+        &args.system_prompt,
+        args.history_turns,
+        &args.llm_params,
+    )
 }
 
 #[tauri::command]
@@ -499,7 +512,7 @@ async fn generate_image(
         let session_config = session::get(&conn, &req.session_id)?;
         let session_prompt = session_config.system_prompt.clone();
         let history_turns = session_config.history_turns;
-        let model_params = settings::active_model_params(&s);
+        let model_params = session_config.llm_params.clone();
         let mut atts: Vec<chat::AttachmentBytes> = Vec::new();
         let mut ids: Vec<String> = Vec::new();
         for id in &req.attachment_ids {
@@ -666,7 +679,7 @@ async fn regenerate_image(
         let session_config = session::get(&conn, &req.session_id)?;
         let session_prompt = session_config.system_prompt.clone();
         let history_turns = session_config.history_turns;
-        let model_params = settings::active_model_params(&s);
+        let model_params = session_config.llm_params.clone();
         let mut atts: Vec<chat::AttachmentBytes> = Vec::new();
         let mut input_images: Vec<&session::ImageRef> = user_msg_existing
             .images
