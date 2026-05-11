@@ -1,3 +1,4 @@
+pub(crate) mod agent;
 pub(crate) mod chat;
 pub(crate) mod parameters;
 pub(crate) mod providers;

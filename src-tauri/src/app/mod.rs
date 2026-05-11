@@ -6,6 +6,15 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 
+use crate::ai::agent::tools::agent_tool::{AgentTool, ChatRequestFactory};
+use crate::ai::agent::exec::engine::ProviderQueryEngine;
+use crate::ai::agent::memory::UserContextLoader;
+use crate::ai::agent::tools::ToolPool;
+use crate::ai::agent::{
+    self, AgentRegistry, FileReadTool, FsSessionMemoryExtractor, FsUserContextLoader,
+    NotificationQueue, ProviderEngine, StaticMcpRegistry, Task, TaskState, TaskStore,
+    UserContextConfig,
+};
 use crate::ai::{chat, parameters, router};
 use crate::data::db::DbPool;
 use crate::data::{db, paths, session, settings};
@@ -15,6 +24,24 @@ use crate::media::{editor, images};
 pub struct AppState {
     pub pool: DbPool,
     generation_cancel: Mutex<HashMap<String, oneshot::Sender<()>>>,
+
+    /// Agent subsystem services. Kept on `AppState` so that any Tauri
+    /// command can register tasks, fan out notifications, or pick up a
+    /// definition without walking the global registry every call.
+    pub agent_registry: Arc<AgentRegistry>,
+    pub task_store: Arc<TaskStore>,
+    pub notifications: Arc<NotificationQueue>,
+    pub engine: Arc<ProviderEngine>,
+    /// CLAUDE.md / user-context loader; cached, invalidate on compact.
+    pub user_context: Arc<FsUserContextLoader>,
+    /// MCP registry snapshot used by `AgentTool` to gate sub-agents.
+    pub mcp: Arc<StaticMcpRegistry>,
+    /// Shared tool pool. Currently holds [`FileReadTool`]; further
+    /// host-implemented tools register on top.
+    pub tools: Arc<ToolPool>,
+    /// Per-session-memory extractor. Stateless aside from the last
+    /// observed [`SessionMemory`] snapshot.
+    pub session_memory: Arc<FsSessionMemoryExtractor>,
 }
 
 impl AppState {
@@ -77,7 +104,7 @@ fn build_history(
             None => true,
         })
         .filter(|m| {
-            // Skip empty turns (no text and no usable images) — they don't add context.
+            // Skip empty turns (no text and no usable images) �?they don't add context.
             let has_text = m
                 .text
                 .as_deref()
@@ -123,25 +150,173 @@ fn build_history(
     Ok(out)
 }
 
+/// Route a chat request through the agent layer.
+///
+/// Every generation now flows through [`agent::run_chat_request`], which
+/// registers a [`Task`] against [`AppState::task_store`]. The per-session
+/// oneshot channel (`generation_cancel`) is kept for the existing
+/// frontend cancel API �?it races against the agent call and, on cancel,
+/// marks the task as `Killed` before returning.
 async fn run_cancellable_generation(
     state: &AppState,
     session_id: &str,
-    request: chat::ChatRequest,
+    agent_type: &str,
+    prompt: String,
+    mut request: chat::ChatRequest,
     on_text_delta: Option<chat::TextDeltaCallback>,
 ) -> AppResult<chat::GenerateResponse> {
     let cancel_rx = register_generation_cancel(state, session_id)?;
+
+    // Drain any pending task-notifications addressed to the main loop and
+    // prepend them to the chat history as hidden user-meta turns. This
+    // mirrors how `query.ts` injects `<task-notification>` at turn
+    // boundaries so the model sees background results on the *next* call.
+    let drained = state.notifications.drain_for_main();
+    if !drained.is_empty() {
+        crate::ai::agent::exec::engine::inject_attachments_into_history(&mut request, &drained);
+    }
+
+    // Prepend the rendered user-context (CLAUDE.md / rules / MEMORY.md)
+    // as the very first hidden user-meta history turn. This mirrors
+    // `prependUserContext()` on the TS side: it sits in front of every
+    // other turn so the model always sees the active instructions.
+    if let Ok(ctx) = state.user_context.load() {
+        if !ctx.rendered.trim().is_empty() {
+            let mut head = vec![chat::HistoryTurn {
+                role: "user".into(),
+                text: Some(ctx.rendered.clone()),
+                images: Vec::new(),
+            }];
+            head.append(&mut request.history);
+            request.history = head;
+        }
+    }
+
+    let engine = state.engine.clone();
+    let store = state.task_store.clone();
+    let prompt_for_agent = prompt;
+    let agent_type = agent_type.to_string();
+
     let result = tokio::select! {
-        result = async {
-            if let Some(on_text_delta) = on_text_delta {
-                router::chat_stream(request, on_text_delta).await
-            } else {
-                router::chat(request).await
-            }
-        } => result,
+        outcome = async move {
+            agent::run_chat_request(
+                engine.as_ref(),
+                store.as_ref(),
+                &agent_type,
+                prompt_for_agent,
+                request,
+                on_text_delta,
+            )
+            .await
+            .map(|o| (o.response, o.task_id))
+        } => result_from_outcome(outcome, state),
         _ = cancel_rx => Err(AppError::Canceled),
     };
     clear_generation_cancel(state, session_id);
     result
+}
+
+/// Bridges [`ChatRequestFactory`] over the host's settings + db pool +
+/// user-context loader so the model-callable `Agent` tool can synthesise
+/// a sub-agent [`ChatRequest`] without the agent layer knowing anything
+/// about SQLite, settings storage, or CLAUDE.md discovery.
+struct SettingsChatFactory {
+    pool: DbPool,
+    user_context: Arc<FsUserContextLoader>,
+}
+
+impl SettingsChatFactory {
+    fn new(pool: DbPool, user_context: Arc<FsUserContextLoader>) -> Self {
+        Self { pool, user_context }
+    }
+}
+
+impl ChatRequestFactory for SettingsChatFactory {
+    fn build(
+        &self,
+        prompt: &str,
+        _agent_type: &str,
+        definition: &crate::ai::agent::AgentDefinition,
+    ) -> AppResult<(chat::ChatRequest, Vec<agent::Attachment>)> {
+        let conn = self.pool.get()?;
+        let settings = settings::read(&conn)?;
+
+        // Runner overwrites `system_prompt` with `definition.system_prompt`
+        // plus env-details + critical reminder, so leave it empty here.
+        let chat = crate::ai::router::build_chat_request(
+            &settings,
+            prompt.to_string(),
+            Vec::new(),
+            String::new(),
+            Vec::new(),
+            crate::ai::parameters::factory().build(
+                String::new(),
+                String::new(),
+                Default::default(),
+            ),
+        )?;
+
+        // Honour `omit_claude_md`: only inject user-context (CLAUDE.md +
+        // rules) when the agent definition opts in. Rendered as a
+        // `Delta { topic = "user_context" }` attachment so the engine
+        // turns it into a `<system-reminder>` block on entry.
+        let attachments = if definition.omit_claude_md {
+            Vec::new()
+        } else {
+            self.user_context
+                .load()
+                .ok()
+                .map(|uc| {
+                    let rendered = uc.rendered.trim();
+                    if rendered.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![agent::Attachment::for_main(
+                            agent::AttachmentKind::Delta {
+                                topic: "user_context".into(),
+                                body: rendered.to_string(),
+                            },
+                        )]
+                    }
+                })
+                .unwrap_or_default()
+        };
+
+        Ok((chat, attachments))
+    }
+}
+
+fn result_from_outcome(
+    outcome: AppResult<(chat::GenerateResponse, agent::TaskId)>,
+    _state: &AppState,
+) -> AppResult<chat::GenerateResponse> {
+    outcome.map(|(resp, _tid)| resp)
+}
+
+/// Post-sampling hook: ask the session-memory extractor whether it
+/// wants to refresh `summary.md` for this session. Mirrors the
+/// `extractSessionMemory()` post-sampling pass �?non-blocking, best-effort.
+fn maybe_extract_session_memory(
+    state: &AppState,
+    app: &AppHandle,
+    session_id: &str,
+    usage: &crate::ai::tokens::TokenUsage,
+) {
+    if !state.session_memory.should_update(usage, 0) {
+        return;
+    }
+    let Ok(dir) = paths::session_dir(app, session_id) else {
+        return;
+    };
+    let latest = state
+        .task_store
+        .list()
+        .into_iter()
+        .filter(|t| !matches!(t.state, TaskState::Pending | TaskState::Running))
+        .max_by_key(|t| t.ended_at_ms.unwrap_or(t.started_at_ms));
+    let _ = state
+        .session_memory
+        .extract_now(session_id, &dir, latest.as_ref());
 }
 
 fn stream_text_callback(
@@ -508,6 +683,155 @@ fn cancel_generation(
     Ok(())
 }
 
+// ───────── Agent task commands ─────────
+
+#[tauri::command]
+fn list_agent_tasks(state: tauri::State<Arc<AppState>>) -> Result<Vec<Task>, AppError> {
+    Ok(state.task_store.list())
+}
+
+#[tauri::command]
+fn cancel_agent_task(
+    state: tauri::State<Arc<AppState>>,
+    task_id: String,
+) -> Result<(), AppError> {
+    let id = agent::TaskId(task_id);
+    state.task_store.set_state(&id, TaskState::Killed);
+    // After state transitions, surface the kill to the main loop as a
+    // hidden `<task-notification>` for the next request.
+    if let Some(slot) = state.task_store.get(&id) {
+        if let Ok(t) = slot.lock() {
+            if let Some(note) = agent::TaskNotification::from_task(&t) {
+                state
+                    .notifications
+                    .push(agent::Attachment::for_main(agent::AttachmentKind::TaskNotification(note)));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct AgentSummary {
+    agent_type: String,
+    when_to_use: String,
+    background: bool,
+    tools: Vec<String>,
+    disallowed_tools: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct UserContextSummary {
+    file_count: usize,
+    rendered_chars: usize,
+    files: Vec<UserContextFile>,
+}
+
+#[derive(Debug, Serialize)]
+struct UserContextFile {
+    ty: String,
+    path: String,
+    conditional: bool,
+    path_globs: Option<Vec<String>>,
+}
+
+#[tauri::command]
+fn refresh_user_context(
+    state: tauri::State<Arc<AppState>>,
+) -> Result<UserContextSummary, AppError> {
+    use crate::ai::agent::memory::UserContextLoader;
+    state.user_context.invalidate();
+    let ctx = state.user_context.load()?;
+    Ok(UserContextSummary {
+        file_count: ctx.memory_files.len(),
+        rendered_chars: ctx.rendered.chars().count(),
+        files: ctx
+            .memory_files
+            .iter()
+            .map(|mf| UserContextFile {
+                ty: format!("{:?}", mf.ty).to_lowercase(),
+                path: mf.path.to_string_lossy().into_owned(),
+                conditional: mf.conditional,
+                path_globs: mf.path_globs.clone(),
+            })
+            .collect(),
+    })
+}
+
+#[tauri::command]
+fn set_mcp_servers(
+    state: tauri::State<Arc<AppState>>,
+    servers: Vec<String>,
+) -> Result<(), AppError> {
+    state.mcp.set(servers);
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct SessionMemoryInfo {
+    session_id: String,
+    summary_path: String,
+    total_tokens: i64,
+}
+
+#[tauri::command]
+fn list_agent_tools(state: tauri::State<Arc<AppState>>) -> Result<Vec<String>, AppError> {
+    let mut names: Vec<String> = state
+        .tools
+        .all()
+        .into_iter()
+        .map(|t| t.spec().name.clone())
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
+#[tauri::command]
+fn extract_session_memory(
+    state: tauri::State<Arc<AppState>>,
+    app: AppHandle,
+    session_id: String,
+) -> Result<SessionMemoryInfo, AppError> {
+    let dir = paths::session_dir(&app, &session_id)?;
+
+    // Use the most recent completed task for this agent_type/session as
+    // the source. If nothing matches we still write the default template.
+    let latest_task = state
+        .task_store
+        .list()
+        .into_iter()
+        .filter(|t| !matches!(t.state, TaskState::Pending | TaskState::Running))
+        .max_by_key(|t| t.ended_at_ms.unwrap_or(t.started_at_ms));
+
+    let sm = state
+        .session_memory
+        .extract_now(&session_id, &dir, latest_task.as_ref())?;
+
+    Ok(SessionMemoryInfo {
+        session_id: sm.session_id,
+        summary_path: sm.summary_path.to_string_lossy().into_owned(),
+        total_tokens: sm.last_usage.total_tokens.unwrap_or(0),
+    })
+}
+
+#[tauri::command]
+fn list_agents(state: tauri::State<Arc<AppState>>) -> Result<Vec<AgentSummary>, AppError> {
+    let mut out: Vec<AgentSummary> = state
+        .agent_registry
+        .active()
+        .into_values()
+        .map(|d| AgentSummary {
+            agent_type: d.agent_type,
+            when_to_use: d.when_to_use,
+            background: d.background,
+            tools: d.tools,
+            disallowed_tools: d.disallowed_tools,
+        })
+        .collect();
+    out.sort_by(|a, b| a.agent_type.cmp(&b.agent_type));
+    Ok(out)
+}
+
 #[derive(Debug, Deserialize)]
 struct GenerateReq {
     session_id: String,
@@ -604,9 +928,15 @@ async fn generate_image(
     // 3) call the unified chat router
     let on_text_delta =
         stream_text_callback(app.clone(), req.session_id.clone(), user_msg.id.clone());
-    let result =
-        run_cancellable_generation(&state, &req.session_id, chat_request, Some(on_text_delta))
-            .await;
+    let result = run_cancellable_generation(
+        &state,
+        &req.session_id,
+        agent::config::builtin::AGENT_GENERAL_PURPOSE,
+        req.prompt.clone(),
+        chat_request,
+        Some(on_text_delta),
+    )
+    .await;
 
     let _ = app.emit(
         "gen://status",
@@ -619,6 +949,7 @@ async fn generate_image(
     // 4) write assistant message
     match result {
         Ok(resp) => {
+            maybe_extract_session_memory(&state, &app, &req.session_id, &resp.usage);
             let conn = state.conn()?;
             let assistant_params_json =
                 params.to_message_params_with_usage(&resp.usage).to_string();
@@ -763,9 +1094,15 @@ async fn regenerate_image(
         req.session_id.clone(),
         req.user_message_id.clone(),
     );
-    let result =
-        run_cancellable_generation(&state, &req.session_id, chat_request, Some(on_text_delta))
-            .await;
+    let result = run_cancellable_generation(
+        &state,
+        &req.session_id,
+        agent::config::builtin::AGENT_GENERAL_PURPOSE,
+        prompt.to_string(),
+        chat_request,
+        Some(on_text_delta),
+    )
+    .await;
 
     let _ = app.emit(
         "gen://status",
@@ -777,6 +1114,7 @@ async fn regenerate_image(
 
     match result {
         Ok(resp) => {
+            maybe_extract_session_memory(&state, &app, &req.session_id, &resp.usage);
             let conn = state.conn()?;
             let assistant_params_json =
                 params.to_message_params_with_usage(&resp.usage).to_string();
@@ -1043,9 +1381,57 @@ pub fn run() {
             let handle = app.handle();
             let db_path = paths::db_path(handle)?;
             let pool = db::open_pool(&db_path)?;
+
+            // Build the shared services first.
+            let registry = Arc::new(AgentRegistry::with_builtins());
+            let task_store = Arc::new(TaskStore::new());
+            let mcp = Arc::new(StaticMcpRegistry::new());
+            let provider_engine = Arc::new(ProviderEngine::new());
+            let user_context = Arc::new(FsUserContextLoader::new(UserContextConfig::from_env()));
+
+            // Pool starts with the built-in filesystem tools. Wrap in
+            // `Arc` immediately so we can register `AgentTool` self-
+            // referentially below.
+            let tools: Arc<ToolPool> = Arc::new(ToolPool::new());
+            tools.register(FileReadTool::new());
+
+            // Build the agent-callable `Agent` tool. The chat factory
+            // lets it materialise a sub-agent `ChatRequest` from the
+            // current settings on demand and (when
+            // `definition.omit_claude_md == false`) attaches CLAUDE.md
+            // as a system-reminder.
+            let chat_factory: Arc<dyn ChatRequestFactory> =
+                Arc::new(SettingsChatFactory::new(pool.clone(), user_context.clone()));
+            // Plan-mode aware resolver: in Plan-mode any write tool /
+            // mutating Bash invocation is denied at the executor before
+            // hitting the tool itself.
+            let permission_resolver: Arc<dyn agent::PermissionResolver> = Arc::new(
+                crate::ai::agent::core::permission::PlanModeResolver::new(agent::AllowAllResolver),
+            );
+            let query_engine: Arc<dyn agent::QueryEngine> = Arc::new(
+                ProviderQueryEngine::new(provider_engine.clone(), permission_resolver),
+            );
+            let agent_tool = AgentTool::new(
+                registry.clone(),
+                tools.clone(),
+                task_store.clone(),
+                query_engine,
+                mcp.clone(),
+            )
+            .with_chat_factory(chat_factory);
+            tools.register(agent_tool);
+
             app.manage(Arc::new(AppState {
                 pool,
                 generation_cancel: Mutex::new(HashMap::new()),
+                agent_registry: registry,
+                task_store,
+                notifications: Arc::new(NotificationQueue::new()),
+                engine: provider_engine,
+                user_context,
+                mcp,
+                tools,
+                session_memory: Arc::new(FsSessionMemoryExtractor::new()),
             }));
             Ok(())
         })
@@ -1070,6 +1456,13 @@ pub fn run() {
             remove_attachment_draft,
             get_image_abs_path,
             cancel_generation,
+            list_agent_tasks,
+            cancel_agent_task,
+            list_agents,
+            refresh_user_context,
+            set_mcp_servers,
+            list_agent_tools,
+            extract_session_memory,
             generate_image,
             regenerate_image,
             edit_image,

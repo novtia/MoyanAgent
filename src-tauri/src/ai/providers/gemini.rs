@@ -216,6 +216,7 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
             Some(texts.join("\n\n"))
         },
         usage: usage(&v),
+        tool_calls: Vec::new(),
     })
 }
 

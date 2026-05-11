@@ -245,6 +245,16 @@ async fn post_openrouter_chat_stream(
                 sleep_for_attempt(attempt).await;
                 continue;
             }
+            if upstream_rejects_streaming(status, &msg) {
+                return fallback_openrouter_chat_response(
+                    client,
+                    request,
+                    body,
+                    provider_label,
+                    on_text_delta.clone(),
+                )
+                .await;
+            }
             if upstream_rejects_modalities(status, &msg) && modality_stage < 2 {
                 modality_stage += 1;
                 continue 'modalities;
@@ -296,6 +306,16 @@ async fn post_stream_with_retries(
             sleep_for_attempt(attempt).await;
             continue;
         }
+        if upstream_rejects_streaming(status, &msg) {
+            return fallback_openai_chat_response(
+                client,
+                request,
+                body,
+                provider_label,
+                on_text_delta,
+            )
+            .await;
+        }
         return Err(AppError::Upstream(format!(
             "{} HTTP {}: {}",
             provider_label, status, msg
@@ -341,6 +361,16 @@ async fn post_responses_stream_with_retries(
         if attempt < MAX_ATTEMPTS && is_retryable_status(status) {
             sleep_for_attempt(attempt).await;
             continue;
+        }
+        if upstream_rejects_streaming(status, &msg) {
+            return fallback_responses_response(
+                client,
+                request,
+                body,
+                provider_label,
+                on_text_delta,
+            )
+            .await;
         }
         return Err(AppError::Upstream(format!(
             "{} HTTP {}: {}",
@@ -543,6 +573,56 @@ fn emit_final_text_if_needed(resp: &GenerateResponse, on_text_delta: &TextDeltaC
     }
 }
 
+async fn fallback_openrouter_chat_response(
+    client: &reqwest::Client,
+    request: &ChatRequest,
+    body: &Value,
+    provider_label: &str,
+    on_text_delta: TextDeltaCallback,
+) -> AppResult<GenerateResponse> {
+    let mut body = without_streaming(body);
+    let final_txt = post_openrouter_chat(client, request, &mut body, provider_label).await?;
+    let resp = parse_openai_like_response(&final_txt)?;
+    emit_final_text_if_needed(&resp, &on_text_delta);
+    Ok(resp)
+}
+
+async fn fallback_openai_chat_response(
+    client: &reqwest::Client,
+    request: &ChatRequest,
+    body: &Value,
+    provider_label: &str,
+    on_text_delta: TextDeltaCallback,
+) -> AppResult<GenerateResponse> {
+    let body = without_streaming(body);
+    let final_txt = post_with_retries(client, request, &body, provider_label).await?;
+    let resp = parse_openai_like_response(&final_txt)?;
+    emit_final_text_if_needed(&resp, &on_text_delta);
+    Ok(resp)
+}
+
+async fn fallback_responses_response(
+    client: &reqwest::Client,
+    request: &ChatRequest,
+    body: &Value,
+    provider_label: &str,
+    on_text_delta: TextDeltaCallback,
+) -> AppResult<GenerateResponse> {
+    let body = without_streaming(body);
+    let final_txt = post_with_retries(client, request, &body, provider_label).await?;
+    let resp = parse_responses_response(&final_txt)?;
+    emit_final_text_if_needed(&resp, &on_text_delta);
+    Ok(resp)
+}
+
+fn without_streaming(body: &Value) -> Value {
+    let mut body = body.clone();
+    if let Some(map) = body.as_object_mut() {
+        map.remove("stream");
+    }
+    body
+}
+
 fn find_sse_event_end(buffer: &[u8]) -> Option<(usize, usize)> {
     for i in 0..buffer.len().saturating_sub(3) {
         if &buffer[i..i + 4] == b"\r\n\r\n" {
@@ -723,9 +803,12 @@ fn merge_usage(target: &mut TokenUsage, next: TokenUsage) {
 
 fn finalize_stream_response(
     text: String,
-    images: Vec<ImageResult>,
+    mut images: Vec<ImageResult>,
     usage: TokenUsage,
 ) -> AppResult<GenerateResponse> {
+    if !text.is_empty() {
+        collect_inline_data_urls(&text, &mut images);
+    }
     let text = if text.trim().is_empty() {
         None
     } else {
@@ -740,6 +823,7 @@ fn finalize_stream_response(
         images,
         text,
         usage,
+        tool_calls: Vec::new(),
     })
 }
 
@@ -771,6 +855,20 @@ fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) -> Value {
     }
     messages.push(json!({ "role": "user", "content": user_content }));
 
+    // Append any tool_result replies after the synthesized user turn so
+    // they match OpenAI's expected message ordering.
+    for tr in &request.tool_results {
+        let content = match &tr.content {
+            Value::String(s) => Value::String(s.clone()),
+            other => Value::String(other.to_string()),
+        };
+        messages.push(json!({
+            "role": "tool",
+            "tool_call_id": tr.tool_call_id,
+            "content": content,
+        }));
+    }
+
     let mut body = json!({
         "model": request.model,
         "messages": messages,
@@ -783,6 +881,27 @@ fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) -> Value {
             map.insert("image_config".into(), image_config);
         }
     }
+
+    // Surface available tools to the model. Image-generation flows
+    // leave `tools` empty so the field is omitted.
+    if !request.tools.is_empty() {
+        let tools: Vec<Value> = request
+            .tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.schema,
+                    }
+                })
+            })
+            .collect();
+        map.insert("tools".into(), Value::Array(tools));
+    }
+
     body
 }
 
@@ -951,6 +1070,17 @@ fn upstream_rejects_modalities(status: StatusCode, msg: &str) -> bool {
     (status == StatusCode::NOT_FOUND || status == StatusCode::BAD_REQUEST) && m.contains("modalit")
 }
 
+fn upstream_rejects_streaming(status: StatusCode, msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    matches!(
+        status,
+        StatusCode::BAD_REQUEST
+            | StatusCode::METHOD_NOT_ALLOWED
+            | StatusCode::NOT_IMPLEMENTED
+            | StatusCode::UNPROCESSABLE_ENTITY
+    ) && (m.contains("stream") || m.contains("sse"))
+}
+
 fn is_image_only_model(model: &str) -> bool {
     let m = model.trim().to_ascii_lowercase();
     m.starts_with("black-forest-labs/")
@@ -1004,9 +1134,11 @@ fn parse_openai_like_response(final_txt: &str) -> AppResult<GenerateResponse> {
 
     let images = extract_images(&v);
     let text = extract_openai_chat_text(&v);
-    if images.is_empty() && text.as_deref().map(str::is_empty).unwrap_or(true) {
+    let tool_calls = extract_openai_chat_tool_calls(&v);
+    let has_text = text.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
+    if images.is_empty() && !has_text && tool_calls.is_empty() {
         return Err(AppError::Upstream(format!(
-            "upstream response did not contain generated image or text. {}",
+            "upstream response did not contain generated image, text or tool_calls. {}",
             empty_response_details(&v)
         )));
     }
@@ -1015,6 +1147,7 @@ fn parse_openai_like_response(final_txt: &str) -> AppResult<GenerateResponse> {
         images,
         text,
         usage: tokens::extract_usage(&v),
+        tool_calls,
     })
 }
 
@@ -1044,6 +1177,7 @@ fn parse_responses_response(final_txt: &str) -> AppResult<GenerateResponse> {
         images,
         text,
         usage: tokens::extract_usage(&v),
+        tool_calls: Vec::new(),
     })
 }
 
@@ -1078,6 +1212,31 @@ fn top_level_error_message(v: &Value) -> Option<String> {
         Some(code) => format!("upstream error {}: {}", code, message),
         None => format!("upstream error: {}", message),
     })
+}
+
+fn extract_openai_chat_tool_calls(v: &Value) -> Vec<crate::ai::chat::ProviderToolCall> {
+    let Some(arr) = v.pointer("/choices/0/message/tool_calls").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|tc| {
+            let id = tc.get("id").and_then(Value::as_str)?.to_string();
+            let name = tc
+                .pointer("/function/name")
+                .and_then(Value::as_str)?
+                .to_string();
+            let raw_args = tc
+                .pointer("/function/arguments")
+                .and_then(Value::as_str)
+                .unwrap_or("{}");
+            let arguments = serde_json::from_str::<Value>(raw_args).unwrap_or(Value::Null);
+            Some(crate::ai::chat::ProviderToolCall {
+                id,
+                name,
+                arguments,
+            })
+        })
+        .collect()
 }
 
 fn extract_openai_chat_text(v: &Value) -> Option<String> {

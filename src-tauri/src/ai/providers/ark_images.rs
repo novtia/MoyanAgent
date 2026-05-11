@@ -328,6 +328,7 @@ async fn parse_response(
         images,
         text: None,
         usage: TokenUsage::default(),
+        tool_calls: Vec::new(),
     })
 }
 

@@ -314,6 +314,7 @@ async fn parse_and_fetch_images(
                 images: from_b64,
                 text: None,
                 usage: TokenUsage::default(),
+                tool_calls: Vec::new(),
             });
         }
         return Err(AppError::Upstream(format!(
@@ -346,6 +347,7 @@ async fn parse_and_fetch_images(
         images,
         text: None,
         usage: TokenUsage::default(),
+        tool_calls: Vec::new(),
     })
 }
 

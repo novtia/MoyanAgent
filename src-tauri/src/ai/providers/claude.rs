@@ -180,6 +180,7 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
         images: Vec::new(),
         text: Some(parts.join("\n\n")),
         usage: usage(&v),
+        tool_calls: Vec::new(),
     })
 }
 

@@ -1,6 +1,12 @@
-use crate::ai::chat::{
-    AttachmentBytes, ChatRequest, GenerateResponse, HistoryTurn, ProviderConfig, TextDeltaCallback,
-};
+//! Helpers for assembling a [`ChatRequest`] from persisted settings.
+//!
+//! Historically this module also exposed `chat()` / `chat_stream()`
+//! wrappers around [`crate::ai::providers::ProviderFactory`]. Those were
+//! removed in favour of the agent-layer entry point
+//! [`crate::ai::agent::run_chat_request`], which adds task tracking and
+//! cancellation on top of the same provider call.
+
+use crate::ai::chat::{AttachmentBytes, ChatRequest, HistoryTurn, ProviderConfig};
 use crate::ai::parameters::GenerationParameters;
 use crate::ai::providers;
 use crate::data::settings;
@@ -41,18 +47,7 @@ pub fn build_chat_request(
         system_prompt,
         history,
         parameters,
+        tools: Vec::new(),
+        tool_results: Vec::new(),
     })
-}
-
-pub async fn chat(request: ChatRequest) -> AppResult<GenerateResponse> {
-    providers::ProviderFactory::default().chat(request).await
-}
-
-pub async fn chat_stream(
-    request: ChatRequest,
-    on_text_delta: TextDeltaCallback,
-) -> AppResult<GenerateResponse> {
-    providers::ProviderFactory::default()
-        .chat_stream(request, on_text_delta)
-        .await
 }
