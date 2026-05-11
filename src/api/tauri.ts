@@ -16,6 +16,18 @@ import type {
   SettingsPatch,
 } from "../types";
 
+/** Per-session fields the backend merges into generation (debug log only). */
+function sessionSettingsForLog(s: Session) {
+  return {
+    session_id: s.id,
+    title: s.title,
+    model: s.model,
+    system_prompt: s.system_prompt,
+    history_turns: s.history_turns,
+    llm_params: s.llm_params,
+  };
+}
+
 export const api = {
   // settings
   getSettings: () => invoke<Settings>("get_settings"),
@@ -48,10 +60,7 @@ export const api = {
     llmParams: ModelParamSettings,
   ) =>
     invoke<void>("update_session_config", {
-      id,
-      systemPrompt,
-      historyTurns,
-      llmParams,
+      args: { id, systemPrompt, historyTurns, llmParams },
     }),
   deleteSession: (id: string) => invoke<void>("delete_session", { id }),
   loadSession: (id: string) =>
@@ -82,19 +91,43 @@ export const api = {
     invoke<string>("get_image_abs_path", { imageId }),
 
   // generate
-  generateImage: (req: {
-    session_id: string;
-    prompt: string;
-    attachment_ids: string[];
-    aspect_ratio: string;
-    image_size: string;
-  }) => invoke<GenerateResult>("generate_image", { req }),
-  regenerateImage: (req: {
-    session_id: string;
-    user_message_id: string;
-    aspect_ratio: string;
-    image_size: string;
-  }) => invoke<GenerateResult>("regenerate_image", { req }),
+  generateImage: async (
+    req: {
+      session_id: string;
+      prompt: string;
+      attachment_ids: string[];
+      aspect_ratio: string;
+      image_size: string;
+    },
+    session?: Session | null,
+  ) => {
+    const tag = "[atelier] generate_image";
+    console.log(`${tag} request →`, {
+      ...req,
+      session_settings: session ? sessionSettingsForLog(session) : null,
+    });
+    const res = await invoke<GenerateResult>("generate_image", { req });
+    console.log(`${tag} response ←`, res);
+    return res;
+  },
+  regenerateImage: async (
+    req: {
+      session_id: string;
+      user_message_id: string;
+      aspect_ratio: string;
+      image_size: string;
+    },
+    session?: Session | null,
+  ) => {
+    const tag = "[atelier] regenerate_image";
+    console.log(`${tag} request →`, {
+      ...req,
+      session_settings: session ? sessionSettingsForLog(session) : null,
+    });
+    const res = await invoke<GenerateResult>("regenerate_image", { req });
+    console.log(`${tag} response ←`, res);
+    return res;
+  },
   cancelGeneration: (sessionId: string) =>
     invoke<void>("cancel_generation", { sessionId }),
 

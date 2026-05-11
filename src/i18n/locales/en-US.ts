@@ -114,6 +114,8 @@ const enUS: Resource = {
     editSend: "Send",
     editAddImage: "Add image",
     editRemoveImage: "Remove image",
+    thinkingToggle: "Model reasoning",
+    thinkingHint: "Click to expand or collapse",
   },
   preview: {
     title: "Preview",

@@ -40,12 +40,16 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
   const messages = active?.messages || [];
   const lastMessageTextLength =
     messages.length > 0 ? messages[messages.length - 1].text?.length ?? 0 : 0;
+  const lastMessageThinkingLength =
+    messages.length > 0
+      ? messages[messages.length - 1].params?.thinking_content?.length ?? 0
+      : 0;
   const hasStreamingAssistant = messages.some((m) => m.id.startsWith("tmp-assistant-"));
 
   useEffect(() => {
     if (!ref.current) return;
     ref.current.scrollTop = ref.current.scrollHeight;
-  }, [messages.length, lastMessageTextLength, busy]);
+  }, [messages.length, lastMessageTextLength, lastMessageThinkingLength, busy]);
 
   useEffect(() => {
     const onFocusMessage = (event: Event) => {
@@ -123,6 +127,10 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
   const hasText = !!(m.text && m.text.trim());
   const canEdit = isUser && (hasText || inputs.length > 0);
   const canQuote = hasText || inputs.length > 0 || outputs.length > 0;
+  const thinkingContent =
+    isAssistant && typeof m.params?.thinking_content === "string"
+      ? m.params.thinking_content.trim()
+      : "";
 
   const MAX_EDIT_IMAGES = 8;
 
@@ -373,6 +381,15 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
                 : t("message.stampFailure", { time: nowStamp(m.created_at) })}
             </span>
           )}
+
+          {!editing && thinkingContent ? (
+            <details className="bubble-thinking">
+              <summary title={t("message.thinkingHint")}>
+                {t("message.thinkingToggle")}
+              </summary>
+              <div className="bubble-thinking-body">{thinkingContent}</div>
+            </details>
+          ) : null}
 
           {!editing && inputs.length > 0 && (
             <div className="attached">

@@ -361,6 +361,55 @@
   text-transform: uppercase;
   margin-bottom: 6px;
 }
+.bubble-thinking {
+  margin-top: 0;
+  margin-bottom: 10px;
+  max-width: min(640px, 100%);
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+.bubble-thinking summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-2);
+  user-select: none;
+}
+.bubble-thinking summary::-webkit-details-marker {
+  display: none;
+}
+.bubble-thinking summary::before {
+  content: "";
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-right: 8px;
+  border-left: 5px solid var(--ink-mute);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transform: translateY(-1px);
+  transition: transform 0.15s ease;
+}
+.bubble-thinking[open] summary::before {
+  transform: rotate(90deg) translate(1px, 0);
+}
+.bubble-thinking-body {
+  padding: 10px 12px 12px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink-2);
+  font-family: 'JetBrains Mono', monospace;
+  border-top: 1px solid var(--line);
+  max-height: min(50vh, 360px);
+  overflow-y: auto;
+}
 .bubble .params {
   display: flex;
   flex-wrap: wrap;

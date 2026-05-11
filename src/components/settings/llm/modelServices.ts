@@ -42,6 +42,8 @@ export const EMPTY_MODEL_PARAMS: ModelParamSettings = {
   max_tokens: null,
   frequency_penalty: null,
   presence_penalty: null,
+  thinking_enabled: null,
+  thinking_effort: null,
 };
 
 export const CAPABILITY_OPTIONS = [

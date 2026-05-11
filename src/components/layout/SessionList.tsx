@@ -204,6 +204,43 @@ export function SessionList({ onOpenChat }: SessionListProps) {
                 </div>
 
                 <div className="row session-config-llm-params">
+                  <div className="field-label">思考 / 推理</div>
+                  <div className="session-config-thinking-row">
+                    <label className="session-config-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={llmParamsDraft.thinking_enabled === true}
+                        onChange={(e) =>
+                          setLlmParamsDraft((current) => ({
+                            ...current,
+                            thinking_enabled: e.target.checked ? true : null,
+                          }))
+                        }
+                      />
+                      <span>开启（OpenAI: reasoning_effort；Claude: output_config.effort）</span>
+                    </label>
+                    <label className="field-label session-config-thinking-effort-label">强度</label>
+                    <select
+                      className="field-input field-input--mono"
+                      value={llmParamsDraft.thinking_effort ?? ""}
+                      onChange={(e) =>
+                        setLlmParamsDraft((current) => ({
+                          ...current,
+                          thinking_effort: e.target.value.trim() ? e.target.value.trim() : null,
+                        }))
+                      }
+                      disabled={llmParamsDraft.thinking_enabled !== true}
+                    >
+                      <option value="">默认 high</option>
+                      <option value="low">low</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                      <option value="max">max</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="row session-config-llm-params">
                   <div className="field-label">模型采样参数</div>
                   <div className="settings-params-grid">
                     {NUMERIC_FIELDS.map((field) => (

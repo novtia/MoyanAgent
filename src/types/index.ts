@@ -4,6 +4,10 @@ export interface ModelParamSettings {
   max_tokens: number | null;
   frequency_penalty: number | null;
   presence_penalty: number | null;
+  /** When true, enables extended reasoning where the SDK supports it. */
+  thinking_enabled: boolean | null;
+  /** e.g. low / medium / high / max — forwarded as OpenAI `reasoning_effort` or Claude `output_config.effort`. */
+  thinking_effort: string | null;
 }
 
 export interface ModelServiceModel {
@@ -142,6 +146,7 @@ export interface MessageAbs {
   params: {
     aspect_ratio?: string;
     image_size?: string;
+    thinking_content?: string | null;
     usage?: {
       prompt_tokens?: number | null;
       completion_tokens?: number | null;

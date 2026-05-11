@@ -52,6 +52,27 @@
 .session-config-form .hint.is-error {
   color: var(--field-error);
 }
+.session-config-thinking-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+.session-config-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.session-config-checkbox input {
+  margin: 0;
+}
+.session-config-thinking-effort-label {
+  margin: 0;
+  font-size: 12px;
+}
 .chat-rename {
   /* Visual styling provided by .field-input + .field-input--compact below.
      This rule only handles layout (full-width inside the row). */

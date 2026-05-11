@@ -26,6 +26,9 @@ interface PendingAttachmentDraft {
 interface GenerationStreamPayload {
   session_id: string;
   request_message_id?: string;
+  text_delta?: string | null;
+  thinking_delta?: string | null;
+  /** Backward compatibility for older backend stream events. */
   delta?: string;
 }
 
@@ -490,12 +493,15 @@ export const useSession = create<SessionStore>((set, get) => {
     setSessionBusy(sid, true);
     ensureGenerationStreamListener();
     try {
-      await api.regenerateImage({
-        session_id: sid,
-        user_message_id: messageId,
-        aspect_ratio: c.aspectRatio,
-        image_size: c.imageSize,
-      });
+      await api.regenerateImage(
+        {
+          session_id: sid,
+          user_message_id: messageId,
+          aspect_ratio: c.aspectRatio,
+          image_size: c.imageSize,
+        },
+        a.session,
+      );
       await reloadActiveSessionIfViewing(sid);
       await get().refreshList();
     } catch (e: unknown) {
@@ -587,13 +593,19 @@ export const useSession = create<SessionStore>((set, get) => {
     ensureGenerationStreamListener();
 
     try {
-      await api.generateImage({
-        session_id: sid,
-        prompt: text,
-        attachment_ids: attachmentIds,
-        aspect_ratio: aspectRatio,
-        image_size: imageSize,
-      });
+      const active = get().active;
+      const sessionForLog =
+        active && active.session.id === sid ? active.session : null;
+      await api.generateImage(
+        {
+          session_id: sid,
+          prompt: text,
+          attachment_ids: attachmentIds,
+          aspect_ratio: aspectRatio,
+          image_size: imageSize,
+        },
+        sessionForLog,
+      );
       await reloadActiveSessionIfViewing(sid);
       await get().refreshList();
     } catch (e: unknown) {
@@ -633,8 +645,9 @@ function ensureGenerationStreamListener() {
   listen<GenerationStreamPayload>("gen://stream", (event) => {
     const payload = event.payload;
     const sessionId = payload.session_id;
-    const delta = payload.delta || "";
-    if (!sessionId || !delta) return;
+    const textDelta = payload.text_delta ?? payload.delta ?? "";
+    const thinkingDelta = payload.thinking_delta ?? "";
+    if (!sessionId || (!textDelta && !thinkingDelta)) return;
 
     const state = useSession.getState();
     if (state.activeId !== sessionId || !state.active) return;
@@ -646,17 +659,27 @@ function ensureGenerationStreamListener() {
 
     if (existingIndex >= 0) {
       const existing = messages[existingIndex];
+      const existingThinking =
+        typeof existing.params?.thinking_content === "string"
+          ? existing.params.thinking_content
+          : "";
+      const nextThinking = thinkingDelta
+        ? `${existingThinking}${thinkingDelta}`
+        : existingThinking;
       messages[existingIndex] = {
         ...existing,
-        text: `${existing.text || ""}${delta}`,
+        text: textDelta ? `${existing.text || ""}${textDelta}` : existing.text,
+        params: nextThinking
+          ? { ...(existing.params || {}), thinking_content: nextThinking }
+          : existing.params,
       };
     } else {
       messages.push({
         id: messageId,
         session_id: sessionId,
         role: "assistant",
-        text: delta,
-        params: null,
+        text: textDelta,
+        params: thinkingDelta ? { thinking_content: thinkingDelta } : null,
         created_at: Date.now(),
         images: [],
       });

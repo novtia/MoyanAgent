@@ -28,6 +28,29 @@ pub struct ModelParamSettings {
     pub max_tokens: Option<i64>,
     pub frequency_penalty: Option<f64>,
     pub presence_penalty: Option<f64>,
+    /// When `Some(true)`, request extended reasoning where the provider
+    /// supports it (OpenAI: `reasoning_effort`; Claude: `output_config.effort`).
+    #[serde(default)]
+    pub thinking_enabled: Option<bool>,
+    /// Provider-specific effort level, e.g. `low` / `medium` / `high` / `max`.
+    /// When enabled and unset, backends default to `high`.
+    #[serde(default)]
+    pub thinking_effort: Option<String>,
+}
+
+impl ModelParamSettings {
+    /// Effort string to send upstream when thinking is enabled.
+    pub fn resolved_thinking_effort(&self) -> Option<String> {
+        if !self.thinking_enabled.unwrap_or(false) {
+            return None;
+        }
+        let effort = self
+            .thinking_effort
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        Some(effort.unwrap_or_else(|| "high".into()))
+    }
 }
 
 impl Default for ModelParamSettings {
@@ -38,6 +61,8 @@ impl Default for ModelParamSettings {
             max_tokens: None,
             frequency_penalty: None,
             presence_penalty: None,
+            thinking_enabled: None,
+            thinking_effort: None,
         }
     }
 }
@@ -285,6 +310,13 @@ pub fn validate_model_param_settings(p: &ModelParamSettings) -> AppResult<()> {
     if let Some(n) = p.max_tokens {
         if n < 0 {
             return Err(AppError::Invalid("max_tokens must be non-negative".into()));
+        }
+    }
+    if let Some(ref s) = p.thinking_effort {
+        if s.trim().is_empty() {
+            return Err(AppError::Invalid(
+                "thinking_effort must not be empty when set".into(),
+            ));
         }
     }
     Ok(())

@@ -330,7 +330,8 @@ fn stream_text_callback(
             serde_json::json!({
                 "session_id": &session_id,
                 "request_message_id": &request_message_id,
-                "delta": delta,
+                "text_delta": delta.text,
+                "thinking_delta": delta.thinking,
             }),
         );
     })
@@ -855,6 +856,45 @@ struct GenerateResult {
     assistant_message: MessageAbs,
 }
 
+/// Dedupe multimodal duplicates, persist assistant row + output images, return API DTO.
+fn finalize_generate_assistant_message(
+    app: &AppHandle,
+    conn: &db::DbConn,
+    session_id: &str,
+    user_message_id: &str,
+    params: &parameters::GenerationParameters,
+    mut resp: chat::GenerateResponse,
+) -> AppResult<GenerateResult> {
+    resp.images = chat::dedupe_image_results(resp.images);
+    let assistant_params_json = params
+        .to_assistant_message_params(&resp.usage, resp.thinking_content.as_deref())
+        .to_string();
+    let assistant = session::insert_message(
+        conn,
+        session_id,
+        "assistant",
+        resp.text.as_deref(),
+        Some(assistant_params_json.as_str()),
+    )?;
+    for (i, img) in resp.images.iter().enumerate() {
+        images::write_output_image(
+            app,
+            conn,
+            session_id,
+            &assistant.id,
+            &img.bytes,
+            &img.mime,
+            i as i64,
+        )?;
+    }
+    let user_full = reload_message(conn, user_message_id)?;
+    let assistant_full = reload_message(conn, &assistant.id)?;
+    Ok(GenerateResult {
+        user_message: decorate_message(app, user_full),
+        assistant_message: decorate_message(app, assistant_full),
+    })
+}
+
 #[tauri::command]
 async fn generate_image(
     state: tauri::State<'_, Arc<AppState>>,
@@ -959,33 +999,14 @@ async fn generate_image(
         Ok(resp) => {
             maybe_extract_session_memory(&state, &app, &req.session_id, &resp.usage);
             let conn = state.conn()?;
-            let assistant_params_json =
-                params.to_message_params_with_usage(&resp.usage).to_string();
-            let assistant = session::insert_message(
+            finalize_generate_assistant_message(
+                &app,
                 &conn,
                 &req.session_id,
-                "assistant",
-                resp.text.as_deref(),
-                Some(assistant_params_json.as_str()),
-            )?;
-            for (i, img) in resp.images.iter().enumerate() {
-                images::write_output_image(
-                    &app,
-                    &conn,
-                    &req.session_id,
-                    &assistant.id,
-                    &img.bytes,
-                    &img.mime,
-                    i as i64,
-                )?;
-            }
-            // reload both messages
-            let user_full = reload_message(&conn, &user_msg.id)?;
-            let assistant_full = reload_message(&conn, &assistant.id)?;
-            Ok(GenerateResult {
-                user_message: decorate_message(&app, user_full),
-                assistant_message: decorate_message(&app, assistant_full),
-            })
+                &user_msg.id,
+                &params,
+                resp,
+            )
         }
         Err(AppError::Canceled) => Err(AppError::Canceled),
         Err(e) => {
@@ -1124,33 +1145,14 @@ async fn regenerate_image(
         Ok(resp) => {
             maybe_extract_session_memory(&state, &app, &req.session_id, &resp.usage);
             let conn = state.conn()?;
-            let assistant_params_json =
-                params.to_message_params_with_usage(&resp.usage).to_string();
-            let assistant = session::insert_message(
+            finalize_generate_assistant_message(
+                &app,
                 &conn,
                 &req.session_id,
-                "assistant",
-                resp.text.as_deref(),
-                Some(assistant_params_json.as_str()),
-            )?;
-            for (i, img) in resp.images.iter().enumerate() {
-                images::write_output_image(
-                    &app,
-                    &conn,
-                    &req.session_id,
-                    &assistant.id,
-                    &img.bytes,
-                    &img.mime,
-                    i as i64,
-                )?;
-            }
-            let conn = state.conn()?;
-            let user_full = reload_message(&conn, &req.user_message_id)?;
-            let assistant_full = reload_message(&conn, &assistant.id)?;
-            Ok(GenerateResult {
-                user_message: decorate_message(&app, user_full),
-                assistant_message: decorate_message(&app, assistant_full),
-            })
+                &req.user_message_id,
+                &params,
+                resp,
+            )
         }
         Err(AppError::Canceled) => Err(AppError::Canceled),
         Err(e) => {

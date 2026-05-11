@@ -291,6 +291,7 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
         } else {
             Some(texts.join("\n\n"))
         },
+        thinking_content: None,
         usage: usage(&v),
         tool_calls,
     })

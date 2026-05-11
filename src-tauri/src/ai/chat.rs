@@ -3,7 +3,37 @@ use std::sync::Arc;
 use crate::ai::parameters::GenerationParameters;
 use crate::ai::tokens::TokenUsage;
 
-pub type TextDeltaCallback = Arc<dyn Fn(String) + Send + Sync + 'static>;
+#[derive(Debug, Clone, Default)]
+pub struct StreamDelta {
+    pub text: Option<String>,
+    pub thinking: Option<String>,
+}
+
+impl StreamDelta {
+    pub fn text(text: String) -> Self {
+        Self {
+            text: Some(text),
+            thinking: None,
+        }
+    }
+
+    pub fn thinking(thinking: String) -> Self {
+        Self {
+            text: None,
+            thinking: Some(thinking),
+        }
+    }
+}
+
+/// Emit one [`StreamDelta::thinking`] per Unicode scalar so the UI can animate
+/// a typewriter effect (upstream often batches several characters per chunk).
+pub fn emit_thinking_deltas(cb: &TextDeltaCallback, chunk: &str) {
+    for ch in chunk.chars() {
+        (cb)(StreamDelta::thinking(ch.to_string()));
+    }
+}
+
+pub type TextDeltaCallback = Arc<dyn Fn(StreamDelta) + Send + Sync + 'static>;
 
 #[derive(Debug, Clone)]
 pub struct ImageResult {
@@ -11,10 +41,32 @@ pub struct ImageResult {
     pub mime: String,
 }
 
+/// Drop duplicate raster outputs (`bytes` + `mime` identical), preserving first-seen order.
+///
+/// Gemini / OpenRouter multimodal streams often expose the same image twice: structured
+/// `inline_data` (or equivalent) plus a `data:image/...` URL in markdown `content`; both get
+/// collected into [`ImageResult`] and would otherwise create duplicate DB rows and UI plates.
+pub fn dedupe_image_results(images: Vec<ImageResult>) -> Vec<ImageResult> {
+    let mut out = Vec::with_capacity(images.len());
+    for img in images {
+        let dup = out
+            .iter()
+            .any(|e: &ImageResult| e.mime == img.mime && e.bytes == img.bytes);
+        if !dup {
+            out.push(img);
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct GenerateResponse {
     pub images: Vec<ImageResult>,
     pub text: Option<String>,
+    /// Model reasoning / extended-thinking text when the provider returns
+    /// it separately from the visible assistant reply (OpenAI `reasoning`,
+    /// Responses API reasoning stream, Claude `thinking` blocks, ...).
+    pub thinking_content: Option<String>,
     pub usage: TokenUsage,
     /// Tool-use requests the model emitted on this turn.
     ///

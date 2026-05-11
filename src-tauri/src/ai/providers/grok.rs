@@ -313,6 +313,7 @@ async fn parse_and_fetch_images(
             return Ok(GenerateResponse {
                 images: from_b64,
                 text: None,
+                thinking_content: None,
                 usage: TokenUsage::default(),
                 tool_calls: Vec::new(),
             });
@@ -346,6 +347,7 @@ async fn parse_and_fetch_images(
     Ok(GenerateResponse {
         images,
         text: None,
+        thinking_content: None,
         usage: TokenUsage::default(),
         tool_calls: Vec::new(),
     })

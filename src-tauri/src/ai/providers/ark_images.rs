@@ -327,6 +327,7 @@ async fn parse_response(
     Ok(GenerateResponse {
         images,
         text: None,
+        thinking_content: None,
         usage: TokenUsage::default(),
         tool_calls: Vec::new(),
     })

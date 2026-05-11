@@ -195,6 +195,14 @@ fn apply_params(map: &mut Map<String, Value>, request: &ChatRequest) {
     if let Some(v) = request.parameters.model.top_p {
         map.insert("top_p".into(), json!(v));
     }
+    if let Some(effort) = request.parameters.model.resolved_thinking_effort() {
+        map.insert(
+            "output_config".into(),
+            json!({
+                "effort": effort,
+            }),
+        );
+    }
 }
 
 fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
@@ -216,6 +224,7 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
 
     let content_array = assistant_content_blocks(&v);
     let mut parts: Vec<String> = Vec::new();
+    let mut thinking_parts: Vec<String> = Vec::new();
     let mut tool_calls: Vec<crate::ai::chat::ProviderToolCall> = Vec::new();
     let mut other_content_types: Vec<String> = Vec::new();
     if let Some(content) = content_array {
@@ -226,6 +235,14 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
                         let trimmed = text.trim();
                         if !trimmed.is_empty() {
                             parts.push(trimmed.to_string());
+                        }
+                    }
+                }
+                Some("thinking") | Some("redacted_thinking") => {
+                    if let Some(text) = item.get("thinking").and_then(Value::as_str) {
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            thinking_parts.push(trimmed.to_string());
                         }
                     }
                 }
@@ -254,9 +271,15 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
         Some(parts.join("\n\n"))
     };
 
-    if text.is_none() && tool_calls.is_empty() {
+    let thinking_content = if thinking_parts.is_empty() {
+        None
+    } else {
+        Some(thinking_parts.join("\n\n"))
+    };
+
+    if text.is_none() && tool_calls.is_empty() && thinking_content.is_none() {
         return Err(AppError::Upstream(format!(
-            "upstream response did not contain generated text or tool_use. {}",
+            "upstream response did not contain generated text, tool_use, or thinking. {}",
             empty_response_details(&v, content_array, &other_content_types)
         )));
     }
@@ -264,6 +287,7 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
     Ok(GenerateResponse {
         images: Vec::new(),
         text,
+        thinking_content,
         usage: usage(&v),
         tool_calls,
     })
