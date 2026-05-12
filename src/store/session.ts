@@ -52,6 +52,7 @@ interface SessionStore {
   ) => Promise<void>;
   remove: (id: string) => Promise<void>;
   ensureActive: () => Promise<string>;
+  reloadActiveSession: () => Promise<void>;
 
   setPrompt: (s: string) => void;
   setAspectRatio: (s: string) => void;
@@ -218,6 +219,16 @@ export const useSession = create<SessionStore>((set, get) => {
     const cur = get().activeId;
     if (cur) return cur;
     return await get().createNew();
+  },
+
+  reloadActiveSession: async () => {
+    const id = get().activeId;
+    if (!id) return;
+    try {
+      set({ active: await api.loadSession(id) });
+    } catch (e) {
+      console.warn(e);
+    }
   },
 
   setPrompt: (s) => set({ composer: { ...get().composer, prompt: s } }),

@@ -15,6 +15,8 @@ export interface ModelServiceModel {
   name: string;
   group: string;
   capabilities: string[];
+  /** Max context window (tokens); omit or null when unknown. */
+  context_window?: number | null;
 }
 
 export type ModelProviderSdk =
@@ -100,6 +102,10 @@ export interface Session {
   system_prompt: string;
   history_turns: number;
   llm_params: ModelParamSettings;
+  /** Context window limit (tokens); null defers to model/catalog. */
+  context_window: number | null;
+  /** Cumulative usage (tokens) tracked for this session. */
+  context_window_used: number;
   created_at: number;
   updated_at: number;
 }
@@ -111,6 +117,8 @@ export interface SessionSummary {
   system_prompt: string;
   history_turns: number;
   llm_params: ModelParamSettings;
+  context_window: number | null;
+  context_window_used: number;
   updated_at: number;
   message_count: number;
 }

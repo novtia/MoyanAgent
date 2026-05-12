@@ -3,14 +3,14 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
 import { useSettings } from "../../store/settings";
-import { srcOf } from "../../api/tauri";
+import { api, srcOf } from "../../api/tauri";
 import {
   ASPECT_RATIOS,
   IMAGE_SIZES,
   RATIO_PIXEL_HINT,
   shortModelName,
 } from "../../config/generation";
-import type { AttachmentDraft } from "../../types";
+import type { AttachmentDraft, ModelServiceModel } from "../../types";
 import { ComposerTextarea } from "./ComposerTextarea";
 import { ATELIER_DRAG_TYPE } from "./SessionGallery";
 
@@ -54,6 +54,10 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const send = useSession((s) => s.send);
   const interrupt = useSession((s) => s.interrupt);
   const busy = useSession((s) => s.busy);
+  const active = useSession((s) => s.active);
+  const activeId = useSession((s) => s.activeId);
+  const refreshList = useSession((s) => s.refreshList);
+  const reloadActiveSession = useSession((s) => s.reloadActiveSession);
   const settings = useSettings((s) => s.settings);
   const update = useSettings((s) => s.update);
 
@@ -87,10 +91,6 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
       : shortModelName(settings?.model);
   const ratioLabel = composer.aspectRatio === "auto" ? t("composer.ratioAuto") : composer.aspectRatio;
   const sizeLabel = composer.imageSize === "auto" ? t("composer.sizeAuto") : composer.imageSize;
-  const ratioHint =
-    composer.aspectRatio === "auto"
-      ? null
-      : RATIO_PIXEL_HINT[composer.aspectRatio];
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -175,13 +175,23 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     };
   }, [modelOpen]);
 
-  const pickModel = (providerId: string, modelId: string) => {
+  const pickModel = async (providerId: string, model: ModelServiceModel) => {
     setModelOpen(false);
+    const modelId = model.id;
     if (
       providerId !== settings?.active_provider_id ||
       modelId !== settings?.model
     ) {
-      update({ active_provider_id: providerId, model: modelId });
+      await update({ active_provider_id: providerId, model: modelId });
+    }
+    if (activeId) {
+      try {
+        await api.setSessionModel(activeId, modelId, model.context_window ?? null);
+        await refreshList();
+        await reloadActiveSession();
+      } catch (e) {
+        console.warn(e);
+      }
     }
   };
 
@@ -419,7 +429,12 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
             </div>
           </div>
           <div className="composer-bar-right">
-            {ratioHint && <span className="composer-meta">{ratioHint}</span>}
+            {active && (
+              <ContextRing
+                used={active.session.context_window_used}
+                limit={active.session.context_window}
+              />
+            )}
             <div className="composer-model" ref={modelRef}>
               <button
                 type="button"
@@ -445,8 +460,8 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                         <div key={provider.id} className="model-popover-group">
                           <div className="model-popover-group-title">{provider.name}</div>
                           <div className="model-popover-list">
-                            {provider.models.map((model) => {
-                              const m = model.id;
+                            {provider.models.map((modelRow) => {
+                              const m = modelRow.id;
                               const isActive =
                                 provider.id === settings?.active_provider_id &&
                                 m === settings?.model;
@@ -455,10 +470,10 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                                   key={`${provider.id}:${m}`}
                                   type="button"
                                   className={`model-popover-item ${isActive ? "active" : ""}`}
-                                  onClick={() => pickModel(provider.id, m)}
+                                  onClick={() => pickModel(provider.id, modelRow)}
                                 >
                                   <span className="model-popover-item-text">
-                                    {model.name || shortModelName(m)}
+                                    {modelRow.name || shortModelName(m)}
                                   </span>
                                   {isActive && <CheckIcon />}
                                 </button>
@@ -507,6 +522,72 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ContextRing({ used, limit }: { used: number; limit: number | null }) {
+  const { t } = useTranslation();
+  const nf = useMemo(() => new Intl.NumberFormat(undefined), []);
+
+  const size = 18;
+  const stroke = 2;
+  const r = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * r;
+
+  const ratioRaw = limit != null && limit > 0 ? used / limit : null;
+  const arcRatio = ratioRaw != null ? Math.min(Math.max(ratioRaw, 0), 1) : 0;
+  const dash = circumference * arcRatio;
+
+  let fillModifier = "";
+  if (ratioRaw != null && ratioRaw > 1) fillModifier = " is-over";
+  else if (ratioRaw != null && ratioRaw >= 0.85) fillModifier = " is-warn";
+
+  const pctInt = ratioRaw != null ? Math.round(Math.min(ratioRaw * 100, 9999)) : null;
+
+  const tooltip =
+    limit != null && limit > 0 && pctInt != null ? (
+      <>
+        <div className="composer-context-ring-tooltip-strong">
+          {t("composer.contextRingPct", { pct: pctInt })}
+        </div>
+        <div className="composer-context-ring-tooltip-muted">
+          {t("composer.contextRingTokens", {
+            used: nf.format(used),
+            limit: nf.format(limit),
+          })}
+        </div>
+      </>
+    ) : (
+      <div className="composer-context-ring-tooltip-muted">{t("composer.contextRingUnknown")}</div>
+    );
+
+  return (
+    <div className="composer-context-ring" aria-label={t("composer.contextRingAria")}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>
+        <circle
+          className="composer-context-ring-track"
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          strokeWidth={stroke}
+        />
+        <circle
+          className={`composer-context-ring-fill${fillModifier}`}
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={`${dash} ${circumference}`}
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        />
+      </svg>
+      <div className="composer-context-ring-tooltip" role="tooltip">
+        {tooltip}
       </div>
     </div>
   );

@@ -94,6 +94,10 @@ const enUS: Resource = {
     bytesB: "{{n}} B",
     bytesKB: "{{n}} KB",
     bytesMB: "{{n}} MB",
+    contextRingAria: "Session context usage",
+    contextRingUnknown: "No context window limit set (choose a model to apply catalog limits)",
+    contextRingPct: "{{pct}}%",
+    contextRingTokens: "{{used}} / {{limit}} tokens used",
   },
   message: {
     deleteConfirm: "Delete this message?",

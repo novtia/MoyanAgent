@@ -38,7 +38,7 @@ fn parse_capabilities(json: &str) -> AppResult<Vec<String>> {
 
 fn load_sdk_models(conn: &DbConn, sdk_id: &str) -> AppResult<Vec<ModelServiceModel>> {
     let mut stmt = conn.prepare(
-        "SELECT model_id, name, model_group, capabilities_json
+        "SELECT model_id, name, model_group, capabilities_json, context_window
          FROM llm_sdk_model
          WHERE sdk_id = ?1
          ORDER BY sort_order, id",
@@ -49,16 +49,18 @@ fn load_sdk_models(conn: &DbConn, sdk_id: &str) -> AppResult<Vec<ModelServiceMod
             r.get::<_, String>(1)?,
             r.get::<_, String>(2)?,
             r.get::<_, String>(3)?,
+            r.get::<_, Option<i64>>(4)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (model_id, name, group, caps_json) = row?;
+        let (model_id, name, group, caps_json, context_window) = row?;
         out.push(ModelServiceModel {
             id: model_id,
             name,
             group,
             capabilities: parse_capabilities(&caps_json)?,
+            context_window,
         });
     }
     Ok(out)
@@ -66,7 +68,7 @@ fn load_sdk_models(conn: &DbConn, sdk_id: &str) -> AppResult<Vec<ModelServiceMod
 
 fn load_supplier_models(conn: &DbConn, supplier_id: &str) -> AppResult<Vec<ModelServiceModel>> {
     let mut stmt = conn.prepare(
-        "SELECT model_id, name, model_group, capabilities_json
+        "SELECT model_id, name, model_group, capabilities_json, context_window
          FROM llm_supplier_model
          WHERE supplier_id = ?1
          ORDER BY sort_order, id",
@@ -77,16 +79,18 @@ fn load_supplier_models(conn: &DbConn, supplier_id: &str) -> AppResult<Vec<Model
             r.get::<_, String>(1)?,
             r.get::<_, String>(2)?,
             r.get::<_, String>(3)?,
+            r.get::<_, Option<i64>>(4)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (model_id, name, group, caps_json) = row?;
+        let (model_id, name, group, caps_json, context_window) = row?;
         out.push(ModelServiceModel {
             id: model_id,
             name,
             group,
             capabilities: parse_capabilities(&caps_json)?,
+            context_window,
         });
     }
     Ok(out)

@@ -304,6 +304,68 @@
   color: var(--ink-mute);
 }
 
+.composer-context-ring {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.composer-context-ring-tooltip {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: max-content;
+  max-width: 260px;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: center;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease;
+  z-index: 70;
+}
+
+.composer-context-ring:hover .composer-context-ring-tooltip {
+  opacity: 1;
+}
+
+.composer-context-ring-tooltip-strong {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.composer-context-ring-tooltip-muted {
+  color: var(--ink-mute);
+  font-size: 10.5px;
+}
+
+.composer-context-ring-track {
+  stroke: var(--line-strong);
+  opacity: 0.45;
+}
+
+.composer-context-ring-fill {
+  stroke: var(--accent, #5b8cff);
+  transition: stroke 0.15s ease;
+}
+
+.composer-context-ring-fill.is-warn {
+  stroke: #d4a024;
+}
+
+.composer-context-ring-fill.is-over {
+  stroke: #e05858;
+}
+
 .composer-model {
   position: relative;
 }

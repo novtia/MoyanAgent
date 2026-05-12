@@ -475,6 +475,28 @@ fn update_session_config(
     )
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetSessionModelArgs {
+    id: String,
+    model: String,
+    context_window: Option<i64>,
+}
+
+#[tauri::command]
+fn set_session_model(
+    state: tauri::State<Arc<AppState>>,
+    args: SetSessionModelArgs,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    session::set_model_and_context(
+        &conn,
+        &args.id,
+        Some(args.model.as_str()),
+        args.context_window,
+    )
+}
+
 #[tauri::command]
 fn delete_session(
     state: tauri::State<Arc<AppState>>,
@@ -889,6 +911,9 @@ fn finalize_generate_assistant_message(
     }
     let user_full = reload_message(conn, user_message_id)?;
     let assistant_full = reload_message(conn, &assistant.id)?;
+    if let Some(t) = resp.usage.total_tokens.filter(|t| *t > 0) {
+        session::bump_context_window_used(conn, session_id, t)?;
+    }
     Ok(GenerateResult {
         user_message: decorate_message(app, user_full),
         assistant_message: decorate_message(app, assistant_full),
@@ -1459,6 +1484,7 @@ pub fn run() {
             create_session,
             rename_session,
             update_session_config,
+            set_session_model,
             delete_session,
             load_session,
             delete_message,

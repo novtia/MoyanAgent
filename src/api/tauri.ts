@@ -62,6 +62,10 @@ export const api = {
     invoke<void>("update_session_config", {
       args: { id, systemPrompt, historyTurns, llmParams },
     }),
+  setSessionModel: (id: string, model: string, contextWindow: number | null) =>
+    invoke<void>("set_session_model", {
+      args: { id, model, contextWindow },
+    }),
   deleteSession: (id: string) => invoke<void>("delete_session", { id }),
   loadSession: (id: string) =>
     invoke<SessionWithMessagesAbs>("load_session", { id }),

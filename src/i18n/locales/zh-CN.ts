@@ -91,6 +91,10 @@ const zhCN = {
     bytesB: "{{n}} B",
     bytesKB: "{{n}} KB",
     bytesMB: "{{n}} MB",
+    contextRingAria: "会话上下文占用",
+    contextRingUnknown: "未设置上下文窗口上限（选择模型后将写入目录中的窗口值）",
+    contextRingPct: "{{pct}}%",
+    contextRingTokens: "已使用 {{used}} / 上限 {{limit}} tokens",
   },
   message: {
     deleteConfirm: "删除这条消息？",

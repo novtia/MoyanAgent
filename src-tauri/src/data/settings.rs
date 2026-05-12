@@ -73,6 +73,9 @@ pub struct ModelServiceModel {
     pub name: String,
     pub group: String,
     pub capabilities: Vec<String>,
+    /// Max context window (tokens) when known; persisted for user-defined models in settings JSON.
+    #[serde(default)]
+    pub context_window: Option<i64>,
 }
 
 fn default_enabled() -> bool {
