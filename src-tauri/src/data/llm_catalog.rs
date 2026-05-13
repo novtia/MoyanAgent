@@ -96,6 +96,45 @@ fn load_supplier_models(conn: &DbConn, supplier_id: &str) -> AppResult<Vec<Model
     Ok(out)
 }
 
+/// Catalog `context_window` for the active provider + model when the UI omits it
+/// (persisted `model_services` often strips fields not stored in JSON).
+pub fn lookup_context_window(
+    conn: &DbConn,
+    supplier_id: &str,
+    sdk_id: &str,
+    model_id: &str,
+) -> AppResult<Option<i64>> {
+    let sid = supplier_id.trim();
+    let mid = model_id.trim();
+    if !sid.is_empty() && !mid.is_empty() {
+        let mut stmt = conn.prepare(
+            "SELECT context_window FROM llm_supplier_model WHERE supplier_id = ?1 AND model_id = ?2 LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![sid, mid])?;
+        if let Some(row) = rows.next()? {
+            let cw: Option<i64> = row.get(0)?;
+            if cw.is_some() {
+                return Ok(cw);
+            }
+        }
+    }
+
+    let sdk = crate::ai::providers::normalize_sdk(sdk_id);
+    let mid = model_id.trim();
+    if sdk.is_empty() || mid.is_empty() {
+        return Ok(None);
+    }
+    let mut stmt = conn.prepare(
+        "SELECT context_window FROM llm_sdk_model WHERE sdk_id = ?1 AND model_id = ?2 LIMIT 1",
+    )?;
+    let mut rows = stmt.query(params![sdk.as_str(), mid])?;
+    if let Some(row) = rows.next()? {
+        let cw: Option<i64> = row.get(0)?;
+        return Ok(cw);
+    }
+    Ok(None)
+}
+
 /// Builtin supplier rows merged into persisted `model_services` (same ids as UI "cannot delete").
 pub fn supplier_presets_as_providers(conn: &DbConn) -> AppResult<Vec<ModelProvider>> {
     let mut stmt = conn.prepare(

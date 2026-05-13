@@ -106,6 +106,8 @@ export interface Session {
   context_window: number | null;
   /** Cumulative usage (tokens) tracked for this session. */
   context_window_used: number;
+  /** Main chat agent: `general-purpose` (Agent) or `Plan` (read-only planning). */
+  agent_type: string;
   created_at: number;
   updated_at: number;
 }
@@ -119,6 +121,7 @@ export interface SessionSummary {
   llm_params: ModelParamSettings;
   context_window: number | null;
   context_window_used: number;
+  agent_type: string;
   updated_at: number;
   message_count: number;
 }

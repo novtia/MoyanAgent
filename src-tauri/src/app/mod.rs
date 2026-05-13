@@ -489,12 +489,44 @@ fn set_session_model(
     args: SetSessionModelArgs,
 ) -> Result<(), AppError> {
     let conn = state.conn()?;
+    let mut cw = args.context_window;
+    if cw.is_none() {
+        let s = settings::read(&conn)?;
+        let sdk = s
+            .model_services
+            .iter()
+            .find(|p| p.id == s.active_provider_id)
+            .map(|p| p.sdk.as_str())
+            .unwrap_or("");
+        cw = llm_catalog::lookup_context_window(
+            &conn,
+            &s.active_provider_id,
+            sdk,
+            &args.model,
+        )?;
+    }
     session::set_model_and_context(
         &conn,
         &args.id,
         Some(args.model.as_str()),
-        args.context_window,
+        cw,
     )
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetSessionAgentTypeArgs {
+    id: String,
+    agent_type: String,
+}
+
+#[tauri::command]
+fn set_session_agent_type(
+    state: tauri::State<Arc<AppState>>,
+    args: SetSessionAgentTypeArgs,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    session::set_agent_type(&conn, &args.id, &args.agent_type)
 }
 
 #[tauri::command]
@@ -911,9 +943,7 @@ fn finalize_generate_assistant_message(
     }
     let user_full = reload_message(conn, user_message_id)?;
     let assistant_full = reload_message(conn, &assistant.id)?;
-    if let Some(t) = resp.usage.total_tokens.filter(|t| *t > 0) {
-        session::bump_context_window_used(conn, session_id, t)?;
-    }
+    session::recompute_context_window_used(conn, session_id)?;
     Ok(GenerateResult {
         user_message: decorate_message(app, user_full),
         assistant_message: decorate_message(app, assistant_full),
@@ -927,10 +957,12 @@ async fn generate_image(
     req: GenerateReq,
 ) -> Result<GenerateResult, AppError> {
     // 1) gather settings + attachment bytes + history synchronously
-    let (chat_request, params, attachment_image_ids) = {
+    let (chat_request, params, attachment_image_ids, generation_agent) = {
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
         let session_config = session::get(&conn, &req.session_id)?;
+        let generation_agent =
+            session::generation_agent_definition_key(&session_config.agent_type);
         let session_prompt = session_config.system_prompt.clone();
         let history_turns = session_config.history_turns;
         let model_params = session_config.llm_params.clone();
@@ -965,7 +997,7 @@ async fn generate_image(
             hist,
             params.clone(),
         )?;
-        (chat_request, params, ids)
+        (chat_request, params, ids, generation_agent)
     };
     let params_json = params.to_message_params_json().to_string();
 
@@ -1004,7 +1036,7 @@ async fn generate_image(
     let result = run_cancellable_generation(
         &state,
         &req.session_id,
-        agent::config::builtin::AGENT_GENERAL_PURPOSE,
+        generation_agent,
         req.prompt.clone(),
         chat_request,
         Some(on_text_delta),
@@ -1086,10 +1118,12 @@ async fn regenerate_image(
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| AppError::Invalid("user message has no prompt text".into()))?;
 
-    let (chat_request, params) = {
+    let (chat_request, params, generation_agent) = {
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
         let session_config = session::get(&conn, &req.session_id)?;
+        let generation_agent =
+            session::generation_agent_definition_key(&session_config.agent_type);
         let session_prompt = session_config.system_prompt.clone();
         let history_turns = session_config.history_turns;
         let model_params = session_config.llm_params.clone();
@@ -1130,7 +1164,7 @@ async fn regenerate_image(
             hist,
             params.clone(),
         )?;
-        (chat_request, params)
+        (chat_request, params, generation_agent)
     };
     let params_json = params.to_message_params_json().to_string();
 
@@ -1151,7 +1185,7 @@ async fn regenerate_image(
     let result = run_cancellable_generation(
         &state,
         &req.session_id,
-        agent::config::builtin::AGENT_GENERAL_PURPOSE,
+        generation_agent,
         prompt.to_string(),
         chat_request,
         Some(on_text_delta),
@@ -1485,6 +1519,7 @@ pub fn run() {
             rename_session,
             update_session_config,
             set_session_model,
+            set_session_agent_type,
             delete_session,
             load_session,
             delete_message,

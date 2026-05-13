@@ -25,6 +25,7 @@ function sessionSettingsForLog(s: Session) {
     system_prompt: s.system_prompt,
     history_turns: s.history_turns,
     llm_params: s.llm_params,
+    agent_type: s.agent_type,
   };
 }
 
@@ -65,6 +66,10 @@ export const api = {
   setSessionModel: (id: string, model: string, contextWindow: number | null) =>
     invoke<void>("set_session_model", {
       args: { id, model, contextWindow },
+    }),
+  setSessionAgentType: (id: string, agentType: string) =>
+    invoke<void>("set_session_agent_type", {
+      args: { id, agentType },
     }),
   deleteSession: (id: string) => invoke<void>("delete_session", { id }),
   loadSession: (id: string) =>

@@ -245,6 +245,19 @@
   align-items: center;
   gap: 6px;
 }
+
+/* Match `.composer-pill` typography so auxiliary controls (context ring) align to the same line box. */
+.composer-bar-right {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.composer-ring-model-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
 .composer-btn {
   width: 30px;
   height: 30px;
@@ -272,6 +285,84 @@
 .composer-params {
   position: relative;
 }
+
+.composer-mode-wrap {
+  position: relative;
+}
+
+.composer-mode-pill {
+  max-width: 132px;
+}
+
+.composer-mode-pill.is-plan {
+  border-color: rgba(0, 102, 102, 0.45);
+  color: var(--ink-2);
+}
+
+.composer-mode-label {
+  max-width: 96px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-mode-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: min(240px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+  z-index: 62;
+  animation: popover-expand 0.2s var(--ease-pop);
+}
+
+.composer-mode-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--ink-2);
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+
+.composer-mode-option:hover {
+  background: var(--bg-soft);
+}
+
+.composer-mode-option.active {
+  border-color: var(--line-strong);
+  background: var(--bg-soft);
+}
+
+.composer-mode-option-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.composer-mode-option-desc {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ink-mute);
+}
+
 .composer-pill {
   display: inline-flex;
   align-items: center;
@@ -282,6 +373,7 @@
   padding: 5px 10px;
   font-family: inherit;
   font-size: 12px;
+  line-height: 1.25;
   font-weight: 500;
   border-radius: 999px;
   cursor: pointer;
@@ -307,9 +399,20 @@
 .composer-context-ring {
   position: relative;
   flex-shrink: 0;
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  font-size: inherit;
+  line-height: 0;
+  width: 1em;
+  height: 1em;
+}
+
+.composer-context-ring-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .composer-context-ring-tooltip {

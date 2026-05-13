@@ -2,6 +2,7 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
+use crate::ai::tokens;
 use crate::data::db::{now_ms, DbConn};
 use crate::data::settings::{
     validate_model_param_settings, ModelParamSettings, DEFAULT_HISTORY_TURNS,
@@ -11,6 +12,18 @@ use crate::error::{AppError, AppResult};
 fn decode_llm_params(raw: Option<String>) -> ModelParamSettings {
     raw.and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
+}
+
+/// Persisted `sessions.agent_type` values the UI may set for main-chat generation.
+pub const SESSION_AGENT_GENERAL: &str = "general-purpose";
+pub const SESSION_AGENT_PLAN: &str = "Plan";
+
+/// Maps DB `sessions.agent_type` → agent registry key for [`crate::ai::agent::run_chat_request`].
+pub fn generation_agent_definition_key(stored: &str) -> &'static str {
+    match stored.trim() {
+        SESSION_AGENT_PLAN => SESSION_AGENT_PLAN,
+        _ => SESSION_AGENT_GENERAL,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +38,8 @@ pub struct Session {
     pub context_window: Option<i64>,
     /// Cumulative context usage tracked for this session (tokens).
     pub context_window_used: i64,
+    /// Which built-in agent definition drives turns (`general-purpose` | `Plan`, …).
+    pub agent_type: String,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -39,6 +54,7 @@ pub struct SessionSummary {
     pub llm_params: ModelParamSettings,
     pub context_window: Option<i64>,
     pub context_window_used: i64,
+    pub agent_type: String,
     pub updated_at: i64,
     pub message_count: i64,
 }
@@ -53,6 +69,7 @@ pub struct SessionSearchResult {
     pub llm_params: ModelParamSettings,
     pub context_window: Option<i64>,
     pub context_window_used: i64,
+    pub agent_type: String,
     pub updated_at: i64,
     pub message_count: i64,
     pub match_message_id: Option<String>,
@@ -110,9 +127,28 @@ pub fn create(conn: &DbConn, title: Option<String>, model: Option<String>) -> Ap
         llm_params: ModelParamSettings::default(),
         context_window: None,
         context_window_used: 0,
+        agent_type: SESSION_AGENT_GENERAL.into(),
         created_at: now,
         updated_at: now,
     })
+}
+
+pub fn set_agent_type(conn: &DbConn, id: &str, agent_type: &str) -> AppResult<()> {
+    let t = agent_type.trim();
+    if t != SESSION_AGENT_GENERAL && t != SESSION_AGENT_PLAN {
+        return Err(AppError::Invalid(format!(
+            "agent_type must be \"{SESSION_AGENT_GENERAL}\" or \"{SESSION_AGENT_PLAN}\""
+        )));
+    }
+    let updated = now_ms();
+    let n = conn.execute(
+        "UPDATE sessions SET agent_type=?1, updated_at=?2 WHERE id=?3",
+        params![t, updated, id],
+    )?;
+    if n == 0 {
+        return Err(AppError::NotFound(format!("session {id}")));
+    }
+    Ok(())
 }
 
 pub fn rename(conn: &DbConn, id: &str, title: &str) -> AppResult<()> {
@@ -177,14 +213,42 @@ pub fn set_model_and_context(
     Ok(())
 }
 
-pub fn bump_context_window_used(conn: &DbConn, session_id: &str, delta: i64) -> AppResult<()> {
-    if delta <= 0 {
-        return Ok(());
+/// Recompute `sessions.context_window_used` from stored messages.
+///
+/// For each user turn (from one user message until the next), only the **last**
+/// assistant message's `params.usage.total_tokens` counts. Regenerating replaces
+/// prior assistant rows for that turn in the timeline, so retry stacks are not
+/// summed into session usage.
+pub fn recompute_context_window_used(conn: &DbConn, session_id: &str) -> AppResult<()> {
+    let loaded = load_with_messages(conn, session_id)?;
+    let msgs = loaded.messages;
+    let mut total: i64 = 0;
+    let mut i = 0usize;
+    while i < msgs.len() {
+        if msgs[i].role != "user" {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        let mut last_assistant_tokens: i64 = 0;
+        while j < msgs.len() && msgs[j].role != "user" {
+            if msgs[j].role == "assistant" {
+                if let Some(ref p) = msgs[j].params {
+                    let u = tokens::extract_usage(p);
+                    if let Some(t) = u.total_tokens.filter(|x| *x > 0) {
+                        last_assistant_tokens = t;
+                    }
+                }
+            }
+            j += 1;
+        }
+        total += last_assistant_tokens;
+        i = j;
     }
     let updated = now_ms();
     conn.execute(
-        "UPDATE sessions SET context_window_used = context_window_used + ?1, updated_at=?2 WHERE id=?3",
-        params![delta, updated, session_id],
+        "UPDATE sessions SET context_window_used=?1, updated_at=?2 WHERE id=?3",
+        params![total, updated, session_id],
     )?;
     Ok(())
 }
@@ -210,6 +274,12 @@ pub fn update_message_params(conn: &DbConn, id: &str, params_json: &str) -> AppR
 
 /// Returns image rel_paths (and thumb rel_paths) that should be cleaned from disk.
 pub fn delete_message(conn: &DbConn, id: &str) -> AppResult<Vec<(String, Option<String>)>> {
+    let session_id: String = conn.query_row(
+        "SELECT session_id FROM messages WHERE id=?1",
+        params![id],
+        |r| r.get(0),
+    )
+    .map_err(|_| AppError::NotFound(format!("message {id}")))?;
     let mut stmt =
         conn.prepare("SELECT rel_path, thumb_path FROM message_images WHERE message_id=?1")?;
     let rows = stmt.query_map(params![id], |r| {
@@ -229,12 +299,13 @@ pub fn delete_message(conn: &DbConn, id: &str) -> AppResult<Vec<(String, Option<
     if n == 0 {
         return Err(AppError::NotFound(format!("message {id}")));
     }
+    recompute_context_window_used(conn, &session_id)?;
     Ok(paths)
 }
 
 pub fn list(conn: &DbConn) -> AppResult<Vec<SessionSummary>> {
     let mut stmt = conn.prepare(
-        "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.context_window, s.context_window_used, s.updated_at,
+        "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.context_window, s.context_window_used, s.agent_type, s.updated_at,
             (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt
          FROM sessions s
          ORDER BY s.updated_at DESC",
@@ -250,8 +321,9 @@ pub fn list(conn: &DbConn) -> AppResult<Vec<SessionSummary>> {
             llm_params: decode_llm_params(raw),
             context_window: r.get(6)?,
             context_window_used: r.get(7)?,
-            updated_at: r.get(8)?,
-            message_count: r.get(9)?,
+            agent_type: r.get(8)?,
+            updated_at: r.get(9)?,
+            message_count: r.get(10)?,
         })
     })?;
     let mut out = Vec::new();
@@ -278,7 +350,7 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
 
     if query.is_empty() {
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.context_window, s.context_window_used, s.updated_at,
+            "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.context_window, s.context_window_used, s.agent_type, s.updated_at,
                 (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt,
                 NULL AS match_message_id, NULL AS match_role, NULL AS match_text,
                 NULL AS match_created_at, 0 AS match_count, 0 AS title_match
@@ -296,7 +368,7 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
 
     let pattern = format!("%{}%", escape_like(query));
     let mut stmt = conn.prepare(
-        "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.context_window, s.context_window_used, s.updated_at,
+        "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.context_window, s.context_window_used, s.agent_type, s.updated_at,
             (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt,
             (SELECT mm.id FROM messages mm
              WHERE mm.session_id = s.id AND COALESCE(mm.text, '') LIKE ?1 ESCAPE '\\'
@@ -333,7 +405,7 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
 }
 
 fn map_search_result(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSearchResult> {
-    let title_match: i64 = row.get(15)?;
+    let title_match: i64 = row.get(16)?;
     let raw: Option<String> = row.get(5)?;
     Ok(SessionSearchResult {
         id: row.get(0)?,
@@ -344,20 +416,21 @@ fn map_search_result(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSearchR
         llm_params: decode_llm_params(raw),
         context_window: row.get(6)?,
         context_window_used: row.get(7)?,
-        updated_at: row.get(8)?,
-        message_count: row.get(9)?,
-        match_message_id: row.get(10)?,
-        match_role: row.get(11)?,
-        match_text: row.get(12)?,
-        match_created_at: row.get(13)?,
-        match_count: row.get(14)?,
+        agent_type: row.get(8)?,
+        updated_at: row.get(9)?,
+        message_count: row.get(10)?,
+        match_message_id: row.get(11)?,
+        match_role: row.get(12)?,
+        match_text: row.get(13)?,
+        match_created_at: row.get(14)?,
+        match_count: row.get(15)?,
         title_match: title_match != 0,
     })
 }
 
 pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, model, system_prompt, history_turns, llm_params, context_window, context_window_used, created_at, updated_at FROM sessions WHERE id=?1",
+        "SELECT id, title, model, system_prompt, history_turns, llm_params, context_window, context_window_used, agent_type, created_at, updated_at FROM sessions WHERE id=?1",
     )?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
@@ -371,8 +444,9 @@ pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
             llm_params: decode_llm_params(raw),
             context_window: row.get(6)?,
             context_window_used: row.get(7)?,
-            created_at: row.get(8)?,
-            updated_at: row.get(9)?,
+            agent_type: row.get(8)?,
+            created_at: row.get(9)?,
+            updated_at: row.get(10)?,
         })
     } else {
         Err(AppError::NotFound(format!("session {id}")))

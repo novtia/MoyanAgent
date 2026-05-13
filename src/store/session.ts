@@ -8,6 +8,11 @@ import type {
   SessionWithMessagesAbs,
 } from "../types";
 import { api } from "../api/tauri";
+import {
+  type ComposerChatMode,
+  agentTypeFromComposerMode,
+  composerModeFromAgentType,
+} from "../config/chatMode";
 
 interface ComposerState {
   prompt: string;
@@ -15,6 +20,7 @@ interface ComposerState {
   pendingAttachments: PendingAttachmentDraft[];
   aspectRatio: string;
   imageSize: string;
+  chatMode: ComposerChatMode;
 }
 
 interface PendingAttachmentDraft {
@@ -57,6 +63,7 @@ interface SessionStore {
   setPrompt: (s: string) => void;
   setAspectRatio: (s: string) => void;
   setImageSize: (s: string) => void;
+  setChatMode: (mode: ComposerChatMode) => Promise<void>;
   addAttachments: (files: File[]) => Promise<void>;
   addAttachmentsFromPaths: (paths: string[]) => Promise<void>;
   addAttachmentFromPath: (path: string) => Promise<void>;
@@ -132,7 +139,14 @@ export const useSession = create<SessionStore>((set, get) => {
   const reloadActiveSessionIfViewing = async (sessionId: string) => {
     if (get().activeId !== sessionId) return;
     try {
-      set({ active: await api.loadSession(sessionId) });
+      const data = await api.loadSession(sessionId);
+      set({
+        active: data,
+        composer: {
+          ...get().composer,
+          chatMode: composerModeFromAgentType(data.session.agent_type),
+        },
+      });
     } catch (e) {
       console.warn(e);
     }
@@ -150,6 +164,7 @@ export const useSession = create<SessionStore>((set, get) => {
     pendingAttachments: [],
     aspectRatio: "auto",
     imageSize: "auto",
+    chatMode: "agent",
   },
 
   refreshList: async () => {
@@ -175,6 +190,7 @@ export const useSession = create<SessionStore>((set, get) => {
         attachments: [],
         pendingAttachments: [],
         prompt: "",
+        chatMode: composerModeFromAgentType(data.session.agent_type),
       },
     });
   },
@@ -225,7 +241,14 @@ export const useSession = create<SessionStore>((set, get) => {
     const id = get().activeId;
     if (!id) return;
     try {
-      set({ active: await api.loadSession(id) });
+      const data = await api.loadSession(id);
+      set({
+        active: data,
+        composer: {
+          ...get().composer,
+          chatMode: composerModeFromAgentType(data.session.agent_type),
+        },
+      });
     } catch (e) {
       console.warn(e);
     }
@@ -234,6 +257,21 @@ export const useSession = create<SessionStore>((set, get) => {
   setPrompt: (s) => set({ composer: { ...get().composer, prompt: s } }),
   setAspectRatio: (s) => set({ composer: { ...get().composer, aspectRatio: s } }),
   setImageSize: (s) => set({ composer: { ...get().composer, imageSize: s } }),
+
+  setChatMode: async (mode) => {
+    const id = get().activeId;
+    if (!id) {
+      set({ composer: { ...get().composer, chatMode: mode } });
+      return;
+    }
+    try {
+      await api.setSessionAgentType(id, agentTypeFromComposerMode(mode));
+      await get().refreshList();
+      await get().reloadActiveSession();
+    } catch (e) {
+      console.warn(e);
+    }
+  },
 
   addAttachments: async (files) => {
     const sid = await get().ensureActive();

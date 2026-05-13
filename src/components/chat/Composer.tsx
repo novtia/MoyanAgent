@@ -58,14 +58,17 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const activeId = useSession((s) => s.activeId);
   const refreshList = useSession((s) => s.refreshList);
   const reloadActiveSession = useSession((s) => s.reloadActiveSession);
+  const setChatMode = useSession((s) => s.setChatMode);
   const settings = useSettings((s) => s.settings);
   const update = useSettings((s) => s.update);
 
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const paramsRef = useRef<HTMLDivElement | null>(null);
+  const modeRef = useRef<HTMLDivElement | null>(null);
   const modelRef = useRef<HTMLDivElement | null>(null);
 
   const [paramsOpen, setParamsOpen] = useState(false);
+  const [modeOpen, setModeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [modelPopoverMaxPx, setModelPopoverMaxPx] = useState(480);
   const [modelPopoverBelow, setModelPopoverBelow] = useState(false);
@@ -115,6 +118,17 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     window.addEventListener("mousedown", onDoc);
     return () => window.removeEventListener("mousedown", onDoc);
   }, [paramsOpen]);
+
+  useEffect(() => {
+    if (!modeOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (modeRef.current && !modeRef.current.contains(e.target as Node)) {
+        setModeOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onDoc);
+    return () => window.removeEventListener("mousedown", onDoc);
+  }, [modeOpen]);
 
   useEffect(() => {
     if (!modelOpen) return;
@@ -357,6 +371,52 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
 
         <div className="composer-bar">
           <div className="composer-bar-left">
+            <div className="composer-mode-wrap" ref={modeRef}>
+              <button
+                type="button"
+                className={`composer-pill composer-mode-pill ${composer.chatMode === "plan" ? "is-plan" : ""} ${modeOpen ? "active" : ""}`}
+                title={t("composer.modePickerTitle")}
+                onClick={() => setModeOpen((v) => !v)}
+              >
+                <span className="composer-mode-label">
+                  {composer.chatMode === "plan" ? t("composer.modePlan") : t("composer.modeAgent")}
+                </span>
+                <CaretIcon />
+              </button>
+              {modeOpen && (
+                <div
+                  className="composer-mode-popover"
+                  role="listbox"
+                  aria-label={t("composer.modePickerTitle")}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    role="option"
+                    className={`composer-mode-option ${composer.chatMode === "agent" ? "active" : ""}`}
+                    onClick={() => {
+                      void setChatMode("agent");
+                      setModeOpen(false);
+                    }}
+                  >
+                    <span className="composer-mode-option-title">{t("composer.modeAgent")}</span>
+                    <span className="composer-mode-option-desc">{t("composer.modeAgentHint")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="option"
+                    className={`composer-mode-option ${composer.chatMode === "plan" ? "active" : ""}`}
+                    onClick={() => {
+                      void setChatMode("plan");
+                      setModeOpen(false);
+                    }}
+                  >
+                    <span className="composer-mode-option-title">{t("composer.modePlan")}</span>
+                    <span className="composer-mode-option-desc">{t("composer.modePlanHint")}</span>
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               type="button"
               className="composer-btn"
@@ -429,63 +489,65 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
             </div>
           </div>
           <div className="composer-bar-right">
-            {active && (
-              <ContextRing
-                used={active.session.context_window_used}
-                limit={active.session.context_window}
-              />
-            )}
-            <div className="composer-model" ref={modelRef}>
-              <button
-                type="button"
-                className={`composer-pill model ${modelOpen ? "active" : ""}`}
-                onClick={() => setModelOpen((v) => !v)}
-                title={settings?.model || t("composer.modelPickerTitle")}
-              >
-                <span>{modelLabel}</span>
-                <CaretIcon />
-              </button>
-              {modelOpen && (
-                <div
-                  className={`model-popover ${modelPopoverBelow ? "model-popover-below" : ""}`}
-                  style={{ maxHeight: modelPopoverMaxPx }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                >
-                  <div className="model-popover-title">{t("composer.modelTitle")}</div>
-                  {enabledProviders.length === 0 ? (
-                    <div className="model-popover-empty">{t("composer.modelPickerEmpty")}</div>
-                  ) : (
-                    <div className="model-popover-body">
-                      {enabledProviders.map((provider) => (
-                        <div key={provider.id} className="model-popover-group">
-                          <div className="model-popover-group-title">{provider.name}</div>
-                          <div className="model-popover-list">
-                            {provider.models.map((modelRow) => {
-                              const m = modelRow.id;
-                              const isActive =
-                                provider.id === settings?.active_provider_id &&
-                                m === settings?.model;
-                              return (
-                                <button
-                                  key={`${provider.id}:${m}`}
-                                  type="button"
-                                  className={`model-popover-item ${isActive ? "active" : ""}`}
-                                  onClick={() => pickModel(provider.id, modelRow)}
-                                >
-                                  <span className="model-popover-item-text">
-                                    {modelRow.name || shortModelName(m)}
-                                  </span>
-                                  {isActive && <CheckIcon />}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+            <div className="composer-ring-model-cluster">
+              {active && (
+                <ContextRing
+                  used={active.session.context_window_used}
+                  limit={active.session.context_window}
+                />
               )}
+              <div className="composer-model" ref={modelRef}>
+                <button
+                  type="button"
+                  className={`composer-pill model ${modelOpen ? "active" : ""}`}
+                  onClick={() => setModelOpen((v) => !v)}
+                  title={settings?.model || t("composer.modelPickerTitle")}
+                >
+                  <span>{modelLabel}</span>
+                  <CaretIcon />
+                </button>
+                {modelOpen && (
+                  <div
+                    className={`model-popover ${modelPopoverBelow ? "model-popover-below" : ""}`}
+                    style={{ maxHeight: modelPopoverMaxPx }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <div className="model-popover-title">{t("composer.modelTitle")}</div>
+                    {enabledProviders.length === 0 ? (
+                      <div className="model-popover-empty">{t("composer.modelPickerEmpty")}</div>
+                    ) : (
+                      <div className="model-popover-body">
+                        {enabledProviders.map((provider) => (
+                          <div key={provider.id} className="model-popover-group">
+                            <div className="model-popover-group-title">{provider.name}</div>
+                            <div className="model-popover-list">
+                              {provider.models.map((modelRow) => {
+                                const m = modelRow.id;
+                                const isActive =
+                                  provider.id === settings?.active_provider_id &&
+                                  m === settings?.model;
+                                return (
+                                  <button
+                                    key={`${provider.id}:${m}`}
+                                    type="button"
+                                    className={`model-popover-item ${isActive ? "active" : ""}`}
+                                    onClick={() => pickModel(provider.id, modelRow)}
+                                  >
+                                    <span className="model-popover-item-text">
+                                      {modelRow.name || shortModelName(m)}
+                                    </span>
+                                    {isActive && <CheckIcon />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
             <button
               className={`send-btn ${busy ? "busy" : ""}`}
@@ -531,9 +593,11 @@ function ContextRing({ used, limit }: { used: number; limit: number | null }) {
   const { t } = useTranslation();
   const nf = useMemo(() => new Intl.NumberFormat(undefined), []);
 
-  const size = 18;
+  /** Fixed viewBox; displayed size follows `.composer-context-ring` (1em × 1em). */
+  const vb = 24;
+  const c = vb / 2;
   const stroke = 2;
-  const r = (size - stroke) / 2;
+  const r = c - stroke / 2;
   const circumference = 2 * Math.PI * r;
 
   const ratioRaw = limit != null && limit > 0 ? used / limit : null;
@@ -565,25 +629,25 @@ function ContextRing({ used, limit }: { used: number; limit: number | null }) {
 
   return (
     <div className="composer-context-ring" aria-label={t("composer.contextRingAria")}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>
+      <svg className="composer-context-ring-svg" viewBox={`0 0 ${vb} ${vb}`} aria-hidden>
         <circle
           className="composer-context-ring-track"
-          cx={size / 2}
-          cy={size / 2}
+          cx={c}
+          cy={c}
           r={r}
           fill="none"
           strokeWidth={stroke}
         />
         <circle
           className={`composer-context-ring-fill${fillModifier}`}
-          cx={size / 2}
-          cy={size / 2}
+          cx={c}
+          cy={c}
           r={r}
           fill="none"
           strokeWidth={stroke}
           strokeLinecap="round"
           strokeDasharray={`${dash} ${circumference}`}
-          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          transform={`rotate(-90 ${c} ${c})`}
         />
       </svg>
       <div className="composer-context-ring-tooltip" role="tooltip">
