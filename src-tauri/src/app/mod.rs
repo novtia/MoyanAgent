@@ -533,7 +533,42 @@ fn create_session(
     args: CreateSessionArgs,
 ) -> Result<session::Session, AppError> {
     let conn = state.conn()?;
-    session::create(&conn, args.title, args.model)
+    let mut sess = session::create(&conn, args.title, args.model)?;
+
+    // Auto-apply the active model and its catalog context-window when no
+    // explicit model was provided.  Mirrors the behaviour of `set_session_model`
+    // so users never have to re-select the same model just to initialise stats.
+    if sess.model.is_none() {
+        if let Ok(s) = settings::read(&conn) {
+            let model = s.model.trim().to_string();
+            if !model.is_empty() {
+                let sdk = s
+                    .model_services
+                    .iter()
+                    .find(|p| p.id == s.active_provider_id)
+                    .map(|p| p.sdk.as_str())
+                    .unwrap_or("");
+                let cw = llm_catalog::lookup_context_window(
+                    &conn,
+                    &s.active_provider_id,
+                    sdk,
+                    &model,
+                )
+                .ok()
+                .flatten();
+                let _ = session::set_model_and_context(
+                    &conn,
+                    &sess.id,
+                    Some(model.as_str()),
+                    cw,
+                );
+                sess.model = Some(model);
+                sess.context_window = cw;
+            }
+        }
+    }
+
+    Ok(sess)
 }
 
 #[tauri::command]
@@ -1274,6 +1309,43 @@ async fn generate_image(
     }
 }
 
+/// Save partial assistant content when the user interrupts generation.
+///
+/// The frontend accumulates streaming text in a temporary in-memory message.
+/// After cancellation, it calls this command to persist whatever was generated
+/// before the interrupt so the content isn't lost on session reload.
+#[tauri::command]
+fn save_cancelled_message(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+    text: String,
+    thinking: String,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    let trimmed_text = text.trim();
+    let trimmed_thinking = thinking.trim();
+    if trimmed_text.is_empty() && trimmed_thinking.is_empty() {
+        return Ok(());
+    }
+    // Ensure session exists before writing.
+    session::get(&conn, &session_id)?;
+    let mut params = serde_json::json!({ "cancelled": true });
+    if !trimmed_thinking.is_empty() {
+        params["thinking_content"] = serde_json::Value::String(trimmed_thinking.to_string());
+    }
+    let params_json = params.to_string();
+    let text_opt = if trimmed_text.is_empty() { None } else { Some(trimmed_text) };
+    session::insert_message(
+        &conn,
+        &session_id,
+        "assistant",
+        text_opt,
+        Some(&params_json),
+    )?;
+    session::recompute_context_window_used(&conn, &session_id)?;
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 struct RegenerateReq {
     session_id: String,
@@ -1740,6 +1812,7 @@ pub fn run() {
             extract_session_memory,
             generate_image,
             regenerate_image,
+            save_cancelled_message,
             edit_image,
             export_image,
         ])

@@ -240,12 +240,14 @@ pub fn recompute_context_window_used(conn: &DbConn, session_id: &str) -> AppResu
         }
         if let Some(ref p) = msg.params {
             let u = tokens::extract_usage(p);
-            // prompt_tokens is the most accurate "how full is the context window"
-            // metric. total_tokens is the fallback for providers that only
-            // expose the aggregate.
-            let t = u.prompt_tokens
+            // Use total_tokens (prompt + completion) because the completion
+            // from the current turn becomes part of the history on the NEXT
+            // turn.  This gives a realistic "how much context is occupied"
+            // reading.  Fall back to prompt_tokens for providers that only
+            // expose the input side.
+            let t = u.total_tokens
                 .filter(|x| *x > 0)
-                .or_else(|| u.total_tokens.filter(|x| *x > 0));
+                .or_else(|| u.prompt_tokens.filter(|x| *x > 0));
             if let Some(t) = t {
                 used = t;
                 break;

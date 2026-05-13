@@ -110,6 +110,28 @@ function isGenerationCancelled(e: unknown) {
   return String(e).includes("generation cancelled");
 }
 
+/** Extract partial text and thinking content from a temporary streaming assistant message. */
+function extractPartialStreamContent(
+  messages: import("../types").MessageAbs[],
+  sessionId: string,
+): { text: string; thinking: string } {
+  const tmp = messages.find(
+    (m) =>
+      m.session_id === sessionId &&
+      m.id.startsWith("tmp-assistant-") &&
+      ((m.text?.trim() || "").length > 0 ||
+        (typeof m.params?.thinking_content === "string" &&
+          m.params.thinking_content.trim().length > 0)),
+  );
+  return {
+    text: tmp?.text?.trim() ?? "",
+    thinking:
+      typeof tmp?.params?.thinking_content === "string"
+        ? tmp.params.thinking_content.trim()
+        : "",
+  };
+}
+
 export const useSession = create<SessionStore>((set, get) => {
   const setSessionBusy = (sessionId: string, busy: boolean) => {
     set((state) => {
@@ -140,6 +162,9 @@ export const useSession = create<SessionStore>((set, get) => {
     if (get().activeId !== sessionId) return;
     try {
       const data = await api.loadSession(sessionId);
+      // Generation is complete — discard the streaming buffer so future
+      // switchTo calls show the persisted DB content, not stale temp data.
+      streamingBuffers.delete(sessionId);
       set({
         active: data,
         composer: {
@@ -180,16 +205,38 @@ export const useSession = create<SessionStore>((set, get) => {
   },
 
   switchTo: async (id) => {
+    // Save the current session's composer draft before switching away.
+    const currentId = get().activeId;
+    if (currentId && currentId !== id) {
+      saveComposerDraft(currentId, get().composer);
+    }
+
     const data = await api.loadSession(id);
+    const isBusy = !!get().busyBySession[id];
+
+    // If this session is still generating, restore any buffered streaming
+    // content that accumulated while the user was viewing another session.
+    let messagesWithBuffer = data.messages;
+    if (isBusy) {
+      const buf = streamingBuffers.get(id);
+      if (buf && (buf.text || buf.thinking)) {
+        messagesWithBuffer = applyStreamBufferToMessages(data.messages, id, buf);
+      }
+    }
+
+    // Restore draft for the target session, falling back to empty defaults.
+    const draft = composerDrafts.get(id);
     set({
       activeId: id,
-      active: data,
-      busy: !!get().busyBySession[id],
+      active: { ...data, messages: messagesWithBuffer },
+      busy: isBusy,
       composer: {
         ...get().composer,
-        attachments: [],
+        prompt: draft?.prompt ?? "",
+        attachments: draft?.attachments ?? [],
         pendingAttachments: [],
-        prompt: "",
+        aspectRatio: draft?.aspectRatio ?? get().composer.aspectRatio,
+        imageSize: draft?.imageSize ?? get().composer.imageSize,
         chatMode: composerModeFromAgentType(data.session.agent_type),
       },
     });
@@ -555,6 +602,14 @@ export const useSession = create<SessionStore>((set, get) => {
       await get().refreshList();
     } catch (e: unknown) {
       if (isGenerationCancelled(e)) {
+        const partial = extractPartialStreamContent(get().active?.messages ?? [], sid);
+        if (partial.text || partial.thinking) {
+          try {
+            await api.saveCancelledMessage(sid, partial.text, partial.thinking);
+          } catch (saveErr) {
+            console.warn("Failed to save partial message", saveErr);
+          }
+        }
         await reloadActiveSessionIfViewing(sid);
         await get().refreshList();
         return;
@@ -639,6 +694,8 @@ export const useSession = create<SessionStore>((set, get) => {
     set({
       composer: { ...get().composer, prompt: "", attachments: [], pendingAttachments: [] },
     });
+    // Clear the saved draft once the message is sent.
+    composerDrafts.delete(sid);
     setSessionBusy(sid, true);
     ensureGenerationStreamListener();
 
@@ -660,6 +717,15 @@ export const useSession = create<SessionStore>((set, get) => {
       await get().refreshList();
     } catch (e: unknown) {
       if (isGenerationCancelled(e)) {
+        // Persist any partial streaming content before reloading from DB.
+        const partial = extractPartialStreamContent(get().active?.messages ?? [], sid);
+        if (partial.text || partial.thinking) {
+          try {
+            await api.saveCancelledMessage(sid, partial.text, partial.thinking);
+          } catch (saveErr) {
+            console.warn("Failed to save partial message", saveErr);
+          }
+        }
         try {
           await reloadActiveSessionIfViewing(sid);
           await get().refreshList();
@@ -688,6 +754,68 @@ export const useSession = create<SessionStore>((set, get) => {
   });
 });
 
+// ─── Per-session composer drafts ─────────────────────────────────────────────
+// Saves each session's input state so switching sessions preserves whatever
+// the user had typed or attached.
+
+interface ComposerDraft {
+  prompt: string;
+  attachments: AttachmentDraft[];
+  aspectRatio: string;
+  imageSize: string;
+}
+
+const composerDrafts = new Map<string, ComposerDraft>();
+
+function saveComposerDraft(sessionId: string, composer: ComposerState) {
+  composerDrafts.set(sessionId, {
+    prompt: composer.prompt,
+    attachments: composer.attachments,
+    aspectRatio: composer.aspectRatio,
+    imageSize: composer.imageSize,
+  });
+}
+
+// ─── Per-session streaming buffers ───────────────────────────────────────────
+// Keeps accumulating stream deltas even when the session isn't active so that
+// switching back to a generating session immediately shows what was produced
+// while the user was away.
+
+interface StreamBuffer {
+  text: string;
+  thinking: string;
+  requestId: string;
+}
+
+const streamingBuffers = new Map<string, StreamBuffer>();
+
+/** Apply a stream buffer as a temporary assistant message into active messages. */
+function applyStreamBufferToMessages(
+  messages: MessageAbs[],
+  sessionId: string,
+  buf: StreamBuffer,
+): MessageAbs[] {
+  const messageId = `tmp-assistant-${buf.requestId}`;
+  const idx = messages.findIndex((m) => m.id === messageId);
+  const tmpMsg: MessageAbs = {
+    id: messageId,
+    session_id: sessionId,
+    role: "assistant",
+    text: buf.text || null,
+    params: buf.thinking ? { thinking_content: buf.thinking } : null,
+    created_at: Date.now(),
+    images: [],
+  };
+  if (idx >= 0) {
+    const next = [...messages];
+    next[idx] = tmpMsg;
+    return next;
+  }
+  return [...messages, tmpMsg];
+}
+
+// ─── Stream listener ──────────────────────────────────────────────────────────
+
 let generationStreamListenerStarted = false;
 
 function ensureGenerationStreamListener() {
@@ -700,10 +828,20 @@ function ensureGenerationStreamListener() {
     const thinkingDelta = payload.thinking_delta ?? "";
     if (!sessionId || (!textDelta && !thinkingDelta)) return;
 
+    const requestId = payload.request_message_id || sessionId;
+
+    // Always accumulate in the per-session buffer (even when not viewing).
+    const prev = streamingBuffers.get(sessionId) ?? { text: "", thinking: "", requestId };
+    streamingBuffers.set(sessionId, {
+      text: textDelta ? prev.text + textDelta : prev.text,
+      thinking: thinkingDelta ? prev.thinking + thinkingDelta : prev.thinking,
+      requestId,
+    });
+
+    // Only update the visible UI when this session is the active one.
     const state = useSession.getState();
     if (state.activeId !== sessionId || !state.active) return;
 
-    const requestId = payload.request_message_id || sessionId;
     const messageId = `tmp-assistant-${requestId}`;
     const existingIndex = state.active.messages.findIndex((m) => m.id === messageId);
     const messages = [...state.active.messages];

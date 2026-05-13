@@ -53,9 +53,44 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
       : 0;
   const hasStreamingAssistant = messages.some((m) => m.id.startsWith("tmp-assistant-"));
 
+  // Track whether the user is near the bottom of the scroll container.
+  // When they scroll up to read history we stop forcing scroll-to-bottom.
+  const isNearBottomRef = useRef(true);
+  const prevMessagesLengthRef = useRef(messages.length);
+
+  // Listen for manual scrolls to update "near bottom" state.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onScroll = () => {
+      // Within 150 px of the bottom is considered "near bottom".
+      isNearBottomRef.current =
+        el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Always scroll to bottom when switching sessions.
   useEffect(() => {
     if (!ref.current) return;
     ref.current.scrollTop = ref.current.scrollHeight;
+    isNearBottomRef.current = true;
+    prevMessagesLengthRef.current = messages.length;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.session.id]);
+
+  // Smart auto-scroll during streaming and when new messages arrive.
+  useEffect(() => {
+    if (!ref.current) return;
+    const messagesGrew = messages.length > prevMessagesLengthRef.current;
+    prevMessagesLengthRef.current = messages.length;
+    // Always scroll when a new message is added (user just sent, or session
+    // reloaded). During streaming only scroll when the user is already near
+    // the bottom so we don't hijack their scroll position.
+    if (messagesGrew || isNearBottomRef.current) {
+      ref.current.scrollTop = ref.current.scrollHeight;
+    }
   }, [messages.length, lastMessageTextLength, lastMessageThinkingLength, busy]);
 
   useEffect(() => {

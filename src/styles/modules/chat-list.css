@@ -5,6 +5,7 @@
   gap: 1px;
 }
 .chat-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -13,14 +14,39 @@
   cursor: pointer;
   border: 1px solid transparent;
   background: transparent;
-  transition: background 0.12s, border-color 0.12s;
+  isolation: isolate;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    padding 0.14s ease,
+    min-height 0.14s ease,
+    gap 0.14s ease,
+    border-radius 0.14s ease;
   min-height: 28px;
 }
-.chat-item:hover {
+/* 悬停 / 选中高亮单独画在行框内缩约 5%，避免两行同时高亮时背景连成一片 */
+.chat-item::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
   background: var(--bg-hover);
+  border-radius: inherit;
+  /* 略小于行框以免贴死；保底像素偏小，主要靠百分比内缩 */
+  top: max(1px, 2%);
+  right: max(3px, 2%);
+  bottom: max(1px, 2%);
+  left: max(3px, 2%);
 }
-.chat-item.active {
-  background: var(--bg-hover);
+.chat-item:hover::before,
+.chat-item.active::before {
+  opacity: 1;
+}
+.chat-item > * {
+  position: relative;
+  z-index: 1;
 }
 .chat-title {
   flex: 1;

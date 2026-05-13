@@ -27,9 +27,6 @@ export function ProjectConfigModal({ project, onClose }: ProjectConfigModalProps
     ...EMPTY_MODEL_PARAMS,
     ...(project.llm_params ?? EMPTY_MODEL_PARAMS),
   });
-  const [contextWindowDraft, setContextWindowDraft] = useState(
-    project.context_window != null ? String(project.context_window) : "",
-  );
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -39,16 +36,6 @@ export function ProjectConfigModal({ project, onClose }: ProjectConfigModalProps
       setError("历史消息条数需为 0-200 的整数。");
       return;
     }
-    const cwRaw = contextWindowDraft.trim();
-    let contextWindow: number | null = null;
-    if (cwRaw !== "") {
-      const cw = Number.parseInt(cwRaw, 10);
-      if (!Number.isFinite(cw) || cw < 1000) {
-        setError("上下文窗口需为 ≥ 1000 的整数，留空则不限制。");
-        return;
-      }
-      contextWindow = cw;
-    }
     setSaving(true);
     try {
       await updateConfig(
@@ -56,7 +43,7 @@ export function ProjectConfigModal({ project, onClose }: ProjectConfigModalProps
         systemPromptDraft,
         turns,
         { ...EMPTY_MODEL_PARAMS, ...llmParamsDraft },
-        contextWindow,
+        null, // context_window 由模型目录自动管理，不在此处手动设置
       );
       onClose();
     } finally {
@@ -111,29 +98,8 @@ export function ProjectConfigModal({ project, onClose }: ProjectConfigModalProps
                   setError(null);
                 }}
               />
-              <div className={`hint ${error?.includes("历史") ? "is-error" : ""}`}>
-                {error?.includes("历史") ? error : "0 表示不携带历史；适用于项目所有会话。"}
-              </div>
-            </div>
-
-            <div className="row">
-              <label className="field-label">上下文窗口上限（tokens）</label>
-              <input
-                type="number"
-                className="field-input field-input--mono"
-                min={1000}
-                step={1000}
-                placeholder="留空不限制"
-                value={contextWindowDraft}
-                onChange={(e) => {
-                  setContextWindowDraft(e.target.value);
-                  setError(null);
-                }}
-              />
-              <div className={`hint ${error?.includes("上下文") ? "is-error" : ""}`}>
-                {error?.includes("上下文")
-                  ? error
-                  : "覆盖项目下所有会话的上下文窗口上限；留空则跟随模型目录值。"}
+              <div className={`hint ${error ? "is-error" : ""}`}>
+                {error ?? "0 表示不携带历史；适用于项目所有会话。"}
               </div>
             </div>
 
