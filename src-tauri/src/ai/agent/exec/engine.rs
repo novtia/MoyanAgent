@@ -193,12 +193,14 @@ impl QueryEngine for ProviderQueryEngine {
             let mut usage = crate::ai::tokens::TokenUsage::default();
             let mut tool_call_count: u32 = 0;
             let mut final_text: Option<String> = None;
+            let mut final_thinking: Option<String> = None;
             let mut final_images = Vec::new();
 
             for _turn in 0..max_turns {
                 if context.abort.aborted() {
                     return Ok(QueryResult {
                         final_text,
+                        thinking_content: final_thinking,
                         events,
                         usage,
                         tool_call_count,
@@ -232,7 +234,16 @@ impl QueryEngine for ProviderQueryEngine {
                     });
                     final_text = Some(text.clone());
                 }
-                usage = response.usage.clone();
+                // Capture thinking/reasoning from the final (non-tool) turn.
+                // Intermediate tool-call turns may also carry thinking content
+                // but only the last assistant-facing turn is surfaced to the user.
+                if let Some(ref t) = response.thinking_content {
+                    if !t.trim().is_empty() {
+                        final_thinking = Some(t.clone());
+                    }
+                }
+                // Accumulate billing tokens across all tool-call rounds.
+                accumulate_usage(&mut usage, &response.usage);
                 final_images = response.images.clone();
 
                 // Compaction window: run *before* enqueuing the next
@@ -256,6 +267,7 @@ impl QueryEngine for ProviderQueryEngine {
                     // Model produced no tool_use blocks → loop terminates.
                     return Ok(QueryResult {
                         final_text,
+                        thinking_content: final_thinking,
                         events,
                         usage,
                         tool_call_count,
@@ -336,6 +348,7 @@ impl QueryEngine for ProviderQueryEngine {
 
             Ok(QueryResult {
                 final_text,
+                thinking_content: final_thinking,
                 events,
                 usage,
                 tool_call_count,
@@ -367,6 +380,29 @@ fn collect_tool_definitions(tools: &ToolPool) -> Vec<crate::ai::chat::ToolDefini
             }
         })
         .collect()
+}
+
+/// Accumulate token usage across multiple API turns (tool-call rounds).
+///
+/// Unlike `merge_usage` (which replaces), this ADDS prompt/completion tokens so
+/// the final `TokenUsage` reflects the true total cost of the entire agent loop.
+fn accumulate_usage(
+    target: &mut crate::ai::tokens::TokenUsage,
+    next: &crate::ai::tokens::TokenUsage,
+) {
+    if let Some(p) = next.prompt_tokens {
+        *target.prompt_tokens.get_or_insert(0) += p;
+    }
+    if let Some(c) = next.completion_tokens {
+        *target.completion_tokens.get_or_insert(0) += c;
+    }
+    // Recompute total as the running sum rather than trusting the per-turn field.
+    target.total_tokens = match (target.prompt_tokens, target.completion_tokens) {
+        (Some(p), Some(c)) => Some(p + c),
+        (Some(p), None) => Some(p),
+        (None, Some(c)) => Some(c),
+        (None, None) => None,
+    };
 }
 
 /// Prepend attachments as hidden user-meta history turns so the model

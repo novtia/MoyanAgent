@@ -458,7 +458,7 @@
 
 .composer-context-ring-fill {
   stroke: var(--accent, #5b8cff);
-  transition: stroke 0.15s ease;
+  transition: stroke 0.15s ease, stroke-dasharray 0.3s ease;
 }
 
 .composer-context-ring-fill.is-warn {
@@ -467,6 +467,12 @@
 
 .composer-context-ring-fill.is-over {
   stroke: #e05858;
+}
+
+/* No limit set but token data exists: show a faint indicator arc */
+.composer-context-ring-fill.is-dim {
+  stroke: var(--ink-mute);
+  opacity: 0.5;
 }
 
 .composer-model {

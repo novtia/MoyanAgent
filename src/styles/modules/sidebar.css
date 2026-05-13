@@ -109,6 +109,7 @@
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
+  padding-right: 0;
 }
 .side-section-scroll::-webkit-scrollbar {
   width: 6px;
@@ -121,4 +122,213 @@
   padding: 6px 10px;
   font-size: 11.5px;
   color: var(--ink-mute);
+}
+
+/* ─── Shared small icon button ─── */
+.side-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--ink-2);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.1s, color 0.1s;
+}
+.side-icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+.side-icon-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ─── Shared action button group (sort + new project) ─── */
+.side-project-action-btns {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+  flex-shrink: 0;
+}
+
+/* ─── Project nav item (shown when no projects) ─── */
+.side-nav-project-row {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  position: relative;
+}
+.side-nav-project-row:hover {
+  background: var(--bg-hover);
+}
+.side-nav-project-row:hover .side-nav-item--label {
+  color: var(--ink);
+}
+.side-nav-project-row:hover .side-project-action-btns {
+  opacity: 1;
+  pointer-events: auto;
+}
+.side-nav-project-row .side-project-action-btns {
+  padding-right: 6px;
+}
+.side-nav-item--label {
+  flex: 1;
+  cursor: default;
+  color: var(--ink-2);
+  pointer-events: none;
+  min-width: 0;
+}
+.side-nav-item--label:hover {
+  background: transparent;
+  color: var(--ink-2);
+}
+
+/* ─── New project dropdown ─── */
+.side-nav-dropdown-anchor {
+  position: relative;
+}
+.side-nav-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 200;
+  background: var(--bg-float, var(--bg-side));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  min-width: 168px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.side-nav-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: background 0.1s;
+}
+.side-nav-dropdown-item:hover {
+  background: var(--bg-hover);
+}
+.side-nav-dropdown-item svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--ink-soft);
+}
+
+/* ─── Section headers ─── */
+.side-section-header {
+  display: flex;
+  align-items: center;
+  padding: 4px 10px 4px 10px;
+  margin-bottom: 2px;
+  gap: 4px;
+}
+.side-section-header--sticky {
+  position: sticky;
+  top: 0;
+  background: var(--bg-side);
+  z-index: 1;
+}
+/* Hoverable section header shows action buttons on hover */
+.side-section-header--hoverable:hover .side-project-action-btns {
+  opacity: 1;
+  pointer-events: auto;
+}
+.side-section-title-text {
+  font-size: 11.5px;
+  color: var(--ink-mute);
+  letter-spacing: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ─── Project section in scroll ─── */
+.side-project-section {
+  margin-bottom: 6px;
+}
+
+/* ─── Project item ─── */
+.project-item {
+  margin-bottom: 1px;
+}
+.project-item-header {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 6px 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+}
+.project-item-header:hover {
+  background: var(--bg-hover);
+}
+.project-item-header:hover .project-item-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.project-item-folder-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--ink-soft);
+}
+.project-item-folder-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.project-item-name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--ink);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+/* Hover action buttons on the project item row */
+.project-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  flex-shrink: 0;
+  transition: opacity 0.1s;
+}
+
+/* ─── Sessions under project ─── */
+.project-sessions {
+  padding-left: 18px;
+}
+.project-sessions-empty {
+  padding: 3px 10px 5px;
+  font-size: 11.5px;
+  color: var(--ink-mute);
+}
+.chat-item--nested {
+  padding-left: 8px;
 }

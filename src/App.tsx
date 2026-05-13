@@ -11,6 +11,7 @@ import { SearchDialog } from "./components/search/SearchDialog";
 import { TitleBar } from "./components/layout/TitleBar";
 import { useSettings } from "./store/settings";
 import { useSession } from "./store/session";
+import { useProject } from "./store/project";
 import {
   THEME_STORAGE_KEY,
   applyThemeMode,
@@ -41,6 +42,7 @@ export default function App() {
   const loadSettings = useSettings((s) => s.load);
   const settings = useSettings((s) => s.settings);
   const refreshList = useSession((s) => s.refreshList);
+  const refreshProjects = useProject((s) => s.refreshList);
   const setAspectRatio = useSession((s) => s.setAspectRatio);
   const setImageSize = useSession((s) => s.setImageSize);
 
@@ -54,7 +56,8 @@ export default function App() {
   useEffect(() => {
     loadSettings();
     refreshList();
-  }, [loadSettings, refreshList]);
+    refreshProjects();
+  }, [loadSettings, refreshList, refreshProjects]);
 
   useEffect(() => {
     const onHashChange = () => setRoute(parseRoute());

@@ -225,6 +225,8 @@ impl AgentTool {
             parent_system_prompt,
             on_text_delta: None,
             query_source: None,
+            // Sub-agents inherit CWD from the host process; no project context.
+            project_cwd: None,
         })
         .await?;
 

@@ -50,6 +50,14 @@ pub struct RunAgentParams {
     /// [`QuerySource`] (e.g. [`QuerySource::ReplMainThread`] for the
     /// primary session).
     pub query_source: Option<QuerySource>,
+    /// Project working directory for this run.
+    ///
+    /// - `Some(path)` → tools execute inside this directory and the
+    ///   `<env>` block in the system prompt shows this path.
+    /// - `None` → the process CWD is used for tool execution but **no**
+    ///   `<env>` block is emitted (suitable for plain chat sessions that
+    ///   have no project context).
+    pub project_cwd: Option<std::path::PathBuf>,
 }
 
 /// Output of [`run_agent`].
@@ -58,6 +66,9 @@ pub struct RunAgentResult {
     pub agent_id: AgentId,
     pub task_id: TaskId,
     pub final_text: Option<String>,
+    /// Reasoning / extended-thinking text from the final turn, when the
+    /// provider returns it separately from the visible assistant reply.
+    pub thinking_content: Option<String>,
     pub usage: TokenUsage,
     pub tool_call_count: u32,
     pub images: Vec<ImageResult>,
@@ -82,6 +93,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         parent_system_prompt,
         on_text_delta,
         query_source,
+        project_cwd,
     } = params;
 
     let agent_id = AgentId::new();
@@ -106,9 +118,12 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         },
         Isolation::None | Isolation::Remote => None,
     };
-    let cwd = worktree
+
+    // CWD used by tools: worktree → project path → host process dir.
+    let tool_cwd = worktree
         .as_ref()
         .map(|h| h.path.clone())
+        .or_else(|| project_cwd.clone())
         .unwrap_or_else(|| host_cwd.clone());
 
     let permission_mode = permission_override
@@ -120,11 +135,14 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
     // `initial_prompt`, `critical_system_reminder`, and parent-prompt
     // inheritance can land — the engine treats `chat_request` as a
     // black-box payload from here on.
+    //
+    // The `<env>` block is only included when a project CWD is provided.
+    // Plain chat sessions (no project / no project path) get no env block.
     chat_request.system_prompt = compose_system_prompt(
         &definition,
         run_mode,
         parent_system_prompt.as_deref(),
-        &cwd,
+        project_cwd.as_deref(),
     );
     chat_request.prompt = compose_user_prompt(&definition, &prompt);
 
@@ -135,7 +153,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         AgentRunMode::Fork => QuerySource::Forked,
         _ => QuerySource::Subagent,
     });
-    let (context, abort) = ToolUseContext::builder(agent_id.clone(), cwd)
+    let (context, abort) = ToolUseContext::builder(agent_id.clone(), tool_cwd)
         .query_source(resolved_source)
         .permission_mode(permission_mode)
         .parent_system_prompt(chat_request.system_prompt.clone())
@@ -167,6 +185,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
                 agent_id,
                 task_id,
                 final_text: qr.final_text,
+                thinking_content: qr.thinking_content,
                 usage: qr.usage,
                 tool_call_count: qr.tool_call_count,
                 images: qr.images,
@@ -206,19 +225,14 @@ fn _abort_handle_marker(_h: AbortHandle) {}
 
 /// Assemble the final `system_prompt` for a sub-agent run.
 ///
-/// Order (mirrors upstream `runAgent.ts` + `enhanceSystemPromptWithEnvDetails`):
-///
-/// 1. `[parent_prompt + "\n\n---\n\n"]` — only in Fork mode.
-/// 2. `definition.system_prompt`.
-/// 3. `<env>` block (cwd / platform / date) — skipped when env details are
-///    already present (idempotent for resumes).
-/// 4. `critical_system_reminder` — appended last so it stays visible
-///    after long contexts get compacted.
+/// `env_cwd`:
+/// - `Some(path)` → include `<env>` block with this working directory.
+/// - `None` → skip the `<env>` block entirely (plain chat, no project context).
 fn compose_system_prompt(
     def: &AgentDefinition,
     run_mode: AgentRunMode,
     parent_system_prompt: Option<&str>,
-    cwd: &std::path::Path,
+    env_cwd: Option<&std::path::Path>,
 ) -> String {
     let mut out = String::with_capacity(2048);
 
@@ -235,10 +249,12 @@ fn compose_system_prompt(
         out.push('\n');
     }
 
-    let env = env_details_block(cwd);
-    if !out.contains("<env>") && !env.is_empty() {
-        out.push('\n');
-        out.push_str(&env);
+    if let Some(cwd) = env_cwd {
+        let env = env_details_block(cwd);
+        if !out.contains("<env>") && !env.is_empty() {
+            out.push('\n');
+            out.push_str(&env);
+        }
     }
 
     if let Some(reminder) = def

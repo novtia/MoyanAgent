@@ -98,6 +98,7 @@ const zhCN = {
     bytesMB: "{{n}} MB",
     contextRingAria: "会话上下文占用",
     contextRingUnknown: "未设置上下文窗口上限（选择模型后将写入目录中的窗口值）",
+    contextRingUsedNoLimit: "已使用 {{used}} tokens（未设置上限）",
     contextRingPct: "{{pct}}%",
     contextRingTokens: "已使用 {{used}} / 上限 {{limit}} tokens",
   },

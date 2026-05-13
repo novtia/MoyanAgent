@@ -8,6 +8,7 @@ import type {
   LlmModelCatalog,
   MessageAbs,
   ModelParamSettings,
+  Project,
   SessionSearchResult,
   SessionSummary,
   SessionWithMessagesAbs,
@@ -74,6 +75,28 @@ export const api = {
   deleteSession: (id: string) => invoke<void>("delete_session", { id }),
   loadSession: (id: string) =>
     invoke<SessionWithMessagesAbs>("load_session", { id }),
+  assignSessionToProject: (sessionId: string, projectId: string | null) =>
+    invoke<void>("assign_session_to_project", { sessionId, projectId }),
+
+  // projects
+  listProjects: () => invoke<Project[]>("list_projects"),
+  createProject: (name: string, path?: string | null) =>
+    invoke<Project>("create_project", { args: { name, path: path ?? null } }),
+  renameProject: (id: string, name: string) =>
+    invoke<void>("rename_project", { id, name }),
+  deleteProject: (id: string) => invoke<void>("delete_project", { id }),
+  reorderProjects: (orderedIds: string[]) =>
+    invoke<void>("reorder_projects", { orderedIds }),
+  updateProjectConfig: (
+    id: string,
+    systemPrompt: string,
+    historyTurns: number,
+    llmParams: ModelParamSettings,
+    contextWindow: number | null,
+  ) =>
+    invoke<void>("update_project_config", {
+      args: { id, systemPrompt, historyTurns, llmParams, contextWindow },
+    }),
   deleteMessage: (id: string) => invoke<void>("delete_message", { id }),
   updateMessageText: (id: string, text: string) =>
     invoke<void>("update_message_text", { id, text }),

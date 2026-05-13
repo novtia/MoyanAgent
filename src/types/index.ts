@@ -124,6 +124,24 @@ export interface SessionSummary {
   agent_type: string;
   updated_at: number;
   message_count: number;
+  project_id: string | null;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  path: string | null;
+  sort_order: number;
+  /** Shared system prompt applied to all sessions in this project. */
+  system_prompt: string;
+  /** Number of history turns for project sessions. */
+  history_turns: number;
+  /** Shared LLM sampling params for project sessions. */
+  llm_params: ModelParamSettings;
+  /** Optional context window override (tokens) for project sessions. */
+  context_window: number | null;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface SessionSearchResult extends SessionSummary {
@@ -133,6 +151,7 @@ export interface SessionSearchResult extends SessionSummary {
   match_created_at: number | null;
   match_count: number;
   title_match: boolean;
+  project_id: string | null;
 }
 
 export interface ImageRefAbs {

@@ -1,0 +1,4 @@
+ALTER TABLE projects ADD COLUMN system_prompt TEXT NOT NULL DEFAULT '';
+ALTER TABLE projects ADD COLUMN history_turns INTEGER NOT NULL DEFAULT 10;
+ALTER TABLE projects ADD COLUMN llm_params TEXT;
+ALTER TABLE projects ADD COLUMN context_window INTEGER;

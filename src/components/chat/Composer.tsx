@@ -600,32 +600,64 @@ function ContextRing({ used, limit }: { used: number; limit: number | null }) {
   const r = c - stroke / 2;
   const circumference = 2 * Math.PI * r;
 
-  const ratioRaw = limit != null && limit > 0 ? used / limit : null;
+  // Three display states:
+  //   A) limit known → show ring arc + percentage
+  //   B) limit unknown, used > 0 → show raw token count (no arc)
+  //   C) limit unknown, used = 0 → "not set" placeholder
+  const hasLimit = limit != null && limit > 0;
+  const hasUsed = used > 0;
+
+  const ratioRaw = hasLimit ? used / limit! : null;
   const arcRatio = ratioRaw != null ? Math.min(Math.max(ratioRaw, 0), 1) : 0;
-  const dash = circumference * arcRatio;
+  // When limit is unknown but tokens exist, draw a faint quarter-arc as
+  // a visual hint that data is available.
+  const arcRatioDisplay = ratioRaw != null ? arcRatio : (hasUsed ? 0.12 : 0);
+  const dash = circumference * arcRatioDisplay;
 
   let fillModifier = "";
   if (ratioRaw != null && ratioRaw > 1) fillModifier = " is-over";
   else if (ratioRaw != null && ratioRaw >= 0.85) fillModifier = " is-warn";
+  else if (ratioRaw == null && hasUsed) fillModifier = " is-dim";
 
   const pctInt = ratioRaw != null ? Math.round(Math.min(ratioRaw * 100, 9999)) : null;
 
-  const tooltip =
-    limit != null && limit > 0 && pctInt != null ? (
-      <>
-        <div className="composer-context-ring-tooltip-strong">
-          {t("composer.contextRingPct", { pct: pctInt })}
-        </div>
-        <div className="composer-context-ring-tooltip-muted">
-          {t("composer.contextRingTokens", {
-            used: nf.format(used),
-            limit: nf.format(limit),
-          })}
-        </div>
-      </>
-    ) : (
-      <div className="composer-context-ring-tooltip-muted">{t("composer.contextRingUnknown")}</div>
+  const tooltip = (() => {
+    if (hasLimit && pctInt != null) {
+      // State A: limit known
+      return (
+        <>
+          <div className="composer-context-ring-tooltip-strong">
+            {t("composer.contextRingPct", { pct: pctInt })}
+          </div>
+          <div className="composer-context-ring-tooltip-muted">
+            {t("composer.contextRingTokens", {
+              used: nf.format(used),
+              limit: nf.format(limit!),
+            })}
+          </div>
+        </>
+      );
+    }
+    if (hasUsed) {
+      // State B: no limit but we have actual token data
+      return (
+        <>
+          <div className="composer-context-ring-tooltip-strong">
+            {nf.format(used)} tokens
+          </div>
+          <div className="composer-context-ring-tooltip-muted">
+            {t("composer.contextRingUsedNoLimit", { used: nf.format(used) })}
+          </div>
+        </>
+      );
+    }
+    // State C: nothing to show
+    return (
+      <div className="composer-context-ring-tooltip-muted">
+        {t("composer.contextRingUnknown")}
+      </div>
     );
+  })();
 
   return (
     <div className="composer-context-ring" aria-label={t("composer.contextRingAria")}>

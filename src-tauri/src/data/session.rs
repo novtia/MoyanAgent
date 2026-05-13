@@ -41,6 +41,8 @@ pub struct Session {
     pub context_window_used: i64,
     /// Which built-in agent definition drives turns (`general-purpose` | `Plan`, …).
     pub agent_type: String,
+    /// Project this session belongs to, if any.
+    pub project_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -58,6 +60,7 @@ pub struct SessionSummary {
     pub agent_type: String,
     pub updated_at: i64,
     pub message_count: i64,
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -73,6 +76,7 @@ pub struct SessionSearchResult {
     pub agent_type: String,
     pub updated_at: i64,
     pub message_count: i64,
+    pub project_id: Option<String>,
     pub match_message_id: Option<String>,
     pub match_role: Option<String>,
     pub match_text: Option<String>,
@@ -129,6 +133,7 @@ pub fn create(conn: &DbConn, title: Option<String>, model: Option<String>) -> Ap
         context_window: None,
         context_window_used: 0,
         agent_type: SESSION_AGENT_GENERAL.into(),
+        project_id: None,
         created_at: now,
         updated_at: now,
     })
@@ -216,40 +221,41 @@ pub fn set_model_and_context(
 
 /// Recompute `sessions.context_window_used` from stored messages.
 ///
-/// For each user turn (from one user message until the next), only the **last**
-/// assistant message's `params.usage.total_tokens` counts. Regenerating replaces
-/// prior assistant rows for that turn in the timeline, so retry stacks are not
-/// summed into session usage.
+/// Uses the **most recent assistant message's `prompt_tokens`** as the context
+/// window usage indicator. `prompt_tokens` from the API already includes
+/// everything sent in that request: system prompt, tool definitions, injected
+/// context (CLAUDE.md / env block), full conversation history, and the current
+/// user message. It therefore accurately represents how much of the context
+/// window is filled and how much remains for future turns.
+///
+/// Falls back to `total_tokens` (prompt + completion) when `prompt_tokens` is
+/// absent, and to 0 when neither is available (e.g. image-generation APIs that
+/// don't report usage).
 pub fn recompute_context_window_used(conn: &DbConn, session_id: &str) -> AppResult<()> {
     let loaded = load_with_messages(conn, session_id)?;
-    let msgs = loaded.messages;
-    let mut total: i64 = 0;
-    let mut i = 0usize;
-    while i < msgs.len() {
-        if msgs[i].role != "user" {
-            i += 1;
+    let mut used: i64 = 0;
+    for msg in loaded.messages.iter().rev() {
+        if msg.role != "assistant" {
             continue;
         }
-        let mut j = i + 1;
-        let mut last_assistant_tokens: i64 = 0;
-        while j < msgs.len() && msgs[j].role != "user" {
-            if msgs[j].role == "assistant" {
-                if let Some(ref p) = msgs[j].params {
-                    let u = tokens::extract_usage(p);
-                    if let Some(t) = u.total_tokens.filter(|x| *x > 0) {
-                        last_assistant_tokens = t;
-                    }
-                }
+        if let Some(ref p) = msg.params {
+            let u = tokens::extract_usage(p);
+            // prompt_tokens is the most accurate "how full is the context window"
+            // metric. total_tokens is the fallback for providers that only
+            // expose the aggregate.
+            let t = u.prompt_tokens
+                .filter(|x| *x > 0)
+                .or_else(|| u.total_tokens.filter(|x| *x > 0));
+            if let Some(t) = t {
+                used = t;
+                break;
             }
-            j += 1;
         }
-        total += last_assistant_tokens;
-        i = j;
     }
     let updated = now_ms();
     conn.execute(
         "UPDATE sessions SET context_window_used=?1, updated_at=?2 WHERE id=?3",
-        params![total, updated, session_id],
+        params![used, updated, session_id],
     )?;
     Ok(())
 }
@@ -307,7 +313,8 @@ pub fn delete_message(conn: &DbConn, id: &str) -> AppResult<Vec<(String, Option<
 pub fn list(conn: &DbConn) -> AppResult<Vec<SessionSummary>> {
     let mut stmt = conn.prepare(
         "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.context_window, s.context_window_used, s.agent_type, s.updated_at,
-            (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt
+            (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt,
+            s.project_id
          FROM sessions s
          ORDER BY s.updated_at DESC",
     )?;
@@ -325,6 +332,7 @@ pub fn list(conn: &DbConn) -> AppResult<Vec<SessionSummary>> {
             agent_type: r.get(8)?,
             updated_at: r.get(9)?,
             message_count: r.get(10)?,
+            project_id: r.get(11)?,
         })
     })?;
     let mut out = Vec::new();
@@ -353,6 +361,7 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
         let mut stmt = conn.prepare(
             "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.context_window, s.context_window_used, s.agent_type, s.updated_at,
                 (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt,
+                s.project_id,
                 NULL AS match_message_id, NULL AS match_role, NULL AS match_text,
                 NULL AS match_created_at, 0 AS match_count, 0 AS title_match
              FROM sessions s
@@ -371,6 +380,7 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
     let mut stmt = conn.prepare(
         "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.context_window, s.context_window_used, s.agent_type, s.updated_at,
             (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt,
+            s.project_id,
             (SELECT mm.id FROM messages mm
              WHERE mm.session_id = s.id AND COALESCE(mm.text, '') LIKE ?1 ESCAPE '\\'
              ORDER BY mm.created_at DESC LIMIT 1) AS match_message_id,
@@ -406,7 +416,7 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
 }
 
 fn map_search_result(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSearchResult> {
-    let title_match: i64 = row.get(16)?;
+    let title_match: i64 = row.get(17)?;
     let raw: Option<String> = row.get(5)?;
     Ok(SessionSearchResult {
         id: row.get(0)?,
@@ -420,18 +430,19 @@ fn map_search_result(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSearchR
         agent_type: row.get(8)?,
         updated_at: row.get(9)?,
         message_count: row.get(10)?,
-        match_message_id: row.get(11)?,
-        match_role: row.get(12)?,
-        match_text: row.get(13)?,
-        match_created_at: row.get(14)?,
-        match_count: row.get(15)?,
+        project_id: row.get(11)?,
+        match_message_id: row.get(12)?,
+        match_role: row.get(13)?,
+        match_text: row.get(14)?,
+        match_created_at: row.get(15)?,
+        match_count: row.get(16)?,
         title_match: title_match != 0,
     })
 }
 
 pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, model, system_prompt, history_turns, llm_params, context_window, context_window_used, agent_type, created_at, updated_at FROM sessions WHERE id=?1",
+        "SELECT id, title, model, system_prompt, history_turns, llm_params, context_window, context_window_used, agent_type, project_id, created_at, updated_at FROM sessions WHERE id=?1",
     )?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
@@ -446,8 +457,9 @@ pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
             context_window: row.get(6)?,
             context_window_used: row.get(7)?,
             agent_type: row.get(8)?,
-            created_at: row.get(9)?,
-            updated_at: row.get(10)?,
+            project_id: row.get(9)?,
+            created_at: row.get(10)?,
+            updated_at: row.get(11)?,
         })
     } else {
         Err(AppError::NotFound(format!("session {id}")))

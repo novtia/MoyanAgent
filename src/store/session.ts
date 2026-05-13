@@ -561,6 +561,7 @@ export const useSession = create<SessionStore>((set, get) => {
       }
       console.error(e);
       await reloadActiveSessionIfViewing(sid);
+      await get().refreshList();
     } finally {
       setSessionBusy(sid, false);
     }
@@ -669,6 +670,7 @@ export const useSession = create<SessionStore>((set, get) => {
       }
       console.error(e);
       await reloadActiveSessionIfViewing(sid);
+      await get().refreshList();
     } finally {
       setSessionBusy(sid, false);
     }

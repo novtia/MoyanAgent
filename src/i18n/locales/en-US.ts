@@ -101,6 +101,7 @@ const enUS: Resource = {
     bytesMB: "{{n}} MB",
     contextRingAria: "Session context usage",
     contextRingUnknown: "No context window limit set (choose a model to apply catalog limits)",
+    contextRingUsedNoLimit: "{{used}} tokens used (no limit set)",
     contextRingPct: "{{pct}}%",
     contextRingTokens: "{{used}} / {{limit}} tokens used",
   },

@@ -17,7 +17,7 @@ use crate::ai::agent::{
 };
 use crate::ai::{chat, parameters, router};
 use crate::data::db::DbPool;
-use crate::data::{db, llm_catalog, paths, session, settings};
+use crate::data::{db, llm_catalog, paths, project, session, settings};
 use crate::error::{AppError, AppResult};
 use crate::media::{editor, images};
 
@@ -166,6 +166,55 @@ fn build_history(
 /// tracking. The per-session cancel channel races the run and returns
 /// [`AppError::Canceled`] without forcing an abort through the tool context
 /// (same coarse behaviour as before).
+/// Resolve the project working directory for a session, if any.
+///
+/// Returns `Some(path)` when the session belongs to a project that has a
+/// non-empty `path` set; `None` otherwise (plain chat, or project without
+/// a filesystem path).
+fn session_project_cwd(conn: &db::DbConn, session_id: &str) -> Option<std::path::PathBuf> {
+    let sess = session::get(conn, session_id).ok()?;
+    let project_id = sess.project_id?;
+    let proj = project::get(conn, &project_id).ok()?;
+    let path_str = proj.path.filter(|p| !p.trim().is_empty())?;
+    Some(std::path::PathBuf::from(path_str))
+}
+
+/// Effective generation parameters for a session.
+///
+/// If the session belongs to a project, the project's shared parameters are
+/// used (system prompt, history turns, LLM params, context window override).
+/// Otherwise the session's own parameters apply.
+#[allow(dead_code)]
+struct EffectiveSessionParams {
+    pub system_prompt: String,
+    pub history_turns: i64,
+    pub llm_params: settings::ModelParamSettings,
+    /// Context window override; reserved for future use in compaction / UI hints.
+    pub context_window: Option<i64>,
+}
+
+fn effective_session_params(
+    conn: &db::DbConn,
+    sess: &session::Session,
+) -> EffectiveSessionParams {
+    if let Some(ref pid) = sess.project_id {
+        if let Ok(proj) = project::get(conn, pid) {
+            return EffectiveSessionParams {
+                system_prompt: proj.system_prompt,
+                history_turns: proj.history_turns,
+                llm_params: proj.llm_params,
+                context_window: proj.context_window.or(sess.context_window),
+            };
+        }
+    }
+    EffectiveSessionParams {
+        system_prompt: sess.system_prompt.clone(),
+        history_turns: sess.history_turns,
+        llm_params: sess.llm_params.clone(),
+        context_window: sess.context_window,
+    }
+}
+
 async fn run_cancellable_generation(
     state: &AppState,
     session_id: &str,
@@ -173,6 +222,7 @@ async fn run_cancellable_generation(
     prompt: String,
     mut request: chat::ChatRequest,
     on_text_delta: Option<chat::TextDeltaCallback>,
+    project_cwd: Option<std::path::PathBuf>,
 ) -> AppResult<chat::GenerateResponse> {
     let cancel_rx = register_generation_cancel(state, session_id)?;
 
@@ -253,6 +303,7 @@ async fn run_cancellable_generation(
             parent_system_prompt: None,
             on_text_delta,
             query_source: Some(agent::QuerySource::ReplMainThread),
+            project_cwd,
         }) => out,
         _ = cancel_rx => Err(AppError::Canceled),
     };
@@ -262,7 +313,7 @@ async fn run_cancellable_generation(
     Ok(chat::GenerateResponse {
         images: run.images,
         text: run.final_text,
-        thinking_content: None,
+        thinking_content: run.thinking_content,
         usage: run.usage,
         tool_calls: Vec::new(),
     })
@@ -600,6 +651,97 @@ fn load_session(
     let s = session::load_with_messages(&conn, &id)?;
     Ok(decorate_session(&app, s))
 }
+
+// ───────── Projects ─────────
+
+#[derive(Debug, Deserialize)]
+struct CreateProjectArgs {
+    name: String,
+    path: Option<String>,
+}
+
+#[tauri::command]
+fn list_projects(
+    state: tauri::State<Arc<AppState>>,
+) -> Result<Vec<project::Project>, AppError> {
+    let conn = state.conn()?;
+    project::list(&conn)
+}
+
+#[tauri::command]
+fn create_project(
+    state: tauri::State<Arc<AppState>>,
+    args: CreateProjectArgs,
+) -> Result<project::Project, AppError> {
+    let conn = state.conn()?;
+    project::create(&conn, &args.name, args.path.as_deref())
+}
+
+#[tauri::command]
+fn rename_project(
+    state: tauri::State<Arc<AppState>>,
+    id: String,
+    name: String,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    project::rename(&conn, &id, &name)
+}
+
+#[tauri::command]
+fn delete_project(
+    state: tauri::State<Arc<AppState>>,
+    id: String,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    project::delete(&conn, &id)
+}
+
+#[tauri::command]
+fn reorder_projects(
+    state: tauri::State<Arc<AppState>>,
+    ordered_ids: Vec<String>,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    project::reorder(&conn, &ordered_ids)
+}
+
+#[tauri::command]
+fn assign_session_to_project(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+    project_id: Option<String>,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    project::assign_session(&conn, &session_id, project_id.as_deref())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateProjectConfigArgs {
+    id: String,
+    system_prompt: String,
+    history_turns: i64,
+    llm_params: settings::ModelParamSettings,
+    context_window: Option<i64>,
+}
+
+#[tauri::command]
+fn update_project_config(
+    state: tauri::State<Arc<AppState>>,
+    args: UpdateProjectConfigArgs,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    project::update_config(
+        &conn,
+        &args.id,
+        &args.system_prompt,
+        args.history_turns,
+        &args.llm_params,
+        args.context_window,
+    )
+}
+
+// ───────── Messages ─────────
 
 #[tauri::command]
 fn update_message_text(
@@ -1001,15 +1143,17 @@ async fn generate_image(
     req: GenerateReq,
 ) -> Result<GenerateResult, AppError> {
     // 1) gather settings + attachment bytes + history synchronously
-    let (chat_request, params, attachment_image_ids, generation_agent) = {
+    let (chat_request, params, attachment_image_ids, generation_agent, project_cwd) = {
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
         let session_config = session::get(&conn, &req.session_id)?;
         let generation_agent =
             session::generation_agent_definition_key(&session_config.agent_type);
-        let session_prompt = session_config.system_prompt.clone();
-        let history_turns = session_config.history_turns;
-        let model_params = session_config.llm_params.clone();
+        let project_cwd = session_project_cwd(&conn, &req.session_id);
+        let eff = effective_session_params(&conn, &session_config);
+        let session_prompt = eff.system_prompt;
+        let history_turns = eff.history_turns;
+        let model_params = eff.llm_params;
         let mut atts: Vec<chat::AttachmentBytes> = Vec::new();
         let mut ids: Vec<String> = Vec::new();
         for id in &req.attachment_ids {
@@ -1041,7 +1185,7 @@ async fn generate_image(
             hist,
             params.clone(),
         )?;
-        (chat_request, params, ids, generation_agent)
+        (chat_request, params, ids, generation_agent, project_cwd)
     };
     let params_json = params.to_message_params_json().to_string();
 
@@ -1084,6 +1228,7 @@ async fn generate_image(
         req.prompt.clone(),
         chat_request,
         Some(on_text_delta),
+        project_cwd,
     )
     .await;
 
@@ -1162,15 +1307,17 @@ async fn regenerate_image(
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| AppError::Invalid("user message has no prompt text".into()))?;
 
-    let (chat_request, params, generation_agent) = {
+    let (chat_request, params, generation_agent, project_cwd) = {
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
         let session_config = session::get(&conn, &req.session_id)?;
         let generation_agent =
             session::generation_agent_definition_key(&session_config.agent_type);
-        let session_prompt = session_config.system_prompt.clone();
-        let history_turns = session_config.history_turns;
-        let model_params = session_config.llm_params.clone();
+        let project_cwd = session_project_cwd(&conn, &req.session_id);
+        let eff = effective_session_params(&conn, &session_config);
+        let session_prompt = eff.system_prompt;
+        let history_turns = eff.history_turns;
+        let model_params = eff.llm_params;
         let mut atts: Vec<chat::AttachmentBytes> = Vec::new();
         let mut input_images: Vec<&session::ImageRef> = user_msg_existing
             .images
@@ -1208,7 +1355,7 @@ async fn regenerate_image(
             hist,
             params.clone(),
         )?;
-        (chat_request, params, generation_agent)
+        (chat_request, params, generation_agent, project_cwd)
     };
     let params_json = params.to_message_params_json().to_string();
 
@@ -1233,6 +1380,7 @@ async fn regenerate_image(
         prompt.to_string(),
         chat_request,
         Some(on_text_delta),
+        project_cwd,
     )
     .await;
 
@@ -1567,6 +1715,13 @@ pub fn run() {
             set_session_agent_type,
             delete_session,
             load_session,
+            list_projects,
+            create_project,
+            rename_project,
+            delete_project,
+            reorder_projects,
+            assign_session_to_project,
+            update_project_config,
             delete_message,
             update_message_text,
             update_message_images,

@@ -45,6 +45,10 @@ impl QueryRequest {
 #[derive(Debug, Clone, Default)]
 pub struct QueryResult {
     pub final_text: Option<String>,
+    /// Reasoning / extended-thinking text from the final turn, when the
+    /// provider returns it separately from the visible assistant reply
+    /// (e.g. Claude `thinking` blocks, OpenAI `reasoning` stream).
+    pub thinking_content: Option<String>,
     pub events: Vec<MessageEvent>,
     pub usage: TokenUsage,
     pub tool_call_count: u32,
