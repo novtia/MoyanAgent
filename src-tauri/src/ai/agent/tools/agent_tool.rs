@@ -223,6 +223,8 @@ impl AgentTool {
             initial_attachments,
             permission_override: None,
             parent_system_prompt,
+            on_text_delta: None,
+            query_source: None,
         })
         .await?;
 

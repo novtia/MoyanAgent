@@ -1096,6 +1096,19 @@ fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) -> Value {
         if !tool_calls.is_empty() {
             m.insert("tool_calls".into(), Value::Array(tool_calls));
         }
+        if request.parameters.openai_compat_requires_reasoning_echo(
+            &request.model,
+            &request.provider.endpoint,
+        ) {
+            if let Some(t) = pending
+                .thinking_content
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                m.insert("reasoning_content".into(), json!(t));
+            }
+        }
         messages.push(msg);
     }
 

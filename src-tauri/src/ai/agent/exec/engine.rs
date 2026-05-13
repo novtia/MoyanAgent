@@ -270,6 +270,7 @@ impl QueryEngine for ProviderQueryEngine {
                 chat.tool_results.clear();
                 chat.pending_assistant_turn = Some(crate::ai::chat::PendingAssistantTurn {
                     text: response.text.clone(),
+                    thinking_content: response.thinking_content.clone(),
                     tool_calls: response.tool_calls.clone(),
                 });
                 for req in &tool_uses {

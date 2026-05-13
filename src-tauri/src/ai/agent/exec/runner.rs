@@ -24,7 +24,7 @@ use crate::ai::agent::core::worktree::WorktreeHandle;
 use crate::ai::agent::exec::query::{QueryEngine, QueryRequest, QueryResult};
 use crate::ai::agent::tools::ToolPool;
 use crate::ai::agent::types::{AgentId, AgentRunMode, QuerySource, TokenUsage};
-use crate::ai::chat::ChatRequest;
+use crate::ai::chat::{ChatRequest, ImageResult, TextDeltaCallback};
 use crate::error::AppResult;
 
 /// Inputs to [`run_agent`].
@@ -43,6 +43,13 @@ pub struct RunAgentParams {
     /// [`AgentRunMode::Fork`]; ignored otherwise. Mirrors
     /// `forkSubagent`'s "inherit parent prompt" semantics.
     pub parent_system_prompt: Option<String>,
+    /// Forward streaming deltas to the host (main REPL). Sub-agent runs
+    /// leave this `None`.
+    pub on_text_delta: Option<TextDeltaCallback>,
+    /// When set, overrides the default `Subagent` / `Forked`
+    /// [`QuerySource`] (e.g. [`QuerySource::ReplMainThread`] for the
+    /// primary session).
+    pub query_source: Option<QuerySource>,
 }
 
 /// Output of [`run_agent`].
@@ -53,6 +60,7 @@ pub struct RunAgentResult {
     pub final_text: Option<String>,
     pub usage: TokenUsage,
     pub tool_call_count: u32,
+    pub images: Vec<ImageResult>,
 }
 
 /// Drive a single sub-agent end-to-end.
@@ -72,6 +80,8 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         initial_attachments,
         permission_override,
         parent_system_prompt,
+        on_text_delta,
+        query_source,
     } = params;
 
     let agent_id = AgentId::new();
@@ -121,11 +131,12 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
     // Persist the rendered system_prompt onto the context so that any
     // `Agent(...)` tool call inside this run can fork-inherit it
     // without having to thread `chat_request` through the Tool trait.
+    let resolved_source = query_source.unwrap_or_else(|| match run_mode {
+        AgentRunMode::Fork => QuerySource::Forked,
+        _ => QuerySource::Subagent,
+    });
     let (context, abort) = ToolUseContext::builder(agent_id.clone(), cwd)
-        .query_source(match run_mode {
-            AgentRunMode::Fork => QuerySource::Forked,
-            _ => QuerySource::Subagent,
-        })
+        .query_source(resolved_source)
         .permission_mode(permission_mode)
         .parent_system_prompt(chat_request.system_prompt.clone())
         .build();
@@ -139,6 +150,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         tools,
         initial_attachments,
         definition.max_turns,
+        on_text_delta,
     )
     .await;
 
@@ -157,6 +169,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
                 final_text: qr.final_text,
                 usage: qr.usage,
                 tool_call_count: qr.tool_call_count,
+                images: qr.images,
             })
         }
         Err(e) => {
@@ -173,13 +186,14 @@ async fn drive(
     tools: Arc<ToolPool>,
     initial_attachments: Vec<Attachment>,
     max_turns: Option<u32>,
+    on_text_delta: Option<TextDeltaCallback>,
 ) -> AppResult<QueryResult> {
     let request = QueryRequest {
         chat: chat_request,
         source: context.query_source,
         max_turns,
         initial_attachments,
-        on_text_delta: None,
+        on_text_delta,
     };
     engine.query(request, context, tools).await
 }

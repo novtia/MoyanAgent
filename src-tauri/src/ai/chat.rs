@@ -147,6 +147,9 @@ pub struct ToolResultMessage {
 #[derive(Debug, Clone, Default)]
 pub struct PendingAssistantTurn {
     pub text: Option<String>,
+    /// DeepSeek / OpenAI-compat: prior-turn `reasoning_content` must be
+    /// echoed on the assistant message when continuing after `tool_calls`.
+    pub thinking_content: Option<String>,
     pub tool_calls: Vec<ProviderToolCall>,
 }
 

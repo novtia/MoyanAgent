@@ -3,8 +3,9 @@
 //! Historically this module also exposed `chat()` / `chat_stream()`
 //! wrappers around [`crate::ai::providers::ProviderFactory`]. Those were
 //! removed in favour of the agent-layer entry point
-//! [`crate::ai::agent::run_chat_request`], which adds task tracking and
-//! cancellation on top of the same provider call.
+//! [`crate::ai::agent::run_agent`] with [`crate::ai::agent::ProviderQueryEngine`],
+//! which adds task tracking, tool turns, and cancellation on top of the same
+//! provider call.
 
 use crate::ai::chat::{AttachmentBytes, ChatRequest, HistoryTurn, ProviderConfig};
 use crate::ai::parameters::GenerationParameters;

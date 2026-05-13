@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 
+use crate::ai::agent::config::mcp::McpRegistry;
 use crate::ai::agent::tools::agent_tool::{AgentTool, ChatRequestFactory};
 use crate::ai::agent::exec::engine::ProviderQueryEngine;
 use crate::ai::agent::memory::UserContextLoader;
-use crate::ai::agent::tools::ToolPool;
 use crate::ai::agent::{
     self, AgentRegistry, FileReadTool, FsSessionMemoryExtractor, FsUserContextLoader,
-    NotificationQueue, ProviderEngine, StaticMcpRegistry, Task, TaskState, TaskStore,
-    UserContextConfig,
+    NotificationQueue, ProviderEngine, QueryEngine, RunAgentParams, StaticMcpRegistry, Task,
+    TaskState, TaskStore, ToolPool, UserContextConfig,
 };
 use crate::ai::{chat, parameters, router};
 use crate::data::db::DbPool;
@@ -31,7 +31,10 @@ pub struct AppState {
     pub agent_registry: Arc<AgentRegistry>,
     pub task_store: Arc<TaskStore>,
     pub notifications: Arc<NotificationQueue>,
+    #[allow(dead_code)]
     pub engine: Arc<ProviderEngine>,
+    /// Full agent query loop (tool turns). Shared with [`AgentTool`].
+    pub query_engine: Arc<dyn QueryEngine>,
     /// CLAUDE.md / user-context loader; cached, invalidate on compact.
     pub user_context: Arc<FsUserContextLoader>,
     /// MCP registry snapshot used by `AgentTool` to gate sub-agents.
@@ -150,13 +153,11 @@ fn build_history(
     Ok(out)
 }
 
-/// Route a chat request through the agent layer.
-///
-/// Every generation now flows through [`agent::run_chat_request`], which
-/// registers a [`Task`] against [`AppState::task_store`]. The per-session
-/// oneshot channel (`generation_cancel`) is kept for the existing
-/// frontend cancel API �?it races against the agent call and, on cancel,
-/// marks the task as `Killed` before returning.
+/// Run the primary session through the full agent runtime ([`agent::run_agent`]
+/// + [`ProviderQueryEngine`]): definition system prompt, tool loop, and task
+/// tracking. The per-session cancel channel races the run and returns
+/// [`AppError::Canceled`] without forcing an abort through the tool context
+/// (same coarse behaviour as before).
 async fn run_cancellable_generation(
     state: &AppState,
     session_id: &str,
@@ -176,44 +177,86 @@ async fn run_cancellable_generation(
         crate::ai::agent::exec::engine::inject_attachments_into_history(&mut request, &drained);
     }
 
-    // Prepend the rendered user-context (CLAUDE.md / rules / MEMORY.md)
-    // as the very first hidden user-meta history turn. This mirrors
-    // `prependUserContext()` on the TS side: it sits in front of every
-    // other turn so the model always sees the active instructions.
+    let mcp_available = state.mcp.available_servers();
+    let mut definition = state
+        .agent_registry
+        .filter_by_mcp(&mcp_available)
+        .get(agent_type)
+        .cloned()
+        .ok_or_else(|| {
+            AppError::Invalid(format!(
+                "unknown or MCP-unavailable agent type for main session: {agent_type}"
+            ))
+        })?;
+
+    // Prepend user-context when the agent opts in (Plan/Explore omit it).
     if let Ok(ctx) = state.user_context.load() {
-        if !ctx.rendered.trim().is_empty() {
-            let mut head = vec![chat::HistoryTurn {
-                role: "user".into(),
-                text: Some(ctx.rendered.clone()),
-                images: Vec::new(),
-            }];
-            head.append(&mut request.history);
-            request.history = head;
+        if !definition.omit_claude_md {
+            let rendered = ctx.rendered.trim();
+            if !rendered.is_empty() {
+                let mut head = vec![chat::HistoryTurn {
+                    role: "user".into(),
+                    text: Some(ctx.rendered.clone()),
+                    images: Vec::new(),
+                }];
+                head.append(&mut request.history);
+                request.history = head;
+            }
         }
     }
 
-    let engine = state.engine.clone();
-    let store = state.task_store.clone();
-    let prompt_for_agent = prompt;
-    let agent_type = agent_type.to_string();
+    // Merge per-session system instructions into the definition body so
+    // `compose_system_prompt` sees one cohesive instruction block.
+    let session_sys = std::mem::take(&mut request.system_prompt);
+    let session_sys = session_sys.trim();
+    if !session_sys.is_empty() {
+        let base = definition.system_prompt.trim();
+        definition.system_prompt = if base.is_empty() {
+            session_sys.to_string()
+        } else {
+            format!("{base}\n\n---\n\n{session_sys}")
+        };
+    }
 
-    let result = tokio::select! {
-        outcome = async move {
-            agent::run_chat_request(
-                engine.as_ref(),
-                store.as_ref(),
-                &agent_type,
-                prompt_for_agent,
-                request,
-                on_text_delta,
-            )
-            .await
-            .map(|o| (o.response, o.task_id))
-        } => result_from_outcome(outcome, state),
+    let worker = ToolPool::new();
+    for (_, tool) in state
+        .tools
+        .filter_for_agent(&definition.tools, &definition.disallowed_tools)
+    {
+        worker.register_arc(tool);
+    }
+    let worker_tools = Arc::new(worker);
+
+    let query_engine = state.query_engine.clone();
+    let task_store = state.task_store.clone();
+
+    let outcome = tokio::select! {
+        out = agent::run_agent(RunAgentParams {
+            definition,
+            prompt,
+            run_mode: agent::AgentRunMode::Foreground,
+            chat_request: request,
+            tools: worker_tools,
+            task_store,
+            engine: query_engine,
+            initial_attachments: Vec::new(),
+            permission_override: None,
+            parent_system_prompt: None,
+            on_text_delta,
+            query_source: Some(agent::QuerySource::ReplMainThread),
+        }) => out,
         _ = cancel_rx => Err(AppError::Canceled),
     };
     clear_generation_cancel(state, session_id);
-    result
+
+    let run = outcome?;
+    Ok(chat::GenerateResponse {
+        images: run.images,
+        text: run.final_text,
+        thinking_content: None,
+        usage: run.usage,
+        tool_calls: Vec::new(),
+    })
 }
 
 /// Bridges [`ChatRequestFactory`] over the host's settings + db pool +
@@ -286,14 +329,6 @@ impl ChatRequestFactory for SettingsChatFactory {
     }
 }
 
-fn result_from_outcome(
-    outcome: AppResult<(chat::GenerateResponse, agent::TaskId)>,
-    _state: &AppState,
-) -> AppResult<chat::GenerateResponse> {
-    outcome.map(|(resp, _tid)| resp)
-}
-
-/// Post-sampling hook: ask the session-memory extractor whether it
 /// wants to refresh `summary.md` for this session. Mirrors the
 /// `extractSessionMemory()` post-sampling pass �?non-blocking, best-effort.
 fn maybe_extract_session_memory(
@@ -1487,7 +1522,7 @@ pub fn run() {
                 registry.clone(),
                 tools.clone(),
                 task_store.clone(),
-                query_engine,
+                query_engine.clone(),
                 mcp.clone(),
             )
             .with_chat_factory(chat_factory);
@@ -1500,6 +1535,7 @@ pub fn run() {
                 task_store,
                 notifications: Arc::new(NotificationQueue::new()),
                 engine: provider_engine,
+                query_engine,
                 user_context,
                 mcp,
                 tools,

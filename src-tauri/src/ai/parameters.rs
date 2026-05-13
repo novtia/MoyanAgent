@@ -146,6 +146,14 @@ impl GenerationParameters {
         body.insert("thinking".into(), json!({ "type": "enabled" }));
     }
 
+    /// DeepSeek thinking mode requires the assistant message that contained
+    /// reasoning to include the same `reasoning_content` when replayed before
+    /// tool results.
+    pub fn openai_compat_requires_reasoning_echo(&self, model: &str, endpoint: &str) -> bool {
+        self.model.resolved_thinking_effort().is_some()
+            && openai_compat_wants_thinking_body(model, endpoint)
+    }
+
     pub fn image_config(&self) -> Option<Value> {
         let mut image_config = Map::new();
         if self.aspect_ratio != "auto" {

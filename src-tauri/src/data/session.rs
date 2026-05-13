@@ -18,7 +18,8 @@ fn decode_llm_params(raw: Option<String>) -> ModelParamSettings {
 pub const SESSION_AGENT_GENERAL: &str = "general-purpose";
 pub const SESSION_AGENT_PLAN: &str = "Plan";
 
-/// Maps DB `sessions.agent_type` → agent registry key for [`crate::ai::agent::run_chat_request`].
+/// Maps DB `sessions.agent_type` → agent registry key for the primary-session
+/// agent run ([`crate::ai::agent::run_agent`]).
 pub fn generation_agent_definition_key(stored: &str) -> &'static str {
     match stored.trim() {
         SESSION_AGENT_PLAN => SESSION_AGENT_PLAN,

@@ -61,12 +61,10 @@
 //!   NotificationQueue── async <task-notification> injection
 //! ```
 //!
-//! Today's runtime entry point is [`exec::engine::run_chat_request`]: a thin
-//! wrapper that registers a [`core::task::Task`] in the [`core::task::TaskStore`]
-//! and drives a chat request through [`exec::engine::ProviderEngine`]. The
-//! richer [`tools::agent_tool::AgentTool::call`] / [`exec::runner::run_agent`]
-//! path is fully wired and is invoked when the model emits a `tool_call`
-//! against the registered `Agent` tool.
+//! Primary session chat flows through [`exec::runner::run_agent`] with
+//! [`exec::engine::ProviderQueryEngine`] (definition system prompt, tool
+//! loop, task tracking). [`exec::engine::run_chat_request`] remains a thin
+//! helper for single-shot provider calls without composing agent prompts.
 //!
 //! The submodules below intentionally publish more surface than the rest
 //! of the crate currently consumes — they are the public API for code
