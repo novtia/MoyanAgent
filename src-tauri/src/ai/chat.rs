@@ -99,6 +99,10 @@ pub struct HistoryTurn {
     pub role: String,
     pub text: Option<String>,
     pub images: Vec<AttachmentBytes>,
+    /// Reasoning/thinking text from a prior assistant turn.
+    /// Required by some providers (e.g. DeepSeek thinking mode) when
+    /// replaying conversation history that originally contained it.
+    pub thinking_content: Option<String>,
 }
 
 #[derive(Debug, Clone)]

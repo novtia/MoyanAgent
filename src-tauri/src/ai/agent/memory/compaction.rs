@@ -95,6 +95,7 @@ pub async fn compact(
         role: "user".to_string(),
         text: Some(format!("<compacted_summary>\n{summary}\n</compacted_summary>")),
         images: Vec::new(),
+        thinking_content: None,
     };
 
     let recent: Vec<HistoryTurn> = chat.history.split_off(split);

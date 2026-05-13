@@ -125,33 +125,22 @@ impl GenerationParameters {
         }
     }
 
-    /// DeepSeek-style OpenAI-compatible APIs expect a top-level `thinking` object
-    /// (e.g. `{"type":"enabled"}`) alongside `reasoning_effort`, matching Python
-    /// `extra_body={"thinking": {"type": "enabled"}}` on `chat.completions.create`.
-    ///
-    /// Only applies when extended thinking is enabled and the model or endpoint
-    /// looks DeepSeek-related, to avoid sending unknown fields to plain OpenAI.
+    /// Send `thinking` control for all OpenAI-compatible chat completions endpoints.
+    /// Providers that don't support thinking will ignore the field; providers that
+    /// default to thinking-on (e.g. DeepSeek) require it to be explicitly disabled.
+    ///   - thinking enabled  → `{"thinking": {"type": "enabled"}}`
+    ///   - thinking disabled → `{"thinking": {"type": "disabled"}}`
     pub fn apply_openai_compat_thinking_object(
         &self,
         body: &mut Map<String, Value>,
-        model: &str,
-        endpoint: &str,
+        _model: &str,
+        _endpoint: &str,
     ) {
-        if self.model.resolved_thinking_effort().is_none() {
-            return;
+        if self.model.resolved_thinking_effort().is_some() {
+            body.insert("thinking".into(), json!({ "type": "enabled" }));
+        } else {
+            body.insert("thinking".into(), json!({ "type": "disabled" }));
         }
-        if !openai_compat_wants_thinking_body(model, endpoint) {
-            return;
-        }
-        body.insert("thinking".into(), json!({ "type": "enabled" }));
-    }
-
-    /// DeepSeek thinking mode requires the assistant message that contained
-    /// reasoning to include the same `reasoning_content` when replayed before
-    /// tool results.
-    pub fn openai_compat_requires_reasoning_echo(&self, model: &str, endpoint: &str) -> bool {
-        self.model.resolved_thinking_effort().is_some()
-            && openai_compat_wants_thinking_body(model, endpoint)
     }
 
     pub fn image_config(&self) -> Option<Value> {
@@ -207,10 +196,4 @@ impl GenerationParameters {
         }
         v
     }
-}
-
-fn openai_compat_wants_thinking_body(model: &str, endpoint: &str) -> bool {
-    let m = model.trim().to_ascii_lowercase();
-    let e = endpoint.trim().to_ascii_lowercase();
-    m.contains("deepseek") || e.contains("deepseek")
 }

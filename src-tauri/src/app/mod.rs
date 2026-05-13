@@ -144,10 +144,18 @@ fn build_history(
                 mime: img.mime.clone(),
             });
         }
+        let thinking_content = m
+            .params
+            .as_ref()
+            .and_then(|p| p.get("thinking_content"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.to_string());
         out.push(chat::HistoryTurn {
             role: m.role.clone(),
             text: m.text.clone(),
             images: payload,
+            thinking_content,
         });
     }
     Ok(out)
@@ -197,6 +205,7 @@ async fn run_cancellable_generation(
                 let mut head = vec![chat::HistoryTurn {
                     role: "user".into(),
                     text: Some(ctx.rendered.clone()),
+                    thinking_content: None,
                     images: Vec::new(),
                 }];
                 head.append(&mut request.history);

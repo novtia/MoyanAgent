@@ -181,17 +181,12 @@ impl QueryEngine for ProviderQueryEngine {
             // the TS query loop.
             inject_attachments_into_history(&mut chat, &initial_attachments);
 
-            // Populate the tool schema. The engine is the source of
+            // Populate the tool schema once. The engine is the source of
             // truth for which tools the model may call — host code only
-            // needs to register tools into the `ToolPool`. When tools
-            // are present we force the buffered (non-streaming) path so
-            // tool_calls come back in a single shot.
-            let on_text_delta = if chat.tools.is_empty() && !tools_is_empty(&tools) {
+            // needs to register tools into the `ToolPool`.
+            if chat.tools.is_empty() && !tools_is_empty(&tools) {
                 chat.tools = collect_tool_definitions(&tools);
-                None
-            } else {
-                on_text_delta
-            };
+            }
 
             let max_turns = max_turns.unwrap_or(self.default_max_turns);
             let mut events: Vec<MessageEvent> = Vec::new();
@@ -211,9 +206,19 @@ impl QueryEngine for ProviderQueryEngine {
                     });
                 }
 
+                // Use streaming only when there are no pending tool_results.
+                // Tool-call turns must be buffered so the full tool_calls JSON
+                // arrives in one shot; all other turns (first turn and the
+                // final answer turn) can stream.
+                let turn_delta = if chat.tool_results.is_empty() {
+                    on_text_delta.clone()
+                } else {
+                    None
+                };
+
                 let turn = self
                     .provider
-                    .run_turn(chat.clone(), on_text_delta.clone())
+                    .run_turn(chat.clone(), turn_delta)
                     .await?;
                 let EngineTurn {
                     response,
@@ -377,6 +382,7 @@ pub fn inject_attachments_into_history(chat: &mut ChatRequest, attachments: &[At
             role: "user".into(),
             text: Some(body),
             images: Vec::new(),
+            thinking_content: None,
         });
         // Bookkeeping: mark notification-shaped attachments rendered so
         // they don't get re-drained next time.

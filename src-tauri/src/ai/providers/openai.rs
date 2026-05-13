@@ -1096,18 +1096,17 @@ fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) -> Value {
         if !tool_calls.is_empty() {
             m.insert("tool_calls".into(), Value::Array(tool_calls));
         }
-        if request.parameters.openai_compat_requires_reasoning_echo(
-            &request.model,
-            &request.provider.endpoint,
-        ) {
-            if let Some(t) = pending
-                .thinking_content
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                m.insert("reasoning_content".into(), json!(t));
-            }
+        // Always echo reasoning_content when present: DeepSeek thinking mode is
+        // enabled by default and requires it to be passed back whenever tool
+        // calls were made, regardless of whether thinking was explicitly
+        // requested by the client.
+        if let Some(t) = pending
+            .thinking_content
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            m.insert("reasoning_content".into(), json!(t));
         }
         messages.push(msg);
     }
@@ -1217,7 +1216,23 @@ fn history_turn_to_chat_message(turn: &HistoryTurn, allow_image_parts: bool) -> 
         return None;
     }
 
-    Some(json!({ "role": role, "content": content }))
+    let mut msg = json!({ "role": role, "content": content });
+    // DeepSeek (and compatible providers) require `reasoning_content` to be
+    // echoed back in assistant history turns when the original response
+    // included it; omitting it causes a 400 error.
+    if role == "assistant" {
+        if let Some(t) = turn
+            .thinking_content
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            msg.as_object_mut()
+                .unwrap()
+                .insert("reasoning_content".into(), json!(t));
+        }
+    }
+    Some(msg)
 }
 
 fn build_responses_body(request: &ChatRequest) -> Value {
