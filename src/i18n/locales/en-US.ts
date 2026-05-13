@@ -124,7 +124,8 @@ const enUS: Resource = {
     editSend: "Send",
     editAddImage: "Add image",
     editRemoveImage: "Remove image",
-    thinkingToggle: "Model reasoning",
+    thinkingToggle: "Reasoning",
+    thinkingStreaming: "Thinking",
     thinkingHint: "Click to expand or collapse",
   },
   preview: {

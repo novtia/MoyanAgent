@@ -121,7 +121,8 @@ const zhCN = {
     editSend: "发送",
     editAddImage: "添加图片",
     editRemoveImage: "移除图片",
-    thinkingToggle: "模型思考过程",
+    thinkingToggle: "推理过程",
+    thinkingStreaming: "思考中",
     thinkingHint: "点击展开或收起",
   },
   preview: {

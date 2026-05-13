@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
 import { srcOf, api } from "../../api/tauri";
@@ -108,6 +115,117 @@ async function copyText(text: string) {
   } catch (e) {
     console.warn(e);
   }
+}
+
+function ThinkingIcon() {
+  return (
+    <svg
+      className="msg-thinking-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <line x1="12" x2="12" y1="2" y2="6" />
+      <line x1="12" x2="12" y1="18" y2="22" />
+      <line x1="4.93" x2="7.76" y1="4.93" y2="7.76" />
+      <line x1="16.24" x2="19.07" y1="16.24" y2="19.07" />
+      <line x1="2" x2="6" y1="12" y2="12" />
+      <line x1="18" x2="22" y1="12" y2="12" />
+      <line x1="4.93" x2="7.76" y1="19.07" y2="16.24" />
+      <line x1="16.24" x2="19.07" y1="7.76" y2="4.93" />
+    </svg>
+  );
+}
+
+function ThinkingChevronIcon() {
+  return (
+    <svg
+      className="msg-thinking-chevron"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
+function ThinkingBlock({
+  content,
+  streaming,
+}: {
+  content: string;
+  streaming: boolean;
+}) {
+  const { t } = useTranslation();
+  const uid = useId();
+  const panelId = `${uid}-thinking-panel`;
+  const [open, setOpen] = useState(streaming);
+  const userToggledRef = useRef(false);
+  const prevStreamingRef = useRef(streaming);
+
+  useEffect(() => {
+    // Auto-collapse when streaming finishes, unless the user manually toggled.
+    if (prevStreamingRef.current && !streaming && !userToggledRef.current) {
+      setOpen(false);
+    }
+    prevStreamingRef.current = streaming;
+  }, [streaming]);
+
+  const handleToggle = () => {
+    userToggledRef.current = true;
+    setOpen((v) => !v);
+  };
+
+  return (
+    <div
+      className={`msg-thinking ${open ? "is-open" : ""} ${
+        streaming ? "is-streaming" : ""
+      }`}
+    >
+      <div
+        className="msg-thinking-header"
+        aria-expanded={open}
+        aria-controls={panelId}
+        title={t("message.thinkingHint")}
+        onClick={handleToggle}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleToggle();
+          }
+        }}
+      >
+        <ThinkingIcon />
+        <span className="msg-thinking-label">
+          {streaming
+            ? t("message.thinkingStreaming")
+            : t("message.thinkingToggle")}
+        </span>
+        <ThinkingChevronIcon />
+      </div>
+      <div
+        id={panelId}
+        className="msg-thinking-panel"
+        role="region"
+        aria-hidden={!open}
+      >
+        <div className="msg-thinking-panel-inner">
+          <div className="msg-thinking-content">{content}</div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
@@ -383,12 +501,10 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
           )}
 
           {!editing && thinkingContent ? (
-            <details className="bubble-thinking">
-              <summary title={t("message.thinkingHint")}>
-                {t("message.thinkingToggle")}
-              </summary>
-              <div className="bubble-thinking-body">{thinkingContent}</div>
-            </details>
+            <ThinkingBlock
+              content={thinkingContent}
+              streaming={isStreamingDraft}
+            />
           ) : null}
 
           {!editing && inputs.length > 0 && (

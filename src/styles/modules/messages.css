@@ -361,54 +361,119 @@
   text-transform: uppercase;
   margin-bottom: 6px;
 }
-.bubble-thinking {
-  margin-top: 0;
-  margin-bottom: 10px;
+/* ───── reasoning / thinking block ─────
+   A minimalistic and elegant block that expands to show thinking processes. */
+.msg-thinking {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   max-width: min(640px, 100%);
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--bg-soft);
+  margin: 4px 0 12px;
+}
+
+.msg-thinking-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 0;
+  cursor: pointer;
+  color: var(--ink-mute);
+  font-size: 13px;
+  font-weight: 500;
+  user-select: none;
+  transition: color 0.2s ease;
+  border-radius: 4px;
+}
+
+.msg-thinking-header:hover {
+  color: var(--ink);
+}
+
+.msg-thinking-header:focus-visible {
+  outline: none;
+  color: var(--ink);
+}
+
+.msg-thinking-icon {
+  width: 14px;
+  height: 14px;
+  color: inherit;
+}
+
+.msg-thinking-label {
+  white-space: nowrap;
+}
+
+.msg-thinking-chevron {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  transition: transform 0.24s var(--ease-out);
+  opacity: 0.8;
+}
+
+.msg-thinking.is-open .msg-thinking-chevron {
+  transform: rotate(180deg);
+}
+
+/* Streaming state: spin the icon */
+.msg-thinking.is-streaming .msg-thinking-icon {
+  animation: thinking-spin 3s linear infinite;
+  color: var(--ink-soft);
+}
+
+@keyframes thinking-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Panel smoothly grows from 0 to natural height */
+.msg-thinking-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  width: 100%;
+  transition: grid-template-rows 0.28s var(--ease-out);
+}
+
+.msg-thinking.is-open .msg-thinking-panel {
+  grid-template-rows: 1fr;
+}
+
+.msg-thinking-panel-inner {
+  min-height: 0;
   overflow: hidden;
 }
-.bubble-thinking summary {
-  cursor: pointer;
-  list-style: none;
-  padding: 8px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ink-2);
-  user-select: none;
-}
-.bubble-thinking summary::-webkit-details-marker {
-  display: none;
-}
-.bubble-thinking summary::before {
-  content: "";
-  display: inline-block;
-  width: 0;
-  height: 0;
-  margin-right: 8px;
-  border-left: 5px solid var(--ink-mute);
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  transform: translateY(-1px);
-  transition: transform 0.15s ease;
-}
-.bubble-thinking[open] summary::before {
-  transform: rotate(90deg) translate(1px, 0);
-}
-.bubble-thinking-body {
-  padding: 10px 12px 12px;
-  margin: 0;
-  font-size: 12px;
-  line-height: 1.55;
+
+.msg-thinking-content {
+  margin: 6px 0 12px 6px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-mute);
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--ink-2);
-  font-family: 'JetBrains Mono', monospace;
-  border-top: 1px solid var(--line);
-  max-height: min(50vh, 360px);
+  max-height: min(50vh, 420px);
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.msg-thinking.is-open .msg-thinking-content {
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 0.05s;
+}
+
+.msg-thinking-content::-webkit-scrollbar {
+  width: 6px;
+}
+.msg-thinking-content::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
 }
 .bubble .params {
   display: flex;
