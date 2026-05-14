@@ -109,21 +109,40 @@ impl TodoListTool {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
                 description: "\
-Manage an in-session task list. Follow these rules strictly:\n\n\
-WORKFLOW — only two phases:\n\
-1. PLAN (once, at the very start): call `add` with ALL planned steps at once as an \
-   array. Do NOT add more items later unless the user explicitly requests new tasks.\n\
-2. EXECUTE: as you complete each step, call `update` to set its status. \
+Manage an in-session task list. Follow ALL of these rules strictly.\n\n\
+━━━ WHEN TO USE ━━━\n\
+Only create a TodoList when the user's request involves MULTIPLE DISTINCT PHASES \
+that each require a separate tool call or verification step. \
+NEVER use TodoList for a task that is naturally done in one shot — just do it.\n\n\
+Examples of tasks that do NOT need a TodoList:\n\
+• Write a novel / story / article (one continuous output — just write it)\n\
+• Answer a question\n\
+• Generate a single file\n\n\
+Examples that DO need a TodoList:\n\
+• Multi-file refactor across many files\n\
+• Research → draft → verify → publish pipeline\n\
+• Any task where the user explicitly asks for a breakdown\n\n\
+━━━ TASK GRANULARITY ━━━\n\
+Each task must represent a meaningful, independently verifiable unit of output. \
+NEVER split a single continuous action into multiple tasks. \
+BAD: '写第一章', '写第二章', '写第三章' — these are all 'write content', one task.\n\
+GOOD: '撰写正文内容（目标 3 万字）', '自查字数与质量是否达标' — two tasks.\n\
+Keep the list as short as possible: 2–5 tasks is typical. \
+If you find yourself writing 6+ tasks, reconsider — you are almost certainly \
+splitting one action into meaningless micro-tasks.\n\n\
+━━━ WORKFLOW (two phases only) ━━━\n\
+1. PLAN once: call `add` with ALL tasks as an array at the very start.\n\
+   Do NOT add more tasks later.\n\
+2. EXECUTE: before starting each task, call `update` → in_progress. \
+   When done, call `update` → done (include a brief result note in content if useful). \
    Never add, remove, or clear items just because you started or finished a step.\n\n\
-Allowed actions:\n\
-• add    – ONE-TIME initialisation. Pass the full plan as a content array.\n\
-• update – Mark an item in_progress before you start it, done when finished, \
-           cancelled if explicitly skipped. Also use to correct the text of an item.\n\
-• list   – Retrieve the current list (e.g. to check ids).\n\
-• remove – Only if the user asks to delete a specific task.\n\
-• clear  – Only if the user asks to wipe the entire list.\n\n\
-Status lifecycle: pending → in_progress → done | cancelled\n\
-Never skip statuses or jump backwards."
+Actions:\n\
+• add    – ONE-TIME initialisation only.\n\
+• update – Change status or content of an existing item (id required).\n\
+• list   – Check ids when needed.\n\
+• remove – Only if the user explicitly asks to delete a task.\n\
+• clear  – Only if the user explicitly asks to wipe everything.\n\n\
+Status lifecycle: pending → in_progress → done | cancelled"
                     .to_string(),
                 schema: json!({
                     "type": "object",
