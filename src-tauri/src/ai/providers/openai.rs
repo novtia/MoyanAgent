@@ -211,6 +211,7 @@ async fn post_openrouter_chat(
     provider_label: &str,
 ) -> AppResult<String> {
     let mut modality_stage: u8 = 0;
+    let mut tools_stripped = false;
     'modalities: loop {
         apply_openrouter_modalities_stage(body, &request.model, modality_stage);
 
@@ -249,6 +250,11 @@ async fn post_openrouter_chat(
                 sleep_for_attempt(attempt).await;
                 continue;
             }
+            if upstream_rejects_tools(status, &msg) && !tools_stripped {
+                tools_stripped = true;
+                strip_tools_from_body(body);
+                continue 'modalities;
+            }
             if upstream_rejects_modalities(status, &msg) && modality_stage < 2 {
                 modality_stage += 1;
                 continue 'modalities;
@@ -270,6 +276,7 @@ async fn post_openrouter_chat_stream(
     on_text_delta: TextDeltaCallback,
 ) -> AppResult<GenerateResponse> {
     let mut modality_stage: u8 = 0;
+    let mut tools_stripped = false;
     'modalities: loop {
         apply_openrouter_modalities_stage(body, &request.model, modality_stage);
 
@@ -329,6 +336,11 @@ async fn post_openrouter_chat_stream(
                     on_text_delta.clone(),
                 )
                 .await;
+            }
+            if upstream_rejects_tools(status, &msg) && !tools_stripped {
+                tools_stripped = true;
+                strip_tools_from_body(body);
+                continue 'modalities;
             }
             if upstream_rejects_modalities(status, &msg) && modality_stage < 2 {
                 modality_stage += 1;
@@ -1444,6 +1456,24 @@ fn apply_openrouter_modalities_stage(body: &mut Value, model: &str, stage: u8) {
 fn upstream_rejects_modalities(status: StatusCode, msg: &str) -> bool {
     let m = msg.to_ascii_lowercase();
     (status == StatusCode::NOT_FOUND || status == StatusCode::BAD_REQUEST) && m.contains("modalit")
+}
+
+/// OpenRouter returns HTTP 404 with a message like
+/// "No endpoints found that support tool use." when the selected
+/// model/provider combination doesn't support function calling. We
+/// detect this and retry without `tools` so the agent can still
+/// produce a plain-text response rather than surfacing a hard error.
+fn upstream_rejects_tools(status: StatusCode, msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    status == StatusCode::NOT_FOUND
+        && (m.contains("tool use") || m.contains("tool_use") || m.contains("function call"))
+}
+
+fn strip_tools_from_body(body: &mut Value) {
+    if let Some(map) = body.as_object_mut() {
+        map.remove("tools");
+        map.remove("tool_choice");
+    }
 }
 
 fn is_empty_stream_upstream_error(err: &AppError) -> bool {
