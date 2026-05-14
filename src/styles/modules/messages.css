@@ -664,6 +664,112 @@
 .bubble .msg-thinking + .tool-call-block {
   margin-top: 8px;
 }
+
+/* ───── TodoList specialized block ───── */
+.todo-list-block .tool-call-summary {
+  font-weight: 500;
+}
+
+.todo-item-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-sunk);
+}
+
+.todo-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 4px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  transition: background 0.1s ease;
+}
+
+.todo-item:hover {
+  background: var(--bg-hover);
+}
+
+/* status-specific text colour */
+.todo-item.done .todo-item-content {
+  color: var(--ink-mute);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.todo-item.cancelled .todo-item-content {
+  color: var(--ink-mute);
+  opacity: 0.6;
+}
+.todo-item.in_progress .todo-item-content {
+  color: var(--ink);
+}
+
+.todo-item-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  position: relative;
+  top: 1px;
+}
+.todo-item-icon.done {
+  color: #16a34a;
+}
+.todo-item-icon.in-progress {
+  color: #2563eb;
+  animation: thinking-spin 3s linear infinite;
+}
+.todo-item-icon.cancelled {
+  color: var(--ink-mute);
+}
+.todo-item-icon.pending {
+  color: var(--line-strong);
+}
+
+.todo-item-content {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+  color: var(--ink);
+}
+
+.todo-item-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.todo-item-badge.pending {
+  color: var(--ink-mute);
+  border-color: var(--line);
+  background: var(--bg-soft);
+}
+.todo-item-badge.in_progress {
+  color: #1d4ed8;
+  background: #dbeafe;
+  border-color: #bfdbfe;
+}
+.todo-item-badge.done {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #bbf7d0;
+}
+.todo-item-badge.cancelled {
+  color: var(--ink-mute);
+  background: var(--bg-soft);
+  border-color: var(--line);
+  opacity: 0.7;
+}
 .bubble .params {
   display: flex;
   flex-wrap: wrap;

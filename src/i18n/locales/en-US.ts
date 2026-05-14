@@ -133,6 +133,12 @@ const enUS: Resource = {
     toolCallToggle: "Expand or collapse details",
     toolCallInput: "Input",
     toolCallOutput: "Output",
+    todoListTitle: "Todo list",
+    todoListEmpty: "No items",
+    todoStatusPending: "Pending",
+    todoStatusInProgress: "In progress",
+    todoStatusDone: "Done",
+    todoStatusCancelled: "Cancelled",
   },
   preview: {
     title: "Preview",

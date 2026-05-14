@@ -323,6 +323,9 @@ function AssistantContent({
             </div>
           );
         }
+        if (block.tool === "TodoList") {
+          return <TodoListBlock key={`tool:${block.id}:${i}`} block={block} />;
+        }
         return <ToolCallBlock key={`tool:${block.id}:${i}`} block={block} />;
       })}
     </>
@@ -480,6 +483,172 @@ function ToolCallBlock({
             </>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ????? TodoList specialized block ?????????????????????????????????????????????
+
+interface TodoItem {
+  id: number;
+  content: string;
+  status: "pending" | "in_progress" | "done" | "cancelled";
+}
+
+function parseTodoOutput(output: unknown): TodoItem[] | null {
+  if (!output || typeof output !== "object") return null;
+  const o = output as Record<string, unknown>;
+  const candidates: unknown[] =
+    Array.isArray(o.items)
+      ? (o.items as unknown[])
+      : Array.isArray(o.added)
+        ? (o.added as unknown[])
+        : o.updated
+          ? [o.updated]
+          : [];
+  if (!candidates.length) return null;
+  return candidates.flatMap((v) => {
+    if (!v || typeof v !== "object") return [];
+    const item = v as Record<string, unknown>;
+    if (typeof item.id !== "number" || typeof item.content !== "string") return [];
+    return [{
+      id: item.id as number,
+      content: item.content as string,
+      status: (item.status as TodoItem["status"]) ?? "pending",
+    }];
+  });
+}
+
+function todoActionSummary(
+  input: unknown,
+  output: unknown,
+  t: (key: string) => string,
+): string {
+  const inp = (input && typeof input === "object") ? (input as Record<string, unknown>) : {};
+  const out = (output && typeof output === "object") ? (output as Record<string, unknown>) : {};
+  const action = String(inp.action ?? "");
+  switch (action) {
+    case "add": {
+      const n = Array.isArray(out.added) ? out.added.length : 1;
+      const total = typeof out.total === "number" ? out.total : null;
+      return total !== null ? `+${n}  (${total} total)` : `+${n}`;
+    }
+    case "update": {
+      const updated = out.updated as Record<string, unknown> | undefined;
+      if (updated && typeof updated.content === "string") {
+        const s = updated.content as string;
+        return s.length > 36 ? s.slice(0, 36) + "?" : s;
+      }
+      return `id ${inp.id}`;
+    }
+    case "remove":
+      return `id ${inp.id}`;
+    case "list": {
+      const total = typeof out.total === "number" ? out.total : null;
+      return total !== null ? `${total} items` : "";
+    }
+    case "clear": {
+      const n = typeof out.cleared === "number" ? out.cleared : "?";
+      return `cleared ${n}`;
+    }
+    default:
+      return action;
+  }
+}
+
+function TodoStatusIcon({ status }: { status: TodoItem["status"] }) {
+  if (status === "done") {
+    return (
+      <svg className="todo-item-icon done" viewBox="0 0 16 16" fill="none" aria-hidden>
+        <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+        <polyline points="5 8 7 10 11 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (status === "cancelled") {
+    return (
+      <svg className="todo-item-icon cancelled" viewBox="0 0 16 16" fill="none" aria-hidden>
+        <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" />
+        <line x1="6" y1="6" x2="10" y2="10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <line x1="10" y1="6" x2="6" y2="10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (status === "in_progress") {
+    return (
+      <svg className="todo-item-icon in-progress" viewBox="0 0 16 16" fill="none" aria-hidden>
+        <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M8 4v4l2.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="todo-item-icon pending" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function TodoListBlock({
+  block,
+}: {
+  block: Extract<AssistantBlock, { type: "tool_use" }>;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(true);
+  const status = block.status;
+  const items = useMemo(() => parseTodoOutput(block.output), [block.output]);
+  const summary = useMemo(
+    () => todoActionSummary(block.input, block.output, t),
+    [block.input, block.output, t],
+  );
+
+  const inp = block.input as Record<string, unknown> | null;
+  const action = String(inp?.action ?? "");
+  const showList =
+    open && items !== null && items.length > 0 && (action === "list" || action === "add" || action === "update");
+
+  return (
+    <div className={`tool-call-block todo-list-block ${status} ${open && items ? "is-open" : ""}`}>
+      <button
+        type="button"
+        className="tool-call-summary"
+        aria-expanded={open}
+        onClick={() => items && setOpen((v) => !v)}
+        disabled={!items}
+      >
+        <ToolCallIcon status={status} />
+        <span className="tool-call-name">{t("message.todoListTitle")}</span>
+        {summary && <span className="tool-call-args">{summary}</span>}
+        <span className="tool-call-spacer" aria-hidden />
+        <span className={`tool-call-badge ${status}`}>
+          {status === "pending"
+            ? t("message.toolCallRunning")
+            : status === "error"
+              ? t("message.toolCallError")
+              : t("message.toolCallDone")}
+        </span>
+        {items && items.length > 0 && <ThinkingChevronIcon />}
+      </button>
+      {showList && (
+        <ul className="todo-item-list" role="list">
+          {items!.map((item) => (
+            <li key={item.id} className={`todo-item ${item.status}`}>
+              <TodoStatusIcon status={item.status} />
+              <span className="todo-item-content">{item.content}</span>
+              <span className={`todo-item-badge ${item.status}`}>
+                {item.status === "pending"
+                  ? t("message.todoStatusPending")
+                  : item.status === "in_progress"
+                    ? t("message.todoStatusInProgress")
+                    : item.status === "done"
+                      ? t("message.todoStatusDone")
+                      : t("message.todoStatusCancelled")}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

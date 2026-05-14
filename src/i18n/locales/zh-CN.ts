@@ -130,6 +130,12 @@ const zhCN = {
     toolCallToggle: "展开或收起详情",
     toolCallInput: "输入",
     toolCallOutput: "输出",
+    todoListTitle: "任务列表",
+    todoListEmpty: "暂无任务",
+    todoStatusPending: "待办",
+    todoStatusInProgress: "进行中",
+    todoStatusDone: "已完成",
+    todoStatusCancelled: "已取消",
   },
   preview: {
     title: "预览",
