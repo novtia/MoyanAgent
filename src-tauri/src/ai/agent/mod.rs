@@ -92,6 +92,7 @@ mod re_exports {
     pub use super::tools::bash::BashTool;
     pub use super::tools::edit::{FileEditTool, FileWriteTool};
     pub use super::tools::fs::FileReadTool;
+    pub use super::tools::todo::TodoListTool;
     pub use super::tools::{Tool, ToolInvocation, ToolPool, ToolResult, ToolSpec};
     // core
     pub use super::core::attachment::{

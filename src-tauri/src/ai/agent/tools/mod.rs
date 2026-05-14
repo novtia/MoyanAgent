@@ -21,6 +21,7 @@ pub mod agent_tool;
 pub mod bash;
 pub mod edit;
 pub mod fs;
+pub mod todo;
 
 use std::collections::HashMap;
 use std::future::Future;

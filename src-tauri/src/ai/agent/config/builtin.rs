@@ -32,6 +32,7 @@ const WRITE_TOOLS: &[&str] = &[
     "Write",
     "NotebookEdit",
     "ExitPlanMode",
+    "TodoList",
 ];
 
 fn read_only_deny() -> Vec<String> {

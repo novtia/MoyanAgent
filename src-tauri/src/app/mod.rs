@@ -606,7 +606,7 @@ fn tool_event_callback(
     })
 }
 
-// ───────── Settings ─────────
+// ????????? Settings ?????????
 
 #[tauri::command]
 fn get_settings(state: tauri::State<Arc<AppState>>) -> Result<settings::Settings, AppError> {
@@ -631,7 +631,7 @@ fn get_llm_model_catalog(
     llm_catalog::fetch_for_frontend(&conn)
 }
 
-// ───────── App info ─────────
+// ????????? App info ?????????
 
 #[derive(Debug, Serialize)]
 struct AppInfo {
@@ -675,7 +675,7 @@ fn open_path(path: String) -> Result<(), AppError> {
     Ok(())
 }
 
-// ───────── Sessions ─────────
+// ????????? Sessions ?????????
 
 #[derive(Debug, Deserialize)]
 struct CreateSessionArgs {
@@ -861,7 +861,7 @@ fn load_session(
     Ok(decorate_session(&app, s))
 }
 
-// ───────── Projects ─────────
+// ????????? Projects ?????????
 
 #[derive(Debug, Deserialize)]
 struct CreateProjectArgs {
@@ -950,7 +950,7 @@ fn update_project_config(
     )
 }
 
-// ───────── Messages ─────────
+// ????????? Messages ?????????
 
 #[tauri::command]
 fn update_message_text(
@@ -1043,7 +1043,7 @@ async fn quote_message_as_attachments(
     .map_err(|e| AppError::Other(e.to_string()))?
 }
 
-// ───────── Attachments ─────────
+// ????????? Attachments ?????????
 
 #[tauri::command]
 async fn add_attachment_from_path(
@@ -1113,7 +1113,7 @@ fn remove_attachment_draft(
     Ok(())
 }
 
-// ───────── Image asset URL helpers ─────────
+// ????????? Image asset URL helpers ?????????
 
 #[tauri::command]
 fn get_image_abs_path(
@@ -1127,7 +1127,7 @@ fn get_image_abs_path(
     Ok(abs.to_string_lossy().to_string())
 }
 
-// ───────── Generate ─────────
+// ????????? Generate ?????????
 
 #[tauri::command]
 fn cancel_generation(
@@ -1141,7 +1141,7 @@ fn cancel_generation(
     Ok(())
 }
 
-// ───────── Agent task commands ─────────
+// ????????? Agent task commands ?????????
 
 #[tauri::command]
 fn list_agent_tasks(state: tauri::State<Arc<AppState>>) -> Result<Vec<Task>, AppError> {
@@ -1778,7 +1778,7 @@ fn reload_message(conn: &db::DbConn, id: &str) -> AppResult<session::Message> {
     }
 }
 
-// ───────── Local edit ─────────
+// ????????? Local edit ?????????
 
 #[derive(Debug, Deserialize)]
 struct EditImageArgs {
@@ -1808,7 +1808,7 @@ fn edit_image(
     Ok(decorate_image(&app, new_ref))
 }
 
-// ───────── Export ─────────
+// ????????? Export ?????????
 
 #[derive(Debug, Deserialize)]
 struct ExportArgs {
@@ -1831,7 +1831,7 @@ fn export_image(
     Ok(())
 }
 
-// ───────── Decorated DTOs (with abs_path) ─────────
+// ????????? Decorated DTOs (with abs_path) ?????????
 
 #[derive(Debug, Serialize)]
 struct ImageRefAbs {
@@ -1916,7 +1916,7 @@ fn decorate_session(app: &AppHandle, s: session::SessionWithMessages) -> Session
     }
 }
 
-// ───────── Run ─────────
+// ????????? Run ?????????
 
 pub fn run() {
     tauri::Builder::default()
@@ -1943,6 +1943,7 @@ pub fn run() {
             tools.register(crate::ai::agent::tools::edit::FileWriteTool::new());
             tools.register(crate::ai::agent::tools::edit::FileEditTool::new());
             tools.register(crate::ai::agent::tools::bash::BashTool::new());
+            tools.register(crate::ai::agent::tools::todo::TodoListTool::new());
 
             // Build the agent-callable `Agent` tool. The chat factory
             // lets it materialise a sub-agent `ChatRequest` from the
