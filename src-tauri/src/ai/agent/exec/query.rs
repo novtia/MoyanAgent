@@ -18,6 +18,13 @@ use crate::ai::agent::types::{MessageEvent, QuerySource, TokenUsage};
 use crate::ai::chat::{ChatRequest, TextDeltaCallback};
 use crate::error::AppResult;
 
+/// Callback invoked the moment a `tool_use` / `tool_result` event is
+/// recorded in the engine. Mirrors [`TextDeltaCallback`] but for the
+/// structured tool stream — the host uses it to forward an inline
+/// `gen://tool` event to the UI in real time, in the exact order the
+/// engine produced the events.
+pub type ToolEventCallback = Arc<dyn Fn(&MessageEvent) + Send + Sync + 'static>;
+
 /// Inputs to one `query()` call.
 pub struct QueryRequest {
     pub chat: ChatRequest,
@@ -27,6 +34,11 @@ pub struct QueryRequest {
     /// Optional streaming callback. Forwarded to the underlying provider
     /// on each turn.
     pub on_text_delta: Option<TextDeltaCallback>,
+    /// Optional callback fired alongside every `ToolUse` / `ToolResult`
+    /// event pushed into the response stream. Used by the host to emit
+    /// `gen://tool` Tauri events that the UI weaves into the assistant
+    /// message blocks inline with streaming text/thinking deltas.
+    pub on_tool_event: Option<ToolEventCallback>,
 }
 
 impl QueryRequest {
@@ -37,6 +49,7 @@ impl QueryRequest {
             max_turns: None,
             initial_attachments: Vec::new(),
             on_text_delta: None,
+            on_tool_event: None,
         }
     }
 }

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  AssistantBlock,
   AttachmentDraft,
   MessageAbs,
   ModelParamSettings,
@@ -37,6 +38,26 @@ interface GenerationStreamPayload {
   /** Backward compatibility for older backend stream events. */
   delta?: string;
 }
+
+interface ToolUseEventPayload {
+  session_id: string;
+  request_message_id?: string;
+  type: "tool_use";
+  id: string;
+  tool: string;
+  input: unknown;
+}
+
+interface ToolResultEventPayload {
+  session_id: string;
+  request_message_id?: string;
+  type: "tool_result";
+  id: string;
+  output: unknown;
+  is_error: boolean;
+}
+
+type ToolEventPayload = ToolUseEventPayload | ToolResultEventPayload;
 
 interface SessionStore {
   sessions: SessionSummary[];
@@ -110,26 +131,45 @@ function isGenerationCancelled(e: unknown) {
   return String(e).includes("generation cancelled");
 }
 
-/** Extract partial text and thinking content from a temporary streaming assistant message. */
+/**
+ * Extract partial streaming content for the in-flight assistant message
+ * of a given session. Returns:
+ *
+ * - `text`: best-effort concatenation of all text blocks (for legacy
+ *   `save_cancelled_message` params that only know about `text`);
+ * - `thinking`: same for thinking blocks;
+ * - `blocks`: the structured ordered list — what we actually want to
+ *   persist on cancel so the rendered UI matches what the user saw.
+ */
 function extractPartialStreamContent(
-  messages: import("../types").MessageAbs[],
+  messages: MessageAbs[],
   sessionId: string,
-): { text: string; thinking: string } {
+): { text: string; thinking: string; blocks: AssistantBlock[] } {
   const tmp = messages.find(
-    (m) =>
-      m.session_id === sessionId &&
-      m.id.startsWith("tmp-assistant-") &&
-      ((m.text?.trim() || "").length > 0 ||
-        (typeof m.params?.thinking_content === "string" &&
-          m.params.thinking_content.trim().length > 0)),
+    (m) => m.session_id === sessionId && m.id.startsWith("tmp-assistant-"),
   );
-  return {
-    text: tmp?.text?.trim() ?? "",
-    thinking:
-      typeof tmp?.params?.thinking_content === "string"
-        ? tmp.params.thinking_content.trim()
-        : "",
-  };
+  const blocks: AssistantBlock[] = tmp?.params?.blocks ?? [];
+  const text =
+    tmp?.text?.trim() ??
+    blocks
+      .filter((b): b is { type: "text"; content: string } => b.type === "text")
+      .map((b) => b.content)
+      .join("")
+      .trim();
+  const thinkingFromParams =
+    typeof tmp?.params?.thinking_content === "string"
+      ? tmp.params.thinking_content.trim()
+      : "";
+  const thinking =
+    thinkingFromParams ||
+    blocks
+      .filter(
+        (b): b is { type: "thinking"; content: string } => b.type === "thinking",
+      )
+      .map((b) => b.content)
+      .join("")
+      .trim();
+  return { text, thinking, blocks };
 }
 
 export const useSession = create<SessionStore>((set, get) => {
@@ -219,7 +259,7 @@ export const useSession = create<SessionStore>((set, get) => {
     let messagesWithBuffer = data.messages;
     if (isBusy) {
       const buf = streamingBuffers.get(id);
-      if (buf && (buf.text || buf.thinking)) {
+      if (buf && buf.blocks.length > 0) {
         messagesWithBuffer = applyStreamBufferToMessages(data.messages, id, buf);
       }
     }
@@ -603,9 +643,14 @@ export const useSession = create<SessionStore>((set, get) => {
     } catch (e: unknown) {
       if (isGenerationCancelled(e)) {
         const partial = extractPartialStreamContent(get().active?.messages ?? [], sid);
-        if (partial.text || partial.thinking) {
+        if (partial.text || partial.thinking || partial.blocks.length > 0) {
           try {
-            await api.saveCancelledMessage(sid, partial.text, partial.thinking);
+            await api.saveCancelledMessage(
+              sid,
+              partial.text,
+              partial.thinking,
+              partial.blocks.length > 0 ? partial.blocks : null,
+            );
           } catch (saveErr) {
             console.warn("Failed to save partial message", saveErr);
           }
@@ -719,9 +764,14 @@ export const useSession = create<SessionStore>((set, get) => {
       if (isGenerationCancelled(e)) {
         // Persist any partial streaming content before reloading from DB.
         const partial = extractPartialStreamContent(get().active?.messages ?? [], sid);
-        if (partial.text || partial.thinking) {
+        if (partial.text || partial.thinking || partial.blocks.length > 0) {
           try {
-            await api.saveCancelledMessage(sid, partial.text, partial.thinking);
+            await api.saveCancelledMessage(
+              sid,
+              partial.text,
+              partial.thinking,
+              partial.blocks.length > 0 ? partial.blocks : null,
+            );
           } catch (saveErr) {
             console.warn("Failed to save partial message", saveErr);
           }
@@ -785,17 +835,72 @@ function saveComposerDraft(sessionId: string, composer: ComposerState) {
 }
 
 // ─── Per-session streaming buffers ───────────────────────────────────────────
-// Keeps accumulating stream deltas even when the session isn't active so that
+// Keeps accumulating stream events even when the session isn't active so that
 // switching back to a generating session immediately shows what was produced
 // while the user was away.
+//
+// Streams flow in strict arrival order — text deltas, thinking deltas, and
+// tool events all share one ordered `blocks` array. The merge/split rules
+// here are the single source of truth for how the renderer perceives the
+// agent's multi-turn output.
 
 interface StreamBuffer {
-  text: string;
-  thinking: string;
+  blocks: AssistantBlock[];
   requestId: string;
 }
 
 const streamingBuffers = new Map<string, StreamBuffer>();
+
+/**
+ * Append a text/thinking delta to a block list following the rule
+ * "merge with last block when it's the same kind, otherwise push new".
+ * Mutates `blocks` in place. Returns nothing — block ordering matters
+ * and callers always operate on a fresh array clone.
+ */
+function appendDelta(
+  blocks: AssistantBlock[],
+  kind: "text" | "thinking",
+  delta: string,
+) {
+  if (!delta) return;
+  const last = blocks[blocks.length - 1];
+  if (last && last.type === kind) {
+    last.content = `${last.content}${delta}`;
+    return;
+  }
+  blocks.push({ type: kind, content: delta });
+}
+
+/**
+ * Record a structured tool event into the block list. `tool_use` always
+ * pushes a new pending block; `tool_result` mutates the matching `tool_use`
+ * block in place so the on-screen card transitions from pending → done
+ * without changing the surrounding order.
+ */
+function applyToolEvent(blocks: AssistantBlock[], event: ToolEventPayload) {
+  if (event.type === "tool_use") {
+    blocks.push({
+      type: "tool_use",
+      id: event.id,
+      tool: event.tool,
+      input: event.input,
+      status: "pending",
+    });
+    return;
+  }
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i];
+    if (b.type === "tool_use" && b.id === event.id) {
+      blocks[i] = {
+        ...b,
+        status: event.is_error ? "error" : "success",
+        output: event.output,
+        is_error: event.is_error || undefined,
+      };
+      return;
+    }
+  }
+}
 
 /** Apply a stream buffer as a temporary assistant message into active messages. */
 function applyStreamBufferToMessages(
@@ -805,12 +910,25 @@ function applyStreamBufferToMessages(
 ): MessageAbs[] {
   const messageId = `tmp-assistant-${buf.requestId}`;
   const idx = messages.findIndex((m) => m.id === messageId);
+  const text = buf.blocks
+    .filter((b): b is { type: "text"; content: string } => b.type === "text")
+    .map((b) => b.content)
+    .join("");
+  const thinking = buf.blocks
+    .filter(
+      (b): b is { type: "thinking"; content: string } => b.type === "thinking",
+    )
+    .map((b) => b.content)
+    .join("");
   const tmpMsg: MessageAbs = {
     id: messageId,
     session_id: sessionId,
     role: "assistant",
-    text: buf.text || null,
-    params: buf.thinking ? { thinking_content: buf.thinking } : null,
+    text: text || null,
+    params: {
+      ...(thinking ? { thinking_content: thinking } : {}),
+      blocks: buf.blocks.map((b) => ({ ...b })),
+    },
     created_at: Date.now(),
     images: [],
   };
@@ -822,76 +940,81 @@ function applyStreamBufferToMessages(
   return [...messages, tmpMsg];
 }
 
-// ─── Stream listener ──────────────────────────────────────────────────────────
+/**
+ * Mutate the live `active.messages` slot for a session so the streaming
+ * tmp-assistant message reflects the latest StreamBuffer. Both listeners
+ * funnel through this so they always agree on the message shape.
+ */
+function syncStreamingMessage(sessionId: string, buf: StreamBuffer) {
+  const state = useSession.getState();
+  if (state.activeId !== sessionId || !state.active) return;
+  const messages = applyStreamBufferToMessages(
+    state.active.messages,
+    sessionId,
+    buf,
+  );
+  useSession.setState({
+    active: {
+      ...state.active,
+      messages,
+    },
+  });
+}
+
+// ─── Stream listeners ─────────────────────────────────────────────────────────
 
 let generationStreamListenerStarted = false;
+let toolEventListenerStarted = false;
 
 function ensureGenerationStreamListener() {
-  if (generationStreamListenerStarted) return;
-  generationStreamListenerStarted = true;
-  listen<GenerationStreamPayload>("gen://stream", (event) => {
-    const payload = event.payload;
-    const sessionId = payload.session_id;
-    const textDelta = payload.text_delta ?? payload.delta ?? "";
-    const thinkingDelta = payload.thinking_delta ?? "";
-    if (!sessionId || (!textDelta && !thinkingDelta)) return;
+  if (!generationStreamListenerStarted) {
+    generationStreamListenerStarted = true;
+    listen<GenerationStreamPayload>("gen://stream", (event) => {
+      const payload = event.payload;
+      const sessionId = payload.session_id;
+      const textDelta = payload.text_delta ?? payload.delta ?? "";
+      const thinkingDelta = payload.thinking_delta ?? "";
+      if (!sessionId || (!textDelta && !thinkingDelta)) return;
 
-    const requestId = payload.request_message_id || sessionId;
-
-    // Always accumulate in the per-session buffer (even when not viewing).
-    const prev = streamingBuffers.get(sessionId) ?? { text: "", thinking: "", requestId };
-    streamingBuffers.set(sessionId, {
-      text: textDelta ? prev.text + textDelta : prev.text,
-      thinking: thinkingDelta ? prev.thinking + thinkingDelta : prev.thinking,
-      requestId,
-    });
-
-    // Only update the visible UI when this session is the active one.
-    const state = useSession.getState();
-    if (state.activeId !== sessionId || !state.active) return;
-
-    const messageId = `tmp-assistant-${requestId}`;
-    const existingIndex = state.active.messages.findIndex((m) => m.id === messageId);
-    const messages = [...state.active.messages];
-
-    if (existingIndex >= 0) {
-      const existing = messages[existingIndex];
-      const existingThinking =
-        typeof existing.params?.thinking_content === "string"
-          ? existing.params.thinking_content
-          : "";
-      const nextThinking = thinkingDelta
-        ? `${existingThinking}${thinkingDelta}`
-        : existingThinking;
-      messages[existingIndex] = {
-        ...existing,
-        text: textDelta ? `${existing.text || ""}${textDelta}` : existing.text,
-        params: nextThinking
-          ? { ...(existing.params || {}), thinking_content: nextThinking }
-          : existing.params,
+      const requestId = payload.request_message_id || sessionId;
+      const prev = streamingBuffers.get(sessionId) ?? {
+        blocks: [],
+        requestId,
       };
-    } else {
-      messages.push({
-        id: messageId,
-        session_id: sessionId,
-        role: "assistant",
-        text: textDelta,
-        params: thinkingDelta ? { thinking_content: thinkingDelta } : null,
-        created_at: Date.now(),
-        images: [],
-      });
-    }
-
-    useSession.setState({
-      active: {
-        ...state.active,
-        messages,
-      },
+      // Always work on a fresh array so React sees a new reference.
+      const nextBlocks = prev.blocks.map((b) => ({ ...b }));
+      if (thinkingDelta) appendDelta(nextBlocks, "thinking", thinkingDelta);
+      if (textDelta) appendDelta(nextBlocks, "text", textDelta);
+      const next: StreamBuffer = { blocks: nextBlocks, requestId };
+      streamingBuffers.set(sessionId, next);
+      syncStreamingMessage(sessionId, next);
+    }).catch((e) => {
+      generationStreamListenerStarted = false;
+      console.warn(e);
     });
-  }).catch((e) => {
-    generationStreamListenerStarted = false;
-    console.warn(e);
-  });
+  }
+
+  if (!toolEventListenerStarted) {
+    toolEventListenerStarted = true;
+    listen<ToolEventPayload>("gen://tool", (event) => {
+      const payload = event.payload;
+      const sessionId = payload.session_id;
+      if (!sessionId) return;
+      const requestId = payload.request_message_id || sessionId;
+      const prev = streamingBuffers.get(sessionId) ?? {
+        blocks: [],
+        requestId,
+      };
+      const nextBlocks = prev.blocks.map((b) => ({ ...b }));
+      applyToolEvent(nextBlocks, payload);
+      const next: StreamBuffer = { blocks: nextBlocks, requestId };
+      streamingBuffers.set(sessionId, next);
+      syncStreamingMessage(sessionId, next);
+    }).catch((e) => {
+      toolEventListenerStarted = false;
+      console.warn(e);
+    });
+  }
 }
 
 ensureGenerationStreamListener();

@@ -492,6 +492,178 @@
   background: var(--line-strong);
   border-radius: 3px;
 }
+
+/* ───── tool call block ─────
+   Inline card showing one tool_use / tool_result from the agent loop.
+   Lives inside the assistant bubble as a sibling to .text / .msg-thinking
+   so the stream's natural order is preserved. */
+.tool-call-block {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  max-width: min(640px, 100%);
+  margin: 6px 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  overflow: hidden;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+.tool-call-block.pending {
+  border-color: var(--line);
+  background: var(--bg-soft);
+}
+.tool-call-block.success {
+  border-color: var(--line);
+}
+.tool-call-block.error {
+  border-color: #fecdd3;
+  background: var(--rose-50);
+}
+
+.tool-call-summary {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.tool-call-summary:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+.tool-call-summary:disabled {
+  cursor: default;
+}
+.tool-call-summary .msg-thinking-chevron {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  transition: transform 0.24s var(--ease-out);
+  opacity: 0.7;
+}
+.tool-call-block.is-open .tool-call-summary .msg-thinking-chevron {
+  transform: rotate(180deg);
+}
+
+.tool-call-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.tool-call-block.pending .tool-call-icon {
+  color: var(--ink-mute);
+  animation: thinking-spin 3s linear infinite;
+}
+.tool-call-block.success .tool-call-icon {
+  color: #16a34a;
+}
+.tool-call-block.error .tool-call-icon {
+  color: var(--rose-500);
+}
+
+.tool-call-name {
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.tool-call-args {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.tool-call-spacer {
+  flex: 1;
+  min-width: 4px;
+}
+.tool-call-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  flex-shrink: 0;
+}
+.tool-call-badge.pending {
+  color: var(--ink-mute);
+  border-color: var(--line);
+  background: var(--bg-sunk);
+}
+.tool-call-badge.success {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #bbf7d0;
+}
+.tool-call-badge.error {
+  color: var(--rose-500);
+  background: #ffe4e6;
+  border-color: #fecdd3;
+}
+
+.tool-call-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-sunk);
+}
+.tool-call-detail-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-mute);
+  margin-top: 4px;
+}
+.tool-call-detail-label:first-child {
+  margin-top: 0;
+}
+.tool-call-detail-body {
+  margin: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: min(40vh, 360px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.tool-call-detail-body::-webkit-scrollbar {
+  width: 6px;
+}
+.tool-call-detail-body::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
+}
+
+/* Tighten the vertical rhythm where blocks alternate. */
+.bubble .text + .tool-call-block,
+.bubble .tool-call-block + .text,
+.bubble .tool-call-block + .msg-thinking,
+.bubble .msg-thinking + .tool-call-block {
+  margin-top: 8px;
+}
 .bubble .params {
   display: flex;
   flex-wrap: wrap;

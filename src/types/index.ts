@@ -168,6 +168,29 @@ export interface ImageRefAbs {
   ord: number;
 }
 
+/**
+ * One inline content block of an assistant message.
+ *
+ * Assistant messages are an *ordered list* of blocks so that thinking,
+ * text, and tool calls render in the exact order they streamed in. The
+ * agent loop can produce multiple thinking/text/tool blocks per
+ * message (one set per inner turn) and the renderer must preserve that
+ * interleaving — see the design note in
+ * `docs/工具调用_ui_渲染.plan.md`.
+ */
+export type AssistantBlock =
+  | { type: "thinking"; content: string }
+  | { type: "text"; content: string }
+  | {
+      type: "tool_use";
+      id: string;
+      tool: string;
+      input: unknown;
+      status: "pending" | "success" | "error";
+      output?: unknown;
+      is_error?: boolean;
+    };
+
 export interface MessageAbs {
   id: string;
   session_id: string;
@@ -177,6 +200,13 @@ export interface MessageAbs {
     aspect_ratio?: string;
     image_size?: string;
     thinking_content?: string | null;
+    /**
+     * Ordered, streamed inline blocks for assistant messages. Newer
+     * messages always populate this; older messages (created before the
+     * blocks model existed) only carry `text` / `thinking_content` and
+     * the renderer falls back to the legacy single-segment view.
+     */
+    blocks?: AssistantBlock[];
     usage?: {
       prompt_tokens?: number | null;
       completion_tokens?: number | null;

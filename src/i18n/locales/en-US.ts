@@ -127,6 +127,12 @@ const enUS: Resource = {
     thinkingToggle: "Reasoning",
     thinkingStreaming: "Thinking",
     thinkingHint: "Click to expand or collapse",
+    toolCallRunning: "Running",
+    toolCallDone: "Done",
+    toolCallError: "Error",
+    toolCallToggle: "Expand or collapse details",
+    toolCallInput: "Input",
+    toolCallOutput: "Output",
   },
   preview: {
     title: "Preview",

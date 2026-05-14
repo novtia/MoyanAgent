@@ -578,6 +578,7 @@ async fn consume_openai_chat_stream(
     let mut thinking = String::new();
     let mut images = Vec::new();
     let mut usage = TokenUsage::default();
+    let mut tool_calls: Vec<PendingStreamToolCall> = Vec::new();
     let mut sse_debug_emitted = 0u32;
 
     while let Some(chunk) = stream.next().await {
@@ -593,9 +594,10 @@ async fn consume_openai_chat_stream(
                 &mut thinking,
                 &mut images,
                 &mut usage,
+                &mut tool_calls,
                 &on_text_delta,
             )? {
-                return finalize_stream_response(text, thinking, images, usage);
+                return finalize_stream_response(text, thinking, images, usage, tool_calls);
             }
         }
     }
@@ -609,11 +611,12 @@ async fn consume_openai_chat_stream(
             &mut thinking,
             &mut images,
             &mut usage,
+            &mut tool_calls,
             &on_text_delta,
         )?;
     }
 
-    finalize_stream_response(text, thinking, images, usage)
+    finalize_stream_response(text, thinking, images, usage, tool_calls)
 }
 
 async fn consume_responses_stream(
@@ -689,7 +692,12 @@ async fn consume_responses_stream(
         }
     }
 
-    finalize_stream_response(text, thinking, images, usage)
+    // OpenAI Responses API surfaces tool calls inside the final response
+    // object (`response.output[*].type == "function_call"`), not inside
+    // streamed `delta.tool_calls`. They're parsed at the call site that
+    // consumes `final_response`; the chat-completions accumulator here
+    // is unused for this path.
+    finalize_stream_response(text, thinking, images, usage, Vec::new())
 }
 
 fn set_streaming(body: &mut Value) {
@@ -802,6 +810,7 @@ fn handle_openai_chat_sse_event(
     thinking: &mut String,
     images: &mut Vec<ImageResult>,
     usage: &mut TokenUsage,
+    tool_calls: &mut Vec<PendingStreamToolCall>,
     on_text_delta: &TextDeltaCallback,
 ) -> AppResult<bool> {
     let Some(data) = sse_data_payload(event) else {
@@ -834,6 +843,7 @@ fn handle_openai_chat_sse_event(
         (on_text_delta)(StreamDelta::text(delta));
     }
     images.append(&mut new_images);
+    merge_tool_call_deltas(&v, tool_calls);
     merge_usage(usage, tokens::extract_usage(&v));
     Ok(false)
 }
@@ -995,18 +1005,102 @@ fn merge_usage(target: &mut TokenUsage, next: TokenUsage) {
     }
 }
 
+/// Buffered shape used while streaming tool_calls arrive piecewise.
+/// OpenAI chat completions stream tool_calls as a sequence of deltas
+/// indexed by `index`: the first delta carries `id` / `type` /
+/// `function.name`, later deltas append more `function.arguments`
+/// fragments. We accumulate them here and emit a final
+/// [`crate::ai::chat::ProviderToolCall`] list when the stream ends.
+#[derive(Debug, Default, Clone)]
+struct PendingStreamToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+/// Merge `choices[*].delta.tool_calls[*]` from one SSE event into the
+/// running accumulator. Tool calls are addressed by `index` (OpenAI
+/// guarantees stable indices across chunks for the same call).
+fn merge_tool_call_deltas(v: &Value, out: &mut Vec<PendingStreamToolCall>) {
+    let Some(choices) = v.get("choices").and_then(Value::as_array) else {
+        return;
+    };
+    for choice in choices {
+        let Some(arr) = choice
+            .pointer("/delta/tool_calls")
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for tc in arr {
+            let idx = tc
+                .get("index")
+                .and_then(Value::as_u64)
+                .map(|i| i as usize)
+                .unwrap_or_else(|| out.len());
+            if idx >= out.len() {
+                out.resize_with(idx + 1, PendingStreamToolCall::default);
+            }
+            let slot = &mut out[idx];
+            if let Some(id) = tc.get("id").and_then(Value::as_str) {
+                if !id.is_empty() {
+                    slot.id = id.to_string();
+                }
+            }
+            if let Some(name) = tc.pointer("/function/name").and_then(Value::as_str) {
+                if !name.is_empty() {
+                    slot.name = name.to_string();
+                }
+            }
+            if let Some(args) = tc.pointer("/function/arguments").and_then(Value::as_str) {
+                if !args.is_empty() {
+                    slot.arguments.push_str(args);
+                }
+            }
+        }
+    }
+}
+
+/// Convert the buffered stream-side tool-call state into the provider-
+/// agnostic shape the agent loop expects. Drops entries that never
+/// received a name (defensive against malformed streams).
+fn finalize_pending_tool_calls(
+    pending: Vec<PendingStreamToolCall>,
+) -> Vec<crate::ai::chat::ProviderToolCall> {
+    pending
+        .into_iter()
+        .filter(|p| !p.name.is_empty())
+        .map(|p| {
+            let raw_args = if p.arguments.trim().is_empty() {
+                "{}"
+            } else {
+                p.arguments.as_str()
+            };
+            let arguments = serde_json::from_str::<Value>(raw_args).unwrap_or(Value::Null);
+            crate::ai::chat::ProviderToolCall {
+                id: p.id,
+                name: p.name,
+                arguments,
+            }
+        })
+        .collect()
+}
+
 fn finalize_stream_response(
     text: String,
     thinking: String,
     mut images: Vec<ImageResult>,
     usage: TokenUsage,
+    pending_tool_calls: Vec<PendingStreamToolCall>,
 ) -> AppResult<GenerateResponse> {
+    let tool_calls = finalize_pending_tool_calls(pending_tool_calls);
     if upstream_debug() {
         eprintln!(
-            "[ATELIER_DEBUG_UPSTREAM] stream assembled: text_chars={} thinking_chars={} image_count={} usage={:?}",
+            "[ATELIER_DEBUG_UPSTREAM] stream assembled: text_chars={} thinking_chars={} image_count={} tool_calls={} usage={:?}",
             text.chars().count(),
             thinking.chars().count(),
             images.len(),
+            tool_calls.len(),
             usage
         );
     }
@@ -1026,9 +1120,10 @@ fn finalize_stream_response(
     if images.is_empty()
         && text.as_deref().map(str::is_empty).unwrap_or(true)
         && thinking_content.as_deref().map(str::is_empty).unwrap_or(true)
+        && tool_calls.is_empty()
     {
         return Err(AppError::Upstream(
-            "upstream stream did not contain generated image or text".into(),
+            "upstream stream did not contain generated image, text, or tool_calls".into(),
         ));
     }
     Ok(GenerateResponse {
@@ -1036,7 +1131,7 @@ fn finalize_stream_response(
         text,
         thinking_content,
         usage,
-        tool_calls: Vec::new(),
+        tool_calls,
     })
 }
 

@@ -224,6 +224,7 @@ impl AgentTool {
             permission_override: None,
             parent_system_prompt,
             on_text_delta: None,
+            on_tool_event: None,
             query_source: None,
             // Sub-agents inherit CWD from the host process; no project context.
             project_cwd: None,

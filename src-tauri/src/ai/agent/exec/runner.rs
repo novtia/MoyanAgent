@@ -21,7 +21,7 @@ use crate::ai::agent::core::context::{AbortHandle, ToolUseContext};
 use crate::ai::agent::core::permission::PermissionMode;
 use crate::ai::agent::core::task::{Task, TaskId, TaskStore};
 use crate::ai::agent::core::worktree::WorktreeHandle;
-use crate::ai::agent::exec::query::{QueryEngine, QueryRequest, QueryResult};
+use crate::ai::agent::exec::query::{QueryEngine, QueryRequest, QueryResult, ToolEventCallback};
 use crate::ai::agent::tools::ToolPool;
 use crate::ai::agent::types::{AgentId, AgentRunMode, QuerySource, TokenUsage};
 use crate::ai::chat::{ChatRequest, ImageResult, TextDeltaCallback};
@@ -46,6 +46,10 @@ pub struct RunAgentParams {
     /// Forward streaming deltas to the host (main REPL). Sub-agent runs
     /// leave this `None`.
     pub on_text_delta: Option<TextDeltaCallback>,
+    /// Forward structured tool events (`ToolUse` / `ToolResult`) to the
+    /// host the moment the engine records them. Sub-agent runs and
+    /// non-agent flows leave this `None`.
+    pub on_tool_event: Option<ToolEventCallback>,
     /// When set, overrides the default `Subagent` / `Forked`
     /// [`QuerySource`] (e.g. [`QuerySource::ReplMainThread`] for the
     /// primary session).
@@ -92,6 +96,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         permission_override,
         parent_system_prompt,
         on_text_delta,
+        on_tool_event,
         query_source,
         project_cwd,
     } = params;
@@ -169,6 +174,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         initial_attachments,
         definition.max_turns,
         on_text_delta,
+        on_tool_event,
     )
     .await;
 
@@ -206,6 +212,7 @@ async fn drive(
     initial_attachments: Vec<Attachment>,
     max_turns: Option<u32>,
     on_text_delta: Option<TextDeltaCallback>,
+    on_tool_event: Option<ToolEventCallback>,
 ) -> AppResult<QueryResult> {
     let request = QueryRequest {
         chat: chat_request,
@@ -213,6 +220,7 @@ async fn drive(
         max_turns,
         initial_attachments,
         on_text_delta,
+        on_tool_event,
     };
     engine.query(request, context, tools).await
 }

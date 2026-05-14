@@ -11,7 +11,12 @@ import { useSession } from "../../store/session";
 import { srcOf, api } from "../../api/tauri";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { ATELIER_DRAG_TYPE } from "./SessionGallery";
-import type { AttachmentDraft, ImageRefAbs, MessageAbs } from "../../types";
+import type {
+  AssistantBlock,
+  AttachmentDraft,
+  ImageRefAbs,
+  MessageAbs,
+} from "../../types";
 
 function nativeFilePath(file: File) {
   return (file as File & { path?: string }).path || "";
@@ -50,6 +55,10 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
   const lastMessageThinkingLength =
     messages.length > 0
       ? messages[messages.length - 1].params?.thinking_content?.length ?? 0
+      : 0;
+  const lastMessageBlocksLength =
+    messages.length > 0
+      ? messages[messages.length - 1].params?.blocks?.length ?? 0
       : 0;
   const hasStreamingAssistant = messages.some((m) => m.id.startsWith("tmp-assistant-"));
 
@@ -91,7 +100,13 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
     if (messagesGrew || isNearBottomRef.current) {
       ref.current.scrollTop = ref.current.scrollHeight;
     }
-  }, [messages.length, lastMessageTextLength, lastMessageThinkingLength, busy]);
+  }, [
+    messages.length,
+    lastMessageTextLength,
+    lastMessageThinkingLength,
+    lastMessageBlocksLength,
+    busy,
+  ]);
 
   useEffect(() => {
     const onFocusMessage = (event: Event) => {
@@ -263,6 +278,223 @@ function ThinkingBlock({
   );
 }
 
+/**
+ * Render the ordered `blocks` of an assistant message. Each block type
+ * (thinking / text / tool_use) is rendered inline in the exact order the
+ * stream delivered it, so an agent loop with multiple turns surfaces as
+ * `[thinking?, text?, tool A, tool B, thinking?, text?, ...]`.
+ *
+ * `isStreaming` mirrors `tmp-assistant-*` state: only the *trailing*
+ * thinking block of a still-streaming message gets the spinner/streaming
+ * label; earlier thinking blocks (already followed by text or a tool
+ * card) auto-collapse like a completed reasoning section.
+ */
+function AssistantContent({
+  blocks,
+  isStreaming,
+}: {
+  blocks: AssistantBlock[];
+  isStreaming: boolean;
+}) {
+  const lastThinkingIdx = useMemo(() => {
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      if (blocks[i].type === "thinking") return i;
+    }
+    return -1;
+  }, [blocks]);
+  return (
+    <>
+      {blocks.map((block, i) => {
+        if (block.type === "thinking") {
+          const trailing = i === lastThinkingIdx;
+          return (
+            <ThinkingBlock
+              key={`thinking:${i}`}
+              content={block.content}
+              streaming={isStreaming && trailing}
+            />
+          );
+        }
+        if (block.type === "text") {
+          if (!block.content) return null;
+          return (
+            <div key={`text:${i}`} className="text">
+              {block.content}
+            </div>
+          );
+        }
+        return <ToolCallBlock key={`tool:${block.id}:${i}`} block={block} />;
+      })}
+    </>
+  );
+}
+
+function ToolCallIcon({ status }: { status: "pending" | "success" | "error" }) {
+  if (status === "pending") {
+    return (
+      <svg
+        className="tool-call-icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </svg>
+    );
+  }
+  if (status === "error") {
+    return (
+      <svg
+        className="tool-call-icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
+        <circle cx="12" cy="12" r="9" />
+        <line x1="9" y1="9" x2="15" y2="15" />
+        <line x1="15" y1="9" x2="9" y2="15" />
+      </svg>
+    );
+  }
+  return (
+    <svg
+      className="tool-call-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="9" />
+      <polyline points="8 12 11 15 16 9" />
+    </svg>
+  );
+}
+
+/** Short, single-line preview of the tool's input arguments for the header. */
+function summarizeToolInput(input: unknown): string {
+  if (input == null) return "";
+  if (typeof input === "string") return input;
+  if (typeof input === "number" || typeof input === "boolean") return String(input);
+  if (Array.isArray(input)) {
+    return input
+      .map((v) => summarizeToolInput(v))
+      .filter(Boolean)
+      .join(", ");
+  }
+  if (typeof input === "object") {
+    const o = input as Record<string, unknown>;
+    // Heuristic: surface the most identifying field first.
+    const primary =
+      o.path ?? o.file_path ?? o.command ?? o.query ?? o.prompt ?? o.name;
+    if (typeof primary === "string" && primary.trim()) return primary;
+    const entries = Object.entries(o).slice(0, 2);
+    return entries
+      .map(([k, v]) => {
+        const s =
+          typeof v === "string"
+            ? v
+            : typeof v === "number" || typeof v === "boolean"
+              ? String(v)
+              : JSON.stringify(v);
+        return `${k}: ${s.length > 40 ? s.slice(0, 40) + "?" : s}`;
+      })
+      .join("  ");
+  }
+  return "";
+}
+
+function ToolCallBlock({
+  block,
+}: {
+  block: Extract<AssistantBlock, { type: "tool_use" }>;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const status = block.status;
+  const statusLabel =
+    status === "pending"
+      ? t("message.toolCallRunning")
+      : status === "error"
+        ? t("message.toolCallError")
+        : t("message.toolCallDone");
+  const summary = useMemo(() => summarizeToolInput(block.input), [block.input]);
+  const hasDetail =
+    (block.input !== undefined && block.input !== null) ||
+    block.output !== undefined;
+  const inputJson = useMemo(
+    () => safeJsonStringify(block.input),
+    [block.input],
+  );
+  const outputJson = useMemo(
+    () => safeJsonStringify(block.output),
+    [block.output],
+  );
+
+  return (
+    <div
+      className={`tool-call-block ${status} ${open ? "is-open" : ""}`}
+    >
+      <button
+        type="button"
+        className="tool-call-summary"
+        aria-expanded={open}
+        title={t("message.toolCallToggle")}
+        onClick={() => hasDetail && setOpen((v) => !v)}
+        disabled={!hasDetail}
+      >
+        <ToolCallIcon status={status} />
+        <span className="tool-call-name">{block.tool}</span>
+        {summary && <span className="tool-call-args">{summary}</span>}
+        <span className="tool-call-spacer" aria-hidden />
+        <span className={`tool-call-badge ${status}`}>{statusLabel}</span>
+        {hasDetail && <ThinkingChevronIcon />}
+      </button>
+      {open && hasDetail && (
+        <div className="tool-call-detail">
+          {inputJson && (
+            <>
+              <div className="tool-call-detail-label">
+                {t("message.toolCallInput")}
+              </div>
+              <pre className="tool-call-detail-body">{inputJson}</pre>
+            </>
+          )}
+          {outputJson && (
+            <>
+              <div className="tool-call-detail-label">
+                {t("message.toolCallOutput")}
+              </div>
+              <pre className="tool-call-detail-body">{outputJson}</pre>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function safeJsonStringify(v: unknown): string {
+  if (v === undefined) return "";
+  try {
+    if (typeof v === "string") return v;
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}
+
 function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
   const { t } = useTranslation();
   const inputs = useMemo(() => m.images.filter((i) => i.role === "input"), [m.images]);
@@ -282,8 +514,12 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
   const canEditAssistant = isAssistant && hasText && !isStreamingDraft;
   const canEdit = canEditUser || canEditAssistant;
   const canQuote = hasText || inputs.length > 0 || outputs.length > 0;
+  const blocks = isAssistant ? m.params?.blocks : undefined;
+  const useBlocksRendering = Array.isArray(blocks) && blocks.length > 0;
   const thinkingContent =
-    isAssistant && typeof m.params?.thinking_content === "string"
+    !useBlocksRendering &&
+    isAssistant &&
+    typeof m.params?.thinking_content === "string"
       ? m.params.thinking_content.trim()
       : "";
 
@@ -537,7 +773,7 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
             </span>
           )}
 
-          {!editing && thinkingContent ? (
+          {!editing && !useBlocksRendering && thinkingContent ? (
             <ThinkingBlock
               content={thinkingContent}
               streaming={isStreamingDraft}
@@ -557,7 +793,16 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
             </div>
           )}
 
-          {!editing && hasText && !isError && <div className="text">{m.text}</div>}
+          {!editing && useBlocksRendering && (
+            <AssistantContent
+              blocks={blocks as AssistantBlock[]}
+              isStreaming={isStreamingDraft}
+            />
+          )}
+
+          {!editing && !useBlocksRendering && hasText && !isError && (
+            <div className="text">{m.text}</div>
+          )}
           {!editing && isError && <div className="text mono">{m.text}</div>}
 
           {editing && (
@@ -588,7 +833,7 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
                         title={t("message.editRemoveImage")}
                         onClick={() => removeDraftImage(img.id)}
                       >
-                        ×
+                        ?
                       </button>
                     </div>
                   ))}

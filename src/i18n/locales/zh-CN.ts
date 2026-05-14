@@ -124,6 +124,12 @@ const zhCN = {
     thinkingToggle: "推理过程",
     thinkingStreaming: "思考中",
     thinkingHint: "点击展开或收起",
+    toolCallRunning: "调用中",
+    toolCallDone: "已完成",
+    toolCallError: "失败",
+    toolCallToggle: "展开或收起详情",
+    toolCallInput: "输入",
+    toolCallOutput: "输出",
   },
   preview: {
     title: "预览",

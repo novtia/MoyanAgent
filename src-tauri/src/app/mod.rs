@@ -9,7 +9,9 @@ use tokio::sync::oneshot;
 use crate::ai::agent::config::mcp::McpRegistry;
 use crate::ai::agent::tools::agent_tool::{AgentTool, ChatRequestFactory};
 use crate::ai::agent::exec::engine::ProviderQueryEngine;
+use crate::ai::agent::exec::query::ToolEventCallback;
 use crate::ai::agent::memory::UserContextLoader;
+use crate::ai::agent::types::MessageEvent;
 use crate::ai::agent::{
     self, AgentRegistry, FileReadTool, FsSessionMemoryExtractor, FsUserContextLoader,
     NotificationQueue, ProviderEngine, QueryEngine, RunAgentParams, StaticMcpRegistry, Task,
@@ -107,7 +109,7 @@ fn build_history(
             None => true,
         })
         .filter(|m| {
-            // Skip empty turns (no text and no usable images) �?they don't add context.
+            // Skip empty turns (no text and no usable images) ?they don't add context.
             let has_text = m
                 .text
                 .as_deref()
@@ -222,6 +224,7 @@ async fn run_cancellable_generation(
     prompt: String,
     mut request: chat::ChatRequest,
     on_text_delta: Option<chat::TextDeltaCallback>,
+    on_tool_event: Option<ToolEventCallback>,
     project_cwd: Option<std::path::PathBuf>,
 ) -> AppResult<chat::GenerateResponse> {
     let cancel_rx = register_generation_cancel(state, session_id)?;
@@ -302,6 +305,7 @@ async fn run_cancellable_generation(
             permission_override: None,
             parent_system_prompt: None,
             on_text_delta,
+            on_tool_event,
             query_source: Some(agent::QuerySource::ReplMainThread),
             project_cwd,
         }) => out,
@@ -390,7 +394,7 @@ impl ChatRequestFactory for SettingsChatFactory {
 }
 
 /// wants to refresh `summary.md` for this session. Mirrors the
-/// `extractSessionMemory()` post-sampling pass �?non-blocking, best-effort.
+/// `extractSessionMemory()` post-sampling pass - non-blocking, best-effort.
 fn maybe_extract_session_memory(
     state: &AppState,
     app: &AppHandle,
@@ -414,12 +418,128 @@ fn maybe_extract_session_memory(
         .extract_now(session_id, &dir, latest.as_ref());
 }
 
+/// Shared accumulator for ordered assistant blocks emitted while a
+/// generation is in flight. Both [`stream_text_callback`] and
+/// [`tool_event_callback`] mutate the same buffer so the final order
+/// reflects exactly when text / thinking / tool events arrived from the
+/// engine. The caller drains the buffer once generation finishes (or is
+/// cancelled) to persist it onto the assistant message.
+type StreamBlocks = Arc<Mutex<Vec<serde_json::Value>>>;
+
+fn new_stream_blocks() -> StreamBlocks {
+    Arc::new(Mutex::new(Vec::new()))
+}
+
+fn snapshot_stream_blocks(blocks: &StreamBlocks) -> Vec<serde_json::Value> {
+    blocks
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
+
+/// Append a text delta to the ordered block list, merging with the
+/// trailing block when it is also a `text` block.
+fn append_text_delta_block(blocks: &mut Vec<serde_json::Value>, delta: &str) {
+    if delta.is_empty() {
+        return;
+    }
+    if let Some(last) = blocks.last_mut() {
+        if last.get("type").and_then(|v| v.as_str()) == Some("text") {
+            if let Some(content) = last.get_mut("content").and_then(|c| c.as_str()) {
+                let merged = format!("{content}{delta}");
+                if let Some(obj) = last.as_object_mut() {
+                    obj.insert("content".into(), serde_json::Value::String(merged));
+                }
+                return;
+            }
+        }
+    }
+    blocks.push(serde_json::json!({ "type": "text", "content": delta }));
+}
+
+/// Same as [`append_text_delta_block`] but for `thinking` blocks.
+fn append_thinking_delta_block(blocks: &mut Vec<serde_json::Value>, delta: &str) {
+    if delta.is_empty() {
+        return;
+    }
+    if let Some(last) = blocks.last_mut() {
+        if last.get("type").and_then(|v| v.as_str()) == Some("thinking") {
+            if let Some(content) = last.get_mut("content").and_then(|c| c.as_str()) {
+                let merged = format!("{content}{delta}");
+                if let Some(obj) = last.as_object_mut() {
+                    obj.insert("content".into(), serde_json::Value::String(merged));
+                }
+                return;
+            }
+        }
+    }
+    blocks.push(serde_json::json!({ "type": "thinking", "content": delta }));
+}
+
+/// Push a new `tool_use` block in `pending` state.
+fn record_tool_use_block(
+    blocks: &mut Vec<serde_json::Value>,
+    id: &str,
+    tool: &str,
+    input: &serde_json::Value,
+) {
+    blocks.push(serde_json::json!({
+        "type": "tool_use",
+        "id": id,
+        "tool": tool,
+        "input": input.clone(),
+        "status": "pending",
+    }));
+}
+
+/// Mutate the matching `tool_use` block in place with the tool result.
+/// No-op if the matching id can't be found (defensive against duplicated
+/// or out-of-order events).
+fn record_tool_result_block(
+    blocks: &mut Vec<serde_json::Value>,
+    id: &str,
+    output: &serde_json::Value,
+    is_error: bool,
+) {
+    for b in blocks.iter_mut().rev() {
+        if b.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
+            continue;
+        }
+        if b.get("id").and_then(|v| v.as_str()) != Some(id) {
+            continue;
+        }
+        if let Some(obj) = b.as_object_mut() {
+            obj.insert(
+                "status".into(),
+                serde_json::Value::String(
+                    if is_error { "error" } else { "success" }.into(),
+                ),
+            );
+            obj.insert("output".into(), output.clone());
+            if is_error {
+                obj.insert("is_error".into(), serde_json::Value::Bool(true));
+            }
+        }
+        return;
+    }
+}
+
 fn stream_text_callback(
     app: AppHandle,
     session_id: String,
     request_message_id: String,
+    blocks: StreamBlocks,
 ) -> chat::TextDeltaCallback {
     Arc::new(move |delta| {
+        if let Ok(mut g) = blocks.lock() {
+            if let Some(t) = delta.text.as_deref() {
+                append_text_delta_block(&mut g, t);
+            }
+            if let Some(t) = delta.thinking.as_deref() {
+                append_thinking_delta_block(&mut g, t);
+            }
+        }
         let _ = app.emit(
             "gen://stream",
             serde_json::json!({
@@ -429,6 +549,60 @@ fn stream_text_callback(
                 "thinking_delta": delta.thinking,
             }),
         );
+    })
+}
+
+/// Build the `gen://tool` callback. Mirrors [`stream_text_callback`]:
+/// updates the shared block buffer first, then forwards a structured
+/// payload to the renderer so the UI can render the tool card inline
+/// the moment the engine fires the event.
+fn tool_event_callback(
+    app: AppHandle,
+    session_id: String,
+    request_message_id: String,
+    blocks: StreamBlocks,
+) -> ToolEventCallback {
+    Arc::new(move |event| match event {
+        MessageEvent::ToolUse { id, tool, input } => {
+            if let Ok(mut g) = blocks.lock() {
+                record_tool_use_block(&mut g, id.as_str(), tool, input);
+            }
+            let _ = app.emit(
+                "gen://tool",
+                serde_json::json!({
+                    "session_id": &session_id,
+                    "request_message_id": &request_message_id,
+                    "type": "tool_use",
+                    "id": id.as_str(),
+                    "tool": tool,
+                    "input": input,
+                }),
+            );
+        }
+        MessageEvent::ToolResult {
+            id,
+            output,
+            is_error,
+            ..
+        } => {
+            if let Ok(mut g) = blocks.lock() {
+                record_tool_result_block(&mut g, id.as_str(), output, *is_error);
+            }
+            let _ = app.emit(
+                "gen://tool",
+                serde_json::json!({
+                    "session_id": &session_id,
+                    "request_message_id": &request_message_id,
+                    "type": "tool_result",
+                    "id": id.as_str(),
+                    "output": output,
+                    "is_error": is_error,
+                }),
+            );
+        }
+        // Other variants (Assistant text, User, Progress, CompactBoundary)
+        // aren't structural tool events - ignore them here.
+        _ => {}
     })
 }
 
@@ -1139,11 +1313,17 @@ fn finalize_generate_assistant_message(
     user_message_id: &str,
     params: &parameters::GenerationParameters,
     mut resp: chat::GenerateResponse,
+    blocks: Vec<serde_json::Value>,
 ) -> AppResult<GenerateResult> {
     resp.images = chat::dedupe_image_results(resp.images);
-    let assistant_params_json = params
-        .to_assistant_message_params(&resp.usage, resp.thinking_content.as_deref())
-        .to_string();
+    let mut assistant_params =
+        params.to_assistant_message_params(&resp.usage, resp.thinking_content.as_deref());
+    if !blocks.is_empty() {
+        if let Some(obj) = assistant_params.as_object_mut() {
+            obj.insert("blocks".into(), serde_json::Value::Array(blocks));
+        }
+    }
+    let assistant_params_json = assistant_params.to_string();
     let assistant = session::insert_message(
         conn,
         session_id,
@@ -1254,8 +1434,19 @@ async fn generate_image(
     );
 
     // 3) call the unified chat router
-    let on_text_delta =
-        stream_text_callback(app.clone(), req.session_id.clone(), user_msg.id.clone());
+    let stream_blocks = new_stream_blocks();
+    let on_text_delta = stream_text_callback(
+        app.clone(),
+        req.session_id.clone(),
+        user_msg.id.clone(),
+        stream_blocks.clone(),
+    );
+    let on_tool_event = tool_event_callback(
+        app.clone(),
+        req.session_id.clone(),
+        user_msg.id.clone(),
+        stream_blocks.clone(),
+    );
     let result = run_cancellable_generation(
         &state,
         &req.session_id,
@@ -1263,6 +1454,7 @@ async fn generate_image(
         req.prompt.clone(),
         chat_request,
         Some(on_text_delta),
+        Some(on_tool_event),
         project_cwd,
     )
     .await;
@@ -1279,6 +1471,7 @@ async fn generate_image(
     match result {
         Ok(resp) => {
             maybe_extract_session_memory(&state, &app, &req.session_id, &resp.usage);
+            let blocks = snapshot_stream_blocks(&stream_blocks);
             let conn = state.conn()?;
             finalize_generate_assistant_message(
                 &app,
@@ -1287,6 +1480,7 @@ async fn generate_image(
                 &user_msg.id,
                 &params,
                 resp,
+                blocks,
             )
         }
         Err(AppError::Canceled) => Err(AppError::Canceled),
@@ -1320,11 +1514,16 @@ fn save_cancelled_message(
     session_id: String,
     text: String,
     thinking: String,
+    blocks: Option<serde_json::Value>,
 ) -> Result<(), AppError> {
     let conn = state.conn()?;
     let trimmed_text = text.trim();
     let trimmed_thinking = thinking.trim();
-    if trimmed_text.is_empty() && trimmed_thinking.is_empty() {
+    let block_array = blocks
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .filter(|a| !a.is_empty());
+    if trimmed_text.is_empty() && trimmed_thinking.is_empty() && block_array.is_none() {
         return Ok(());
     }
     // Ensure session exists before writing.
@@ -1332,6 +1531,9 @@ fn save_cancelled_message(
     let mut params = serde_json::json!({ "cancelled": true });
     if !trimmed_thinking.is_empty() {
         params["thinking_content"] = serde_json::Value::String(trimmed_thinking.to_string());
+    }
+    if let Some(arr) = block_array {
+        params["blocks"] = serde_json::Value::Array(arr.clone());
     }
     let params_json = params.to_string();
     let text_opt = if trimmed_text.is_empty() { None } else { Some(trimmed_text) };
@@ -1440,10 +1642,18 @@ async fn regenerate_image(
         }),
     );
 
+    let stream_blocks = new_stream_blocks();
     let on_text_delta = stream_text_callback(
         app.clone(),
         req.session_id.clone(),
         req.user_message_id.clone(),
+        stream_blocks.clone(),
+    );
+    let on_tool_event = tool_event_callback(
+        app.clone(),
+        req.session_id.clone(),
+        req.user_message_id.clone(),
+        stream_blocks.clone(),
     );
     let result = run_cancellable_generation(
         &state,
@@ -1452,6 +1662,7 @@ async fn regenerate_image(
         prompt.to_string(),
         chat_request,
         Some(on_text_delta),
+        Some(on_tool_event),
         project_cwd,
     )
     .await;
@@ -1467,6 +1678,7 @@ async fn regenerate_image(
     match result {
         Ok(resp) => {
             maybe_extract_session_memory(&state, &app, &req.session_id, &resp.usage);
+            let blocks = snapshot_stream_blocks(&stream_blocks);
             let conn = state.conn()?;
             finalize_generate_assistant_message(
                 &app,
@@ -1475,6 +1687,7 @@ async fn regenerate_image(
                 &req.user_message_id,
                 &params,
                 resp,
+                blocks,
             )
         }
         Err(AppError::Canceled) => Err(AppError::Canceled),

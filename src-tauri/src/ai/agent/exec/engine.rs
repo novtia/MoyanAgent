@@ -18,16 +18,19 @@
 //! [`ProviderEngine::run_turn`] return type is the single seam that
 //! needs to forward `tool_use` requests upward.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::ai::agent::core::attachment::{Attachment, AttachmentKind};
 use crate::ai::agent::core::context::ToolUseContext;
 use crate::ai::agent::core::permission::{AllowAllResolver, PermissionRequest, PermissionResolver};
-use crate::ai::agent::exec::query::{QueryEngine, QueryFuture, QueryRequest, QueryResult};
+use crate::ai::agent::exec::query::{
+    QueryEngine, QueryFuture, QueryRequest, QueryResult, ToolEventCallback,
+};
 use crate::ai::agent::core::task::{Task, TaskId, TaskState, TaskStore};
 use crate::ai::agent::tools::{ToolInvocation, ToolPool, ToolResult};
 use crate::ai::agent::types::{AgentId, MessageEvent, MessageId};
-use crate::ai::chat::{ChatRequest, GenerateResponse, TextDeltaCallback};
+use crate::ai::chat::{ChatRequest, GenerateResponse, StreamDelta, TextDeltaCallback};
 use crate::ai::providers::ProviderFactory;
 use crate::error::AppResult;
 
@@ -173,6 +176,7 @@ impl QueryEngine for ProviderQueryEngine {
                 max_turns,
                 initial_attachments,
                 on_text_delta,
+                on_tool_event,
             } = request;
 
             // Push initial attachments (e.g. drained task-notifications)
@@ -208,14 +212,28 @@ impl QueryEngine for ProviderQueryEngine {
                     });
                 }
 
-                // Use streaming only when there are no pending tool_results.
-                // Tool-call turns must be buffered so the full tool_calls JSON
-                // arrives in one shot; all other turns (first turn and the
-                // final answer turn) can stream.
-                let turn_delta = if chat.tool_results.is_empty() {
-                    on_text_delta.clone()
-                } else {
-                    None
+                // Stream every turn — including tool-call turns and the
+                // final-answer turn. Provider streaming paths now
+                // correctly accumulate `tool_calls` deltas, so there is
+                // no longer any reason to fall back to a non-streaming
+                // call once `tool_results` are pending. Live blocks the
+                // host renders therefore reflect every thinking / text
+                // delta in real time across the whole agent loop.
+                //
+                // The callback is wrapped in a tracker so we can detect
+                // providers whose `chat_stream` impl is actually a
+                // synchronous `chat()` fallback (the default trait impl
+                // used by Claude / Gemini / Grok / Ark image SDK). In
+                // that case the wrapped callback is never invoked
+                // during the turn — we replay the response's
+                // text/thinking once afterwards so the host's block
+                // buffer still matches what the model produced.
+                let (turn_delta, tracker) = match on_text_delta.as_ref() {
+                    Some(cb) => {
+                        let (wrapped, t) = wrap_tracking_callback(cb.clone());
+                        (Some(wrapped), Some(t))
+                    }
+                    None => (None, None),
                 };
 
                 let turn = self
@@ -226,6 +244,26 @@ impl QueryEngine for ProviderQueryEngine {
                     response,
                     tool_uses,
                 } = turn;
+
+                if let (Some(cb), Some(tracker)) =
+                    (on_text_delta.as_ref(), tracker.as_ref())
+                {
+                    if tracker.thinking_chars.load(Ordering::Relaxed) == 0 {
+                        if let Some(t) = response
+                            .thinking_content
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                        {
+                            cb(StreamDelta::thinking(t.to_string()));
+                        }
+                    }
+                    if tracker.text_chars.load(Ordering::Relaxed) == 0 {
+                        if let Some(t) = response.text.as_deref().filter(|s| !s.is_empty()) {
+                            cb(StreamDelta::text(t.to_string()));
+                        }
+                    }
+                }
 
                 if let Some(text) = response.text.as_ref() {
                     events.push(MessageEvent::Assistant {
@@ -291,11 +329,13 @@ impl QueryEngine for ProviderQueryEngine {
                     tool_calls: response.tool_calls.clone(),
                 });
                 for req in &tool_uses {
-                    events.push(MessageEvent::ToolUse {
+                    let use_event = MessageEvent::ToolUse {
                         id: req.id.clone(),
                         tool: req.tool_name.clone(),
                         input: req.input.clone(),
-                    });
+                    };
+                    fire_tool_event(&on_tool_event, &use_event);
+                    events.push(use_event);
 
                     let invocation = ToolInvocation {
                         id: req.id.clone(),
@@ -325,12 +365,14 @@ impl QueryEngine for ProviderQueryEngine {
                         is_error: result.is_error,
                     });
 
-                    events.push(MessageEvent::ToolResult {
+                    let result_event = MessageEvent::ToolResult {
                         id: req.id.clone(),
                         tool: req.tool_name.clone(),
                         output: result.content,
                         is_error: result.is_error,
-                    });
+                    };
+                    fire_tool_event(&on_tool_event, &result_event);
+                    events.push(result_event);
                     tool_call_count += 1;
                 }
 
@@ -356,6 +398,47 @@ impl QueryEngine for ProviderQueryEngine {
             })
         })
     }
+}
+
+/// Helper: forward a structural tool event to the host's callback when
+/// one is registered. Centralised so call sites stay symmetrical with
+/// `events.push(...)` and never accidentally fire out of order.
+fn fire_tool_event(cb: &Option<ToolEventCallback>, event: &MessageEvent) {
+    if let Some(cb) = cb.as_ref() {
+        cb(event);
+    }
+}
+
+/// Counters tracking how much streamed content actually flowed through
+/// the wrapped callback during one turn. Used by the engine to decide
+/// whether a defensive post-turn replay is necessary (i.e. the provider
+/// silently fell back to a non-streaming call).
+struct DeltaTracker {
+    text_chars: AtomicUsize,
+    thinking_chars: AtomicUsize,
+}
+
+/// Wrap a [`TextDeltaCallback`] so we can observe whether the provider
+/// invoked it at all on a given turn. The returned `Arc<DeltaTracker>`
+/// is read once the turn completes.
+fn wrap_tracking_callback(
+    inner: TextDeltaCallback,
+) -> (TextDeltaCallback, Arc<DeltaTracker>) {
+    let tracker = Arc::new(DeltaTracker {
+        text_chars: AtomicUsize::new(0),
+        thinking_chars: AtomicUsize::new(0),
+    });
+    let t = tracker.clone();
+    let wrapped: TextDeltaCallback = Arc::new(move |delta| {
+        if let Some(s) = delta.text.as_deref() {
+            t.text_chars.fetch_add(s.chars().count(), Ordering::Relaxed);
+        }
+        if let Some(s) = delta.thinking.as_deref() {
+            t.thinking_chars.fetch_add(s.chars().count(), Ordering::Relaxed);
+        }
+        inner(delta);
+    });
+    (wrapped, tracker)
 }
 
 /// True iff the tool pool is empty. We can't check

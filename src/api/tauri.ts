@@ -162,8 +162,18 @@ export const api = {
   },
   cancelGeneration: (sessionId: string) =>
     invoke<void>("cancel_generation", { sessionId }),
-  saveCancelledMessage: (sessionId: string, text: string, thinking = "") =>
-    invoke<void>("save_cancelled_message", { sessionId, text, thinking }),
+  saveCancelledMessage: (
+    sessionId: string,
+    text: string,
+    thinking = "",
+    blocks: unknown[] | null = null,
+  ) =>
+    invoke<void>("save_cancelled_message", {
+      sessionId,
+      text,
+      thinking,
+      blocks,
+    }),
 
   // local editing
   editImage: (imageId: string, op: EditOp) =>
