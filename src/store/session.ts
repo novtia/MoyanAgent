@@ -744,11 +744,19 @@ export const useSession = create<SessionStore>((set, get) => {
 
   interrupt: async () => {
     const sid = get().activeId;
-    if (!sid || !get().busyBySession[sid]) return;
+    if (!sid || !get().busyBySession[sid]) {
+      console.log("[atelier] 中断对话：未执行（无会话或未在生成中）", {
+        sessionId: sid ?? null,
+        busyBySession: sid ? get().busyBySession[sid] : undefined,
+      });
+      return;
+    }
+    console.log("[atelier] 中断对话：调用 cancel_generation", { sessionId: sid });
     try {
       await api.cancelGeneration(sid);
+      console.log("[atelier] 中断对话：cancel_generation 已返回", { sessionId: sid });
     } catch (e) {
-      console.warn(e);
+      console.warn("[atelier] 中断对话：cancel_generation 失败", e);
     }
   },
   });

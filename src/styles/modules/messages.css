@@ -267,6 +267,12 @@
   width: 14px;
   height: 14px;
 }
+/* 与加图按钮同宽，非用户消息编辑时占位，使取消/保存与用户编辑对齐 */
+.bubble-edit-icon-placeholder {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+}
 .bubble-edit-images {
   display: flex;
   flex-wrap: wrap;
@@ -338,6 +344,17 @@
   padding-right: 0;
   max-width: 100%;
   width: 100%;
+}
+/* `.msg.assistant .bubble` 写在 `.msg.is-editing .bubble` 之后时会覆盖编辑态；
+   助手进入编辑时应与用户消息使用同一套 field 视觉。 */
+.msg.assistant.is-editing .bubble {
+  background: var(--field-bg);
+  border: 1px solid var(--field-border-focus);
+  color: var(--ink);
+  border-radius: var(--radius-lg);
+  padding: 14px 18px 12px;
+  box-shadow: var(--field-focus-ring);
+  transition: var(--field-transition);
 }
 .msg.error .bubble {
   background: var(--rose-50);

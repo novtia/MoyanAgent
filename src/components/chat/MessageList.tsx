@@ -278,7 +278,9 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
   const isError = m.role === "error";
   const isStreamingDraft = m.id.startsWith("tmp-assistant-");
   const hasText = !!(m.text && m.text.trim());
-  const canEdit = isUser && (hasText || inputs.length > 0);
+  const canEditUser = isUser && (hasText || inputs.length > 0);
+  const canEditAssistant = isAssistant && hasText && !isStreamingDraft;
+  const canEdit = canEditUser || canEditAssistant;
   const canQuote = hasText || inputs.length > 0 || outputs.length > 0;
   const thinkingContent =
     isAssistant && typeof m.params?.thinking_content === "string"
@@ -328,7 +330,7 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
   const beginEdit = () => {
     if (!canEdit) return;
     setDraft(m.text || "");
-    setDraftImages(inputs);
+    setDraftImages(isUser ? inputs : []);
     addedDraftIdsRef.current = new Set();
     setEditing(true);
   };
@@ -336,7 +338,7 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
     const orphans = Array.from(addedDraftIdsRef.current);
     addedDraftIdsRef.current = new Set();
     setDraft(m.text || "");
-    setDraftImages(inputs);
+    setDraftImages(isUser ? inputs : []);
     setEditing(false);
     if (orphans.length) await cleanupAddedDrafts(orphans);
   };
@@ -440,18 +442,18 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
     return types.includes("Files") || types.includes(ATELIER_DRAG_TYPE);
   };
   const onEditDragEnter = (e: React.DragEvent) => {
-    if (!editing || !editHasDragPayload(e)) return;
+    if (!isUser || !editing || !editHasDragPayload(e)) return;
     e.preventDefault();
     editDragDepth.current += 1;
     setEditDragOver(true);
   };
   const onEditDragOver = (e: React.DragEvent) => {
-    if (!editing || !editHasDragPayload(e)) return;
+    if (!isUser || !editing || !editHasDragPayload(e)) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
   };
   const onEditDragLeave = (e: React.DragEvent) => {
-    if (!editing || !editHasDragPayload(e)) return;
+    if (!isUser || !editing || !editHasDragPayload(e)) return;
     editDragDepth.current -= 1;
     if (editDragDepth.current <= 0) {
       editDragDepth.current = 0;
@@ -459,7 +461,7 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
     }
   };
   const onEditDrop = (e: React.DragEvent) => {
-    if (!editing || !editHasDragPayload(e)) return;
+    if (!isUser || !editing || !editHasDragPayload(e)) return;
     e.preventDefault();
     e.stopPropagation();
     editDragDepth.current = 0;
@@ -525,7 +527,7 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
     >
       <div className="msg-col">
         <div className="bubble">
-          {!isUser && (
+          {!isUser && !(editing && isAssistant) && (
             <span className="stamp">
               {isStreamingDraft
                 ? t("message.stampGenerating", { time: nowStamp(m.created_at) })
@@ -567,7 +569,7 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
               onDragLeave={onEditDragLeave}
               onDrop={onEditDrop}
             >
-              {(draftImages.length > 0 || picking) && (
+              {isUser && (draftImages.length > 0 || picking) && (
                 <div className="bubble-edit-images">
                   {draftImages.map((img, i) => (
                     <div
@@ -608,15 +610,19 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
                 }}
               />
               <div className="bubble-edit-actions">
-                <button
-                  type="button"
-                  className="bubble-edit-icon-btn"
-                  title={t("message.editAddImage")}
-                  onClick={addDraftImage}
-                  disabled={picking || draftImages.length >= MAX_EDIT_IMAGES}
-                >
-                  <PlusIcon />
-                </button>
+                {isUser ? (
+                  <button
+                    type="button"
+                    className="bubble-edit-icon-btn"
+                    title={t("message.editAddImage")}
+                    onClick={addDraftImage}
+                    disabled={picking || draftImages.length >= MAX_EDIT_IMAGES}
+                  >
+                    <PlusIcon />
+                  </button>
+                ) : (
+                  <span className="bubble-edit-icon-placeholder" aria-hidden />
+                )}
                 <span className="bubble-edit-spacer" />
                 <button
                   type="button"
@@ -641,7 +647,7 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
             </div>
           )}
 
-          {!editing && outputs.length > 0 && (
+          {outputs.length > 0 && (!editing || isAssistant) && (
             <div className="outputs">
               {outputs.map((img, i) => (
                 <div
