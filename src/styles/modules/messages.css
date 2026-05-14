@@ -669,6 +669,19 @@
 .todo-list-block .tool-call-summary {
   font-weight: 500;
 }
+.todo-progress {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+.todo-empty {
+  margin: 0;
+  padding: 8px 12px 10px;
+  font-size: 13px;
+  color: var(--ink-mute);
+  border-top: 1px solid var(--line);
+  background: var(--bg-sunk);
+}
 
 .todo-item-list {
   list-style: none;

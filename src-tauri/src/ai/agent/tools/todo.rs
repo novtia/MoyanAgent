@@ -109,17 +109,21 @@ impl TodoListTool {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
                 description: "\
-Manage an in-session to-do list to plan and track multi-step work. \
-Use it to break down complex tasks, record progress, and avoid losing track \
-of pending steps during a long agent run. \
-The list is ephemeral — it lives only for the current session.\n\n\
-Actions:\n\
-• add    – add one item (content: string) or multiple (content: array of strings)\n\
-• update – change content and/or status of an existing item (id required)\n\
-• remove – delete an item by id\n\
-• list   – return all items\n\
-• clear  – delete all items\n\n\
-Status values: pending | in_progress | done | cancelled"
+Manage an in-session task list. Follow these rules strictly:\n\n\
+WORKFLOW — only two phases:\n\
+1. PLAN (once, at the very start): call `add` with ALL planned steps at once as an \
+   array. Do NOT add more items later unless the user explicitly requests new tasks.\n\
+2. EXECUTE: as you complete each step, call `update` to set its status. \
+   Never add, remove, or clear items just because you started or finished a step.\n\n\
+Allowed actions:\n\
+• add    – ONE-TIME initialisation. Pass the full plan as a content array.\n\
+• update – Mark an item in_progress before you start it, done when finished, \
+           cancelled if explicitly skipped. Also use to correct the text of an item.\n\
+• list   – Retrieve the current list (e.g. to check ids).\n\
+• remove – Only if the user asks to delete a specific task.\n\
+• clear  – Only if the user asks to wipe the entire list.\n\n\
+Status lifecycle: pending → in_progress → done | cancelled\n\
+Never skip statuses or jump backwards."
                     .to_string(),
                 schema: json!({
                     "type": "object",

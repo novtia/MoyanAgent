@@ -302,6 +302,21 @@ function AssistantContent({
     }
     return -1;
   }, [blocks]);
+
+  // Pre-compute once so the map below can check cheaply.
+  const firstTodoIdx = useMemo(
+    () => blocks.findIndex((b) => b.type === "tool_use" && b.tool === "TodoList"),
+    [blocks],
+  );
+  const todoBlocks = useMemo(
+    () =>
+      blocks.filter(
+        (b): b is Extract<AssistantBlock, { type: "tool_use" }> =>
+          b.type === "tool_use" && b.tool === "TodoList",
+      ),
+    [blocks],
+  );
+
   return (
     <>
       {blocks.map((block, i) => {
@@ -323,8 +338,19 @@ function AssistantContent({
             </div>
           );
         }
+        // All TodoList blocks are collapsed into one persistent view;
+        // only the first occurrence renders the master card.
         if (block.tool === "TodoList") {
-          return <TodoListBlock key={`tool:${block.id}:${i}`} block={block} />;
+          if (i === firstTodoIdx) {
+            return (
+              <TodoMasterView
+                key="todo-master"
+                todoBlocks={todoBlocks}
+                isStreaming={isStreaming}
+              />
+            );
+          }
+          return null;
         }
         return <ToolCallBlock key={`tool:${block.id}:${i}`} block={block} />;
       })}
@@ -488,7 +514,12 @@ function ToolCallBlock({
   );
 }
 
-// ????? TodoList specialized block ?????????????????????????????????????????????
+// ????? TodoList: single merged master view ????????????????????????????????????
+//
+// All TodoList tool_use blocks in a message are collapsed into ONE persistent
+// card. The card replays every completed operation in order to derive the
+// current list state, so it always reflects the latest snapshot without
+// creating a new card per action.
 
 interface TodoItem {
   id: number;
@@ -496,65 +527,78 @@ interface TodoItem {
   status: "pending" | "in_progress" | "done" | "cancelled";
 }
 
-function parseTodoOutput(output: unknown): TodoItem[] | null {
-  if (!output || typeof output !== "object") return null;
-  const o = output as Record<string, unknown>;
-  const candidates: unknown[] =
-    Array.isArray(o.items)
-      ? (o.items as unknown[])
-      : Array.isArray(o.added)
-        ? (o.added as unknown[])
-        : o.updated
-          ? [o.updated]
-          : [];
-  if (!candidates.length) return null;
-  return candidates.flatMap((v) => {
+type TodoBlock = Extract<AssistantBlock, { type: "tool_use" }>;
+
+function parseRawItems(arr: unknown[]): TodoItem[] {
+  return arr.flatMap((v) => {
     if (!v || typeof v !== "object") return [];
     const item = v as Record<string, unknown>;
     if (typeof item.id !== "number" || typeof item.content !== "string") return [];
-    return [{
-      id: item.id as number,
-      content: item.content as string,
-      status: (item.status as TodoItem["status"]) ?? "pending",
-    }];
+    return [
+      {
+        id: item.id as number,
+        content: item.content as string,
+        status: (item.status as TodoItem["status"]) ?? "pending",
+      },
+    ];
   });
 }
 
-function todoActionSummary(
-  input: unknown,
-  output: unknown,
-  t: (key: string) => string,
-): string {
-  const inp = (input && typeof input === "object") ? (input as Record<string, unknown>) : {};
-  const out = (output && typeof output === "object") ? (output as Record<string, unknown>) : {};
-  const action = String(inp.action ?? "");
-  switch (action) {
-    case "add": {
-      const n = Array.isArray(out.added) ? out.added.length : 1;
-      const total = typeof out.total === "number" ? out.total : null;
-      return total !== null ? `+${n}  (${total} total)` : `+${n}`;
+/**
+ * Replay all completed TodoList operations in order and return the
+ * authoritative list state plus a `busy` flag (true while at least one
+ * block is still pending).
+ */
+function replayTodoBlocks(blocks: TodoBlock[]): {
+  items: TodoItem[];
+  busy: boolean;
+} {
+  let items: TodoItem[] = [];
+  let busy = false;
+
+  for (const block of blocks) {
+    if (block.status === "pending") {
+      busy = true;
+      continue;
     }
-    case "update": {
-      const updated = out.updated as Record<string, unknown> | undefined;
-      if (updated && typeof updated.content === "string") {
-        const s = updated.content as string;
-        return s.length > 36 ? s.slice(0, 36) + "?" : s;
-      }
-      return `id ${inp.id}`;
+    if (block.status === "error") continue;
+
+    const out =
+      block.output && typeof block.output === "object"
+        ? (block.output as Record<string, unknown>)
+        : {};
+    const inp =
+      block.input && typeof block.input === "object"
+        ? (block.input as Record<string, unknown>)
+        : {};
+    const action = String(inp.action ?? "");
+
+    if (action === "list" && Array.isArray(out.items)) {
+      items = parseRawItems(out.items as unknown[]);
+    } else if (action === "add" && Array.isArray(out.added)) {
+      items = [...items, ...parseRawItems(out.added as unknown[])];
+    } else if (action === "update" && out.updated) {
+      const u = out.updated as Record<string, unknown>;
+      items = items.map((it) =>
+        it.id === (u.id as number)
+          ? {
+              id: it.id,
+              content: typeof u.content === "string" ? u.content : it.content,
+              status:
+                typeof u.status === "string"
+                  ? (u.status as TodoItem["status"])
+                  : it.status,
+            }
+          : it,
+      );
+    } else if (action === "remove" && typeof out.removed_id === "number") {
+      items = items.filter((it) => it.id !== out.removed_id);
+    } else if (action === "clear") {
+      items = [];
     }
-    case "remove":
-      return `id ${inp.id}`;
-    case "list": {
-      const total = typeof out.total === "number" ? out.total : null;
-      return total !== null ? `${total} items` : "";
-    }
-    case "clear": {
-      const n = typeof out.cleared === "number" ? out.cleared : "?";
-      return `cleared ${n}`;
-    }
-    default:
-      return action;
   }
+
+  return { items, busy };
 }
 
 function TodoStatusIcon({ status }: { status: TodoItem["status"] }) {
@@ -562,7 +606,13 @@ function TodoStatusIcon({ status }: { status: TodoItem["status"] }) {
     return (
       <svg className="todo-item-icon done" viewBox="0 0 16 16" fill="none" aria-hidden>
         <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
-        <polyline points="5 8 7 10 11 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <polyline
+          points="5 8 7 10 11 6"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
       </svg>
     );
   }
@@ -590,50 +640,64 @@ function TodoStatusIcon({ status }: { status: TodoItem["status"] }) {
   );
 }
 
-function TodoListBlock({
-  block,
+function TodoMasterView({
+  todoBlocks,
+  isStreaming,
 }: {
-  block: Extract<AssistantBlock, { type: "tool_use" }>;
+  todoBlocks: TodoBlock[];
+  isStreaming: boolean;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
-  const status = block.status;
-  const items = useMemo(() => parseTodoOutput(block.output), [block.output]);
-  const summary = useMemo(
-    () => todoActionSummary(block.input, block.output, t),
-    [block.input, block.output, t],
+
+  const { items, busy } = useMemo(
+    () => replayTodoBlocks(todoBlocks),
+    [todoBlocks],
   );
 
-  const inp = block.input as Record<string, unknown> | null;
-  const action = String(inp?.action ?? "");
-  const showList =
-    open && items !== null && items.length > 0 && (action === "list" || action === "add" || action === "update");
+  const totalDone = items.filter((it) => it.status === "done").length;
+  const totalItems = items.length;
+  const overallPending = busy || (isStreaming && totalItems === 0);
+  const progressLabel = totalItems > 0 ? `${totalDone} / ${totalItems}` : null;
 
   return (
-    <div className={`tool-call-block todo-list-block ${status} ${open && items ? "is-open" : ""}`}>
+    <div
+      className={`tool-call-block todo-list-block todo-master ${overallPending ? "pending" : "success"} ${open ? "is-open" : ""}`}
+    >
       <button
         type="button"
         className="tool-call-summary"
         aria-expanded={open}
-        onClick={() => items && setOpen((v) => !v)}
-        disabled={!items}
+        onClick={() => totalItems > 0 && setOpen((v) => !v)}
+        disabled={totalItems === 0}
       >
-        <ToolCallIcon status={status} />
+        <svg
+          className="tool-call-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M9 11l3 3L22 4" />
+          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+        </svg>
         <span className="tool-call-name">{t("message.todoListTitle")}</span>
-        {summary && <span className="tool-call-args">{summary}</span>}
+        {progressLabel && (
+          <span className="tool-call-args todo-progress">{progressLabel}</span>
+        )}
         <span className="tool-call-spacer" aria-hidden />
-        <span className={`tool-call-badge ${status}`}>
-          {status === "pending"
-            ? t("message.toolCallRunning")
-            : status === "error"
-              ? t("message.toolCallError")
-              : t("message.toolCallDone")}
-        </span>
-        {items && items.length > 0 && <ThinkingChevronIcon />}
+        {busy && (
+          <span className="tool-call-badge pending">{t("message.toolCallRunning")}</span>
+        )}
+        {totalItems > 0 && <ThinkingChevronIcon />}
       </button>
-      {showList && (
+
+      {open && totalItems > 0 && (
         <ul className="todo-item-list" role="list">
-          {items!.map((item) => (
+          {items.map((item) => (
             <li key={item.id} className={`todo-item ${item.status}`}>
               <TodoStatusIcon status={item.status} />
               <span className="todo-item-content">{item.content}</span>
@@ -649,6 +713,10 @@ function TodoListBlock({
             </li>
           ))}
         </ul>
+      )}
+
+      {open && totalItems === 0 && !busy && (
+        <p className="todo-empty">{t("message.todoListEmpty")}</p>
       )}
     </div>
   );
