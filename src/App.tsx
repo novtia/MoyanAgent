@@ -43,6 +43,7 @@ export default function App() {
   const loadSettings = useSettings((s) => s.load);
   const settings = useSettings((s) => s.settings);
   const refreshList = useSession((s) => s.refreshList);
+  const createNew = useSession((s) => s.createNew);
   const refreshProjects = useProject((s) => s.refreshList);
   const setAspectRatio = useSession((s) => s.setAspectRatio);
   const setImageSize = useSession((s) => s.setImageSize);
@@ -112,6 +113,10 @@ export default function App() {
     window.location.hash = `#/settings/${tab}`;
     setRoute({ view: "settings", tab });
   };
+  const onNewChat = async () => {
+    await createNew();
+    openChat();
+  };
 
   return (
     <>
@@ -119,6 +124,11 @@ export default function App() {
         <TitleBar
           onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
           sidebarCollapsed={sidebarCollapsed}
+          canGoBack={route.view === "settings"}
+          onBack={openChat}
+          onNewChat={onNewChat}
+          onOpenSearch={() => setSearchOpen(true)}
+          onOpenSettings={() => openSettings("appearance")}
         />
         <div className="stage">
           {route.view === "settings" ? (

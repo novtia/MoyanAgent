@@ -294,10 +294,6 @@
 .project-item-header:hover {
   background: var(--bg-hover);
 }
-.project-item-header:hover .project-item-actions {
-  opacity: 1;
-  pointer-events: auto;
-}
 .project-item-folder-icon {
   display: flex;
   align-items: center;
@@ -318,25 +314,91 @@
   white-space: nowrap;
   min-width: 0;
 }
+.project-item-trailing {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 52px;
+  height: 24px;
+  margin-left: 4px;
+}
+.project-item-count {
+  flex-shrink: 0;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--ink-mute);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  transition: opacity 0.12s var(--ease-out);
+}
+.project-item-header:hover .project-item-count {
+  opacity: 0;
+  pointer-events: none;
+}
 /* Hover action buttons on the project item row */
 .project-item-actions {
+  position: absolute;
+  right: 0;
+  top: 50%;
   display: flex;
   align-items: center;
   gap: 1px;
   opacity: 0;
   pointer-events: none;
   flex-shrink: 0;
-  transition: opacity 0.1s;
+  transform: translateY(-50%);
+  transition: opacity 0.12s var(--ease-out);
+}
+.project-item-header:hover .project-item-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* ─── Sessions under project ─── */
+.project-sessions-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.22s var(--ease-out);
+}
+.project-sessions-wrap.is-expanded {
+  grid-template-rows: 1fr;
+}
+.project-sessions-inner {
+  overflow: hidden;
+  min-height: 0;
+}
 .project-sessions {
   padding-left: 18px;
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+  transition:
+    opacity 0.18s var(--ease-out),
+    transform 0.22s var(--ease-out);
+}
+.project-sessions-wrap.is-expanded .project-sessions {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 .project-sessions-empty {
   padding: 3px 10px 5px;
   font-size: 11.5px;
   color: var(--ink-mute);
+}
+@media (prefers-reduced-motion: reduce) {
+  .project-sessions-wrap,
+  .project-sessions {
+    transition: none;
+  }
+  .project-sessions-wrap.is-expanded .project-sessions {
+    transform: none;
+  }
 }
 .chat-item--nested {
   padding-left: 8px;

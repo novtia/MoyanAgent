@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "icons:ico": "node scripts/make-ico.mjs"
+    "icons:ico": "node scripts/make-ico.mjs",
+    "icons:gen": "python scripts/generate-icons.py"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",

@@ -20,15 +20,20 @@
 }
 .titlebar-left {
   display: inline-flex;
-  align-items: center;
-  gap: 2px;
+  align-items: stretch;
   height: 100%;
-  padding: 0 4px 0 6px;
+  padding: 0 2px 0 4px;
   flex-shrink: 0;
 }
+.titlebar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding-right: 2px;
+}
 .titlebar-action {
-  width: 28px;
-  height: 24px;
+  width: 32px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -38,27 +43,85 @@
   cursor: pointer;
   border-radius: 4px;
   padding: 0;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.12s, color 0.12s, opacity 0.12s;
 }
-.titlebar-action:hover {
+.titlebar-action:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--ink);
+}
+.titlebar-action:disabled {
+  opacity: 0.34;
+  cursor: default;
+}
+.titlebar-menus {
+  display: inline-flex;
+  align-items: stretch;
+  height: 100%;
+}
+.titlebar-menu {
+  position: relative;
+  height: 100%;
+}
+.titlebar-menu-btn {
+  height: 100%;
+  padding: 0 10px;
+  background: transparent;
+  border: none;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.12s, color 0.12s;
+}
+.titlebar-menu-btn:hover,
+.titlebar-menu-btn[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+.titlebar-menu-dropdown {
+  position: absolute;
+  top: calc(100% - 1px);
+  left: 0;
+  min-width: 168px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow-2);
+  z-index: 120;
+}
+.titlebar-menu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.titlebar-menu-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+.titlebar-menu-item:disabled {
+  opacity: 0.72;
+  cursor: default;
+}
+.titlebar-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
 }
 .titlebar-drag {
   flex: 1;
   height: 100%;
-  display: flex;
-  align-items: center;
   min-width: 0;
-  padding: 0 8px;
-}
-.titlebar-title {
-  font-size: 12px;
-  color: var(--ink-mute);
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .titlebar-controls {
   display: inline-flex;
@@ -96,7 +159,10 @@
   display: block;
   flex-shrink: 0;
   opacity: 0.88;
-  transition: opacity 0.12s ease;
+  transition: opacity 0.12s ease, filter 0.12s ease;
+}
+:root[data-theme="dark"] .titlebar-win-icon {
+  filter: invert(1);
 }
 .titlebar-btn:hover .titlebar-win-icon {
   opacity: 1;

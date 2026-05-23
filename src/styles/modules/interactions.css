@@ -1,5 +1,6 @@
 /* ───── universal click feedback ───── */
 .titlebar-action,
+.titlebar-menu-btn,
 .chat-actions button,
 .ghost-btn,
 .chat-more-item,
@@ -27,6 +28,7 @@
 }
 
 .titlebar-action:active:not(:disabled),
+.titlebar-menu-btn:active:not(:disabled),
 .chat-actions button:active:not(:disabled),
 .ghost-btn:active:not(:disabled),
 .chat-more-item:active:not(:disabled),

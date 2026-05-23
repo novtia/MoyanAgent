@@ -287,6 +287,22 @@ function ProjectSectionHeader() {
 
 // ─── Project item ─────────────────────────────────────────────────────────────
 
+const PROJECT_EXPANDED_KEY = "atelier.sidebar.projectExpanded";
+
+function readProjectExpandedMap(): Record<string, boolean> {
+  try {
+    const raw = window.localStorage.getItem(PROJECT_EXPANDED_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeProjectExpanded(projectId: string, expanded: boolean) {
+  const next = { ...readProjectExpandedMap(), [projectId]: expanded };
+  window.localStorage.setItem(PROJECT_EXPANDED_KEY, JSON.stringify(next));
+}
+
 interface ProjectItemProps {
   project: Project;
   sessions: SessionSummary[];
@@ -294,6 +310,7 @@ interface ProjectItemProps {
 }
 
 function ProjectItem({ project, sessions, onOpenChat }: ProjectItemProps) {
+  const { t } = useTranslation();
   const rename = useProject((s) => s.rename);
   const remove = useProject((s) => s.remove);
   const exportProjects = useProject((s) => s.exportProjects);
@@ -301,12 +318,31 @@ function ProjectItem({ project, sessions, onOpenChat }: ProjectItemProps) {
   const refreshSessionList = useSession((s) => s.refreshList);
   const activeId = useSession((s) => s.activeId);
   const [configOpen, setConfigOpen] = useState(false);
+  const [expanded, setExpanded] = useState(
+    () => readProjectExpandedMap()[project.id] ?? true,
+  );
+
+  useEffect(() => {
+    if (!sessions.some((s) => s.id === activeId)) return;
+    setExpanded(true);
+    writeProjectExpanded(project.id, true);
+  }, [activeId, project.id, sessions]);
+
+  const toggleExpanded = () => {
+    setExpanded((current) => {
+      const next = !current;
+      writeProjectExpanded(project.id, next);
+      return next;
+    });
+  };
 
   const handleNewSession = async (e: ReactMouseEvent) => {
     e.stopPropagation();
     const sessionId = await createNew();
     await api.assignSessionToProject(sessionId, project.id);
     await refreshSessionList();
+    setExpanded(true);
+    writeProjectExpanded(project.id, true);
     onOpenChat();
   };
 
@@ -365,52 +401,76 @@ function ProjectItem({ project, sessions, onOpenChat }: ProjectItemProps) {
   return (
     <>
     <div className="project-item">
-      <div className="project-item-header" onContextMenu={openProjectMenu}>
-        {/* 文件夹图标 */}
+      <div
+        className="project-item-header"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-label={expanded ? t("sidebar.collapseProject") : t("sidebar.expandProject")}
+        title={expanded ? t("sidebar.collapseProject") : t("sidebar.expandProject")}
+        onClick={toggleExpanded}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggleExpanded();
+          }
+        }}
+        onContextMenu={openProjectMenu}
+      >
         <span className="project-item-folder-icon">
           <FolderIcon />
         </span>
-        {/* 项目名 */}
         <span className="project-item-name" title={project.name}>
           {project.name}
         </span>
-        {/* 悬停显示的操作按钮 */}
-        <div className="project-item-actions">
-          <button
-            type="button"
-            className="side-icon-btn"
-            title="在此项目中新建会话"
-            onClick={handleNewSession}
-          >
-            <NewChatIcon />
-          </button>
-          <button
-            type="button"
-            className="side-icon-btn"
-            title="项目选项"
-            onClick={openProjectMenu}
-          >
-            <DotsIcon />
-          </button>
+        <div className="project-item-trailing">
+          {!expanded && sessions.length > 0 && (
+            <span className="project-item-count">{sessions.length}</span>
+          )}
+          <div className="project-item-actions">
+            <button
+              type="button"
+              className="side-icon-btn"
+              title="在此项目中新建会话"
+              onClick={handleNewSession}
+            >
+              <NewChatIcon />
+            </button>
+            <button
+              type="button"
+              className="side-icon-btn"
+              title="项目选项"
+              onClick={openProjectMenu}
+            >
+              <DotsIcon />
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="project-sessions">
-        {sessions.length === 0 ? (
-          <div className="project-sessions-empty">暂无会话</div>
-        ) : (
-          sessions.map((s) => (
-            <SessionItem
-              key={s.id}
-              session={s}
-              isActive={activeId === s.id}
-              className="chat-item--nested"
-              onOpenChat={onOpenChat}
-              projectId={project.id}
-              onOpenProjectConfig={() => setConfigOpen(true)}
-            />
-          ))
-        )}
+      <div
+        className={`project-sessions-wrap${expanded ? " is-expanded" : ""}`}
+        aria-hidden={!expanded}
+      >
+        <div className="project-sessions-inner">
+          <div className="project-sessions">
+            {sessions.length === 0 ? (
+              <div className="project-sessions-empty">{t("sidebar.noProjectSessions")}</div>
+            ) : (
+              sessions.map((s) => (
+                <SessionItem
+                  key={s.id}
+                  session={s}
+                  isActive={activeId === s.id}
+                  className="chat-item--nested"
+                  onOpenChat={onOpenChat}
+                  projectId={project.id}
+                  onOpenProjectConfig={() => setConfigOpen(true)}
+                />
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </div>
     {configOpen && (
