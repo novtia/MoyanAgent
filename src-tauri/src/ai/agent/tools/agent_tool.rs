@@ -228,6 +228,7 @@ impl AgentTool {
             query_source: None,
             // Sub-agents inherit CWD from the host process; no project context.
             project_cwd: None,
+            abort_signal: None,
         })
         .await?;
 

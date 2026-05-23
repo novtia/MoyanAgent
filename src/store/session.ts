@@ -93,7 +93,7 @@ interface SessionStore {
   clearComposer: () => void;
 
   send: () => Promise<void>;
-  interrupt: () => Promise<void>;
+  interrupt: () => void;
   resendMessage: (messageId: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   editMessage: (messageId: string, text: string, imageIds?: string[]) => Promise<void>;
@@ -170,6 +170,27 @@ function extractPartialStreamContent(
       .join("")
       .trim();
   return { text, thinking, blocks };
+}
+
+/** Persist in-flight stream content so a session reload does not wipe the UI. */
+async function persistPartialStreamIfAny(sessionId: string) {
+  const partial = extractPartialStreamContent(
+    useSession.getState().active?.messages ?? [],
+    sessionId,
+  );
+  if (!partial.text && !partial.thinking && partial.blocks.length === 0) {
+    return;
+  }
+  try {
+    await api.saveCancelledMessage(
+      sessionId,
+      partial.text,
+      partial.thinking,
+      partial.blocks.length > 0 ? partial.blocks : null,
+    );
+  } catch (saveErr) {
+    console.warn("Failed to save partial message", saveErr);
+  }
 }
 
 export const useSession = create<SessionStore>((set, get) => {
@@ -642,27 +663,17 @@ export const useSession = create<SessionStore>((set, get) => {
       await get().refreshList();
     } catch (e: unknown) {
       if (isGenerationCancelled(e)) {
-        const partial = extractPartialStreamContent(get().active?.messages ?? [], sid);
-        if (partial.text || partial.thinking || partial.blocks.length > 0) {
-          try {
-            await api.saveCancelledMessage(
-              sid,
-              partial.text,
-              partial.thinking,
-              partial.blocks.length > 0 ? partial.blocks : null,
-            );
-          } catch (saveErr) {
-            console.warn("Failed to save partial message", saveErr);
-          }
-        }
+        await persistPartialStreamIfAny(sid);
         await reloadActiveSessionIfViewing(sid);
         await get().refreshList();
         return;
       }
       console.error(e);
+      await persistPartialStreamIfAny(sid);
       await reloadActiveSessionIfViewing(sid);
       await get().refreshList();
     } finally {
+      cancellingSessions.delete(sid);
       setSessionBusy(sid, false);
     }
   },
@@ -762,20 +773,7 @@ export const useSession = create<SessionStore>((set, get) => {
       await get().refreshList();
     } catch (e: unknown) {
       if (isGenerationCancelled(e)) {
-        // Persist any partial streaming content before reloading from DB.
-        const partial = extractPartialStreamContent(get().active?.messages ?? [], sid);
-        if (partial.text || partial.thinking || partial.blocks.length > 0) {
-          try {
-            await api.saveCancelledMessage(
-              sid,
-              partial.text,
-              partial.thinking,
-              partial.blocks.length > 0 ? partial.blocks : null,
-            );
-          } catch (saveErr) {
-            console.warn("Failed to save partial message", saveErr);
-          }
-        }
+        await persistPartialStreamIfAny(sid);
         try {
           await reloadActiveSessionIfViewing(sid);
           await get().refreshList();
@@ -785,29 +783,29 @@ export const useSession = create<SessionStore>((set, get) => {
         return;
       }
       console.error(e);
+      await persistPartialStreamIfAny(sid);
       await reloadActiveSessionIfViewing(sid);
       await get().refreshList();
     } finally {
+      cancellingSessions.delete(sid);
       setSessionBusy(sid, false);
     }
   },
 
-  interrupt: async () => {
+  interrupt: () => {
     const sid = get().activeId;
     if (!sid || !get().busyBySession[sid]) {
-      console.log("[atelier] 中断对话：未执行（无会话或未在生成中）", {
-        sessionId: sid ?? null,
-        busyBySession: sid ? get().busyBySession[sid] : undefined,
-      });
       return;
     }
-    console.log("[atelier] 中断对话：调用 cancel_generation", { sessionId: sid });
-    try {
-      await api.cancelGeneration(sid);
-      console.log("[atelier] 中断对话：cancel_generation 已返回", { sessionId: sid });
-    } catch (e) {
-      console.warn("[atelier] 中断对话：cancel_generation 失败", e);
+    if (cancellingSessions.has(sid)) {
+      return;
     }
+    cancellingSessions.add(sid);
+    // Stop accepting stream deltas and release the send button immediately.
+    setSessionBusy(sid, false);
+    void api.cancelGeneration(sid).catch((e) => {
+      console.warn("[atelier] cancel_generation failed", e);
+    });
   },
   });
 });
@@ -850,6 +848,9 @@ interface StreamBuffer {
 }
 
 const streamingBuffers = new Map<string, StreamBuffer>();
+
+/** Sessions the user interrupted; ignore late stream events until the invoke returns. */
+const cancellingSessions = new Set<string>();
 
 /**
  * Append a text/thinking delta to a block list following the rule
@@ -972,6 +973,7 @@ function ensureGenerationStreamListener() {
     listen<GenerationStreamPayload>("gen://stream", (event) => {
       const payload = event.payload;
       const sessionId = payload.session_id;
+      if (sessionId && cancellingSessions.has(sessionId)) return;
       const textDelta = payload.text_delta ?? payload.delta ?? "";
       const thinkingDelta = payload.thinking_delta ?? "";
       if (!sessionId || (!textDelta && !thinkingDelta)) return;
@@ -1000,6 +1002,7 @@ function ensureGenerationStreamListener() {
       const payload = event.payload;
       const sessionId = payload.session_id;
       if (!sessionId) return;
+      if (cancellingSessions.has(sessionId)) return;
       const requestId = payload.request_message_id || sessionId;
       const prev = streamingBuffers.get(sessionId) ?? {
         blocks: [],

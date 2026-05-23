@@ -384,7 +384,7 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  max-width: min(640px, 100%);
+  width: 100%;
   margin: 4px 0 12px;
 }
 
@@ -501,7 +501,7 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  max-width: min(640px, 100%);
+  width: 100%;
   margin: 6px 0;
   border: 1px solid var(--line);
   border-radius: 10px;

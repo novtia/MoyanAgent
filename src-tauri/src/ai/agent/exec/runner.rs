@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use crate::ai::agent::config::definition::{AgentDefinition, Isolation};
 use crate::ai::agent::core::attachment::Attachment;
-use crate::ai::agent::core::context::{AbortHandle, ToolUseContext};
+use crate::ai::agent::core::context::{AbortHandle, AbortSignal, ToolUseContext};
 use crate::ai::agent::core::permission::PermissionMode;
 use crate::ai::agent::core::task::{Task, TaskId, TaskStore};
 use crate::ai::agent::core::worktree::WorktreeHandle;
@@ -62,6 +62,9 @@ pub struct RunAgentParams {
     ///   `<env>` block is emitted (suitable for plain chat sessions that
     ///   have no project context).
     pub project_cwd: Option<std::path::PathBuf>,
+    /// Shared cancellation controller for the main session. When set,
+    /// `cancel_generation` can abort in-flight provider/tool work promptly.
+    pub abort_signal: Option<AbortSignal>,
 }
 
 /// Output of [`run_agent`].
@@ -99,6 +102,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         on_tool_event,
         query_source,
         project_cwd,
+        abort_signal,
     } = params;
 
     let agent_id = AgentId::new();
@@ -158,11 +162,14 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         AgentRunMode::Fork => QuerySource::Forked,
         _ => QuerySource::Subagent,
     });
-    let (context, abort) = ToolUseContext::builder(agent_id.clone(), tool_cwd)
+    let mut ctx_builder = ToolUseContext::builder(agent_id.clone(), tool_cwd)
         .query_source(resolved_source)
         .permission_mode(permission_mode)
-        .parent_system_prompt(chat_request.system_prompt.clone())
-        .build();
+        .parent_system_prompt(chat_request.system_prompt.clone());
+    if let Some(signal) = abort_signal {
+        ctx_builder = ctx_builder.abort_signal(signal);
+    }
+    let (context, abort) = ctx_builder.build();
 
     task_store.set_state(&task_id, crate::ai::agent::core::task::TaskState::Running);
 

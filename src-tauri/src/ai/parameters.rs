@@ -125,21 +125,44 @@ impl GenerationParameters {
         }
     }
 
-    /// Send `thinking` control for all OpenAI-compatible chat completions endpoints.
-    /// Providers that don't support thinking will ignore the field; providers that
-    /// default to thinking-on (e.g. DeepSeek) require it to be explicitly disabled.
+    /// OpenRouter normalizes reasoning via the top-level `reasoning` object.
+    /// Do not combine this with `reasoning_effort` or DeepSeek's `thinking` field.
+    pub fn apply_openrouter_reasoning(&self, body: &mut Map<String, Value>) {
+        if let Some(effort) = self.model.resolved_thinking_effort() {
+            body.insert(
+                "reasoning".into(),
+                json!({
+                    "effort": effort,
+                    "enabled": true,
+                }),
+            );
+        }
+    }
+
+    /// DeepSeek direct API: `thinking.type` must be set explicitly.
     ///   - thinking enabled  → `{"thinking": {"type": "enabled"}}`
     ///   - thinking disabled → `{"thinking": {"type": "disabled"}}`
-    pub fn apply_openai_compat_thinking_object(
-        &self,
-        body: &mut Map<String, Value>,
-        _model: &str,
-        _endpoint: &str,
-    ) {
+    pub fn apply_deepseek_thinking_object(&self, body: &mut Map<String, Value>) {
         if self.model.resolved_thinking_effort().is_some() {
             body.insert("thinking".into(), json!({ "type": "enabled" }));
         } else {
             body.insert("thinking".into(), json!({ "type": "disabled" }));
+        }
+    }
+
+    /// Route thinking/reasoning controls to the shape each upstream expects.
+    pub fn apply_thinking_params(
+        &self,
+        body: &mut Map<String, Value>,
+        endpoint: &str,
+    ) {
+        if is_openrouter_endpoint(endpoint) {
+            self.apply_openrouter_reasoning(body);
+            return;
+        }
+        self.apply_openai_reasoning_effort(body);
+        if is_deepseek_endpoint(endpoint) {
+            self.apply_deepseek_thinking_object(body);
         }
     }
 
@@ -196,4 +219,16 @@ impl GenerationParameters {
         }
         v
     }
+}
+
+fn is_openrouter_endpoint(endpoint: &str) -> bool {
+    endpoint
+        .trim()
+        .to_ascii_lowercase()
+        .contains("openrouter.ai")
+}
+
+fn is_deepseek_endpoint(endpoint: &str) -> bool {
+    let e = endpoint.trim().to_ascii_lowercase();
+    e.contains("deepseek.com") || e.contains("deepseek.ai")
 }

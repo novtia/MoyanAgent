@@ -236,10 +236,19 @@ impl QueryEngine for ProviderQueryEngine {
                     None => (None, None),
                 };
 
-                let turn = self
-                    .provider
-                    .run_turn(chat.clone(), turn_delta)
-                    .await?;
+                let turn = tokio::select! {
+                    t = self.provider.run_turn(chat.clone(), turn_delta) => t?,
+                    _ = context.abort.wait_aborted() => {
+                        return Ok(QueryResult {
+                            final_text,
+                            thinking_content: final_thinking,
+                            events,
+                            usage,
+                            tool_call_count,
+                            images: final_images,
+                        });
+                    }
+                };
                 let EngineTurn {
                     response,
                     tool_uses,
@@ -329,6 +338,16 @@ impl QueryEngine for ProviderQueryEngine {
                     tool_calls: response.tool_calls.clone(),
                 });
                 for req in &tool_uses {
+                    if context.abort.aborted() {
+                        return Ok(QueryResult {
+                            final_text,
+                            thinking_content: final_thinking,
+                            events,
+                            usage,
+                            tool_call_count,
+                            images: final_images,
+                        });
+                    }
                     let use_event = MessageEvent::ToolUse {
                         id: req.id.clone(),
                         tool: req.tool_name.clone(),
@@ -354,10 +373,17 @@ impl QueryEngine for ProviderQueryEngine {
                         is_coordinator_worker: false,
                     };
 
-                    let result = tools
-                        .execute(&req.tool_name, invocation, perm, self.resolver.as_ref())
-                        .await
-                        .unwrap_or_else(|e| ToolResult::error(e.to_string()));
+                    let result = tokio::select! {
+                        r = tools.execute(
+                            &req.tool_name,
+                            invocation,
+                            perm,
+                            self.resolver.as_ref(),
+                        ) => r.unwrap_or_else(|e| ToolResult::error(e.to_string())),
+                        _ = context.abort.wait_aborted() => {
+                            ToolResult::error("generation cancelled")
+                        }
+                    };
 
                     chat.tool_results.push(crate::ai::chat::ToolResultMessage {
                         tool_call_id: req.id.0.clone(),

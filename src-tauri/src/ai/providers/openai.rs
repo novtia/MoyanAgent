@@ -210,7 +210,7 @@ async fn post_openrouter_chat(
     body: &mut Value,
     provider_label: &str,
 ) -> AppResult<String> {
-    let mut modality_stage: u8 = 0;
+    let mut modality_stage = openrouter_initial_modality_stage(request);
     let mut tools_stripped = false;
     'modalities: loop {
         apply_openrouter_modalities_stage(body, &request.model, modality_stage);
@@ -275,7 +275,7 @@ async fn post_openrouter_chat_stream(
     provider_label: &str,
     on_text_delta: TextDeltaCallback,
 ) -> AppResult<GenerateResponse> {
-    let mut modality_stage: u8 = 0;
+    let mut modality_stage = openrouter_initial_modality_stage(request);
     let mut tools_stripped = false;
     'modalities: loop {
         apply_openrouter_modalities_stage(body, &request.model, modality_stage);
@@ -1239,13 +1239,12 @@ fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) -> Value {
 
     let map = body.as_object_mut().unwrap();
     request.parameters.apply_model_params(map);
-    request.parameters.apply_openai_reasoning_effort(map);
-    request.parameters.apply_openai_compat_thinking_object(
-        map,
-        &request.model,
-        &request.provider.endpoint,
-    );
-    if is_openrouter_endpoint(&request.provider.endpoint) {
+    request
+        .parameters
+        .apply_thinking_params(map, &request.provider.endpoint);
+    if is_openrouter_endpoint(&request.provider.endpoint)
+        && openrouter_wants_image_output(request)
+    {
         if let Some(image_config) = request.parameters.image_config() {
             map.insert("image_config".into(), image_config);
         }
@@ -1413,8 +1412,7 @@ fn apply_responses_params(body: &mut Map<String, Value>, request: &ChatRequest) 
     if let Some(v) = params.model.max_tokens {
         body.insert("max_output_tokens".into(), json!(v));
     }
-    params.apply_openai_reasoning_effort(body);
-    params.apply_openai_compat_thinking_object(body, &request.model, &request.provider.endpoint);
+    params.apply_thinking_params(body, &request.provider.endpoint);
 }
 
 fn data_url(att: &AttachmentBytes) -> String {
@@ -1426,6 +1424,32 @@ fn is_openrouter_endpoint(endpoint: &str) -> bool {
         .trim()
         .to_ascii_lowercase()
         .contains("openrouter.ai")
+}
+
+/// Agent tool-calling requests must not ask OpenRouter for image output.
+fn openrouter_wants_image_output(request: &ChatRequest) -> bool {
+    if !request.tools.is_empty() {
+        return false;
+    }
+    if is_image_only_model(&request.model) {
+        return true;
+    }
+    if request.parameters.image_config().is_some() {
+        return true;
+    }
+    request
+        .model
+        .trim()
+        .to_ascii_lowercase()
+        .contains("image")
+}
+
+fn openrouter_initial_modality_stage(request: &ChatRequest) -> u8 {
+    if openrouter_wants_image_output(request) {
+        0
+    } else {
+        2
+    }
 }
 
 fn requested_modalities(model: &str) -> Value {
@@ -1465,8 +1489,11 @@ fn upstream_rejects_modalities(status: StatusCode, msg: &str) -> bool {
 /// produce a plain-text response rather than surfacing a hard error.
 fn upstream_rejects_tools(status: StatusCode, msg: &str) -> bool {
     let m = msg.to_ascii_lowercase();
-    status == StatusCode::NOT_FOUND
-        && (m.contains("tool use") || m.contains("tool_use") || m.contains("function call"))
+    matches!(status, StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST)
+        && (m.contains("tool use")
+            || m.contains("tool_use")
+            || m.contains("function call")
+            || m.contains("invalid_argument"))
 }
 
 fn strip_tools_from_body(body: &mut Value) {

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::oneshot;
+use crate::ai::agent::core::context::{AbortHandle, AbortSignal};
 
 use crate::ai::agent::config::mcp::McpRegistry;
 use crate::ai::agent::tools::agent_tool::{AgentTool, ChatRequestFactory};
@@ -25,7 +25,8 @@ use crate::media::{editor, images};
 
 pub struct AppState {
     pub pool: DbPool,
-    generation_cancel: Mutex<HashMap<String, oneshot::Sender<()>>>,
+    /// Per-session abort controllers for in-flight `generate_image` runs.
+    generation_abort: Mutex<HashMap<String, AbortHandle>>,
 
     /// Agent subsystem services. Kept on `AppState` so that any Tauri
     /// command can register tasks, fan out notifications, or pick up a
@@ -55,32 +56,35 @@ impl AppState {
     }
 }
 
-fn generation_cancel_lock(
+fn generation_abort_lock(
     state: &AppState,
-) -> AppResult<MutexGuard<'_, HashMap<String, oneshot::Sender<()>>>> {
+) -> AppResult<MutexGuard<'_, HashMap<String, AbortHandle>>> {
     state
-        .generation_cancel
+        .generation_abort
         .lock()
-        .map_err(|_| AppError::Other("generation cancellation lock poisoned".into()))
+        .map_err(|_| AppError::Other("generation abort lock poisoned".into()))
 }
 
-fn register_generation_cancel(
+/// Register a session-scoped abort controller and return the matching signal
+/// for the agent run. Repeated cancel clicks call [`AbortHandle::abort`] on the
+/// stored handle until the run finishes and the slot is cleared.
+fn register_generation_abort(
     state: &AppState,
     session_id: &str,
-) -> AppResult<oneshot::Receiver<()>> {
-    let (tx, rx) = oneshot::channel();
-    let mut guard = generation_cancel_lock(state)?;
+) -> AppResult<AbortSignal> {
+    let (signal, handle) = AbortSignal::new();
+    let mut guard = generation_abort_lock(state)?;
     if guard.contains_key(session_id) {
         return Err(AppError::Invalid(
             "generation already in progress for session".into(),
         ));
     }
-    guard.insert(session_id.to_string(), tx);
-    Ok(rx)
+    guard.insert(session_id.to_string(), handle);
+    Ok(signal)
 }
 
-fn clear_generation_cancel(state: &AppState, session_id: &str) {
-    if let Ok(mut guard) = state.generation_cancel.lock() {
+fn clear_generation_abort(state: &AppState, session_id: &str) {
+    if let Ok(mut guard) = state.generation_abort.lock() {
         guard.remove(session_id);
     }
 }
@@ -165,9 +169,9 @@ fn build_history(
 
 /// Run the primary session through the full agent runtime ([`agent::run_agent`]
 /// + [`ProviderQueryEngine`]): definition system prompt, tool loop, and task
-/// tracking. The per-session cancel channel races the run and returns
-/// [`AppError::Canceled`] without forcing an abort through the tool context
-/// (same coarse behaviour as before).
+/// tracking. The per-session abort controller races the run and returns
+/// [`AppError::Canceled`], propagating cancellation through the tool context
+/// so in-flight provider streams and tool calls can stop promptly.
 /// Resolve the project working directory for a session, if any.
 ///
 /// Returns `Some(path)` when the session belongs to a project that has a
@@ -227,7 +231,7 @@ async fn run_cancellable_generation(
     on_tool_event: Option<ToolEventCallback>,
     project_cwd: Option<std::path::PathBuf>,
 ) -> AppResult<chat::GenerateResponse> {
-    let cancel_rx = register_generation_cancel(state, session_id)?;
+    let abort_signal = register_generation_abort(state, session_id)?;
 
     // Drain any pending task-notifications addressed to the main loop and
     // prepend them to the chat history as hidden user-meta turns. This
@@ -308,10 +312,11 @@ async fn run_cancellable_generation(
             on_tool_event,
             query_source: Some(agent::QuerySource::ReplMainThread),
             project_cwd,
+            abort_signal: Some(abort_signal.clone()),
         }) => out,
-        _ = cancel_rx => Err(AppError::Canceled),
+        _ = abort_signal.wait_aborted() => Err(AppError::Canceled),
     };
-    clear_generation_cancel(state, session_id);
+    clear_generation_abort(state, session_id);
 
     let run = outcome?;
     Ok(chat::GenerateResponse {
@@ -436,6 +441,73 @@ fn snapshot_stream_blocks(blocks: &StreamBlocks) -> Vec<serde_json::Value> {
         .ok()
         .map(|g| g.clone())
         .unwrap_or_default()
+}
+
+fn concat_block_text(blocks: &[serde_json::Value], block_type: &str) -> String {
+    blocks
+        .iter()
+        .filter(|b| b.get("type").and_then(|v| v.as_str()) == Some(block_type))
+        .filter_map(|b| b.get("content").and_then(|c| c.as_str()))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+/// Persist streamed assistant output before the session is reloaded.
+///
+/// On upstream failure the UI has already rendered deltas from `gen://stream`;
+/// without this write, a DB reload would drop the in-flight assistant bubble and
+/// leave only the separate `error` row.
+fn persist_streamed_assistant_snapshot(
+    conn: &db::DbConn,
+    session_id: &str,
+    blocks: &[serde_json::Value],
+    fallback_text: Option<&str>,
+    fallback_thinking: Option<&str>,
+    mut params: serde_json::Value,
+) -> AppResult<()> {
+    session::get(conn, session_id)?;
+
+    let mut text = concat_block_text(blocks, "text");
+    if text.trim().is_empty() {
+        text = fallback_text.unwrap_or("").trim().to_string();
+    } else {
+        text = text.trim().to_string();
+    }
+    let mut thinking = concat_block_text(blocks, "thinking");
+    if thinking.trim().is_empty() {
+        thinking = fallback_thinking.unwrap_or("").trim().to_string();
+    } else {
+        thinking = thinking.trim().to_string();
+    }
+
+    let has_blocks = !blocks.is_empty();
+    if text.is_empty() && thinking.is_empty() && !has_blocks {
+        return Ok(());
+    }
+
+    if let Some(obj) = params.as_object_mut() {
+        if !thinking.is_empty() {
+            obj.insert(
+                "thinking_content".into(),
+                serde_json::Value::String(thinking.clone()),
+            );
+        }
+        if has_blocks {
+            obj.insert(
+                "blocks".into(),
+                serde_json::Value::Array(blocks.to_vec()),
+            );
+        }
+    }
+    let params_json = params.to_string();
+    let text_opt = if text.is_empty() {
+        None
+    } else {
+        Some(text.as_str())
+    };
+    session::insert_message(conn, session_id, "assistant", text_opt, Some(&params_json))?;
+    session::recompute_context_window_used(conn, session_id)?;
+    Ok(())
 }
 
 /// Append a text delta to the ordered block list, merging with the
@@ -1134,9 +1206,9 @@ fn cancel_generation(
     state: tauri::State<Arc<AppState>>,
     session_id: String,
 ) -> Result<(), AppError> {
-    let mut guard = generation_cancel_lock(&state)?;
-    if let Some(tx) = guard.remove(&session_id) {
-        let _ = tx.send(());
+    let guard = generation_abort_lock(&state)?;
+    if let Some(handle) = guard.get(&session_id) {
+        handle.abort();
     }
     Ok(())
 }
@@ -1486,6 +1558,15 @@ async fn generate_image(
         Err(AppError::Canceled) => Err(AppError::Canceled),
         Err(e) => {
             let conn = state.conn()?;
+            let blocks = snapshot_stream_blocks(&stream_blocks);
+            persist_streamed_assistant_snapshot(
+                &conn,
+                &req.session_id,
+                &blocks,
+                None,
+                None,
+                serde_json::json!({ "partial_before_error": true }),
+            )?;
             let msg_text = format!("{}", e);
             let err_msg = session::insert_message(
                 &conn,
@@ -1517,35 +1598,19 @@ fn save_cancelled_message(
     blocks: Option<serde_json::Value>,
 ) -> Result<(), AppError> {
     let conn = state.conn()?;
-    let trimmed_text = text.trim();
-    let trimmed_thinking = thinking.trim();
-    let block_array = blocks
+    let block_vec: Vec<serde_json::Value> = blocks
         .as_ref()
         .and_then(|v| v.as_array())
-        .filter(|a| !a.is_empty());
-    if trimmed_text.is_empty() && trimmed_thinking.is_empty() && block_array.is_none() {
-        return Ok(());
-    }
-    // Ensure session exists before writing.
-    session::get(&conn, &session_id)?;
-    let mut params = serde_json::json!({ "cancelled": true });
-    if !trimmed_thinking.is_empty() {
-        params["thinking_content"] = serde_json::Value::String(trimmed_thinking.to_string());
-    }
-    if let Some(arr) = block_array {
-        params["blocks"] = serde_json::Value::Array(arr.clone());
-    }
-    let params_json = params.to_string();
-    let text_opt = if trimmed_text.is_empty() { None } else { Some(trimmed_text) };
-    session::insert_message(
+        .map(|a| a.clone())
+        .unwrap_or_default();
+    persist_streamed_assistant_snapshot(
         &conn,
         &session_id,
-        "assistant",
-        text_opt,
-        Some(&params_json),
-    )?;
-    session::recompute_context_window_used(&conn, &session_id)?;
-    Ok(())
+        &block_vec,
+        Some(text.as_str()),
+        Some(thinking.as_str()),
+        serde_json::json!({ "cancelled": true }),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -1693,6 +1758,15 @@ async fn regenerate_image(
         Err(AppError::Canceled) => Err(AppError::Canceled),
         Err(e) => {
             let conn = state.conn()?;
+            let blocks = snapshot_stream_blocks(&stream_blocks);
+            persist_streamed_assistant_snapshot(
+                &conn,
+                &req.session_id,
+                &blocks,
+                None,
+                None,
+                serde_json::json!({ "partial_before_error": true }),
+            )?;
             let msg_text = format!("{}", e);
             let err_msg = session::insert_message(
                 &conn,
@@ -1973,7 +2047,7 @@ pub fn run() {
 
             app.manage(Arc::new(AppState {
                 pool,
-                generation_cancel: Mutex::new(HashMap::new()),
+                generation_abort: Mutex::new(HashMap::new()),
                 agent_registry: registry,
                 task_store,
                 notifications: Arc::new(NotificationQueue::new()),

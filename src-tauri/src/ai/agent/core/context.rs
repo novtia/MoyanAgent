@@ -122,8 +122,24 @@ impl AbortSignal {
         *self.rx.borrow()
     }
 
+    /// Block until [`AbortHandle::abort`] is invoked on this signal's controller.
+    pub async fn wait_aborted(&self) {
+        if self.aborted() {
+            return;
+        }
+        let mut rx = self.rx.clone();
+        let _ = rx.changed().await;
+    }
+
     pub fn child(&self) -> AbortSignal {
         self.clone()
+    }
+
+    /// Handle that aborts this signal (and any [`child`] clones).
+    pub fn controller(&self) -> AbortHandle {
+        AbortHandle {
+            tx: self._tx.clone(),
+        }
     }
 }
 
@@ -145,6 +161,9 @@ pub struct ToolUseContextBuilder {
     permission_mode: PermissionMode,
     user_context: Option<Arc<UserContext>>,
     parent_system_prompt: Option<String>,
+    /// When set, the built context shares this cancellation controller
+    /// (used by the main session so `cancel_generation` can stop in-flight work).
+    abort_signal: Option<AbortSignal>,
 }
 
 impl ToolUseContextBuilder {
@@ -156,7 +175,13 @@ impl ToolUseContextBuilder {
             permission_mode: PermissionMode::Default,
             user_context: None,
             parent_system_prompt: None,
+            abort_signal: None,
         }
+    }
+
+    pub fn abort_signal(mut self, signal: AbortSignal) -> Self {
+        self.abort_signal = Some(signal);
+        self
     }
 
     pub fn query_source(mut self, source: QuerySource) -> Self {
@@ -180,7 +205,13 @@ impl ToolUseContextBuilder {
     }
 
     pub fn build(self) -> (Arc<ToolUseContext>, AbortHandle) {
-        let (signal, handle) = AbortSignal::new();
+        let (signal, handle) = match self.abort_signal {
+            Some(signal) => {
+                let handle = signal.controller();
+                (signal, handle)
+            }
+            None => AbortSignal::new(),
+        };
         let ctx = ToolUseContext {
             agent_id: self.agent_id,
             query_source: self.query_source,

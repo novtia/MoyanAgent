@@ -748,11 +748,23 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
   const isStreamingDraft = m.id.startsWith("tmp-assistant-");
   const hasText = !!(m.text && m.text.trim());
   const canEditUser = isUser && (hasText || inputs.length > 0);
-  const canEditAssistant = isAssistant && hasText && !isStreamingDraft;
+  const canEditAssistant = isAssistant && !isStreamingDraft;
   const canEdit = canEditUser || canEditAssistant;
   const canQuote = hasText || inputs.length > 0 || outputs.length > 0;
   const blocks = isAssistant ? m.params?.blocks : undefined;
   const useBlocksRendering = Array.isArray(blocks) && blocks.length > 0;
+  const blocksText = useMemo(() => {
+    if (!Array.isArray(blocks)) return "";
+    return blocks
+      .filter((b): b is Extract<AssistantBlock, { type: "text" }> => b.type === "text")
+      .map((b) => b.content)
+      .join("")
+      .trim();
+  }, [blocks]);
+  // Agent messages render text from `blocks`; manual edits only update `m.text`.
+  // When blocks carry no text (e.g. tool-only replies), surface edited `m.text`.
+  const showMessageText =
+    hasText && (!useBlocksRendering || (m.text || "").trim() !== blocksText);
   const thinkingContent =
     !useBlocksRendering &&
     isAssistant &&
@@ -802,7 +814,7 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
 
   const beginEdit = () => {
     if (!canEdit) return;
-    setDraft(m.text || "");
+    setDraft((m.text || "").trim() || blocksText || "");
     setDraftImages(isUser ? inputs : []);
     addedDraftIdsRef.current = new Set();
     setEditing(true);
@@ -1037,7 +1049,7 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
             />
           )}
 
-          {!editing && !useBlocksRendering && hasText && !isError && (
+          {!editing && showMessageText && !isError && (
             <div className="text">{m.text}</div>
           )}
           {!editing && isError && <div className="text mono">{m.text}</div>}
