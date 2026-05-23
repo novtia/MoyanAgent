@@ -7,6 +7,7 @@ import { ImagePreview } from "./components/media/ImagePreview";
 import { SettingsView } from "./components/settings";
 import type { SettingsTab, ThemeMode } from "./components/settings";
 import { ContextMenuHost } from "./components/context-menu";
+import { ToastHost, DialogHost } from "./components/ui";
 import { SearchDialog } from "./components/search/SearchDialog";
 import { TitleBar } from "./components/layout/TitleBar";
 import { useSettings } from "./store/settings";
@@ -179,6 +180,8 @@ export default function App() {
         />
       )}
       <ContextMenuHost />
+      <ToastHost />
+      <DialogHost />
     </>
   );
 }

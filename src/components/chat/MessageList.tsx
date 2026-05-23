@@ -9,6 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
 import { srcOf, api } from "../../api/tauri";
+import { dialog } from "../ui";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { ATELIER_DRAG_TYPE } from "./SessionGallery";
 import type {
@@ -998,7 +999,8 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
     await resendMessage(m.id);
   };
   const onDelete = async () => {
-    if (!window.confirm(t("message.deleteConfirm"))) return;
+    const ok = await dialog.confirm(t("message.deleteConfirm"), { type: "danger", confirmLabel: t("common.delete") });
+    if (!ok) return;
     await deleteMessage(m.id);
   };
   const onCopy = () => {

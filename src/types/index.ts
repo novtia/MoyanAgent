@@ -245,3 +245,9 @@ export interface GenerateResult {
   user_message: MessageAbs;
   assistant_message: MessageAbs;
 }
+
+export interface ImportResult {
+  projects_imported: number;
+  sessions_imported: number;
+  messages_imported: number;
+}

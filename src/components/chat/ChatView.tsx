@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
+import { dialog } from "../ui";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { EmptyChat } from "./EmptyChat";
@@ -66,15 +67,13 @@ export function ChatView({
                     <button
                       type="button"
                       className="chat-more-item danger"
-                      onClick={() => {
-                        if (
-                          active &&
-                          window.confirm(
-                            t("chat.deleteSessionConfirm", {
-                              title: active.session.title,
-                            }),
-                          )
-                        ) {
+                      onClick={async () => {
+                        if (!active) return;
+                        const ok = await dialog.confirm(
+                          t("chat.deleteSessionConfirm", { title: active.session.title }),
+                          { type: "danger", confirmLabel: t("common.delete"), title: t("chat.deleteSession") },
+                        );
+                        if (ok) {
                           remove(active.session.id);
                           setMoreOpen(false);
                         }

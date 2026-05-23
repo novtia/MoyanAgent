@@ -1,0 +1,280 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   ui.css — Toast 通知 + Dialog 弹窗告示 样式
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* ═══ Toast ══════════════════════════════════════════════════════════════════ */
+
+@keyframes toast-in {
+  0% {
+    opacity: 0;
+    transform: translateX(100%) scale(0.92);
+  }
+  60% {
+    opacity: 1;
+    transform: translateX(-4px) scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes toast-out {
+  0% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+    max-height: 120px;
+    margin-bottom: 8px;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(40px) scale(0.92);
+    max-height: 0;
+    margin-bottom: 0;
+  }
+}
+
+.toast-host {
+  position: fixed;
+  top: calc(var(--titlebar-height, 32px) + 12px);
+  right: 16px;
+  z-index: 9000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: 340px;
+  width: 340px;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px 11px 13px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  box-shadow: var(--shadow-pop);
+  pointer-events: auto;
+  animation: toast-in 0.3s var(--ease-pop) both;
+  min-height: 44px;
+}
+
+.toast--exit {
+  animation: toast-out 0.32s var(--ease-out) both;
+}
+
+/* Variant colour strips */
+.toast--success { border-left: 3px solid var(--green-500); }
+.toast--error   { border-left: 3px solid var(--rose-500); }
+.toast--warning { border-left: 3px solid #f59e0b; }
+.toast--info    { border-left: 3px solid var(--blue-500); }
+
+.toast-icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.toast-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.toast--success .toast-icon { color: var(--green-500); }
+.toast--error   .toast-icon { color: var(--rose-500); }
+.toast--warning .toast-icon { color: #f59e0b; }
+.toast--info    .toast-icon { color: var(--blue-500); }
+
+.toast-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toast-message {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.toast-description {
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.toast-close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: pointer;
+  padding: 0;
+  margin-top: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.toast-close:hover {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+.toast-close svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ═══ Dialog ═════════════════════════════════════════════════════════════════ */
+
+@keyframes dialog-in {
+  0% {
+    opacity: 0;
+    transform: translateY(16px) scale(0.9);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-3px) scale(1.01);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.dialog-backdrop {
+  /* Sits above everything else including modals */
+  z-index: 9100;
+}
+
+.dialog {
+  background: var(--bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  border: 1px solid var(--line);
+  width: min(420px, 90vw);
+  overflow: hidden;
+  animation: dialog-in 0.24s var(--ease-pop) both;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Icon strip at the top */
+.dialog-icon-strip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 0 0;
+}
+
+.dialog-icon-strip svg {
+  width: 36px;
+  height: 36px;
+}
+
+.dialog-icon-strip--default svg { color: var(--blue-500); }
+.dialog-icon-strip--warning svg { color: #f59e0b; }
+.dialog-icon-strip--danger  svg { color: var(--rose-500); }
+
+.dialog-inner {
+  padding: 14px 24px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dialog-title {
+  margin: 0;
+  font-family: 'Instrument Sans', sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  text-align: center;
+}
+
+.dialog-body {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  text-align: center;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dialog-input {
+  width: 100%;
+  margin-top: 2px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.dialog-actions .btn {
+  min-width: 96px;
+}
+
+/* warning variant button */
+.btn.warning {
+  color: #92400e;
+  border-color: #fbbf24;
+  background: #fffbeb;
+}
+.btn.warning:hover {
+  background: #fef3c7;
+  border-color: #f59e0b;
+}
+
+:root[data-theme="dark"] .btn.warning {
+  color: #fde68a;
+  border-color: #78350f;
+  background: #1c1308;
+}
+:root[data-theme="dark"] .btn.warning:hover {
+  background: #291c09;
+}
+
+/* ─── form field (shared, referenced from Dialog prompt input) ─── */
+.field {
+  display: block;
+  width: 100%;
+  padding: var(--field-padding-y) var(--field-padding-x);
+  font-family: inherit;
+  font-size: var(--field-font-size);
+  line-height: var(--field-line-height);
+  color: var(--ink);
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+  border-radius: var(--field-radius);
+  outline: none;
+  transition: var(--field-transition);
+}
+.field:hover {
+  border-color: var(--field-border-hover);
+}
+.field:focus {
+  border-color: var(--field-border-focus);
+  box-shadow: var(--field-focus-ring);
+}
+.field::placeholder {
+  color: var(--ink-mute);
+}

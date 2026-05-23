@@ -235,6 +235,15 @@
   flex-shrink: 0;
   color: var(--ink-soft);
 }
+.side-nav-dropdown-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.side-nav-dropdown-separator {
+  height: 1px;
+  background: var(--line);
+  margin: 3px 4px;
+}
 
 /* ─── Section headers ─── */
 .side-section-header {

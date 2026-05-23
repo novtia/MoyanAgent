@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { openContextMenu } from "../context-menu";
 import { useSession } from "../../store/session";
+import { dialog } from "../ui";
 import type { ModelParamSettings, SessionSummary } from "../../types";
 import { EMPTY_MODEL_PARAMS } from "../settings/llm/modelServices";
 import { NUMERIC_FIELDS } from "../settings/llm/modelParams";
@@ -115,10 +116,12 @@ export function SessionItem({
         id: "session-delete",
         label: t("sessions.deleteTitle"),
         danger: true,
-        onSelect: () => {
-          if (window.confirm(t("sessions.deleteConfirm", { title: session.title }))) {
-            remove(session.id);
-          }
+        onSelect: async () => {
+          const ok = await dialog.confirm(
+            t("sessions.deleteConfirm", { title: session.title }),
+            { type: "danger", confirmLabel: t("common.delete"), title: t("sessions.deleteTitle") },
+          );
+          if (ok) remove(session.id);
         },
       },
     ]);

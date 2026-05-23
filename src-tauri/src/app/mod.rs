@@ -1905,7 +1905,38 @@ fn export_image(
     Ok(())
 }
 
-// ????????? Decorated DTOs (with abs_path) ?????????
+// ─── Project / Session Transfer (export + import) ────────────────────────────
+
+#[tauri::command]
+fn export_projects_archive(
+    state: tauri::State<Arc<AppState>>,
+    app: AppHandle,
+    project_ids: Vec<String>,
+    dest_path: String,
+) -> Result<(), AppError> {
+    crate::data::transfer::export_projects(&app, &state.pool, &project_ids, &dest_path)
+}
+
+#[tauri::command]
+fn export_session_archive(
+    state: tauri::State<Arc<AppState>>,
+    app: AppHandle,
+    session_id: String,
+    dest_path: String,
+) -> Result<(), AppError> {
+    crate::data::transfer::export_session(&app, &state.pool, &session_id, &dest_path)
+}
+
+#[tauri::command]
+fn import_archive(
+    state: tauri::State<Arc<AppState>>,
+    app: AppHandle,
+    archive_path: String,
+) -> Result<crate::data::transfer::ImportResult, AppError> {
+    crate::data::transfer::import_archive(&app, &state.pool, &archive_path)
+}
+
+// ─── Decorated DTOs (with abs_path) ──────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
 struct ImageRefAbs {
@@ -2103,6 +2134,9 @@ pub fn run() {
             save_cancelled_message,
             edit_image,
             export_image,
+            export_projects_archive,
+            export_session_archive,
+            import_archive,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

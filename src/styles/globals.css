@@ -34,5 +34,7 @@
 
 @import './modules/settings.css';
 
+@import './modules/ui.css';
+
 @import './modules/interactions.css';
 @import './modules/responsive.css';

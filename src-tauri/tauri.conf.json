@@ -15,9 +15,9 @@
       {
         "title": "Atelier · gpt-image-2",
         "width": 1280,
-        "height": 820,
-        "minWidth": 960,
-        "minHeight": 640,
+        "height": 720,
+        "minWidth": 1280,
+        "minHeight": 720,
         "resizable": true,
         "fullscreen": false,
         "decorations": false,

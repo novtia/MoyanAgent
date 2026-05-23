@@ -4,3 +4,4 @@ pub(crate) mod paths;
 pub(crate) mod project;
 pub(crate) mod session;
 pub(crate) mod settings;
+pub(crate) mod transfer;

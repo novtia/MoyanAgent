@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, srcOf } from "../../api/tauri";
+import { toast } from "../ui";
 import type { AttachmentDraft, ImageRefAbs } from "../../types";
 
 interface Props {
@@ -237,7 +238,7 @@ export function TransformTool({ target, busy, setBusy, onApplied }: Props) {
       }
     } catch (e) {
       console.error(e);
-      alert(`${t("editor.transform.applyError")}: ${e}`);
+      toast.error(`${t("editor.transform.applyError")}: ${e}`);
     } finally {
       setBusy(false);
     }

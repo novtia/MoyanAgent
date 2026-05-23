@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api, srcOf } from "../../api/tauri";
+import { toast } from "../ui";
 import type { AttachmentDraft } from "../../types";
 
 interface Props {
@@ -171,7 +172,7 @@ export function MaskTool({ target, busy, setBusy, onApplied }: Props) {
     const dataUrl = out.toDataURL("image/png");
     const base64 = dataUrl.split(",")[1] || "";
     if (!base64) {
-      alert(t("editor.mask.generateError"));
+      toast.error(t("editor.mask.generateError"));
       return;
     }
     setBusy(true);
@@ -193,7 +194,7 @@ export function MaskTool({ target, busy, setBusy, onApplied }: Props) {
       });
     } catch (e) {
       console.error(e);
-      alert(`${t("editor.mask.applyError")}: ${e}`);
+      toast.error(`${t("editor.mask.applyError")}: ${e}`);
     } finally {
       setBusy(false);
     }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import Cropper, { type Area } from "react-easy-crop";
 import { useTranslation } from "react-i18next";
 import { api, srcOf } from "../../api/tauri";
+import { toast } from "../ui";
 import type { AttachmentDraft } from "../../types";
 
 interface Props {
@@ -51,7 +52,7 @@ export function CropTool({ target, busy, setBusy, onApplied }: Props) {
       });
     } catch (e) {
       console.error(e);
-      alert(`${t("editor.crop.error")}: ${e}`);
+      toast.error(`${t("editor.crop.error")}: ${e}`);
     } finally {
       setBusy(false);
     }

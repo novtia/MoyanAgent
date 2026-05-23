@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ModelParamSettings, Project } from "../types";
+import type { ImportResult, ModelParamSettings, Project } from "../types";
 import { api } from "../api/tauri";
 
 interface ProjectStore {
@@ -17,6 +17,8 @@ interface ProjectStore {
     llmParams: ModelParamSettings,
     contextWindow: number | null,
   ) => Promise<void>;
+  exportProjects: (projectIds: string[], destPath: string) => Promise<void>;
+  importArchive: (archivePath: string) => Promise<ImportResult>;
 }
 
 export const useProject = create<ProjectStore>((set, get) => ({
@@ -57,5 +59,15 @@ export const useProject = create<ProjectStore>((set, get) => ({
   updateConfig: async (id, systemPrompt, historyTurns, llmParams, contextWindow) => {
     await api.updateProjectConfig(id, systemPrompt, historyTurns, llmParams, contextWindow);
     await get().refreshList();
+  },
+
+  exportProjects: async (projectIds, destPath) => {
+    await api.exportProjectsArchive(projectIds, destPath);
+  },
+
+  importArchive: async (archivePath) => {
+    const result = await api.importArchive(archivePath);
+    await get().refreshList();
+    return result;
   },
 }));

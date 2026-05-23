@@ -5,6 +5,7 @@ import type {
   EditOp,
   GenerateResult,
   ImageRefAbs,
+  ImportResult,
   LlmModelCatalog,
   MessageAbs,
   ModelParamSettings,
@@ -179,9 +180,19 @@ export const api = {
   editImage: (imageId: string, op: EditOp) =>
     invoke<ImageRefAbs>("edit_image", { args: { image_id: imageId, op } }),
 
-  // export
+  // export image
   exportImage: (imageId: string, destPath: string) =>
     invoke<void>("export_image", { args: { image_id: imageId, dest_path: destPath } }),
+
+  // project / session transfer
+  exportProjectsArchive: (projectIds: string[], destPath: string) =>
+    invoke<void>("export_projects_archive", { projectIds, destPath }),
+
+  exportSessionArchive: (sessionId: string, destPath: string) =>
+    invoke<void>("export_session_archive", { sessionId, destPath }),
+
+  importArchive: (archivePath: string) =>
+    invoke<ImportResult>("import_archive", { archivePath }),
 };
 
 export function srcOf(absPath: string | null | undefined): string {

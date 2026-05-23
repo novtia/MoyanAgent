@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { SessionList } from "./SessionList";
 import { SessionItem } from "./SessionItem";
 import { ProjectConfigModal } from "./ProjectConfigModal";
@@ -9,6 +9,7 @@ import { useProject } from "../../store/project";
 import { api } from "../../api/tauri";
 import type { Project, SessionSummary } from "../../types";
 import { openContextMenu } from "../context-menu";
+import { toast, dialog } from "../ui";
 
 interface SidebarProps {
   onOpenSettings: () => void;
@@ -112,10 +113,12 @@ function useProjectActions() {
   const createBlank = useProject((s) => s.createBlank);
   const createFromFolder = useProject((s) => s.createFromFolder);
   const reorder = useProject((s) => s.reorder);
+  const importArchive = useProject((s) => s.importArchive);
   const [showSortHint, setShowSortHint] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const handleCreateBlank = async () => {
-    const name = prompt("项目名称");
+    const name = await dialog.prompt("请输入项目名称", { placeholder: "新项目" });
     if (!name?.trim()) return;
     await createBlank(name.trim());
   };
@@ -129,6 +132,30 @@ function useProjectActions() {
     await createFromFolder(folderName, folderPath);
   };
 
+  const handleImportArchive = async () => {
+    const archivePath = await openDialog({
+      multiple: false,
+      title: "选择 .atelier 归档文件",
+      filters: [{ name: "Atelier 归档", extensions: ["atelier"] }],
+    });
+    if (!archivePath) return;
+    setImporting(true);
+    try {
+      const result = await importArchive(archivePath as string);
+      toast.success(
+        "导入成功",
+        {
+          description: `项目 ${result.projects_imported} 个 · 会话 ${result.sessions_imported} 个 · 消息 ${result.messages_imported} 条`,
+          duration: 5000,
+        },
+      );
+    } catch (err) {
+      toast.error("导入失败", { description: String(err) });
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const handleSort = () => {
     const sorted = [...projects].sort((a, b) => a.name.localeCompare(b.name));
     reorder(sorted.map((p) => p.id));
@@ -136,7 +163,7 @@ function useProjectActions() {
     setTimeout(() => setShowSortHint(false), 1500);
   };
 
-  return { handleCreateBlank, handleCreateFromFolder, handleSort, showSortHint };
+  return { handleCreateBlank, handleCreateFromFolder, handleImportArchive, handleSort, showSortHint, importing };
 }
 
 // ─── Shared action buttons (sort + new project dropdown) ──────────────────────
@@ -147,7 +174,7 @@ interface ProjectActionBtnsProps {
 }
 
 function ProjectActionBtns({ onSort, sortHint }: ProjectActionBtnsProps) {
-  const { handleCreateBlank, handleCreateFromFolder } = useProjectActions();
+  const { handleCreateBlank, handleCreateFromFolder, handleImportArchive, importing } = useProjectActions();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const newBtnRef = useRef<HTMLButtonElement>(null);
@@ -176,6 +203,11 @@ function ProjectActionBtns({ onSort, sortHint }: ProjectActionBtnsProps) {
     await handleCreateFromFolder();
   };
 
+  const onImport = async () => {
+    setDropdownOpen(false);
+    await handleImportArchive();
+  };
+
   return (
     <div className="side-project-action-btns">
       <button
@@ -191,7 +223,7 @@ function ProjectActionBtns({ onSort, sortHint }: ProjectActionBtnsProps) {
           ref={newBtnRef}
           type="button"
           className="side-icon-btn"
-          title="新建项目"
+          title="新建 / 导入项目"
           onClick={(e) => { e.stopPropagation(); setDropdownOpen((v) => !v); }}
         >
           <PlusIcon />
@@ -205,6 +237,16 @@ function ProjectActionBtns({ onSort, sortHint }: ProjectActionBtnsProps) {
             <button type="button" className="side-nav-dropdown-item" onClick={onCreateFromFolder}>
               <FolderOpenIcon />
               <span>使用现有文件夹</span>
+            </button>
+            <div className="side-nav-dropdown-separator" />
+            <button
+              type="button"
+              className="side-nav-dropdown-item"
+              onClick={onImport}
+              disabled={importing}
+            >
+              <ImportIcon />
+              <span>{importing ? "导入中…" : "从归档导入"}</span>
             </button>
           </div>
         )}
@@ -254,6 +296,7 @@ interface ProjectItemProps {
 function ProjectItem({ project, sessions, onOpenChat }: ProjectItemProps) {
   const rename = useProject((s) => s.rename);
   const remove = useProject((s) => s.remove);
+  const exportProjects = useProject((s) => s.exportProjects);
   const createNew = useSession((s) => s.createNew);
   const refreshSessionList = useSession((s) => s.refreshList);
   const activeId = useSession((s) => s.activeId);
@@ -267,6 +310,21 @@ function ProjectItem({ project, sessions, onOpenChat }: ProjectItemProps) {
     onOpenChat();
   };
 
+  const handleExportProject = async () => {
+    const destPath = await saveDialog({
+      title: "导出项目归档",
+      defaultPath: `${project.name}.atelier`,
+      filters: [{ name: "Atelier 归档", extensions: ["atelier"] }],
+    });
+    if (!destPath) return;
+    try {
+      await exportProjects([project.id], destPath as string);
+      toast.success("导出成功", { description: destPath as string });
+    } catch (err) {
+      toast.error("导出失败", { description: String(err) });
+    }
+  };
+
   const openProjectMenu = (e: ReactMouseEvent) => {
     e.stopPropagation();
     openContextMenu(e, [
@@ -278,20 +336,27 @@ function ProjectItem({ project, sessions, onOpenChat }: ProjectItemProps) {
       {
         id: "project-rename",
         label: "重命名项目",
-        onSelect: () => {
-          const name = prompt("新项目名称", project.name);
+        onSelect: async () => {
+          const name = await dialog.prompt("请输入新项目名称", { defaultValue: project.name });
           if (name?.trim()) rename(project.id, name.trim());
         },
+      },
+      {
+        id: "project-export",
+        label: "导出项目",
+        onSelect: handleExportProject,
       },
       { type: "separator" },
       {
         id: "project-delete",
         label: "删除项目",
         danger: true,
-        onSelect: () => {
-          if (window.confirm(`删除项目「${project.name}」？项目下的会话不会被删除。`)) {
-            remove(project.id);
-          }
+        onSelect: async () => {
+          const ok = await dialog.confirm(
+            `删除项目「${project.name}」？\n项目下的会话不会被删除。`,
+            { type: "danger", confirmLabel: "删除", title: "删除项目" },
+          );
+          if (ok) remove(project.id);
         },
       },
     ]);
@@ -451,6 +516,15 @@ function DotsIcon() {
       <circle cx="12" cy="5" r="1" fill="currentColor" />
       <circle cx="12" cy="12" r="1" fill="currentColor" />
       <circle cx="12" cy="19" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+function ImportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
     </svg>
   );
 }

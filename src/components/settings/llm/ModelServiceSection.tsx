@@ -15,6 +15,7 @@ import type {
 } from "../../../types";
 import { api } from "../../../api/tauri";
 import { CheckIcon, CopyIcon } from "../icons";
+import { toast, dialog } from "../../ui";
 import {
   CAPABILITY_OPTIONS,
   DEFAULT_PROVIDER_SDK,
@@ -95,7 +96,7 @@ function ProviderAvatarPicker({
     try {
       onChange(await readAvatarFile(file));
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "头像图片读取失败。");
+      toast.error(error instanceof Error ? error.message : "头像图片读取失败。");
     }
   };
 
@@ -392,12 +393,14 @@ export function ModelServiceSection() {
 
   const deleteProvider = async (provider: ModelProvider) => {
     if (isBuiltinProvider(provider, builtinPresets)) {
-      window.alert("系统默认供应商不能删除。");
+      toast.warning("系统默认供应商不能删除。");
       return;
     }
-    if (!window.confirm(`删除供应商 ${provider.name}？其 API 配置和模型列表也会删除。`)) {
-      return;
-    }
+    const ok = await dialog.confirm(
+      `删除供应商 ${provider.name}？其 API 配置和模型列表也会删除。`,
+      { type: "danger", confirmLabel: "删除", title: "删除供应商" },
+    );
+    if (!ok) return;
 
     const next = providers.filter((item) => item.id !== provider.id);
     const enabledFallback = next.find((item) => item.enabled !== false) ?? null;
@@ -509,7 +512,8 @@ export function ModelServiceSection() {
 
   const deleteModel = async (modelId: string) => {
     if (!selectedProvider) return;
-    if (!window.confirm(`删除模型 ${modelId}？`)) return;
+    const ok = await dialog.confirm(`删除模型 ${modelId}？`, { type: "danger", confirmLabel: "删除" });
+    if (!ok) return;
     const nextModels = selectedProvider.models.filter((model) => model.id !== modelId);
     await patchProvider(
       selectedProvider.id,
