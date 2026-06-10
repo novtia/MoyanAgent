@@ -78,9 +78,6 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const hasPendingAttachments = composer.pendingAttachments.length > 0;
   const hasAttachments = composer.attachments.length > 0 || hasPendingAttachments;
 
-  const activeProvider = settings?.model_services?.find(
-    (provider) => provider.id === settings.active_provider_id,
-  );
   const enabledProviders = useMemo(
     () =>
       (settings?.model_services ?? []).filter(
@@ -88,10 +85,8 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
       ),
     [settings?.model_services],
   );
-  const modelLabel =
-    activeProvider && activeProvider.enabled !== false
-      ? `${activeProvider.name} · ${shortModelName(settings?.model)}`
-      : shortModelName(settings?.model);
+  const modelName = shortModelName(settings?.model);
+  const modelLabel = modelName.length > 12 ? `${modelName.slice(0, 12)}…` : modelName;
   const ratioLabel = composer.aspectRatio === "auto" ? t("composer.ratioAuto") : composer.aspectRatio;
   const sizeLabel = composer.imageSize === "auto" ? t("composer.sizeAuto") : composer.imageSize;
 

@@ -617,6 +617,17 @@
   border-radius: 10px;
   background: var(--bg-sunk);
 }
+.agent-flow-modal {
+  width: min(460px, 92vw);
+}
+.agent-flow-form--modal {
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+.agent-flow-form--modal .agent-flow-field {
+  font-size: 12px;
+}
 .agent-flow-field {
   display: flex;
   flex-direction: column;

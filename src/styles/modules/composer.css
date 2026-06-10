@@ -18,6 +18,8 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  container-type: inline-size;
+  container-name: composer;
 }
 .composer-textarea:focus {
   outline: none;
@@ -381,9 +383,16 @@
   font-size: 12px;
   line-height: 1.25;
   font-weight: 500;
+  white-space: nowrap;
   border-radius: 999px;
   cursor: pointer;
   transition: all 0.12s;
+}
+.composer-pill > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .composer-pill:hover,
 .composer-pill.active {
@@ -396,7 +405,22 @@
 .composer-pill svg {
   width: 12px;
   height: 12px;
+  flex: 0 0 auto;
   color: var(--ink-soft);
+}
+
+/* When the composer is narrow, collapse the params pill to its icon only
+   (hide the "ratio · size" text and the dropdown caret). */
+@container composer (max-width: 480px) {
+  .composer-params .composer-pill {
+    gap: 0;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .composer-params .composer-pill > span,
+  .composer-params .composer-pill > svg:last-child {
+    display: none;
+  }
 }
 
 .composer-meta {

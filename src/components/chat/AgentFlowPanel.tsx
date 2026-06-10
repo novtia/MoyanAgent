@@ -58,6 +58,11 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
     void refreshAgents();
   }, [refreshAgents]);
 
+  const builtinName = useCallback(
+    (agentType: string) => t(`agentFlow.builtinNames.${agentType}`, { defaultValue: agentType }),
+    [t],
+  );
+
   const nameOf = useCallback(
     (agentType: string) => {
       if (agentType === MAIN) return t("agentFlow.mainName");
@@ -65,17 +70,17 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
         const found = customs.find((c) => c.agent_type === agentType);
         return found?.name ?? agentType.slice(CUSTOM_PREFIX.length);
       }
-      return agentType;
+      return builtinName(agentType);
     },
-    [customs, t],
+    [customs, t, builtinName],
   );
 
   const agents = useMemo(
     () => [
-      ...builtins.map((b) => ({ id: b.agent_type, name: b.agent_type, custom: false })),
+      ...builtins.map((b) => ({ id: b.agent_type, name: builtinName(b.agent_type), custom: false })),
       ...customs.map((c) => ({ id: c.agent_type, name: c.name, custom: true })),
     ],
-    [builtins, customs],
+    [builtins, customs, builtinName],
   );
 
   const knownTypes = useMemo(() => {
@@ -159,86 +164,94 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
     [customs, refreshAgents, t],
   );
 
-  const tab = open ? 0 : -1;
-
-  if (form.mode !== "closed") {
-    return (
-      <div className="agent-flow agent-flow--form">
-        <div className="agent-flow-section-head">
-          {form.mode === "new" ? t("agentFlow.newAgent") : t("agentFlow.editAgent")}
-        </div>
-        <div className="agent-flow-form">
-          <label className="agent-flow-field">
-            <span>{t("agentFlow.formName")}</span>
-            <input
-              type="text"
-              value={form.name}
-              tabIndex={tab}
-              placeholder={t("agentFlow.formNamePlaceholder")}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            />
-          </label>
-          <label className="agent-flow-field">
-            <span>{t("agentFlow.formWhenToUse")}</span>
-            <input
-              type="text"
-              value={form.whenToUse}
-              tabIndex={tab}
-              placeholder={t("agentFlow.formWhenToUsePlaceholder")}
-              onChange={(e) => setForm((f) => ({ ...f, whenToUse: e.target.value }))}
-            />
-          </label>
-          <label className="agent-flow-field">
-            <span>{t("agentFlow.formSystemPrompt")}</span>
-            <textarea
-              rows={6}
-              value={form.systemPrompt}
-              tabIndex={tab}
-              placeholder={t("agentFlow.formSystemPromptPlaceholder")}
-              onChange={(e) => setForm((f) => ({ ...f, systemPrompt: e.target.value }))}
-            />
-          </label>
-          <label className="agent-flow-field">
-            <span>{t("agentFlow.formModel")}</span>
-            <input
-              type="text"
-              value={form.model}
-              tabIndex={tab}
-              placeholder={t("agentFlow.formModelPlaceholder")}
-              onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-            />
-          </label>
-          <div className="agent-flow-form-actions">
-            <button type="button" className="ghost-btn" tabIndex={tab} onClick={closeForm}>
-              {t("agentFlow.cancel")}
-            </button>
-            <button
-              type="button"
-              className="btn primary"
-              tabIndex={tab}
-              disabled={!form.name.trim()}
-              onClick={() => void submitForm()}
-            >
-              {form.mode === "new" ? t("agentFlow.create") : t("agentFlow.save")}
-            </button>
+  return (
+    <>
+      <AgentFlowCanvas
+        open={open}
+        sessionId={sessionId}
+        chain={chain}
+        agents={agents}
+        knownTypes={knownTypes}
+        nameOf={nameOf}
+        onOrderChange={onOrderChange}
+        onRequestNewAgent={openNew}
+        onEditAgent={openEditByType}
+        onDeleteAgent={deleteByType}
+      />
+      {form.mode !== "closed" && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeForm();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") closeForm();
+          }}
+        >
+          <div className="modal agent-flow-modal" role="dialog" aria-modal="true">
+            <div className="modal-head">
+              <h3>{form.mode === "new" ? t("agentFlow.newAgent") : t("agentFlow.editAgent")}</h3>
+              <button type="button" className="close" onClick={closeForm}>
+                {t("agentFlow.cancel")}
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="agent-flow-form agent-flow-form--modal">
+                <label className="agent-flow-field">
+                  <span>{t("agentFlow.formName")}</span>
+                  <input
+                    type="text"
+                    value={form.name}
+                    autoFocus
+                    placeholder={t("agentFlow.formNamePlaceholder")}
+                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                  />
+                </label>
+                <label className="agent-flow-field">
+                  <span>{t("agentFlow.formWhenToUse")}</span>
+                  <input
+                    type="text"
+                    value={form.whenToUse}
+                    placeholder={t("agentFlow.formWhenToUsePlaceholder")}
+                    onChange={(e) => setForm((f) => ({ ...f, whenToUse: e.target.value }))}
+                  />
+                </label>
+                <label className="agent-flow-field">
+                  <span>{t("agentFlow.formSystemPrompt")}</span>
+                  <textarea
+                    rows={6}
+                    value={form.systemPrompt}
+                    placeholder={t("agentFlow.formSystemPromptPlaceholder")}
+                    onChange={(e) => setForm((f) => ({ ...f, systemPrompt: e.target.value }))}
+                  />
+                </label>
+                <label className="agent-flow-field">
+                  <span>{t("agentFlow.formModel")}</span>
+                  <input
+                    type="text"
+                    value={form.model}
+                    placeholder={t("agentFlow.formModelPlaceholder")}
+                    onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button type="button" className="btn" onClick={closeForm}>
+                {t("agentFlow.cancel")}
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={!form.name.trim()}
+                onClick={() => void submitForm()}
+              >
+                {form.mode === "new" ? t("agentFlow.create") : t("agentFlow.save")}
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    );
-  }
-
-  return (
-    <AgentFlowCanvas
-      open={open}
-      sessionId={sessionId}
-      chain={chain}
-      agents={agents}
-      knownTypes={knownTypes}
-      nameOf={nameOf}
-      onOrderChange={onOrderChange}
-      onRequestNewAgent={openNew}
-      onEditAgent={openEditByType}
-      onDeleteAgent={deleteByType}
-    />
+      )}
+    </>
   );
 }
