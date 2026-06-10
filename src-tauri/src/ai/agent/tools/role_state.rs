@@ -24,7 +24,7 @@
 //!
 //! ```json
 //! {
-//!   "id": "rin", "name": "凛", "emoji": "🦊",
+//!   "id": "rin", "name": "凛",
 //!   "location": "…", "mood": "…", "outfit": "…",
 //!   "attributes": { "好感": 72, "信任": 55 },
 //!   "meters": { "体力": { "value": 80, "max": 100 } },
@@ -291,7 +291,7 @@ lowercase ascii `id` (e.g. \"rin\", \"alice\") plus the initial `role` object.\n
 using dot-paths in `set` / `unset`. Do NOT recreate it.\n\
 4. For a character that left the scene for good → `delete`.\n\n\
 ━━━ ROLE OBJECT SHAPE (prefer numbers over prose) ━━━\n\
-{\n  \"name\": \"凛\", \"emoji\": \"🦊\",\n  \"location\": \"…\", \"mood\": \"…\", \"outfit\": \"…\",\n  \"attributes\": { \"好感\": 72, \"信任\": 55 },   // 0-100, drawn as a radar polygon\n  \"meters\": { \"体力\": { \"value\": 80, \"max\": 100 } }, // drawn as bars\n  \"tags\": [\"害羞\"],                              // drawn as chips\n  \"nsfw\": {\n    \"兴奋度\": 40, \"湿润度\": 55, \"状态\": \"迷离\",\n    \"敏感点\": [\"颈部\"],\n    \"精液\": { \"外表\": \"小腹至大腿漫溢\", \"吞精\": 850, \"阴道\": 2400, \"肛门\": 0 }\n  }\n}\n\
+{\n  \"name\": \"凛\",\n  \"location\": \"…\", \"mood\": \"…\", \"outfit\": \"…\",\n  \"attributes\": { \"好感\": 72, \"信任\": 55 },   // 0-100, drawn as a radar polygon\n  \"meters\": { \"体力\": { \"value\": 80, \"max\": 100 } }, // drawn as bars\n  \"tags\": [\"害羞\"],                              // drawn as chips\n  \"nsfw\": {\n    \"兴奋度\": 40, \"湿润度\": 55, \"状态\": \"迷离\",\n    \"敏感点\": [\"颈部\"],\n    \"精液\": { \"外表\": \"小腹至大腿漫溢\", \"吞精\": 850, \"阴道\": 2400, \"肛门\": 0 }\n  }\n}\n\
 `nsfw.精液` breakdown (update only what changed):\n\
   • 外表 — SHORT TEXT for external residue (外射体表); scale with the scene.\n\
   • 吞精 / 阴道 / 肛门 — volume in ml (can be large: horse/beast → 2000–8000 ml).\n\

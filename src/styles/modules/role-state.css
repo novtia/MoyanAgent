@@ -66,18 +66,6 @@
   gap: 10px;
 }
 
-.rs-avatar {
-  width: 36px;
-  height: 36px;
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  font-size: 20px;
-  border-radius: 50%;
-  background: var(--bg-sunk);
-  border: 1px solid var(--line);
-}
-
 .rs-card-id {
   display: flex;
   flex-direction: column;
@@ -170,20 +158,16 @@
 }
 
 .rs-radar-area {
-  fill: color-mix(in srgb, var(--blue-500) 22%, transparent);
-  stroke: var(--blue-500);
-  stroke-width: 1.6;
+  fill: color-mix(in srgb, var(--blue-500) 32%, transparent);
+  stroke: color-mix(in srgb, var(--blue-500) 55%, transparent);
+  stroke-width: 1.2;
   stroke-linejoin: round;
-  transition: all 0.4s var(--ease-out);
+  transition: fill 0.4s var(--ease-out), stroke 0.4s var(--ease-out);
 }
 
-.rs-radar-dot {
-  fill: var(--blue-500);
-  transition: r 0.3s var(--ease-out), fill 0.3s var(--ease-out);
-}
-
-.rs-radar-dot.is-changed {
-  fill: var(--rose-500);
+.rs-radar-area.is-changed {
+  fill: color-mix(in srgb, var(--rose-500) 38%, transparent);
+  stroke: color-mix(in srgb, var(--rose-500) 65%, transparent);
 }
 
 .rs-radar-label {

@@ -64,11 +64,14 @@ function useChangedString(value: string | null | undefined): boolean {
   return changed;
 }
 
+/** A radar dimension: label, raw value, and the max used to normalise it. */
+type RadarDatum = [string, number, number?];
+
 function RadarChart({
   data,
   changed,
 }: {
-  data: Array<[string, number]>;
+  data: Array<RadarDatum>;
   changed: Set<string>;
 }) {
   const size = 168;
@@ -78,9 +81,9 @@ function RadarChart({
   const n = data.length;
 
   const points = useMemo(() => {
-    return data.map(([, value], i) => {
+    return data.map(([, value, max], i) => {
       const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
-      const r = (pct(value) / 100) * radius;
+      const r = (pct(value, max ?? 100) / 100) * radius;
       return {
         x: cx + Math.cos(angle) * r,
         y: cy + Math.sin(angle) * r,
@@ -96,8 +99,8 @@ function RadarChart({
     // A polygon needs at least 3 vertices; fall back to bars for 1-2 dims.
     return (
       <div className="rs-bars">
-        {data.map(([k, v]) => (
-          <MeterBar key={k} label={k} value={v} max={100} flash={changed.has(k)} />
+        {data.map(([k, v, max]) => (
+          <MeterBar key={k} label={k} value={v} max={max ?? 100} flash={changed.has(k)} />
         ))}
       </div>
     );
@@ -105,6 +108,7 @@ function RadarChart({
 
   const rings = [0.25, 0.5, 0.75, 1];
   const polygon = points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const areaChanged = data.some(([k]) => changed.has(k));
 
   return (
     <svg className="rs-radar" viewBox={`0 0 ${size} ${size}`} role="img">
@@ -124,16 +128,7 @@ function RadarChart({
       {points.map((p, i) => (
         <line key={i} className="rs-radar-spoke" x1={cx} y1={cy} x2={p.ax} y2={p.ay} />
       ))}
-      <polygon className="rs-radar-area" points={polygon} />
-      {points.map((p, i) => (
-        <circle
-          key={i}
-          className={`rs-radar-dot ${changed.has(data[i][0]) ? "is-changed" : ""}`}
-          cx={p.x}
-          cy={p.y}
-          r={changed.has(data[i][0]) ? 4 : 2.6}
-        />
-      ))}
+      <polygon className={`rs-radar-area ${areaChanged ? "is-changed" : ""}`} points={polygon} />
       {points.map((p, i) => (
         <text
           key={i}
@@ -410,13 +405,26 @@ export const RoleStateCard = memo(function RoleStateCard({ role }: RoleStateCard
     [changedRaw],
   );
 
+  // attributes (0-100) + meters (own max) merged into one radar dataset; the
+  // graph kicks in once the combined dimension count exceeds 3.
+  const scalars = useMemo<Array<RadarDatum>>(
+    () => [
+      ...attributes.map(([k, v]) => [k, v, 100] as RadarDatum),
+      ...meters.map(([k, m]) => [k, m.value, m.max ?? 100] as RadarDatum),
+    ],
+    [attributes, meters],
+  );
+  const changedScalar = useMemo(
+    () => new Set<string>([...changedAttr, ...changedMeter]),
+    [changedAttr, changedMeter],
+  );
+
   const tags = Array.isArray(role.tags) ? role.tags : [];
   const hasNsfw = role.nsfw && typeof role.nsfw === "object" && Object.keys(role.nsfw).length > 0;
 
   return (
     <article className="rs-card">
       <header className="rs-card-head">
-        <span className="rs-avatar">{role.emoji || "🎭"}</span>
         <div className="rs-card-id">
           <span className="rs-name">{role.name || role.id}</span>
           {tags.length > 0 && (
@@ -454,18 +462,30 @@ export const RoleStateCard = memo(function RoleStateCard({ role }: RoleStateCard
         </div>
       )}
 
-      {attributes.length > 0 && (
+      {scalars.length > 3 ? (
+        // >3 numeric dimensions → single radar polygon (attributes + meters).
         <div className="rs-section">
-          <RadarChart data={attributes} changed={changedAttr} />
+          <RadarChart data={scalars} changed={changedScalar} />
         </div>
-      )}
-
-      {meters.length > 0 && (
-        <div className="rs-section rs-bars">
-          {meters.map(([k, m]) => (
-            <MeterBar key={k} label={k} value={m.value} max={m.max ?? 100} flash={changedMeter.has(k)} />
-          ))}
-        </div>
+      ) : (
+        // ≤3 → keep the previous look: attribute radar/bars + meter bars.
+        <>
+          {attributes.length > 0 && (
+            <div className="rs-section">
+              <RadarChart
+                data={attributes.map(([k, v]) => [k, v] as RadarDatum)}
+                changed={changedAttr}
+              />
+            </div>
+          )}
+          {meters.length > 0 && (
+            <div className="rs-section rs-bars">
+              {meters.map(([k, m]) => (
+                <MeterBar key={k} label={k} value={m.value} max={m.max ?? 100} flash={changedMeter.has(k)} />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {hasNsfw && (

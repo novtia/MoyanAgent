@@ -35,7 +35,6 @@ export interface RoleMeter {
 export interface Role {
   id: string;
   name?: string;
-  emoji?: string;
   location?: string;
   mood?: string;
   outfit?: string;

@@ -170,6 +170,48 @@ fn build_history(
     Ok(out)
 }
 
+/// Load the current character state board for prompt injection: prefer the
+/// in-memory store, fall back to the latest persisted snapshot.
+fn load_roles_for_prompt(state: &AppState, session_id: &str) -> AppResult<Vec<serde_json::Value>> {
+    let live = state.role_states.snapshot(session_id);
+    if !live.is_empty() {
+        return Ok(live);
+    }
+    let conn = state.conn()?;
+    crate::data::role_state::latest_roles(&conn, session_id)
+}
+
+/// Render the role board as a tagged user-meta block appended to history.
+fn format_role_state_history_block(roles: &[serde_json::Value]) -> String {
+    let json = serde_json::to_string_pretty(roles).unwrap_or_else(|_| "[]".to_string());
+    format!(
+        "<role-state>\n\
+         当前角色状态板（JSON）。续写正文时请与此状态保持一致；数值单位为 ml 的精液字段请按故事尺度理解。\n\n\
+         {json}\n\
+         </role-state>"
+    )
+}
+
+/// Append the latest role board as the final history turn so the model sees
+/// structured character state after the conversational transcript.
+fn append_role_state_history_tail(
+    state: &AppState,
+    session_id: &str,
+    history: &mut Vec<chat::HistoryTurn>,
+) -> AppResult<()> {
+    let roles = load_roles_for_prompt(state, session_id)?;
+    if roles.is_empty() {
+        return Ok(());
+    }
+    history.push(chat::HistoryTurn {
+        role: "user".into(),
+        text: Some(format_role_state_history_block(&roles)),
+        images: Vec::new(),
+        thinking_content: None,
+    });
+    Ok(())
+}
+
 /// Run the primary session through the full agent runtime ([`agent::run_agent`]
 /// + [`ProviderQueryEngine`]): definition system prompt, tool loop, and task
 /// tracking. The per-session abort controller races the run and returns
@@ -456,6 +498,12 @@ async fn run_cancellable_generation(
                 request.history = head;
             }
         }
+    }
+
+    // Append the structured role board after the transcript. The dedicated
+    // `role-state` sub-agent reads prose + calls `RoleState` get instead.
+    if agent_type != crate::ai::agent::config::builtin::AGENT_ROLE_STATE {
+        append_role_state_history_tail(state, session_id, &mut request.history)?;
     }
 
     // Merge per-session system instructions into the definition body so
