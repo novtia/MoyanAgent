@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { openContextMenu, type ContextMenuItem } from "../context-menu";
 
 export const MAIN = "__main__";
 const CUSTOM_PREFIX = "custom:";
@@ -38,6 +39,18 @@ interface Agent {
   name: string;
   custom: boolean;
 }
+
+/**
+ * How a freshly added node is wired into the graph:
+ * - `append`       — chained after the main chain's tail node.
+ * - `insert`       — spliced into an existing edge (`edgeId`).
+ * - `insertBefore` — spliced in front of `targetId` (enables adding a node
+ *   ahead of the main agent, which otherwise has no predecessor slot).
+ * - `insertAfter`  — spliced right after `targetId`.
+ * - `floating`     — dropped at (`wx`,`wy`) with no edges; the user wires it
+ *   up manually (a node with both ends empty).
+ */
+type AddMode = "append" | "insert" | "insertBefore" | "insertAfter" | "floating";
 
 interface AgentFlowCanvasProps {
   open: boolean;
@@ -99,27 +112,66 @@ function loadGraph(sessionId: string, chain: string[]): Graph {
   return buildGraphFromChain(chain);
 }
 
-/** Walk edges from the head node (no incoming) to produce the linear order. */
+/**
+ * Derive the linear execution chain from a free-form graph.
+ *
+ * The canvas now allows arbitrary wiring plus free-floating (unconnected)
+ * nodes, so the chain is defined as the single path that runs *through the
+ * main agent*: backtrack along incoming edges to the head of main's chain,
+ * then walk forward along outgoing edges. Nodes not wired into that path
+ * (floating nodes or separate components) are intentionally excluded from the
+ * executed order — they just live on the canvas.
+ */
 function deriveOrder(graph: Graph): string[] {
   const { nodes, edges } = graph;
-  if (nodes.length === 0) return [MAIN];
-  const incoming = new Set(edges.map((e) => e.to));
-  const outBy = new Map<string, string>();
-  for (const e of edges) outBy.set(e.from, e.to);
+  const main = nodes.find((n) => n.agentType === MAIN);
+  if (!main) return [MAIN];
 
-  let head = nodes.find((n) => !incoming.has(n.id)) ?? nodes[0];
-  const visited: string[] = [];
-  const seen = new Set<string>();
-  let cur: FNode | undefined = head;
-  while (cur && !seen.has(cur.id)) {
-    seen.add(cur.id);
-    visited.push(cur.agentType);
-    const nextId = outBy.get(cur.id);
-    cur = nextId ? nodes.find((n) => n.id === nextId) : undefined;
+  const inBy = new Map<string, string>();
+  const outBy = new Map<string, string>();
+  for (const e of edges) {
+    inBy.set(e.to, e.from);
+    outBy.set(e.from, e.to);
   }
-  // Guarantee the main agent always runs even if it was left unconnected.
-  if (!visited.includes(MAIN)) visited.push(MAIN);
-  return visited;
+
+  // Backtrack to the head of the chain that contains main.
+  let head = main.id;
+  const seenBack = new Set<string>([head]);
+  while (inBy.has(head)) {
+    const prev = inBy.get(head)!;
+    if (seenBack.has(prev)) break; // cycle guard
+    seenBack.add(prev);
+    head = prev;
+  }
+
+  // Walk forward from the head collecting agent types.
+  const order: string[] = [];
+  const seen = new Set<string>();
+  let cur: string | undefined = head;
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const node = nodes.find((n) => n.id === cur);
+    if (node) order.push(node.agentType);
+    cur = outBy.get(cur);
+  }
+  if (!order.includes(MAIN)) order.push(MAIN);
+  return order;
+}
+
+/** The last node reachable from main by following outgoing edges. */
+function chainTailId(g: Graph): string | null {
+  const main = g.nodes.find((n) => n.agentType === MAIN);
+  if (!main) return null;
+  const outBy = new Map(g.edges.map((e) => [e.from, e.to] as const));
+  let cur = main.id;
+  const seen = new Set<string>([cur]);
+  while (outBy.has(cur)) {
+    const next = outBy.get(cur)!;
+    if (seen.has(next)) break;
+    seen.add(next);
+    cur = next;
+  }
+  return cur;
 }
 
 export function AgentFlowCanvas({
@@ -146,7 +198,15 @@ export function AgentFlowCanvas({
     null,
   );
   const [addMenu, setAddMenu] = useState<
-    { x: number; y: number; mode: "append" | "insert"; edgeId?: string } | null
+    {
+      x: number;
+      y: number;
+      mode: AddMode;
+      edgeId?: string;
+      targetId?: string;
+      wx?: number;
+      wy?: number;
+    } | null
   >(null);
   const [nodeMenu, setNodeMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
 
@@ -366,9 +426,18 @@ export function AgentFlowCanvas({
     });
   };
 
-  const addNode = (agentType: string, ctx: { mode: "append" | "insert"; edgeId?: string }) => {
+  const addNode = (
+    agentType: string,
+    ctx: { mode: AddMode; edgeId?: string; targetId?: string; wx?: number; wy?: number },
+  ) => {
     setGraph((g) => {
       const node: FNode = { id: genId("n"), agentType, x: 0, y: 0 };
+      if (ctx.mode === "floating") {
+        // A standalone node with no edges; the user wires it manually.
+        node.x = ctx.wx ?? 48;
+        node.y = ctx.wy ?? 96;
+        return { nodes: [...g.nodes, node], edges: g.edges };
+      }
       if (ctx.mode === "insert" && ctx.edgeId) {
         const edge = g.edges.find((e) => e.id === ctx.edgeId);
         if (edge) {
@@ -382,8 +451,35 @@ export function AgentFlowCanvas({
           return { nodes: [...g.nodes, node], edges };
         }
       }
-      // append: place to the right of the tail node and connect from it
-      const tail = g.nodes.find((n) => !g.edges.some((e) => e.from === n.id)) ?? g.nodes[g.nodes.length - 1];
+      if (ctx.mode === "insertBefore" && ctx.targetId) {
+        const target = g.nodes.find((n) => n.id === ctx.targetId);
+        if (target) {
+          node.x = target.x - NODE_W - GAP_X;
+          node.y = target.y;
+          // Splice ahead of `target`, redirecting its existing predecessor (if
+          // any) through the new node so the chain stays linear.
+          const inEdge = g.edges.find((e) => e.to === target.id);
+          const edges = g.edges.filter((e) => e.id !== inEdge?.id);
+          if (inEdge) edges.push({ id: genId("e"), from: inEdge.from, to: node.id });
+          edges.push({ id: genId("e"), from: node.id, to: target.id });
+          return { nodes: [...g.nodes, node], edges };
+        }
+      }
+      if (ctx.mode === "insertAfter" && ctx.targetId) {
+        const target = g.nodes.find((n) => n.id === ctx.targetId);
+        if (target) {
+          node.x = target.x + NODE_W + GAP_X;
+          node.y = target.y;
+          const outEdge = g.edges.find((e) => e.from === target.id);
+          const edges = g.edges.filter((e) => e.id !== outEdge?.id);
+          edges.push({ id: genId("e"), from: target.id, to: node.id });
+          if (outEdge) edges.push({ id: genId("e"), from: node.id, to: outEdge.to });
+          return { nodes: [...g.nodes, node], edges };
+        }
+      }
+      // append: chain after the main chain's tail (ignores floating nodes)
+      const tailId = chainTailId(g);
+      const tail = tailId ? g.nodes.find((n) => n.id === tailId) : undefined;
       if (tail) {
         node.x = tail.x + NODE_W + GAP_X;
         node.y = tail.y;
@@ -395,6 +491,11 @@ export function AgentFlowCanvas({
       if (tail) edges.push({ id: genId("e"), from: tail.id, to: node.id });
       return { nodes: [...g.nodes, node], edges };
     });
+    setNeedsFit(true);
+  };
+
+  const deleteEdge = (edgeId: string) => {
+    setGraph((g) => ({ ...g, edges: g.edges.filter((e) => e.id !== edgeId) }));
   };
 
   function removeNodeFromGraph(g: Graph, nodeId: string): Graph {
@@ -418,6 +519,128 @@ export function AgentFlowCanvas({
   const closeMenus = () => {
     setAddMenu(null);
     setNodeMenu(null);
+  };
+
+  // Translate a client point into afc-viewport-relative coords so the reused
+  // `AddMenu` picker (rendered inside the viewport) lands under the cursor.
+  const hostPoint = (clientX: number, clientY: number) => {
+    const host = containerRef.current?.getBoundingClientRect();
+    return { x: clientX - (host?.left ?? 0), y: clientY - (host?.top ?? 0) };
+  };
+
+  // ── right-click context menu: empty canvas ───────────────────────────────
+  const onCanvasContextMenu = (e: React.MouseEvent) => {
+    const p = hostPoint(e.clientX, e.clientY);
+    const w = toWorld(e.clientX, e.clientY);
+    closeMenus();
+    const items: ContextMenuItem[] = [
+      {
+        id: "add",
+        label: t("agentFlow.addAgentHere"),
+        disabled: !sessionId,
+        onSelect: () => {
+          setNodeMenu(null);
+          setAddMenu({ x: p.x, y: p.y, mode: "floating", wx: w.x, wy: w.y });
+        },
+      },
+      {
+        id: "append",
+        label: t("agentFlow.appendAgent"),
+        disabled: !sessionId,
+        onSelect: () => {
+          setNodeMenu(null);
+          setAddMenu({ x: p.x, y: p.y, mode: "append" });
+        },
+      },
+      {
+        id: "new",
+        label: t("agentFlow.newAgent"),
+        onSelect: () => onRequestNewAgent(),
+      },
+      { type: "separator" },
+      {
+        id: "fit",
+        label: t("agentFlow.fitView"),
+        onSelect: () => fitView(graphRef.current),
+      },
+    ];
+    openContextMenu(e, items, { menuId: "agent-flow-canvas" });
+  };
+
+  // ── right-click context menu: a connection ───────────────────────────────
+  const onEdgeContextMenu = (e: React.MouseEvent, edgeId: string) => {
+    const p = hostPoint(e.clientX, e.clientY);
+    closeMenus();
+    const items: ContextMenuItem[] = [
+      {
+        id: "insert",
+        label: t("agentFlow.insertHere"),
+        onSelect: () => {
+          setNodeMenu(null);
+          setAddMenu({ x: p.x, y: p.y, mode: "insert", edgeId });
+        },
+      },
+      { type: "separator" },
+      {
+        id: "delete-edge",
+        label: t("agentFlow.deleteEdge"),
+        danger: true,
+        onSelect: () => deleteEdge(edgeId),
+      },
+    ];
+    openContextMenu(e, items, { menuId: "agent-flow-edge" });
+  };
+
+  // ── right-click context menu: a node ─────────────────────────────────────
+  const onNodeContextMenu = (e: React.MouseEvent, node: FNode) => {
+    const p = hostPoint(e.clientX, e.clientY);
+    const isMain = node.agentType === MAIN;
+    const isCustom = node.agentType.startsWith(CUSTOM_PREFIX);
+    closeMenus();
+    const items: ContextMenuItem[] = [
+      {
+        id: "insert-before",
+        label: t("agentFlow.insertBefore"),
+        onSelect: () => {
+          setNodeMenu(null);
+          setAddMenu({ x: p.x, y: p.y, mode: "insertBefore", targetId: node.id });
+        },
+      },
+      {
+        id: "insert-after",
+        label: t("agentFlow.insertAfter"),
+        onSelect: () => {
+          setNodeMenu(null);
+          setAddMenu({ x: p.x, y: p.y, mode: "insertAfter", targetId: node.id });
+        },
+      },
+    ];
+    if (isCustom) {
+      items.push(
+        { type: "separator" },
+        {
+          id: "edit",
+          label: t("agentFlow.editAgent"),
+          onSelect: () => onEditAgent(node.agentType),
+        },
+      );
+    }
+    if (!isMain) {
+      items.push({
+        id: "remove",
+        label: t("agentFlow.removeNode"),
+        onSelect: () => removeNode(node.id),
+      });
+    }
+    if (isCustom) {
+      items.push({
+        id: "delete",
+        label: t("agentFlow.deleteAgent"),
+        danger: true,
+        onSelect: () => onDeleteAgent(node.agentType),
+      });
+    }
+    openContextMenu(e, items, { menuId: "agent-flow-node" });
   };
 
   // ── render geometry ──────────────────────────────────────────────────────
@@ -523,6 +746,7 @@ export function AgentFlowCanvas({
         ref={containerRef}
         className="afc-viewport"
         onPointerDown={onBgPointerDown}
+        onContextMenu={onCanvasContextMenu}
       >
         <div
           className="afc-world"
@@ -543,14 +767,27 @@ export function AgentFlowCanvas({
               </marker>
             </defs>
             {edgePaths.map((e) => (
-              <path
-                key={e.id}
-                d={e.d}
-                fill="none"
-                stroke="var(--line-strong)"
-                strokeWidth={2}
-                markerEnd="url(#afc-arrow)"
-              />
+              <g key={e.id}>
+                <path
+                  d={e.d}
+                  fill="none"
+                  stroke="var(--line-strong)"
+                  strokeWidth={2}
+                  markerEnd="url(#afc-arrow)"
+                />
+                {/* Wide transparent hit area: re-enable pointer events (the
+                    parent SVG sets pointer-events:none) so edges are
+                    right-clickable for delete / insert. */}
+                <path
+                  d={e.d}
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth={16}
+                  style={{ pointerEvents: "stroke", cursor: "context-menu" }}
+                  onPointerDown={(ev) => ev.stopPropagation()}
+                  onContextMenu={(ev) => onEdgeContextMenu(ev, e.id)}
+                />
+              </g>
             ))}
             {connecting &&
               (() => {
@@ -580,6 +817,7 @@ export function AgentFlowCanvas({
               title={t("agentFlow.insertHere")}
               tabIndex={tab}
               onPointerDown={(ev) => ev.stopPropagation()}
+              onContextMenu={(ev) => onEdgeContextMenu(ev, e.id)}
               onClick={(ev) => {
                 ev.stopPropagation();
                 const host = containerRef.current?.getBoundingClientRect();
@@ -605,6 +843,7 @@ export function AgentFlowCanvas({
                 className={`afc-node ${isMain ? "is-main" : ""}`}
                 style={{ left: n.x, top: n.y, width: NODE_W, height: NODE_H }}
                 onPointerDown={(e) => onNodePointerDown(e, n.id)}
+                onContextMenu={(e) => onNodeContextMenu(e, n)}
               >
                 <span className="afc-node-port in" aria-hidden />
                 <div className="afc-node-body">
@@ -691,7 +930,11 @@ export function AgentFlowCanvas({
             agents={agents}
             t={t}
             onPick={(agentType) => {
-              addNode(agentType, { mode: addMenu.mode, edgeId: addMenu.edgeId });
+              addNode(agentType, {
+                mode: addMenu.mode,
+                edgeId: addMenu.edgeId,
+                targetId: addMenu.targetId,
+              });
               setAddMenu(null);
             }}
             onClose={() => setAddMenu(null)}

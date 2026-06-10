@@ -656,6 +656,64 @@
   justify-content: flex-end;
   gap: 8px;
 }
+.agent-flow-tools-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.agent-flow-tools-toggle {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink-1);
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.agent-flow-tools-toggle:hover:not(:disabled) {
+  border-color: var(--blue-500);
+}
+.agent-flow-tools-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.agent-flow-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  max-height: 160px;
+  overflow-y: auto;
+}
+.agent-flow-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-1);
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+}
+.agent-flow-tool input {
+  margin: 0;
+  cursor: pointer;
+}
+.agent-flow-tool:hover {
+  border-color: var(--blue-500);
+}
+.agent-flow-tools-empty,
+.agent-flow-tools-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-mute);
+}
 .agent-flow-custom-list {
   list-style: none;
   margin: 0;

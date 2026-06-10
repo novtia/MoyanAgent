@@ -54,13 +54,15 @@ pub struct RunAgentParams {
     /// [`QuerySource`] (e.g. [`QuerySource::ReplMainThread`] for the
     /// primary session).
     pub query_source: Option<QuerySource>,
-    /// Project working directory for this run.
+    /// Project working directory for this run. MUST originate from the
+    /// database (the project's `path` column) — never from the host
+    /// process environment.
     ///
     /// - `Some(path)` → tools execute inside this directory and the
     ///   `<env>` block in the system prompt shows this path.
-    /// - `None` → the process CWD is used for tool execution but **no**
-    ///   `<env>` block is emitted (suitable for plain chat sessions that
-    ///   have no project context).
+    /// - `None` → tools get **no** working directory (tools that require
+    ///   one fail with an explicit error) and no `<env>` block is emitted.
+    ///   The host process CWD is NEVER used as a fallback.
     pub project_cwd: Option<std::path::PathBuf>,
     /// Shared cancellation controller for the main session. When set,
     /// `cancel_generation` can abort in-flight provider/tool work promptly.
@@ -112,28 +114,41 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         || definition.background;
     let task_id = task_store.register(task);
 
-    let host_cwd = std::env::current_dir().unwrap_or_default();
-
     // Optional git-worktree isolation. The handle's `Drop` removes the
     // worktree on the way out, including the error path — keep it
     // alive for the entire `drive` call below.
+    //
+    // The worktree root MUST be the DB-provided project path; the host
+    // process directory is never used.
     let worktree = match definition.isolation {
-        Isolation::Worktree => match WorktreeHandle::acquire(&host_cwd) {
-            Ok(h) => Some(h),
-            Err(e) => {
-                task_store.fail(&task_id, format!("worktree setup failed: {e}"));
+        Isolation::Worktree => match project_cwd.as_deref() {
+            Some(root) => match WorktreeHandle::acquire(root) {
+                Ok(h) => Some(h),
+                Err(e) => {
+                    task_store.fail(&task_id, format!("worktree setup failed: {e}"));
+                    return Err(e);
+                }
+            },
+            None => {
+                let e = crate::error::AppError::Invalid(
+                    "worktree isolation requires a project path (set the project's \
+                     `path` in the database); refusing to use the host process directory"
+                        .into(),
+                );
+                task_store.fail(&task_id, e.to_string());
                 return Err(e);
             }
         },
         Isolation::None | Isolation::Remote => None,
     };
 
-    // CWD used by tools: worktree → project path → host process dir.
+    // CWD used by tools: worktree → DB project path → none (empty).
+    // NEVER fall back to the host process directory.
     let tool_cwd = worktree
         .as_ref()
         .map(|h| h.path.clone())
         .or_else(|| project_cwd.clone())
-        .unwrap_or_else(|| host_cwd.clone());
+        .unwrap_or_default();
 
     let permission_mode = permission_override
         .or(definition.permission_mode)
@@ -240,9 +255,9 @@ fn _abort_handle_marker(_h: AbortHandle) {}
 
 /// Assemble the final `system_prompt` for a sub-agent run.
 ///
-/// `env_cwd`:
-/// - `Some(path)` → include `<env>` block with this working directory.
-/// - `None` → skip the `<env>` block entirely (plain chat, no project context).
+/// Always appends an `<env>` block with platform/shell metadata.
+/// The working directory line is included only when a DB project path
+/// is available (`env_cwd: Some`).
 fn compose_system_prompt(
     def: &AgentDefinition,
     run_mode: AgentRunMode,
@@ -264,12 +279,10 @@ fn compose_system_prompt(
         out.push('\n');
     }
 
-    if let Some(cwd) = env_cwd {
-        let env = env_details_block(cwd);
-        if !out.contains("<env>") && !env.is_empty() {
-            out.push('\n');
-            out.push_str(&env);
-        }
+    let env = env_details_block(env_cwd);
+    if !out.contains("<env>") && !env.is_empty() {
+        out.push('\n');
+        out.push_str(&env);
     }
 
     if let Some(reminder) = def
@@ -301,13 +314,38 @@ fn compose_user_prompt(def: &AgentDefinition, user_prompt: &str) -> String {
     }
 }
 
-/// Render the `<env>` block: working directory + platform. Mirrors
-/// `enhanceSystemPromptWithEnvDetails` minus the date (we don't pull a
-/// chrono dep just for one line — providers stamp their own date into
-/// the request).
-fn env_details_block(cwd: &std::path::Path) -> String {
-    let cwd_str = cwd.display().to_string();
+/// Render the `<env>` block injected into every agent system prompt.
+///
+/// Platform and shell are always present so the model never needs to
+/// probe the OS with Bash. The working directory comes exclusively from
+/// the database project `path` column — never from the host process.
+fn env_details_block(project_cwd: Option<&std::path::Path>) -> String {
     let platform = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
-    format!("<env>\nWorking directory: {cwd_str}\nPlatform: {platform}/{arch}\n</env>")
+    let shell = shell_description();
+    let mut lines = vec![
+        "<env>".to_string(),
+        format!("Platform: {platform}/{arch}"),
+        format!("Shell: {shell}"),
+    ];
+    match project_cwd.filter(|p| !p.as_os_str().is_empty()) {
+        Some(cwd) => lines.push(format!("Working directory: {}", cwd.display())),
+        None => lines.push(
+            "Working directory: (none — set the project's `path` in the database to enable \
+             file/shell tools)"
+                .to_string(),
+        ),
+    }
+    lines.push("</env>".to_string());
+    lines.join("\n")
+}
+
+#[cfg(windows)]
+fn shell_description() -> &'static str {
+    "cmd.exe — use `dir`, `cd`, `type`; do NOT use `ls`, `pwd`, `find`, `uname`"
+}
+
+#[cfg(not(windows))]
+fn shell_description() -> &'static str {
+    "sh -c (POSIX) — use `ls`, `find`, `pwd`, etc."
 }

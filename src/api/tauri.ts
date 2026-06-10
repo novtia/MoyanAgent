@@ -203,12 +203,14 @@ export const api = {
 
   // agents
   listAgents: () => invoke<AgentSummary[]>("list_agents"),
+  listAgentTools: () => invoke<string[]>("list_agent_tools"),
   listCustomAgents: () => invoke<CustomAgent[]>("list_custom_agents"),
   createCustomAgent: (args: {
     name: string;
     whenToUse?: string;
     systemPrompt?: string;
     model?: string | null;
+    tools?: string[];
   }) =>
     invoke<CustomAgent>("create_custom_agent", {
       args: {
@@ -216,6 +218,7 @@ export const api = {
         whenToUse: args.whenToUse ?? "",
         systemPrompt: args.systemPrompt ?? "",
         model: args.model ?? null,
+        tools: args.tools ?? [],
       },
     }),
   updateCustomAgent: (args: {
@@ -224,6 +227,7 @@ export const api = {
     whenToUse?: string;
     systemPrompt?: string;
     model?: string | null;
+    tools?: string[];
   }) =>
     invoke<CustomAgent>("update_custom_agent", {
       args: {
@@ -232,6 +236,7 @@ export const api = {
         whenToUse: args.whenToUse ?? "",
         systemPrompt: args.systemPrompt ?? "",
         model: args.model ?? null,
+        tools: args.tools ?? [],
       },
     }),
   deleteCustomAgent: (agentType: string) =>

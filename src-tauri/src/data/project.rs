@@ -1,7 +1,7 @@
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use ulid::Ulid;
-
 use crate::data::db::{now_ms, DbConn};
 use crate::data::settings::{validate_model_param_settings, ModelParamSettings, DEFAULT_HISTORY_TURNS};
 use crate::error::{AppError, AppResult};
@@ -48,7 +48,14 @@ fn map_project(r: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
 const SELECT_COLS: &str =
     "id, name, path, sort_order, system_prompt, history_turns, llm_params, context_window, created_at, updated_at";
 
+/// Root directory for auto-created blank projects: `Documents/moyanagentproject`.
+const BLANK_PROJECT_ROOT_NAME: &str = "moyanagentproject";
+
 pub fn create(conn: &DbConn, name: &str, path: Option<&str>) -> AppResult<Project> {
+    let resolved_path = match path {
+        Some(p) if !p.trim().is_empty() => Some(p.trim().to_string()),
+        _ => Some(allocate_blank_project_dir(name)?.to_string_lossy().into_owned()),
+    };
     let id = Ulid::new().to_string();
     let now = now_ms();
     let sort_order: i64 = conn
@@ -60,12 +67,12 @@ pub fn create(conn: &DbConn, name: &str, path: Option<&str>) -> AppResult<Projec
         .unwrap_or(0);
     conn.execute(
         "INSERT INTO projects(id, name, path, sort_order, created_at, updated_at) VALUES(?1,?2,?3,?4,?5,?5)",
-        params![id, name, path, sort_order, now],
+        params![id, name, resolved_path.as_deref(), sort_order, now],
     )?;
     Ok(Project {
         id,
         name: name.to_string(),
-        path: path.map(|s| s.to_string()),
+        path: resolved_path,
         sort_order,
         system_prompt: String::new(),
         history_turns: DEFAULT_HISTORY_TURNS,
@@ -76,8 +83,73 @@ pub fn create(conn: &DbConn, name: &str, path: Option<&str>) -> AppResult<Projec
     })
 }
 
-pub fn list(conn: &DbConn) -> AppResult<Vec<Project>> {
-    let sql = format!(
+/// Resolve `~/Documents/moyanagentproject` (Windows: `C:\Users\<user>\Documents\...`).
+fn blank_projects_root() -> AppResult<PathBuf> {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .ok_or_else(|| AppError::Config("cannot resolve user home directory".into()))?;
+    let documents = home.join("Documents");
+    Ok(documents.join(BLANK_PROJECT_ROOT_NAME))
+}
+
+/// Create a unique subdirectory under [`blank_projects_root`] for a blank project.
+fn allocate_blank_project_dir(project_name: &str) -> AppResult<PathBuf> {    let root = blank_projects_root()?;
+    std::fs::create_dir_all(&root).map_err(|e| {
+        AppError::Other(format!(
+            "failed to create blank-project root {}: {e}",
+            root.display()
+        ))
+    })?;
+
+    let base = sanitize_folder_name(project_name);
+    for candidate in unique_dir_candidates(&root, &base) {
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => {
+                return candidate
+                    .canonicalize()
+                    .map_err(|e| AppError::Other(format!("canonicalize {}: {e}", candidate.display())));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(AppError::Other(format!(
+                    "failed to create project directory {}: {e}",
+                    candidate.display()
+                )));
+            }
+        }
+    }
+    Err(AppError::Other(format!(
+        "could not allocate a unique directory under {}",
+        root.display()
+    )))
+}
+
+fn sanitize_folder_name(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| match c {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let s = s.trim().trim_end_matches('.').to_string();
+    if s.is_empty() {
+        "project".to_string()
+    } else {
+        s
+    }
+}
+
+fn unique_dir_candidates<'a>(
+    root: &'a Path,
+    base: &'a str,
+) -> impl Iterator<Item = PathBuf> + 'a {
+    std::iter::once(root.join(base)).chain((2..).map(move |n| root.join(format!("{base}-{n}"))))
+}
+
+pub fn list(conn: &DbConn) -> AppResult<Vec<Project>> {    let sql = format!(
         "SELECT {SELECT_COLS} FROM projects ORDER BY sort_order ASC, created_at ASC"
     );
     let mut stmt = conn.prepare(&sql)?;

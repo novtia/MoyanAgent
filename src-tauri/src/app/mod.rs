@@ -1565,6 +1565,8 @@ struct CreateCustomAgentArgs {
     system_prompt: String,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    tools: Vec<String>,
 }
 
 #[tauri::command]
@@ -1579,6 +1581,7 @@ fn create_custom_agent(
         &args.when_to_use,
         &args.system_prompt,
         args.model.as_deref(),
+        &args.tools,
     )
 }
 
@@ -1593,6 +1596,8 @@ struct UpdateCustomAgentArgs {
     system_prompt: String,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    tools: Vec<String>,
 }
 
 #[tauri::command]
@@ -1608,6 +1613,7 @@ fn update_custom_agent(
         &args.when_to_use,
         &args.system_prompt,
         args.model.as_deref(),
+        &args.tools,
     )
 }
 

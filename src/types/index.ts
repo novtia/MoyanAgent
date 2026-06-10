@@ -125,6 +125,8 @@ export interface CustomAgent {
   when_to_use: string;
   system_prompt: string;
   model: string | null;
+  /** Allowed tool names. Empty means full tool access. */
+  tools: string[];
   created_at: number;
   updated_at: number;
 }

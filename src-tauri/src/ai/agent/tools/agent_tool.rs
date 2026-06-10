@@ -164,6 +164,9 @@ impl AgentTool {
             chat_request,
             initial_attachments,
             parent_hint,
+            // Host-side path has no parent ToolUseContext; without a
+            // DB-derived path the sub-agent runs without a CWD.
+            None,
         )
         .await
     }
@@ -189,6 +192,7 @@ impl AgentTool {
     ///
     /// `parent_hint` is whatever system prompt the caller knows about
     /// the parent agent. Only consulted in [`AgentRunMode::Fork`].
+    #[allow(clippy::too_many_arguments)]
     async fn dispatch(
         &self,
         invocation: AgentInvocation,
@@ -197,6 +201,7 @@ impl AgentTool {
         chat_request: ChatRequest,
         initial_attachments: Vec<Attachment>,
         parent_hint: Option<String>,
+        parent_cwd: Option<std::path::PathBuf>,
     ) -> AppResult<AgentToolResult> {
         let run_mode = if agent_type == AGENT_FORK {
             AgentRunMode::Fork
@@ -226,8 +231,10 @@ impl AgentTool {
             on_text_delta: None,
             on_tool_event: None,
             query_source: None,
-            // Sub-agents inherit CWD from the host process; no project context.
-            project_cwd: None,
+            // Sub-agents inherit the parent's DB-derived project path.
+            // NEVER the host process directory — if the parent has no
+            // project path, the sub-agent gets none either.
+            project_cwd: parent_cwd,
             abort_signal: None,
         })
         .await?;
@@ -326,6 +333,14 @@ impl Tool for AgentTool {
             // loop (see `runner::run_agent`).
             let parent_hint = invocation.context.parent_system_prompt.clone();
 
+            // Propagate the parent's working directory only when it is a
+            // real (DB-derived) path; an empty cwd stays empty.
+            let parent_cwd = if invocation.context.cwd.as_os_str().is_empty() {
+                None
+            } else {
+                Some(invocation.context.cwd.clone())
+            };
+
             match self
                 .dispatch(
                     invocation_args,
@@ -334,6 +349,7 @@ impl Tool for AgentTool {
                     chat_request,
                     initial_attachments,
                     parent_hint,
+                    parent_cwd,
                 )
                 .await
             {

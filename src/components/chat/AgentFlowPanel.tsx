@@ -15,6 +15,7 @@ interface FormState {
   whenToUse: string;
   systemPrompt: string;
   model: string;
+  tools: string[];
 }
 
 const EMPTY_FORM: FormState = {
@@ -24,6 +25,7 @@ const EMPTY_FORM: FormState = {
   whenToUse: "",
   systemPrompt: "",
   model: "",
+  tools: [],
 };
 
 /**
@@ -42,6 +44,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
 
   const [builtins, setBuiltins] = useState<AgentSummary[]>([]);
   const [customs, setCustoms] = useState<CustomAgent[]>([]);
+  const [allTools, setAllTools] = useState<string[]>([]);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
 
   const refreshAgents = useCallback(async () => {
@@ -57,6 +60,13 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
   useEffect(() => {
     void refreshAgents();
   }, [refreshAgents]);
+
+  useEffect(() => {
+    api
+      .listAgentTools()
+      .then(setAllTools)
+      .catch((e) => console.warn(e));
+  }, []);
 
   const builtinName = useCallback(
     (agentType: string) => t(`agentFlow.builtinNames.${agentType}`, { defaultValue: agentType }),
@@ -99,11 +109,15 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
     [sessionId, setAgentChain],
   );
 
-  const openNew = () => setForm({ ...EMPTY_FORM, mode: "new" });
+  // New agents start with every available tool enabled (full access); the user
+  // can then uncheck tools to restrict the agent.
+  const openNew = () => setForm({ ...EMPTY_FORM, mode: "new", tools: [...allTools] });
   const openEditByType = useCallback(
     (agentType: string) => {
       const c = customs.find((x) => x.agent_type === agentType);
       if (!c) return;
+      // An empty stored list means "all tools"; reflect that as everything checked.
+      const tools = c.tools.length > 0 ? c.tools : [...allTools];
       setForm({
         mode: "edit",
         agentType: c.agent_type,
@@ -111,15 +125,37 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
         whenToUse: c.when_to_use,
         systemPrompt: c.system_prompt,
         model: c.model ?? "",
+        tools,
       });
     },
-    [customs],
+    [customs, allTools],
   );
   const closeForm = () => setForm(EMPTY_FORM);
+
+  const toggleTool = useCallback((tool: string) => {
+    setForm((f) => {
+      const has = f.tools.includes(tool);
+      return {
+        ...f,
+        tools: has ? f.tools.filter((t) => t !== tool) : [...f.tools, tool],
+      };
+    });
+  }, []);
+
+  const allToolsSelected = allTools.length > 0 && form.tools.length === allTools.length;
+  const toggleAllTools = useCallback(() => {
+    setForm((f) => ({
+      ...f,
+      tools: f.tools.length === allTools.length ? [] : [...allTools],
+    }));
+  }, [allTools]);
 
   const submitForm = async () => {
     const name = form.name.trim();
     if (!name) return;
+    // When every tool is selected, persist an empty list so the agent keeps
+    // full access and automatically picks up tools added later.
+    const tools = allToolsSelected ? [] : form.tools;
     try {
       if (form.mode === "new") {
         await api.createCustomAgent({
@@ -127,6 +163,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
           whenToUse: form.whenToUse,
           systemPrompt: form.systemPrompt,
           model: form.model.trim() || null,
+          tools,
         });
       } else if (form.mode === "edit") {
         await api.updateCustomAgent({
@@ -135,6 +172,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
           whenToUse: form.whenToUse,
           systemPrompt: form.systemPrompt,
           model: form.model.trim() || null,
+          tools,
         });
       }
       await refreshAgents();
@@ -234,6 +272,38 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
                     onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
                   />
                 </label>
+                <div className="agent-flow-field">
+                  <div className="agent-flow-tools-head">
+                    <span>{t("agentFlow.formTools")}</span>
+                    <button
+                      type="button"
+                      className="agent-flow-tools-toggle"
+                      onClick={toggleAllTools}
+                      disabled={allTools.length === 0}
+                    >
+                      {allToolsSelected
+                        ? t("agentFlow.toolsDeselectAll")
+                        : t("agentFlow.toolsSelectAll")}
+                    </button>
+                  </div>
+                  {allTools.length === 0 ? (
+                    <p className="agent-flow-tools-empty">{t("agentFlow.toolsEmpty")}</p>
+                  ) : (
+                    <div className="agent-flow-tools">
+                      {allTools.map((tool) => (
+                        <label key={tool} className="agent-flow-tool">
+                          <input
+                            type="checkbox"
+                            checked={form.tools.includes(tool)}
+                            onChange={() => toggleTool(tool)}
+                          />
+                          <span>{tool}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  <p className="agent-flow-tools-hint">{t("agentFlow.formToolsHint")}</p>
+                </div>
               </div>
             </div>
             <div className="modal-foot">

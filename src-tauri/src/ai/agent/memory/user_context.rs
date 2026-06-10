@@ -38,7 +38,11 @@ pub struct UserContextConfig {
 
 impl UserContextConfig {
     pub fn from_env() -> Self {
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        // Deliberately NO `std::env::current_dir()` here: the host process
+        // directory (e.g. the app's own dev checkout) must never be scanned
+        // for CLAUDE.md. Project paths come exclusively from the database;
+        // an empty cwd disables the project-memory walk entirely.
+        let cwd = PathBuf::new();
         let home = std::env::var_os("HOME")
             .or_else(|| std::env::var_os("USERPROFILE"))
             .map(PathBuf::from);
@@ -101,7 +105,14 @@ impl FsUserContextLoader {
         }
 
         // Project memory: walk up from CWD to the filesystem root.
-        let mut project_chain = ancestor_paths(&self.config.cwd);
+        // An empty cwd means "no project context" — skip the walk
+        // entirely instead of resolving relative paths against the host
+        // process directory.
+        let mut project_chain = if self.config.cwd.as_os_str().is_empty() {
+            Vec::new()
+        } else {
+            ancestor_paths(&self.config.cwd)
+        };
         // closest directory wins, but we discover root → leaf so callers
         // see ascending order. Reverse so leaf (most specific) comes last.
         project_chain.reverse();

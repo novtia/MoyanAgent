@@ -47,6 +47,9 @@ impl BashTool {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
                 description: "Execute a shell command and return stdout/stderr/exit code. \
+                    Platform and shell type are in the `<env>` block — read that instead of \
+                    running `uname`. Requires a working directory from the database project \
+                    `path` (or an explicit absolute `cwd`). \
                     Uses cmd on Windows and sh on Unix. Times out (default 60s)."
                     .to_string(),
                 schema: json!({
@@ -54,7 +57,8 @@ impl BashTool {
                     "properties": {
                         "command": {
                             "type": "string",
-                            "description": "Shell command to execute. Treated as a single -c / /C string."
+                            "description": "Shell command to execute. Treated as a single -c / /C string. \
+                                On Windows use cmd syntax (dir, type); on Unix use sh syntax (ls, find)."
                         },
                         "timeout_secs": {
                             "type": "integer",
@@ -64,7 +68,9 @@ impl BashTool {
                         },
                         "cwd": {
                             "type": "string",
-                            "description": "Working directory. Defaults to the agent's CWD."
+                            "description": "Working directory. Must be absolute. On Windows use drive-letter \
+                                paths (e.g. C:\\\\project); Unix-style paths like /tmp are invalid on Windows. \
+                                Defaults to the database project path from `<env>`."
                         }
                     },
                     "required": ["command"]
@@ -113,10 +119,23 @@ impl Tool for BashTool {
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(|| invocation.context.cwd.clone());
 
-            let mut cmd = build_command(&command);
-            if !cwd.as_os_str().is_empty() {
-                cmd.current_dir(&cwd);
+            // Refuse to run without an explicit working directory. Falling
+            // through to the host process CWD would leak the app's own
+            // directory; the only valid CWD sources are the DB project
+            // path (via context) or an explicit absolute `cwd` argument.
+            if cwd.as_os_str().is_empty() {
+                return Ok(ToolResult::error(
+                    "Bash: no working directory available. Set the project's `path` in the \
+                     database, or pass an explicit absolute `cwd`. To detect the OS, read \
+                     `<env>Platform</env>` in the system prompt — do not run `uname`.",
+                ));
             }
+            if !cwd.is_absolute() {
+                return Ok(ToolResult::error(cwd_validation_error(&cwd)));
+            }
+
+            let mut cmd = build_command(&command);
+            cmd.current_dir(&cwd);
             cmd.stdout(Stdio::piped());
             cmd.stderr(Stdio::piped());
             cmd.stdin(Stdio::null());
@@ -198,4 +217,28 @@ fn truncate_lossy(bytes: &[u8]) -> (String, bool) {
     let mut s = String::from_utf8_lossy(head).into_owned();
     s.push_str("\n\n<truncated>");
     (s, true)
+}
+
+/// Platform-aware error when `cwd` fails `is_absolute()`.
+fn cwd_validation_error(path: &std::path::Path) -> String {
+    let display = path.display();
+    #[cfg(windows)]
+    {
+        let looks_unix = path
+            .to_str()
+            .is_some_and(|s| s.starts_with('/') && !s.contains(':'));
+        if looks_unix {
+            return format!(
+                "Bash: `cwd` must be a Windows absolute path (e.g. `C:\\\\`), got `{display}`. \
+                 This host is Windows — read `<env>Platform</env>` instead of using Unix paths."
+            );
+        }
+        format!(
+            "Bash: `cwd` must be an absolute Windows path (e.g. `C:\\\\project`), got `{display}`"
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        format!("Bash: `cwd` must be an absolute path, got `{display}`")
+    }
 }

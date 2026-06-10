@@ -245,7 +245,15 @@ fn path_arg(input: &Value, tool: &str) -> AppResult<PathBuf> {
         .get("path")
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::Invalid(format!("{tool}: missing path")))?;
-    Ok(PathBuf::from(raw))
+    let path = PathBuf::from(raw);
+    // Relative paths would resolve against the host process CWD (the
+    // app's own directory) — never allowed.
+    if !path.is_absolute() {
+        return Err(AppError::Invalid(format!(
+            "{tool}: `path` must be absolute, got `{raw}`"
+        )));
+    }
+    Ok(path)
 }
 
 /// True iff the agent has registered a read receipt for `path` (or its

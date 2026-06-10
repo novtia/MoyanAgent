@@ -91,6 +91,15 @@ impl Tool for FileReadTool {
                 .map(PathBuf::from)
                 .ok_or_else(|| AppError::Invalid("Read: missing path".into()))?;
 
+            // Relative paths would resolve against the host process CWD
+            // (the app's own directory) — never allowed.
+            if !path.is_absolute() {
+                return Ok(ToolResult::error(format!(
+                    "Read: `path` must be absolute, got `{}`",
+                    path.display()
+                )));
+            }
+
             let canonical = std::fs::canonicalize(&path)
                 .map_err(|e| AppError::Other(format!("Read: canonicalize {:?}: {e}", path)))?;
 
