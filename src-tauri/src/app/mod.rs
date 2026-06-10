@@ -19,7 +19,7 @@ use crate::ai::agent::{
 };
 use crate::ai::{chat, parameters, router};
 use crate::data::db::DbPool;
-use crate::data::{db, llm_catalog, paths, project, session, settings};
+use crate::data::{custom_agents, db, llm_catalog, paths, project, session, settings};
 use crate::error::{AppError, AppResult};
 use crate::media::{editor, images};
 
@@ -221,6 +221,182 @@ fn effective_session_params(
     }
 }
 
+/// Resolve the [`AgentDefinition`] that should drive a primary-session
+/// generation for `agent_type`. Built-in agents come from the registry
+/// (MCP-gated); user-defined agents (`custom:*`) are loaded from the
+/// `custom_agents` table on demand.
+fn resolve_generation_definition(
+    state: &AppState,
+    agent_type: &str,
+) -> AppResult<crate::ai::agent::AgentDefinition> {
+    let mcp_available = state.mcp.available_servers();
+    if let Some(d) = state
+        .agent_registry
+        .filter_by_mcp(&mcp_available)
+        .get(agent_type)
+        .cloned()
+    {
+        return Ok(d);
+    }
+    if agent_type.starts_with(custom_agents::CUSTOM_AGENT_PREFIX) {
+        let conn = state.conn()?;
+        if let Some(ca) = custom_agents::get(&conn, agent_type)? {
+            return Ok(ca.to_definition());
+        }
+    }
+    Err(AppError::Invalid(format!(
+        "unknown or MCP-unavailable agent type for main session: {agent_type}"
+    )))
+}
+
+/// Human-friendly label for an agent flow stage. Custom agents show their
+/// stored name; built-ins show the `agent_type` directly.
+fn stage_display_name(state: &AppState, agent_type: &str) -> String {
+    if agent_type.starts_with(custom_agents::CUSTOM_AGENT_PREFIX) {
+        if let Ok(conn) = state.conn() {
+            if let Ok(Some(ca)) = custom_agents::get(&conn, agent_type) {
+                return ca.name;
+            }
+        }
+    }
+    agent_type.to_string()
+}
+
+/// Build the prompt handed to a downstream (N>1) agent flow stage. Wraps the
+/// original user request together with the upstream stage's final output so
+/// each stage refines the previous stage's result.
+fn build_chain_stage_prompt(user_prompt: &str, prev_output: &str) -> String {
+    format!(
+        "You are a stage in an ordered agent pipeline. Continue the work by \
+processing the previous agent's output.\n\n\
+--- ORIGINAL USER REQUEST ---\n{user_prompt}\n\n\
+--- PREVIOUS AGENT OUTPUT ---\n{prev_output}\n\n\
+--- YOUR TASK ---\nProcess the previous agent's output according to your role \
+and produce the refined result."
+    )
+}
+
+/// Record an `agent_stage` marker block into the shared stream buffer so the
+/// persisted assistant message keeps stage boundaries.
+fn push_agent_stage_block(blocks: &StreamBlocks, agent_type: &str, name: &str, index: usize) {
+    if let Ok(mut g) = blocks.lock() {
+        g.push(serde_json::json!({
+            "type": "agent_stage",
+            "agent_type": agent_type,
+            "name": name,
+            "index": index,
+        }));
+    }
+}
+
+/// Emit a live `agent_stage` event so the UI can render the stage separator
+/// while the chain streams.
+fn emit_agent_stage(
+    app: &AppHandle,
+    session_id: &str,
+    request_message_id: &str,
+    agent_type: &str,
+    name: &str,
+    index: usize,
+) {
+    let _ = app.emit(
+        "gen://stream",
+        serde_json::json!({
+            "session_id": session_id,
+            "request_message_id": request_message_id,
+            "stage": {
+                "agent_type": agent_type,
+                "name": name,
+                "index": index,
+            },
+        }),
+    );
+}
+
+/// Run an ordered agent flow chain for a single user turn.
+///
+/// Stage 0 receives the prepared `base_request` (full history + user prompt +
+/// attachments). Each later stage gets a fresh request whose prompt wraps the
+/// original user prompt plus the previous stage's final text (see
+/// [`build_chain_stage_prompt`]), so the chain behaves like a streaming
+/// pipeline (main -> state-machine -> fixer -> ...). All stages stream into the
+/// same `stream_blocks`; an `agent_stage` marker is pushed and emitted before
+/// each stage. Returns the merged response: the last stage's text/thinking/
+/// usage plus images collected across every stage.
+#[allow(clippy::too_many_arguments)]
+async fn run_agent_chain(
+    state: &AppState,
+    app: &AppHandle,
+    session_id: &str,
+    request_message_id: &str,
+    chain: &[String],
+    main_agent: &str,
+    user_prompt: &str,
+    base_request: chat::ChatRequest,
+    settings: &settings::Settings,
+    session_prompt: &str,
+    params: &parameters::GenerationParameters,
+    project_cwd: Option<std::path::PathBuf>,
+    stream_blocks: &StreamBlocks,
+    on_text_delta: chat::TextDeltaCallback,
+    on_tool_event: ToolEventCallback,
+) -> AppResult<chat::GenerateResponse> {
+    let mut base_request = Some(base_request);
+    let mut prev_text: Option<String> = None;
+    let mut merged = chat::GenerateResponse::default();
+
+    for (idx, raw_type) in chain.iter().enumerate() {
+        // The default main agent is referenced by a sentinel so it tracks the
+        // session's `agent_type` (general-purpose / Plan) wherever it sits.
+        let is_main = raw_type == session::AGENT_CHAIN_MAIN;
+        let agent_type: &str = if is_main { main_agent } else { raw_type.as_str() };
+        let name = if is_main {
+            main_agent.to_string()
+        } else {
+            stage_display_name(state, agent_type)
+        };
+        push_agent_stage_block(stream_blocks, agent_type, &name, idx);
+        emit_agent_stage(app, session_id, request_message_id, agent_type, &name, idx);
+
+        let (request, stage_prompt) = if idx == 0 {
+            let r = base_request.take().expect("stage 0 request present");
+            let p = r.prompt.clone();
+            (r, p)
+        } else {
+            let wrapped = build_chain_stage_prompt(user_prompt, prev_text.as_deref().unwrap_or(""));
+            let r = router::build_chat_request(
+                settings,
+                wrapped.clone(),
+                Vec::new(),
+                session_prompt.to_string(),
+                Vec::new(),
+                params.clone(),
+            )?;
+            (r, wrapped)
+        };
+
+        let resp = run_cancellable_generation(
+            state,
+            session_id,
+            agent_type,
+            stage_prompt,
+            request,
+            Some(on_text_delta.clone()),
+            Some(on_tool_event.clone()),
+            project_cwd.clone(),
+        )
+        .await?;
+
+        prev_text = resp.text.clone();
+        merged.text = resp.text;
+        merged.thinking_content = resp.thinking_content;
+        merged.usage = resp.usage;
+        merged.images.extend(resp.images);
+    }
+
+    Ok(merged)
+}
+
 async fn run_cancellable_generation(
     state: &AppState,
     session_id: &str,
@@ -242,17 +418,7 @@ async fn run_cancellable_generation(
         crate::ai::agent::exec::engine::inject_attachments_into_history(&mut request, &drained);
     }
 
-    let mcp_available = state.mcp.available_servers();
-    let mut definition = state
-        .agent_registry
-        .filter_by_mcp(&mcp_available)
-        .get(agent_type)
-        .cloned()
-        .ok_or_else(|| {
-            AppError::Invalid(format!(
-                "unknown or MCP-unavailable agent type for main session: {agent_type}"
-            ))
-        })?;
+    let mut definition = resolve_generation_definition(state, agent_type)?;
 
     // Prepend user-context when the agent opts in (Plan/Explore omit it).
     if let Ok(ctx) = state.user_context.load() {
@@ -1381,6 +1547,101 @@ fn list_agents(state: tauri::State<Arc<AppState>>) -> Result<Vec<AgentSummary>, 
     Ok(out)
 }
 
+#[tauri::command]
+fn list_custom_agents(
+    state: tauri::State<Arc<AppState>>,
+) -> Result<Vec<custom_agents::CustomAgent>, AppError> {
+    let conn = state.conn()?;
+    custom_agents::list(&conn)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateCustomAgentArgs {
+    name: String,
+    #[serde(default)]
+    when_to_use: String,
+    #[serde(default)]
+    system_prompt: String,
+    #[serde(default)]
+    model: Option<String>,
+}
+
+#[tauri::command]
+fn create_custom_agent(
+    state: tauri::State<Arc<AppState>>,
+    args: CreateCustomAgentArgs,
+) -> Result<custom_agents::CustomAgent, AppError> {
+    let conn = state.conn()?;
+    custom_agents::create(
+        &conn,
+        &args.name,
+        &args.when_to_use,
+        &args.system_prompt,
+        args.model.as_deref(),
+    )
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCustomAgentArgs {
+    agent_type: String,
+    name: String,
+    #[serde(default)]
+    when_to_use: String,
+    #[serde(default)]
+    system_prompt: String,
+    #[serde(default)]
+    model: Option<String>,
+}
+
+#[tauri::command]
+fn update_custom_agent(
+    state: tauri::State<Arc<AppState>>,
+    args: UpdateCustomAgentArgs,
+) -> Result<custom_agents::CustomAgent, AppError> {
+    let conn = state.conn()?;
+    custom_agents::update(
+        &conn,
+        &args.agent_type,
+        &args.name,
+        &args.when_to_use,
+        &args.system_prompt,
+        args.model.as_deref(),
+    )
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteCustomAgentArgs {
+    agent_type: String,
+}
+
+#[tauri::command]
+fn delete_custom_agent(
+    state: tauri::State<Arc<AppState>>,
+    args: DeleteCustomAgentArgs,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    custom_agents::delete(&conn, &args.agent_type)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetSessionAgentChainArgs {
+    id: String,
+    chain: Vec<String>,
+}
+
+#[tauri::command]
+fn set_session_agent_chain(
+    state: tauri::State<Arc<AppState>>,
+    args: SetSessionAgentChainArgs,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    session::set_agent_chain(&conn, &args.id, &args.chain)
+}
+
 #[derive(Debug, Deserialize)]
 struct GenerateReq {
     session_id: String,
@@ -1449,12 +1710,13 @@ async fn generate_image(
     req: GenerateReq,
 ) -> Result<GenerateResult, AppError> {
     // 1) gather settings + attachment bytes + history synchronously
-    let (chat_request, params, attachment_image_ids, generation_agent, project_cwd) = {
+    let (chat_request, params, attachment_image_ids, generation_agent, project_cwd, agent_chain, settings_snapshot, session_prompt) = {
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
         let session_config = session::get(&conn, &req.session_id)?;
         let generation_agent =
             session::generation_agent_definition_key(&session_config.agent_type);
+        let agent_chain = session_config.agent_chain.clone();
         let project_cwd = session_project_cwd(&conn, &req.session_id);
         let eff = effective_session_params(&conn, &session_config);
         let session_prompt = eff.system_prompt;
@@ -1487,11 +1749,11 @@ async fn generate_image(
             &s,
             req.prompt.clone(),
             atts,
-            session_prompt,
+            session_prompt.clone(),
             hist,
             params.clone(),
         )?;
-        (chat_request, params, ids, generation_agent, project_cwd)
+        (chat_request, params, ids, generation_agent, project_cwd, agent_chain, s, session_prompt)
     };
     let params_json = params.to_message_params_json().to_string();
 
@@ -1538,17 +1800,41 @@ async fn generate_image(
         user_msg.id.clone(),
         stream_blocks.clone(),
     );
-    let result = run_cancellable_generation(
-        &state,
-        &req.session_id,
-        generation_agent,
-        req.prompt.clone(),
-        chat_request,
-        Some(on_text_delta),
-        Some(on_tool_event),
-        project_cwd,
-    )
-    .await;
+    let result = match agent_chain.as_ref().filter(|c| !c.is_empty()) {
+        Some(chain) => {
+            run_agent_chain(
+                &state,
+                &app,
+                &req.session_id,
+                &user_msg.id,
+                chain,
+                generation_agent,
+                &req.prompt,
+                chat_request,
+                &settings_snapshot,
+                &session_prompt,
+                &params,
+                project_cwd,
+                &stream_blocks,
+                on_text_delta,
+                on_tool_event,
+            )
+            .await
+        }
+        None => {
+            run_cancellable_generation(
+                &state,
+                &req.session_id,
+                generation_agent,
+                req.prompt.clone(),
+                chat_request,
+                Some(on_text_delta),
+                Some(on_tool_event),
+                project_cwd,
+            )
+            .await
+        }
+    };
 
     let _ = app.emit(
         "gen://status",
@@ -1665,12 +1951,13 @@ async fn regenerate_image(
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| AppError::Invalid("user message has no prompt text".into()))?;
 
-    let (chat_request, params, generation_agent, project_cwd) = {
+    let (chat_request, params, generation_agent, project_cwd, agent_chain, settings_snapshot, session_prompt) = {
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
         let session_config = session::get(&conn, &req.session_id)?;
         let generation_agent =
             session::generation_agent_definition_key(&session_config.agent_type);
+        let agent_chain = session_config.agent_chain.clone();
         let project_cwd = session_project_cwd(&conn, &req.session_id);
         let eff = effective_session_params(&conn, &session_config);
         let session_prompt = eff.system_prompt;
@@ -1709,11 +1996,11 @@ async fn regenerate_image(
             &s,
             prompt.to_string(),
             atts,
-            session_prompt,
+            session_prompt.clone(),
             hist,
             params.clone(),
         )?;
-        (chat_request, params, generation_agent, project_cwd)
+        (chat_request, params, generation_agent, project_cwd, agent_chain, s, session_prompt)
     };
     let params_json = params.to_message_params_json().to_string();
 
@@ -1739,17 +2026,41 @@ async fn regenerate_image(
         req.user_message_id.clone(),
         stream_blocks.clone(),
     );
-    let result = run_cancellable_generation(
-        &state,
-        &req.session_id,
-        generation_agent,
-        prompt.to_string(),
-        chat_request,
-        Some(on_text_delta),
-        Some(on_tool_event),
-        project_cwd,
-    )
-    .await;
+    let result = match agent_chain.as_ref().filter(|c| !c.is_empty()) {
+        Some(chain) => {
+            run_agent_chain(
+                &state,
+                &app,
+                &req.session_id,
+                &req.user_message_id,
+                chain,
+                generation_agent,
+                prompt,
+                chat_request,
+                &settings_snapshot,
+                &session_prompt,
+                &params,
+                project_cwd,
+                &stream_blocks,
+                on_text_delta,
+                on_tool_event,
+            )
+            .await
+        }
+        None => {
+            run_cancellable_generation(
+                &state,
+                &req.session_id,
+                generation_agent,
+                prompt.to_string(),
+                chat_request,
+                Some(on_text_delta),
+                Some(on_tool_event),
+                project_cwd,
+            )
+            .await
+        }
+    };
 
     let _ = app.emit(
         "gen://status",
@@ -2124,6 +2435,7 @@ pub fn run() {
             update_session_config,
             set_session_model,
             set_session_agent_type,
+            set_session_agent_chain,
             delete_session,
             load_session,
             list_projects,
@@ -2145,6 +2457,10 @@ pub fn run() {
             list_agent_tasks,
             cancel_agent_task,
             list_agents,
+            list_custom_agents,
+            create_custom_agent,
+            update_custom_agent,
+            delete_custom_agent,
             refresh_user_context,
             set_mcp_servers,
             list_agent_tools,

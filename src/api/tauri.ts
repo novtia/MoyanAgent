@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type {
+  AgentSummary,
   AttachmentDraft,
+  CustomAgent,
   EditOp,
   GenerateResult,
   ImageRefAbs,
@@ -73,6 +75,10 @@ export const api = {
   setSessionAgentType: (id: string, agentType: string) =>
     invoke<void>("set_session_agent_type", {
       args: { id, agentType },
+    }),
+  setSessionAgentChain: (id: string, chain: string[]) =>
+    invoke<void>("set_session_agent_chain", {
+      args: { id, chain },
     }),
   deleteSession: (id: string) => invoke<void>("delete_session", { id }),
   loadSession: (id: string) =>
@@ -194,6 +200,42 @@ export const api = {
 
   importArchive: (archivePath: string) =>
     invoke<ImportResult>("import_archive", { archivePath }),
+
+  // agents
+  listAgents: () => invoke<AgentSummary[]>("list_agents"),
+  listCustomAgents: () => invoke<CustomAgent[]>("list_custom_agents"),
+  createCustomAgent: (args: {
+    name: string;
+    whenToUse?: string;
+    systemPrompt?: string;
+    model?: string | null;
+  }) =>
+    invoke<CustomAgent>("create_custom_agent", {
+      args: {
+        name: args.name,
+        whenToUse: args.whenToUse ?? "",
+        systemPrompt: args.systemPrompt ?? "",
+        model: args.model ?? null,
+      },
+    }),
+  updateCustomAgent: (args: {
+    agentType: string;
+    name: string;
+    whenToUse?: string;
+    systemPrompt?: string;
+    model?: string | null;
+  }) =>
+    invoke<CustomAgent>("update_custom_agent", {
+      args: {
+        agentType: args.agentType,
+        name: args.name,
+        whenToUse: args.whenToUse ?? "",
+        systemPrompt: args.systemPrompt ?? "",
+        model: args.model ?? null,
+      },
+    }),
+  deleteCustomAgent: (agentType: string) =>
+    invoke<void>("delete_custom_agent", { args: { agentType } }),
 };
 
 export function srcOf(absPath: string | null | undefined): string {

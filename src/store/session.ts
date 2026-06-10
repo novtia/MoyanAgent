@@ -37,6 +37,8 @@ interface GenerationStreamPayload {
   thinking_delta?: string | null;
   /** Backward compatibility for older backend stream events. */
   delta?: string;
+  /** Agent flow chain stage boundary marker. */
+  stage?: { agent_type: string; name?: string; index?: number };
 }
 
 interface ToolUseEventPayload {
@@ -85,6 +87,7 @@ interface SessionStore {
   setAspectRatio: (s: string) => void;
   setImageSize: (s: string) => void;
   setChatMode: (mode: ComposerChatMode) => Promise<void>;
+  setAgentChain: (chain: string[]) => Promise<void>;
   addAttachments: (files: File[]) => Promise<void>;
   addAttachmentsFromPaths: (paths: string[]) => Promise<void>;
   addAttachmentFromPath: (path: string) => Promise<void>;
@@ -378,6 +381,27 @@ export const useSession = create<SessionStore>((set, get) => {
       await get().reloadActiveSession();
     } catch (e) {
       console.warn(e);
+    }
+  },
+
+  setAgentChain: async (chain) => {
+    const id = get().activeId;
+    if (!id) return;
+    const cleaned = chain.map((s) => s.trim()).filter(Boolean);
+    const active = get().active;
+    if (active && active.session.id === id) {
+      set({
+        active: {
+          ...active,
+          session: { ...active.session, agent_chain: cleaned.length ? cleaned : null },
+        },
+      });
+    }
+    try {
+      await api.setSessionAgentChain(id, cleaned);
+    } catch (e) {
+      console.warn(e);
+      await get().reloadActiveSession();
     }
   },
 
@@ -976,7 +1000,8 @@ function ensureGenerationStreamListener() {
       if (sessionId && cancellingSessions.has(sessionId)) return;
       const textDelta = payload.text_delta ?? payload.delta ?? "";
       const thinkingDelta = payload.thinking_delta ?? "";
-      if (!sessionId || (!textDelta && !thinkingDelta)) return;
+      const stage = payload.stage;
+      if (!sessionId || (!textDelta && !thinkingDelta && !stage)) return;
 
       const requestId = payload.request_message_id || sessionId;
       const prev = streamingBuffers.get(sessionId) ?? {
@@ -985,6 +1010,14 @@ function ensureGenerationStreamListener() {
       };
       // Always work on a fresh array so React sees a new reference.
       const nextBlocks = prev.blocks.map((b) => ({ ...b }));
+      if (stage) {
+        nextBlocks.push({
+          type: "agent_stage",
+          agent_type: stage.agent_type,
+          name: stage.name,
+          index: stage.index,
+        });
+      }
       if (thinkingDelta) appendDelta(nextBlocks, "thinking", thinkingDelta);
       if (textDelta) appendDelta(nextBlocks, "text", textDelta);
       const next: StreamBuffer = { blocks: nextBlocks, requestId };

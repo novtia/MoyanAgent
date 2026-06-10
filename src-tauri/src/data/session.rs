@@ -18,6 +18,12 @@ fn decode_llm_params(raw: Option<String>) -> ModelParamSettings {
 pub const SESSION_AGENT_GENERAL: &str = "general-purpose";
 pub const SESSION_AGENT_PLAN: &str = "Plan";
 
+/// Sentinel used inside `agent_chain` to mark the session's default main agent.
+/// Resolved at generation time to [`generation_agent_definition_key`] of the
+/// session's `agent_type`. The main agent is always present and cannot be
+/// removed; other agents are arranged before/after it.
+pub const AGENT_CHAIN_MAIN: &str = "__main__";
+
 /// Maps DB `sessions.agent_type` → agent registry key for the primary-session
 /// agent run ([`crate::ai::agent::run_agent`]).
 pub fn generation_agent_definition_key(stored: &str) -> &'static str {
@@ -41,10 +47,28 @@ pub struct Session {
     pub context_window_used: i64,
     /// Which built-in agent definition drives turns (`general-purpose` | `Plan`, …).
     pub agent_type: String,
+    /// Ordered agent flow chain (agent_type strings). `None`/empty means a
+    /// single agent run driven by `agent_type`.
+    pub agent_chain: Option<Vec<String>>,
     /// Project this session belongs to, if any.
     pub project_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+fn decode_agent_chain(raw: Option<String>) -> Option<Vec<String>> {
+    let raw = raw?;
+    let parsed: Vec<String> = serde_json::from_str(&raw).ok()?;
+    let cleaned: Vec<String> = parsed
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -133,10 +157,38 @@ pub fn create(conn: &DbConn, title: Option<String>, model: Option<String>) -> Ap
         context_window: None,
         context_window_used: 0,
         agent_type: SESSION_AGENT_GENERAL.into(),
+        agent_chain: None,
         project_id: None,
         created_at: now,
         updated_at: now,
     })
+}
+
+/// Persist the ordered agent flow chain for a session. An empty list clears
+/// the chain (the session falls back to single-agent generation).
+pub fn set_agent_chain(conn: &DbConn, id: &str, chain: &[String]) -> AppResult<()> {
+    let cleaned: Vec<String> = chain
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let stored: Option<String> = if cleaned.is_empty() {
+        None
+    } else {
+        Some(
+            serde_json::to_string(&cleaned)
+                .map_err(|e| AppError::Invalid(format!("failed to serialize agent_chain: {e}")))?,
+        )
+    };
+    let updated = now_ms();
+    let n = conn.execute(
+        "UPDATE sessions SET agent_chain=?1, updated_at=?2 WHERE id=?3",
+        params![stored, updated, id],
+    )?;
+    if n == 0 {
+        return Err(AppError::NotFound(format!("session {id}")));
+    }
+    Ok(())
 }
 
 pub fn set_agent_type(conn: &DbConn, id: &str, agent_type: &str) -> AppResult<()> {
@@ -444,11 +496,12 @@ fn map_search_result(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSearchR
 
 pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, model, system_prompt, history_turns, llm_params, context_window, context_window_used, agent_type, project_id, created_at, updated_at FROM sessions WHERE id=?1",
+        "SELECT id, title, model, system_prompt, history_turns, llm_params, context_window, context_window_used, agent_type, project_id, created_at, updated_at, agent_chain FROM sessions WHERE id=?1",
     )?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
         let raw: Option<String> = row.get(5)?;
+        let chain_raw: Option<String> = row.get(12)?;
         Ok(Session {
             id: row.get(0)?,
             title: row.get(1)?,
@@ -459,6 +512,7 @@ pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
             context_window: row.get(6)?,
             context_window_used: row.get(7)?,
             agent_type: row.get(8)?,
+            agent_chain: decode_agent_chain(chain_raw),
             project_id: row.get(9)?,
             created_at: row.get(10)?,
             updated_at: row.get(11)?,

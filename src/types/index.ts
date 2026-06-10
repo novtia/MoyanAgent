@@ -108,8 +108,34 @@ export interface Session {
   context_window_used: number;
   /** Main chat agent: `general-purpose` (Agent) or `Plan` (read-only planning). */
   agent_type: string;
+  /**
+   * Ordered agent flow chain (agent_type strings). When set and non-empty the
+   * turn runs as a streaming pipeline through each agent in order; otherwise a
+   * single `agent_type` run applies.
+   */
+  agent_chain: string[] | null;
   created_at: number;
   updated_at: number;
+}
+
+/** A user-defined sub-agent saved globally and reusable across sessions. */
+export interface CustomAgent {
+  agent_type: string;
+  name: string;
+  when_to_use: string;
+  system_prompt: string;
+  model: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** Summary of a built-in / registered agent definition (from `list_agents`). */
+export interface AgentSummary {
+  agent_type: string;
+  when_to_use: string;
+  background: boolean;
+  tools: string[];
+  disallowed_tools: string[];
 }
 
 export interface SessionSummary {
@@ -189,6 +215,17 @@ export type AssistantBlock =
       status: "pending" | "success" | "error";
       output?: unknown;
       is_error?: boolean;
+    }
+  | {
+      /**
+       * Marks the start of an agent flow stage. Emitted before each agent in a
+       * multi-agent chain so the renderer can show stage separators
+       * (main -> state-machine -> fixer -> ...).
+       */
+      type: "agent_stage";
+      agent_type: string;
+      name?: string;
+      index?: number;
     };
 
 export interface MessageAbs {

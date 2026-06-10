@@ -380,6 +380,14 @@ function AssistantContent({
             </div>
           );
         }
+        if (block.type === "agent_stage") {
+          return (
+            <AgentStageDivider
+              key={`stage:${i}`}
+              label={block.name || block.agent_type}
+            />
+          );
+        }
         // All TodoList blocks are collapsed into one persistent view;
         // only the first occurrence renders the master card.
         if (block.tool === "TodoList") {
@@ -397,6 +405,33 @@ function AssistantContent({
         return <ToolCallBlock key={`tool:${block.id}:${i}`} block={block} />;
       })}
     </>
+  );
+}
+
+/** Visual separator marking the start of an agent flow stage. */
+function AgentStageDivider({ label }: { label: string }) {
+  const { t } = useTranslation();
+  return (
+    <div className="agent-stage-divider" role="separator" aria-label={label}>
+      <span className="agent-stage-line" />
+      <span className="agent-stage-chip">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+        </svg>
+        <span className="agent-stage-name">{label}</span>
+        <span className="agent-stage-tag">{t("agentFlow.stageTag")}</span>
+      </span>
+      <span className="agent-stage-line" />
+    </div>
   );
 }
 

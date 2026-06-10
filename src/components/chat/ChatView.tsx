@@ -5,7 +5,7 @@ import { dialog } from "../ui";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { EmptyChat } from "./EmptyChat";
-import { SessionGallery } from "./SessionGallery";
+import { RightPanel } from "./RightPanel";
 import type { AttachmentDraft, ImageRefAbs } from "../../types";
 
 interface ChatViewProps {
@@ -96,17 +96,15 @@ export function ChatView({
             )}
           </div>
           <div className="chat-topbar-right">
-            {!isEmpty && (
-              <button
-                type="button"
-                className={`ghost-btn ${galleryOpen ? "is-active" : ""}`}
-                title={t("chat.galleryToggle")}
-                aria-pressed={galleryOpen}
-                onClick={() => setGalleryOpen((v) => !v)}
-              >
-                <GalleryIcon />
-              </button>
-            )}
+            <button
+              type="button"
+              className={`ghost-btn ${galleryOpen ? "is-active" : ""}`}
+              title={t("rightPanel.toggle")}
+              aria-pressed={galleryOpen}
+              onClick={() => setGalleryOpen((v) => !v)}
+            >
+              <GalleryIcon />
+            </button>
           </div>
         </div>
 
@@ -128,8 +126,8 @@ export function ChatView({
         )}
       </div>
 
-      <SessionGallery
-        open={galleryOpen && !isEmpty}
+      <RightPanel
+        open={galleryOpen}
         onClose={() => setGalleryOpen(false)}
         onPreviewImage={onPreviewImage}
       />
