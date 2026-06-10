@@ -1,15 +1,22 @@
 /* ───── universal click feedback ───── */
+
+/* Shared press transition */
 .titlebar-action,
 .titlebar-menu-btn,
+.titlebar-menu-item,
 .chat-actions button,
+.side-nav-item,
+.side-icon-btn,
+.side-nav-dropdown-item,
 .ghost-btn,
 .chat-more-item,
 .msg-action,
 .bubble-edit-btn,
+.bubble-edit-icon-btn,
 .composer-btn,
 .composer-pill,
+.composer-mode-option,
 .model-popover-item,
-.send-btn,
 .chip,
 .btn,
 .modal-head .close,
@@ -18,93 +25,132 @@
 .settings-segment-btn,
 .settings-preset-item,
 .settings-icon-btn,
-.settings-toggle {
+.settings-toggle,
+.lang-dropdown-trigger,
+.lang-dropdown-item,
+.context-menu-item,
+.search-result,
+.send-btn {
   transform: translateY(0) scale(1);
   transform-origin: center;
   transition-property: background, color, border-color, box-shadow, transform;
   transition-duration: 0.16s;
   transition-timing-function: var(--ease-out);
-  will-change: transform;
 }
 
 .titlebar-action:active:not(:disabled),
 .titlebar-menu-btn:active:not(:disabled),
+.titlebar-menu-item:active:not(:disabled),
 .chat-actions button:active:not(:disabled),
+.side-nav-item:active:not(:disabled),
+.side-icon-btn:active:not(:disabled),
+.side-nav-dropdown-item:active:not(:disabled),
 .ghost-btn:active:not(:disabled),
 .chat-more-item:active:not(:disabled),
 .msg-action:active:not(:disabled),
 .bubble-edit-btn:active:not(:disabled),
+.bubble-edit-icon-btn:active:not(:disabled),
 .composer-btn:active:not(:disabled),
 .composer-pill:active:not(:disabled),
+.composer-mode-option:active:not(:disabled),
 .model-popover-item:active:not(:disabled),
 .chip:active:not(:disabled),
 .btn:active:not(:disabled),
 .modal-head .close:active:not(:disabled),
 .settings-back:active:not(:disabled),
+.settings-nav-item:active:not(:disabled),
 .settings-segment-btn:active:not(:disabled),
 .settings-preset-item:active:not(:disabled),
-.settings-icon-btn:active:not(:disabled) {
+.settings-icon-btn:active:not(:disabled),
+.lang-dropdown-trigger:active:not(:disabled),
+.lang-dropdown-item:active:not(:disabled),
+.context-menu-item:active:not(:disabled),
+.search-result:active {
   transform: translateY(0.5px) scale(0.94);
   transition-duration: 0.06s;
 }
+
 .settings-toggle:active:not(:disabled) {
   transform: translateY(0.5px) scale(0.96);
   transition-duration: 0.06s;
 }
 
-.settings-nav-item:active:not(:disabled) {
-  animation: nav-tap 0.32s var(--ease-pop);
+.send-btn:active:not(:disabled) {
+  transform: scale(0.92);
+  transition-duration: 0.06s;
 }
 
-/* Ripple flash overlay (uses a pseudo so it doesn't touch hit-testing) */
-.msg-action,
-.bubble-edit-btn,
-.composer-btn,
-.composer-pill,
-.btn,
-.settings-nav-item,
-.settings-segment-btn,
-.settings-icon-btn,
-.settings-preset-item,
-.chat-more-item,
-.model-popover-item {
-  position: relative;
-  isolation: isolate;
+.input-affix .affix-btn {
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease, transform 0.12s var(--ease-out);
 }
-.msg-action::after,
-.bubble-edit-btn::after,
-.composer-btn::after,
-.composer-pill::after,
-.btn::after,
-.settings-nav-item::after,
-.settings-segment-btn::after,
-.settings-icon-btn::after,
-.settings-preset-item::after,
-.chat-more-item::after,
-.model-popover-item::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: currentColor;
-  opacity: 0;
-  pointer-events: none;
-  z-index: -1;
-  transform: scale(0.6);
-  transform-origin: center;
+.input-affix .affix-btn:active:not(:disabled) {
+  transform: translateY(-50%) scale(0.92);
 }
-.msg-action:active:not(:disabled)::after,
-.bubble-edit-btn:active:not(:disabled)::after,
-.composer-btn:active:not(:disabled)::after,
-.composer-pill:active:not(:disabled)::after,
-.btn:active:not(:disabled)::after,
-.settings-nav-item:active:not(:disabled)::after,
-.settings-segment-btn:active:not(:disabled)::after,
-.settings-icon-btn:active:not(:disabled)::after,
-.settings-preset-item:active:not(:disabled)::after,
-.chat-more-item:active:not(:disabled)::after,
-.model-popover-item:active:not(:disabled)::after {
-  animation: ripple-flash 0.42s ease-out;
+
+/* Full-button press highlight (replaces ripple overlay) */
+.titlebar-action:active:not(:disabled),
+.titlebar-menu-btn:active:not(:disabled),
+.titlebar-menu-item:active:not(:disabled),
+.side-nav-item:active:not(:disabled),
+.side-icon-btn:active:not(:disabled),
+.side-nav-dropdown-item:active:not(:disabled),
+.ghost-btn:active:not(:disabled),
+.chat-more-item:active:not(:disabled),
+.msg-action:active:not(:disabled),
+.bubble-edit-btn.ghost:active:not(:disabled),
+.bubble-edit-icon-btn:active:not(:disabled),
+.composer-btn:active:not(:disabled),
+.composer-pill:active:not(:disabled),
+.composer-mode-option:active:not(:disabled),
+.model-popover-item:active:not(:disabled),
+.chip:active:not(:disabled):not(.active),
+.btn:active:not(:disabled):not(.primary):not(.danger):not(.warning),
+.modal-head .close:active:not(:disabled),
+.settings-back:active:not(:disabled),
+.settings-preset-item:active:not(:disabled),
+.settings-icon-btn:active:not(:disabled),
+.lang-dropdown-trigger:active:not(:disabled),
+.lang-dropdown-item:active:not(:disabled),
+.context-menu-item:active:not(:disabled),
+.search-result:active {
+  background: var(--bg-hover);
+}
+
+.chat-more-item.danger:active:not(:disabled) {
+  background: var(--rose-50);
+}
+
+.context-menu-item.danger:active:not(:disabled) {
+  background: var(--rose-50);
+  color: var(--rose-500);
+}
+
+.bubble-edit-btn.primary:active:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.btn.primary:active:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.btn.danger:active:not(:disabled) {
+  background: var(--rose-500);
+  color: #fff;
+}
+
+.send-btn:active:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.chip.active:active:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.model-popover-item.active:active:not(:disabled),
+.composer-mode-option.active:active:not(:disabled),
+.lang-dropdown-item.active:active:not(:disabled),
+.chat-more-item.active:active:not(:disabled) {
+  background: var(--bg-hover);
 }
 
 /* Trigger pill: when the popover just opened, add a small punch */
@@ -120,50 +166,10 @@
   transform: rotate(180deg);
 }
 
-/* Chip toggle: brief pop on click */
-.chip:active:not(:disabled) {
-  animation: click-pop 0.26s var(--ease-pop);
-}
-
-/* Send button: bigger, springier feedback */
-.send-btn:active:not(:disabled) {
-  animation: send-pop 0.32s var(--ease-pop);
-}
-
-/* Settings preset selection feels chunky */
-.settings-preset-item:active:not(:disabled) {
-  animation: click-pop 0.28s var(--ease-pop);
-}
-
-/* affix button keeps its translateY(-50%) anchor */
-.input-affix .affix-btn {
-  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease, transform 0.12s var(--ease-out);
-}
-.input-affix .affix-btn:active:not(:disabled) {
-  transform: translateY(-50%) scale(0.92);
-}
-
 /* Respect motion preference */
 @media (prefers-reduced-motion: reduce) {
-  .composer-pill.active,
-  .send-btn:active:not(:disabled),
-  .chip:active:not(:disabled),
-  .settings-nav-item:active:not(:disabled),
-  .settings-preset-item:active:not(:disabled) {
+  .composer-pill.active {
     animation: none;
-  }
-  .msg-action::after,
-  .bubble-edit-btn::after,
-  .composer-btn::after,
-  .composer-pill::after,
-  .btn::after,
-  .settings-nav-item::after,
-  .settings-segment-btn::after,
-  .settings-icon-btn::after,
-  .settings-preset-item::after,
-  .chat-more-item::after,
-  .model-popover-item::after {
-    display: none;
   }
 }
 

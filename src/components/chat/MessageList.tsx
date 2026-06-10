@@ -19,6 +19,47 @@ import type {
   MessageAbs,
 } from "../../types";
 
+type MessageTokenUsageData = NonNullable<
+  NonNullable<MessageAbs["params"]>["usage"]
+>;
+
+const tokenUsageFormatter = new Intl.NumberFormat();
+
+function resolveMessageTokenUsage(usage: MessageTokenUsageData): {
+  prompt: number;
+  completion: number;
+} | null {
+  const prompt = usage.prompt_tokens ?? 0;
+  const completion = usage.completion_tokens ?? 0;
+  if (prompt <= 0 && completion <= 0) return null;
+  return { prompt, completion };
+}
+
+function MessageTokenUsage({ usage }: { usage?: MessageTokenUsageData | null }) {
+  const { t } = useTranslation();
+  if (!usage) return null;
+
+  const turn = resolveMessageTokenUsage(usage);
+  if (!turn) return null;
+
+  const { prompt, completion } = turn;
+  const label =
+    prompt > 0 && completion > 0
+      ? t("message.tokenUsageTurn", {
+          prompt: tokenUsageFormatter.format(prompt),
+          completion: tokenUsageFormatter.format(completion),
+        })
+      : completion > 0
+        ? t("message.tokenUsageOutput", {
+            completion: tokenUsageFormatter.format(completion),
+          })
+        : t("message.tokenUsageInput", {
+            prompt: tokenUsageFormatter.format(prompt),
+          });
+
+  return <span className="msg-token-usage">{label}</span>;
+}
+
 function nativeFilePath(file: File) {
   return (file as File & { path?: string }).path || "";
 }
@@ -1155,6 +1196,10 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
                 </div>
               ))}
             </div>
+          )}
+
+          {isAssistant && !isStreamingDraft && !editing && (
+            <MessageTokenUsage usage={m.params?.usage} />
           )}
         </div>
 

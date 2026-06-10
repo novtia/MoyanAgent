@@ -104,6 +104,9 @@
   background: var(--bg-hover);
   color: var(--ink);
 }
+.search-result:active {
+  background: var(--bg-hover);
+}
 
 .search-result-main {
   min-width: 0;

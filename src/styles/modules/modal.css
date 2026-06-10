@@ -84,6 +84,9 @@
   border-color: var(--ink);
   background: var(--bg-soft);
 }
+.btn:active:not(:disabled):not(.primary):not(.danger):not(.warning) {
+  background: var(--bg-hover);
+}
 .btn.primary {
   background: var(--ink);
   color: #fff;
@@ -92,12 +95,19 @@
 .btn.primary:hover {
   background: var(--accent-soft);
 }
+.btn.primary:active:not(:disabled) {
+  background: var(--accent-soft);
+}
 .btn.danger {
   color: var(--rose-500);
   border-color: var(--rose-500);
   background: var(--rose-50);
 }
 .btn.danger:hover {
+  background: var(--rose-500);
+  color: #fff;
+}
+.btn.danger:active:not(:disabled) {
   background: var(--rose-500);
   color: #fff;
 }
@@ -129,6 +139,9 @@
   color: var(--ink);
   border-color: var(--field-border-hover);
   background: var(--bg-soft);
+}
+.input-affix .affix-btn:active:not(:disabled) {
+  background: var(--bg-hover);
 }
 
 .footnote {

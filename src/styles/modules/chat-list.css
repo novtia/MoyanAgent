@@ -41,7 +41,8 @@
   left: max(3px, 2%);
 }
 .chat-item:hover::before,
-.chat-item.active::before {
+.chat-item.active::before,
+.chat-item:active::before {
   opacity: 1;
 }
 .chat-item > * {

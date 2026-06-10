@@ -67,6 +67,7 @@
   cursor: pointer;
   text-align: left;
   width: 100%;
+  user-select: none;
   transition: background 0.12s, color 0.12s;
 }
 .side-nav-item:hover:not(:disabled) {
@@ -227,6 +228,9 @@
   transition: background 0.1s;
 }
 .side-nav-dropdown-item:hover {
+  background: var(--bg-hover);
+}
+.side-nav-dropdown-item:active:not(:disabled) {
   background: var(--bg-hover);
 }
 .side-nav-dropdown-item svg {

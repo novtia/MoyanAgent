@@ -20,6 +20,7 @@ import {
   watchSystemTheme,
 } from "./theme";
 import { collectSessionGalleryImages, indexOfImageInGallery } from "./sessionGallery";
+import { api } from "./api/tauri";
 import type { AttachmentDraft, ImageRefAbs } from "./types";
 
 type AppRoute =
@@ -72,6 +73,11 @@ export default function App() {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setSearchOpen(true);
+        return;
+      }
+      if (event.key === "F12") {
+        event.preventDefault();
+        api.toggleDevtools().catch(console.warn);
       }
     };
     window.addEventListener("keydown", onKeyDown);

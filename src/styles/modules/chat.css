@@ -128,6 +128,9 @@
 .chat-more-item:hover {
   background: var(--bg-hover);
 }
+.chat-more-item:active:not(:disabled) {
+  background: var(--bg-hover);
+}
 .chat-more-item.active {
   background: var(--bg-sunk);
   color: var(--ink);

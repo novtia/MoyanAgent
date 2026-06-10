@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
+import { api } from "../../api/tauri";
 
 interface TitleBarProps {
   onToggleSidebar: () => void;
@@ -109,6 +110,14 @@ export function TitleBar({
           onClick: () => { onToggleSidebar(); closeMenu(); },
         },
         { type: "action", label: t("titlebar.menu.search"), onClick: () => { onOpenSearch?.(); closeMenu(); } },
+        {
+          type: "action",
+          label: t("titlebar.menu.devtools"),
+          onClick: () => {
+            api.toggleDevtools().catch(console.warn);
+            closeMenu();
+          },
+        },
       ],
     },
     {

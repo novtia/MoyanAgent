@@ -33,5 +33,6 @@ futures-util = "0.3"
 zip = { version = "2", features = ["deflate"] }
 
 [features]
-default = ["custom-protocol"]
+default = ["custom-protocol", "devtools"]
 custom-protocol = ["tauri/custom-protocol"]
+devtools = ["tauri/devtools"]

@@ -747,6 +747,25 @@ fn open_path(path: String) -> Result<(), AppError> {
     Ok(())
 }
 
+#[tauri::command]
+fn toggle_devtools(app: AppHandle) -> Result<(), AppError> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    #[cfg(any(debug_assertions, feature = "devtools"))]
+    {
+        #[cfg(not(target_os = "windows"))]
+        {
+            if window.is_devtools_open() {
+                window.close_devtools();
+                return Ok(());
+            }
+        }
+        window.open_devtools();
+    }
+    Ok(())
+}
+
 // ????????? Sessions ?????????
 
 #[derive(Debug, Deserialize)]
@@ -2097,6 +2116,7 @@ pub fn run() {
             get_llm_model_catalog,
             get_app_info,
             open_path,
+            toggle_devtools,
             list_sessions,
             search_sessions,
             create_session,

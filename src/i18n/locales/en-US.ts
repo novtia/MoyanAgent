@@ -39,6 +39,7 @@ const enUS: Resource = {
       newChat: "New chat",
       settings: "Settings",
       search: "Search",
+      devtools: "Developer Tools",
       quit: "Quit",
     },
   },
@@ -155,6 +156,9 @@ const enUS: Resource = {
     todoStatusInProgress: "In progress",
     todoStatusDone: "Done",
     todoStatusCancelled: "Cancelled",
+    tokenUsageTurn: "This turn · in {{prompt}} · out {{completion}}",
+    tokenUsageInput: "This turn · in {{prompt}}",
+    tokenUsageOutput: "This turn · out {{completion}}",
   },
   preview: {
     title: "Preview",

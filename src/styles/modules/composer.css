@@ -277,6 +277,9 @@
   background: var(--bg-soft);
   color: var(--ink);
 }
+.composer-btn:active:not(:disabled) {
+  background: var(--bg-hover);
+}
 .composer-btn svg {
   width: 14px;
   height: 14px;
@@ -345,6 +348,9 @@
 .composer-mode-option:hover {
   background: var(--bg-soft);
 }
+.composer-mode-option:active:not(:disabled) {
+  background: var(--bg-hover);
+}
 
 .composer-mode-option.active {
   border-color: var(--line-strong);
@@ -383,6 +389,9 @@
 .composer-pill.active {
   border-color: var(--line-strong);
   background: var(--bg-soft);
+}
+.composer-pill:active:not(:disabled) {
+  background: var(--bg-hover);
 }
 .composer-pill svg {
   width: 12px;
@@ -572,6 +581,9 @@
   transition: background 0.1s;
 }
 .model-popover-item:hover {
+  background: var(--bg-hover);
+}
+.model-popover-item:active:not(:disabled) {
   background: var(--bg-hover);
 }
 .model-popover-item.active {

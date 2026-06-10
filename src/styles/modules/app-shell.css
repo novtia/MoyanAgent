@@ -49,6 +49,9 @@
   background: var(--bg-hover);
   color: var(--ink);
 }
+.titlebar-action:active:not(:disabled) {
+  background: var(--bg-hover);
+}
 .titlebar-action:disabled {
   opacity: 0.34;
   cursor: default;
@@ -79,6 +82,9 @@
   background: var(--bg-hover);
   color: var(--ink);
 }
+.titlebar-menu-btn:active:not(:disabled) {
+  background: var(--bg-hover);
+}
 .titlebar-menu-dropdown {
   position: absolute;
   top: calc(100% - 1px);
@@ -108,6 +114,9 @@
 .titlebar-menu-item:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--ink);
+}
+.titlebar-menu-item:active:not(:disabled) {
+  background: var(--bg-hover);
 }
 .titlebar-menu-item:disabled {
   opacity: 0.72;

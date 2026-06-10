@@ -36,6 +36,7 @@ const zhCN = {
       newChat: "新对话",
       settings: "设置",
       search: "搜索",
+      devtools: "开发者工具",
       quit: "退出",
     },
   },
@@ -152,6 +153,9 @@ const zhCN = {
     todoStatusInProgress: "进行中",
     todoStatusDone: "已完成",
     todoStatusCancelled: "已取消",
+    tokenUsageTurn: "本次对话 · 输入 {{prompt}} · 输出 {{completion}} tokens",
+    tokenUsageInput: "本次对话 · 输入 {{prompt}} tokens",
+    tokenUsageOutput: "本次对话 · 输出 {{completion}} tokens",
   },
   preview: {
     title: "预览",

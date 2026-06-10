@@ -47,6 +47,7 @@ export const api = {
       sessions_dir: string;
     }>("get_app_info"),
   openPath: (path: string) => invoke<void>("open_path", { path }),
+  toggleDevtools: () => invoke<void>("toggle_devtools"),
 
   // sessions
   listSessions: () => invoke<SessionSummary[]>("list_sessions"),

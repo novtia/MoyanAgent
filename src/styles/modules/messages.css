@@ -147,6 +147,7 @@
   font-family: inherit;
   font-size: 12px;
   font-weight: 500;
+  user-select: none;
   transition: background 0.12s, color 0.12s;
 }
 .msg-action:hover:not(:disabled) {
@@ -377,6 +378,16 @@
   color: var(--ink-mute);
   text-transform: uppercase;
   margin-bottom: 6px;
+}
+.msg-token-usage {
+  display: block;
+  margin-top: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-mute);
+  line-height: 1.4;
+  user-select: none;
 }
 /* ───── reasoning / thinking block ─────
    A minimalistic and elegant block that expands to show thinking processes. */

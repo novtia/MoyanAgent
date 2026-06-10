@@ -52,6 +52,11 @@
   outline: none;
 }
 
+.context-menu-item:active:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+
 .context-menu-item:disabled {
   cursor: not-allowed;
   opacity: 0.4;
