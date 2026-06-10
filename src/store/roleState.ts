@@ -2,25 +2,29 @@ import { create } from "zustand";
 
 import { api } from "../api/tauri";
 
-/** Semen / fluid state under `nsfw.精液`. */
+export type RoleGender = "male" | "female";
+
+/** Semen / fluid state under `nsfw.semen` (English keys). */
 export interface RoleNsfwSemen {
-  /** 外表精液 — short text (部位 + 大致量感), NOT a number */
-  外表?: string;
-  /** 吞精量 (ml) */
-  吞精?: number;
-  /** 阴道精液量 (ml) */
-  阴道?: number;
-  /** 肛门精液量 (ml) */
-  肛门?: number;
+  /** Male: semen texture / quality (text). */
+  texture?: string;
+  /** Female: external residue on body (text). */
+  exterior?: string;
+  /** Female: swallowed volume (ml). */
+  swallowed?: number;
+  /** Female: vaginal retention (ml). */
+  vaginal?: number;
+  /** Female: anal retention (ml). */
+  anal?: number;
 }
 
-/** Structured NSFW block on a role card. */
+/** Structured NSFW block on a role card (English keys). */
 export interface RoleNsfw {
-  兴奋度?: number;
-  湿润度?: number;
-  状态?: string;
-  敏感点?: string[];
-  精液?: RoleNsfwSemen;
+  arousal?: number;
+  wetness?: number;
+  status?: string;
+  sensitive_spots?: string[];
+  semen?: RoleNsfwSemen;
   [key: string]: unknown;
 }
 
@@ -35,6 +39,8 @@ export interface RoleMeter {
 export interface Role {
   id: string;
   name?: string;
+  /** `"male"` | `"female"` — drives semen field rendering. */
+  gender?: RoleGender;
   location?: string;
   mood?: string;
   outfit?: string;
@@ -46,7 +52,6 @@ export interface Role {
   tags?: string[];
   /** Explicit body / arousal state — see [`RoleNsfw`]. */
   nsfw?: RoleNsfw;
-  // Any additional model-authored fields pass through untouched.
   [key: string]: unknown;
 }
 
@@ -59,19 +64,93 @@ export interface RoleStateOp {
   removed?: boolean;
 }
 
+/** Female semen volume keys (ml). */
+export const SEMEN_ML_KEYS = ["swallowed", "vaginal", "anal"] as const;
+
+const LEGACY_SEMEN_ML: Record<(typeof SEMEN_ML_KEYS)[number], string> = {
+  swallowed: "吞精",
+  vaginal: "阴道",
+  anal: "肛门",
+};
+
+/** Read `nsfw.semen`, falling back to legacy `nsfw.精液`. */
+export function resolveSemen(nsfw: RoleNsfw | undefined): RoleNsfwSemen | undefined {
+  if (!nsfw) return undefined;
+  const block = nsfw.semen ?? (nsfw as Record<string, unknown>)["精液"];
+  if (block && typeof block === "object") return block as RoleNsfwSemen;
+  return undefined;
+}
+
+/** Normalised gender from role (English keys only). */
+export function resolveGender(role: Role): RoleGender | undefined {
+  const g = role.gender;
+  return g === "male" || g === "female" ? g : undefined;
+}
+
+/** Read a female semen ml field (new or legacy Chinese key). */
+export function semenMl(
+  semen: RoleNsfwSemen | undefined,
+  key: (typeof SEMEN_ML_KEYS)[number],
+): number | undefined {
+  if (!semen) return undefined;
+  const legacyKey = LEGACY_SEMEN_ML[key];
+  const raw = semen[key] ?? (semen as Record<string, unknown>)[legacyKey];
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}
+
+/** Read semen text: `texture` (male) or `exterior` (female), with legacy `外表`. */
+export function semenText(
+  semen: RoleNsfwSemen | undefined,
+  kind: "texture" | "exterior",
+): string | null {
+  if (!semen) return null;
+  const legacyExterior = (semen as Record<string, unknown>)["外表"];
+  const raw =
+    kind === "texture"
+      ? semen.texture
+      : semen.exterior ?? (typeof legacyExterior === "string" ? legacyExterior : undefined);
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed || null;
+}
+
+/** NSFW scalar pairs [key, value] — English first, legacy Chinese fallback. */
+export function nsfwScalars(nsfw: RoleNsfw): Array<[string, number]> {
+  const pairs: Array<[string, number]> = [];
+  const arousal =
+    typeof nsfw.arousal === "number"
+      ? nsfw.arousal
+      : typeof (nsfw as Record<string, unknown>)["兴奋度"] === "number"
+        ? ((nsfw as Record<string, unknown>)["兴奋度"] as number)
+        : undefined;
+  const wetness =
+    typeof nsfw.wetness === "number"
+      ? nsfw.wetness
+      : typeof (nsfw as Record<string, unknown>)["湿润度"] === "number"
+        ? ((nsfw as Record<string, unknown>)["湿润度"] as number)
+        : undefined;
+  if (typeof arousal === "number") pairs.push(["arousal", arousal]);
+  if (typeof wetness === "number") pairs.push(["wetness", wetness]);
+  return pairs;
+}
+
+export function nsfwStatus(nsfw: RoleNsfw): string | null {
+  const raw = nsfw.status ?? (nsfw as Record<string, unknown>)["状态"];
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
+export function nsfwSensitiveSpots(nsfw: RoleNsfw): string[] {
+  const raw = nsfw.sensitive_spots ?? (nsfw as Record<string, unknown>)["敏感点"];
+  return Array.isArray(raw) ? raw.map(String) : [];
+}
+
 interface RoleStateStore {
-  /** sessionId → ordered list of role ids (insertion order). */
   orderBySession: Record<string, string[]>;
-  /** sessionId → roleId → role. */
   rolesBySession: Record<string, Record<string, Role>>;
 
-  /** Apply one incremental tool result for a session. */
   applyOp: (sessionId: string, op: RoleStateOp) => void;
-  /** Replace a session's board wholesale (load / reset). */
   setRoles: (sessionId: string, roles: Role[]) => void;
-  /** Re-fetch the persisted board for a session from the backend. */
   loadLatest: (sessionId: string) => Promise<void>;
-  /** Ordered roles for a session (stable references where unchanged). */
   rolesOf: (sessionId: string | null | undefined) => Role[];
 }
 
@@ -110,8 +189,6 @@ export const useRoleState = create<RoleStateStore>((set, get) => ({
         map[op.role.id] = op.role;
         if (!order.includes(op.role.id)) order.push(op.role.id);
       } else if (op.op === "update" && op.role && typeof op.role.id === "string") {
-        // Backend returns the full updated role; replacing the reference is
-        // what triggers the single affected card to re-render.
         map[op.role.id] = op.role;
         if (!order.includes(op.role.id)) order.push(op.role.id);
       } else if (op.op === "delete" && typeof op.id === "string") {
@@ -143,3 +220,4 @@ export const useRoleState = create<RoleStateStore>((set, get) => ({
     return order.map((id) => map[id]).filter(Boolean) as Role[];
   },
 }));
+

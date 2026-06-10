@@ -24,23 +24,26 @@
 //!
 //! ```json
 //! {
-//!   "id": "rin", "name": "凛",
+//!   "id": "rin", "name": "凛", "gender": "female",
 //!   "location": "…", "mood": "…", "outfit": "…",
 //!   "attributes": { "好感": 72, "信任": 55 },
 //!   "meters": { "体力": { "value": 80, "max": 100 } },
 //!   "tags": ["害羞"],
 //!   "nsfw": {
-//!     "兴奋度": 40, "湿润度": 55, "状态": "迷离",
-//!     "敏感点": ["颈部"],
-//!     "精液": {
-//!       "外表": "脸颊与胸前少量白浊",
-//!       "吞精": 12.5, "阴道": 8.0, "肛门": 0
+//!     "arousal": 40, "wetness": 55, "status": "迷离",
+//!     "sensitive_spots": ["颈部"],
+//!     "semen": {
+//!       "exterior": "脸颊与胸前少量白浊",
+//!       "swallowed": 12.5, "vaginal": 8.0, "anal": 0
 //!     }
 //!   }
 //! }
-//! `nsfw.精液.外表` is a short TEXT description (body sites + amount in words).
-//! `吞精` / `阴道` / `肛门` are millilitre amounts (ml) as plain numbers — NOT 0-100.
 //! ```
+//! `gender` is `"male"` or `"female"` (required on `create`).
+//! Semen fields under `nsfw.semen` depend on gender — use English keys only:
+//! - **male** → `texture` (TEXT: semen quality / viscosity / warmth).
+//! - **female** → `exterior` (TEXT: external residue) plus `swallowed` /
+//!   `vaginal` / `anal` as millilitre amounts (ml, NOT 0-100).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -290,18 +293,19 @@ lowercase ascii `id` (e.g. \"rin\", \"alice\") plus the initial `role` object.\n
 3. For a character that already exists → `update` ONLY the fields that changed, \
 using dot-paths in `set` / `unset`. Do NOT recreate it.\n\
 4. For a character that left the scene for good → `delete`.\n\n\
-━━━ ROLE OBJECT SHAPE (prefer numbers over prose) ━━━\n\
-{\n  \"name\": \"凛\",\n  \"location\": \"…\", \"mood\": \"…\", \"outfit\": \"…\",\n  \"attributes\": { \"好感\": 72, \"信任\": 55 },   // 0-100, drawn as a radar polygon\n  \"meters\": { \"体力\": { \"value\": 80, \"max\": 100 } }, // drawn as bars\n  \"tags\": [\"害羞\"],                              // drawn as chips\n  \"nsfw\": {\n    \"兴奋度\": 40, \"湿润度\": 55, \"状态\": \"迷离\",\n    \"敏感点\": [\"颈部\"],\n    \"精液\": { \"外表\": \"小腹至大腿漫溢\", \"吞精\": 850, \"阴道\": 2400, \"肛门\": 0 }\n  }\n}\n\
-`nsfw.精液` breakdown (update only what changed):\n\
-  • 外表 — SHORT TEXT for external residue (外射体表); scale with the scene.\n\
-  • 吞精 / 阴道 / 肛门 — volume in ml (can be large: horse/beast → 2000–8000 ml).\n\
-Match FICTION scale, NOT clinical human averages — avoid defaulting to 5–15 ml \
-when prose implies flooding, beasts, or exaggerated RP. Use dot-paths, e.g. \
-`nsfw.精液.阴道`: 3200 or `nsfw.精液.外表`: \"全身淌满\".\n\
-Keep text fields brief. ALWAYS maintain `nsfw` (including `精液`) from the prose.\n\n\
+━━━ ROLE OBJECT SHAPE (prefer numbers over prose; English keys for nsfw) ━━━\n\
+{\n  \"name\": \"凛\", \"gender\": \"female\",\n  \"location\": \"…\", \"mood\": \"…\", \"outfit\": \"…\",\n  \"attributes\": { \"好感\": 72, \"信任\": 55 },   // 0-100, radar polygon\n  \"meters\": { \"体力\": { \"value\": 80, \"max\": 100 } }, // bars\n  \"tags\": [\"害羞\"],\n  \"nsfw\": {\n    \"arousal\": 40, \"wetness\": 55, \"status\": \"迷离\",\n    \"sensitive_spots\": [\"颈部\"],\n    \"semen\": { \"exterior\": \"小腹至大腿漫溢\", \"swallowed\": 850, \"vaginal\": 2400, \"anal\": 0 }\n  }\n}\n\
+`gender` — REQUIRED on `create`: `\"male\"` or `\"female\"`.\n\
+`nsfw.semen` — gender-specific (update only what changed):\n\
+  • **male** → `texture` (TEXT: semen quality — viscosity, warmth, colour, volume feel).\n\
+  • **female** → `exterior` (TEXT: external residue on body) + `swallowed` / `vaginal` / \
+`anal` as ml (can be large: horse/beast → 2000–8000 ml).\n\
+Match FICTION scale, NOT clinical human averages. Use dot-paths, e.g. \
+`nsfw.semen.vaginal`: 3200 or `nsfw.semen.texture`: \"浓稠、量大、温热\".\n\
+Keep text fields brief. ALWAYS maintain `nsfw` (including `semen`) from the prose.\n\n\
 ━━━ INCREMENTAL EDIT EXAMPLES ━━━\n\
-set: { \"nsfw.兴奋度\": 60, \"nsfw.精液.外表\": \"胸腹至腿根漫溢\", \"nsfw.精液.阴道\": 1800 }\n\
-unset: [\"tags.0\", \"nsfw.精液.肛门\"]\n\n\
+set: { \"nsfw.arousal\": 60, \"nsfw.semen.vaginal\": 1800, \"nsfw.semen.texture\": \"浓稠拉丝\" }\n\
+unset: [\"tags.0\", \"nsfw.semen.anal\"]\n\n\
 Do NOT narrate. Your visible text reply must be at most one short sentence."
                     .to_string(),
                 schema: json!({

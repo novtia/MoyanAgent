@@ -186,7 +186,7 @@ fn format_role_state_history_block(roles: &[serde_json::Value]) -> String {
     let json = serde_json::to_string_pretty(roles).unwrap_or_else(|_| "[]".to_string());
     format!(
         "<role-state>\n\
-         当前角色状态板（JSON）。续写正文时请与此状态保持一致；数值单位为 ml 的精液字段请按故事尺度理解。\n\n\
+         当前角色状态板（JSON）。续写正文时请与此状态保持一致；女性 nsfw.semen 的 ml 字段请按故事尺度理解。\n\n\
          {json}\n\
          </role-state>"
     )

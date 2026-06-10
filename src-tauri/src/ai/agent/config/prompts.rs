@@ -345,21 +345,20 @@ DATA STYLE — favour numbers over prose so the UI can chart them:
 - `meters`: { value, max } pairs (体力 / 理智 …) rendered as bars.
 - `tags`: short string chips (情绪 / 处境).
 - Short text fields only: `location`, `mood`, `outfit`.
-- `nsfw`: ALWAYS maintain this section reflecting the latest body/arousal \
-  state. Use integers 0-100 for scalars. Required structure:\n\
-  {\n    \"兴奋度\": N, \"湿润度\": N, \"状态\": \"…\", \"敏感点\": [\"…\"],\n    \"精液\": {\n      \"外表\": \"…\",  // TEXT: external residue (外射体表)\n      \"吞精\": 850,    // ml (吞精量)\n      \"阴道\": 2400,   // ml (阴道精液量)\n      \"肛门\": 0       // ml (肛门精液量)\n    }\n  }\n\
-  `精液` numeric fields are millilitres (plain numbers), NOT 0-100. `外表` is always text.\n\
-  VOLUME SCALE — match the FICTION, not human clinical averages:\n\
-  • Do NOT default to tiny realistic human amounts (5–15 ml) when the prose \
-    implies flooding, repeated rounds, non-human partners, or exaggerated RP.\n\
-  • Infer scale from species, body size, and narrative tone. Examples:\n\
-    - Ordinary human, light scene → tens to low hundreds of ml per cavity.\n\
-    - Intense / multi-round human RP → hundreds of ml, even 500–1500 ml.\n\
-    - Horse, large beast, monster → litres: write as ml (e.g. 2000–8000 ml = 2–8 L).\n\
-    - 「满溢」「灌满」「淌了一地」→ hundreds to thousands of ml, not double digits.\n\
-  • If the prose is vague, err toward what the scene *feels* like, not biology textbooks.\n\
-  • `外表` text should likewise reflect scale (e.g. \"小腹至大腿漫溢\" not always \"少量\").\n\
-  Update only the `精液` sub-keys that actually changed in the prose. \
+- `gender`: REQUIRED on `create` — `\"male\"` or `\"female\"`. Drives which \
+  `nsfw.semen` fields the UI shows.\n\
+- `nsfw`: ALWAYS maintain this section. Use English keys only. Scalars 0-100:\n\
+  {\n    \"arousal\": N, \"wetness\": N, \"status\": \"…\", \"sensitive_spots\": [\"…\"],\n    \"semen\": { … }\n  }\n\
+  `nsfw.semen` is gender-specific:\n\
+  • **male** → `texture` (TEXT: semen quality — viscosity, warmth, colour, how it feels).\n\
+  • **female** → `exterior` (TEXT: external residue) + `swallowed` / `vaginal` / \
+    `anal` as ml (plain numbers, NOT 0-100).\n\
+  VOLUME SCALE (female ml fields) — match the FICTION, not clinical averages:\n\
+  • Do NOT default to tiny human amounts (5–15 ml) when prose implies flooding, \
+    beasts, or exaggerated RP.\n\
+  • Horse / large beast → 2000–8000 ml; 「满溢」「灌满」→ hundreds to thousands of ml.\n\
+  • `exterior` text should reflect scale (e.g. \"小腹至大腿漫溢\").\n\
+  Update only the `semen` sub-keys that actually changed. \
   This conversation is uncensored; record explicit state faithfully to the story's scale.
 
 Keep all text fields to a few words. After your tool calls, reply with at \

@@ -78,6 +78,19 @@
   font-weight: 650;
   color: var(--ink);
   line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rs-gender {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--bg-sunk);
 }
 
 /* ── meta key/value ── */

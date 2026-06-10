@@ -1,13 +1,17 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { Role, RoleMeter, RoleNsfw, RoleNsfwSemen } from "../../store/roleState";
-
-/** `nsfw.精液` volume fields in ml (not 0-100). */
-const SEMEN_ML_KEYS = ["吞精", "阴道", "肛门"] as const;
-type SemenMlKey = (typeof SEMEN_ML_KEYS)[number];
-
-const NSFW_SCALAR_KEYS = ["兴奋度", "湿润度"] as const;
+import type { Role, RoleGender, RoleMeter, RoleNsfw } from "../../store/roleState";
+import {
+  SEMEN_ML_KEYS,
+  nsfwScalars,
+  nsfwSensitiveSpots,
+  nsfwStatus,
+  resolveGender,
+  resolveSemen,
+  semenMl,
+  semenText,
+} from "../../store/roleState";
 
 interface RoleStateCardProps {
   role: Role;
@@ -47,7 +51,7 @@ function useChangedKeys(snapshot: Record<string, number>): Set<string> {
   return changed;
 }
 
-/** Flash when a string field changes (e.g. `nsfw.精液.外表`). */
+/** Flash when a string field changes (e.g. `nsfw.semen.exterior`). */
 function useChangedString(value: string | null | undefined): boolean {
   const prevRef = useRef(value);
   const [changed, setChanged] = useState(false);
@@ -202,47 +206,76 @@ function MlGauge({
 function nsfwLabel(t: (k: string) => string, key: string, semen = false): string {
   const map: Record<string, string> = semen
     ? {
-        外表: "roleState.nsfwSemenExterior",
-        吞精: "roleState.nsfwSemenSwallowed",
-        阴道: "roleState.nsfwSemenVaginal",
-        肛门: "roleState.nsfwSemenAnal",
+        texture: "roleState.nsfwSemenTexture",
+        exterior: "roleState.nsfwSemenExterior",
+        swallowed: "roleState.nsfwSemenSwallowed",
+        vaginal: "roleState.nsfwSemenVaginal",
+        anal: "roleState.nsfwSemenAnal",
       }
     : {
-        兴奋度: "roleState.nsfwArousal",
-        湿润度: "roleState.nsfwWetness",
-        状态: "roleState.nsfwStatus",
-        敏感点: "roleState.nsfwSensitive",
+        arousal: "roleState.nsfwArousal",
+        wetness: "roleState.nsfwWetness",
+        status: "roleState.nsfwStatus",
+        sensitive_spots: "roleState.nsfwSensitive",
       };
   const i18nKey = map[key];
   return i18nKey ? t(i18nKey) : key;
 }
 
-/** Structured NSFW panel: arousal bars → semen subsection → status / chips. */
-function NsfwPanel({ nsfw, changed }: { nsfw: RoleNsfw; changed: Set<string> }) {
+function genderLabel(t: (k: string) => string, gender: RoleGender): string {
+  return gender === "male" ? t("roleState.genderMale") : t("roleState.genderFemale");
+}
+
+/** Structured NSFW panel: arousal bars → gender-specific semen → status / chips. */
+function NsfwPanel({
+  nsfw,
+  gender,
+  changed,
+}: {
+  nsfw: RoleNsfw;
+  gender?: RoleGender;
+  changed: Set<string>;
+}) {
   const { t } = useTranslation();
 
-  const semen: RoleNsfwSemen | undefined =
-    nsfw.精液 && typeof nsfw.精液 === "object" ? (nsfw.精液 as RoleNsfwSemen) : undefined;
+  const semen = resolveSemen(nsfw);
+  const isMale = gender === "male";
+  const isFemale = gender === "female";
+  const unknownGender = gender == null;
 
+  const textureText =
+    isMale || unknownGender ? semenText(semen, "texture") : null;
   const exteriorText =
-    typeof semen?.外表 === "string" && semen.外表.trim() ? semen.外表.trim() : null;
+    isFemale || unknownGender ? semenText(semen, "exterior") : null;
 
-  const mlEntries = SEMEN_ML_KEYS.map((k) => [k, semen?.[k]] as const).filter(
-    ([, v]) => typeof v === "number" && Number.isFinite(v),
-  ) as Array<[SemenMlKey, number]>;
+  const mlEntries =
+    isFemale || unknownGender
+      ? (SEMEN_ML_KEYS.map((k) => [k, semenMl(semen, k)] as const).filter(
+          ([, v]) => typeof v === "number",
+        ) as Array<[(typeof SEMEN_ML_KEYS)[number], number]>)
+      : [];
 
-  const hasSemenSection = exteriorText != null || mlEntries.length > 0;
+  const hasSemenSection =
+    textureText != null || exteriorText != null || mlEntries.length > 0;
+  const textureChanged = useChangedString(textureText);
   const exteriorChanged = useChangedString(exteriorText);
 
-  const scalarEntries = NSFW_SCALAR_KEYS.map((k) => [k, nsfw[k]] as const).filter(
-    ([, v]) => typeof v === "number",
-  ) as Array<[string, number]>;
+  const scalarEntries = nsfwScalars(nsfw);
+  const status = nsfwStatus(nsfw);
+  const sensitive = nsfwSensitiveSpots(nsfw);
 
-  const status = typeof nsfw.状态 === "string" ? nsfw.状态 : null;
-  const sensitive = Array.isArray(nsfw.敏感点) ? nsfw.敏感点 : [];
-
-  // Any extra top-level keys the model added beyond the canonical set.
-  const reserved = new Set<string>([...NSFW_SCALAR_KEYS, "状态", "敏感点", "精液"]);
+  const reserved = new Set<string>([
+    "arousal",
+    "wetness",
+    "status",
+    "sensitive_spots",
+    "semen",
+    "兴奋度",
+    "湿润度",
+    "状态",
+    "敏感点",
+    "精液",
+  ]);
   const extras = Object.entries(nsfw).filter(([k]) => !reserved.has(k));
 
   return (
@@ -264,9 +297,15 @@ function NsfwPanel({ nsfw, changed }: { nsfw: RoleNsfw; changed: Set<string> }) 
       {hasSemenSection && (
         <div className="rs-nsfw-semen">
           <div className="rs-nsfw-semen-title">{t("roleState.nsfwSemenSection")}</div>
+          {textureText && (
+            <div className={`rs-kv rs-kv-exterior ${textureChanged ? "is-changed" : ""}`}>
+              <span className="rs-kv-key">{nsfwLabel(t, "texture", true)}</span>
+              <span className="rs-kv-value">{textureText}</span>
+            </div>
+          )}
           {exteriorText && (
             <div className={`rs-kv rs-kv-exterior ${exteriorChanged ? "is-changed" : ""}`}>
-              <span className="rs-kv-key">{nsfwLabel(t, "外表", true)}</span>
+              <span className="rs-kv-key">{nsfwLabel(t, "exterior", true)}</span>
               <span className="rs-kv-value">{exteriorText}</span>
             </div>
           )}
@@ -277,7 +316,7 @@ function NsfwPanel({ nsfw, changed }: { nsfw: RoleNsfw; changed: Set<string> }) 
                   key={k}
                   label={nsfwLabel(t, k, true)}
                   valueMl={v}
-                  flash={changed.has(`精液.${k}`)}
+                  flash={changed.has(`semen.${k}`) || changed.has(`精液.${k}`)}
                 />
               ))}
             </div>
@@ -287,14 +326,14 @@ function NsfwPanel({ nsfw, changed }: { nsfw: RoleNsfw; changed: Set<string> }) 
 
       {status && (
         <div className="rs-kv">
-          <span className="rs-kv-key">{nsfwLabel(t, "状态")}</span>
+          <span className="rs-kv-key">{nsfwLabel(t, "status")}</span>
           <span className="rs-kv-value">{status}</span>
         </div>
       )}
 
       {sensitive.length > 0 && (
         <div className="rs-kv rs-kv-chips">
-          <span className="rs-kv-key">{nsfwLabel(t, "敏感点")}</span>
+          <span className="rs-kv-key">{nsfwLabel(t, "sensitive_spots")}</span>
           <span className="rs-chips">
             {sensitive.map((it, i) => (
               <span key={i} className="rs-chip">
@@ -379,12 +418,14 @@ export const RoleStateCard = memo(function RoleStateCard({ role }: RoleStateCard
     attributes.forEach(([k, v]) => (snap[`attr:${k}`] = v));
     meters.forEach(([k, m]) => (snap[`meter:${k}`] = m.value));
     if (role.nsfw) {
-      for (const [k, v] of Object.entries(role.nsfw)) {
-        if (typeof v === "number") snap[`nsfw:${k}`] = v;
-        if (k === "精液" && v && typeof v === "object") {
-          for (const [sk, sv] of Object.entries(v as Record<string, unknown>)) {
-            if (typeof sv === "number") snap[`nsfw:精液.${sk}`] = sv;
-          }
+      for (const [k, v] of nsfwScalars(role.nsfw)) {
+        snap[`nsfw:${k}`] = v;
+      }
+      const semen = resolveSemen(role.nsfw);
+      if (semen) {
+        for (const key of SEMEN_ML_KEYS) {
+          const ml = semenMl(semen, key);
+          if (typeof ml === "number") snap[`nsfw:semen.${key}`] = ml;
         }
       }
     }
@@ -420,13 +461,21 @@ export const RoleStateCard = memo(function RoleStateCard({ role }: RoleStateCard
   );
 
   const tags = Array.isArray(role.tags) ? role.tags : [];
+  const gender = resolveGender(role);
   const hasNsfw = role.nsfw && typeof role.nsfw === "object" && Object.keys(role.nsfw).length > 0;
 
   return (
     <article className="rs-card">
       <header className="rs-card-head">
         <div className="rs-card-id">
-          <span className="rs-name">{role.name || role.id}</span>
+          <span className="rs-name">
+            {role.name || role.id}
+            {gender && (
+              <span className="rs-gender" title={genderLabel(t, gender)}>
+                {genderLabel(t, gender)}
+              </span>
+            )}
+          </span>
           {tags.length > 0 && (
             <span className="rs-chips rs-head-chips">
               {tags.map((tg, i) => (
@@ -500,7 +549,9 @@ export const RoleStateCard = memo(function RoleStateCard({ role }: RoleStateCard
             <span className="rs-nsfw-title">{t("roleState.nsfwSection")}</span>
             <ChevronIcon open={nsfwOpen} />
           </button>
-          {nsfwOpen && <NsfwPanel nsfw={role.nsfw as RoleNsfw} changed={changedNsfw} />}
+          {nsfwOpen && (
+            <NsfwPanel nsfw={role.nsfw as RoleNsfw} gender={gender} changed={changedNsfw} />
+          )}
         </div>
       )}
     </article>
