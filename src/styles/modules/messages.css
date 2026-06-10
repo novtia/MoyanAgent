@@ -365,6 +365,8 @@
 .bubble .text {
   white-space: pre-wrap;
   word-break: break-word;
+  font-weight: 400;
+  font-synthesis: none;
 }
 .bubble .text.mono {
   font-family: 'JetBrains Mono', monospace;

@@ -266,6 +266,24 @@ fn effective_session_params(
     }
 }
 
+/// Resolve the agent flow chain that should drive a session's generation.
+///
+/// Sessions belonging to a project share the project's single agent flow
+/// record, so editing the chain on any conversation applies to all of them and
+/// new conversations inherit it. Plain (project-less) sessions keep their own
+/// per-session chain.
+fn effective_agent_chain(
+    conn: &db::DbConn,
+    sess: &session::Session,
+) -> Option<Vec<String>> {
+    if let Some(ref pid) = sess.project_id {
+        if let Ok(proj) = project::get(conn, pid) {
+            return proj.agent_chain;
+        }
+    }
+    sess.agent_chain.clone()
+}
+
 /// Resolve the [`AgentDefinition`] that should drive a primary-session
 /// generation for `agent_type`. Built-in agents come from the registry
 /// (MCP-gated); user-defined agents (`custom:*`) are loaded from the
@@ -1192,7 +1210,15 @@ fn load_session(
     if let Ok(roles) = crate::data::role_state::latest_roles(&conn, &id) {
         state.role_states.load(&id, roles);
     }
-    let s = session::load_with_messages(&conn, &id)?;
+    let mut s = session::load_with_messages(&conn, &id)?;
+    // Sessions in a project share the project's single agent flow record;
+    // surface it as the session's chain so the UI edits/reads one source of
+    // truth regardless of which conversation is open.
+    if let Some(ref pid) = s.session.project_id {
+        if let Ok(proj) = project::get(&conn, pid) {
+            s.session.agent_chain = proj.agent_chain;
+        }
+    }
     Ok(decorate_session(&app, s))
 }
 
@@ -1770,6 +1796,22 @@ fn set_session_agent_chain(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetProjectAgentChainArgs {
+    id: String,
+    chain: Vec<String>,
+}
+
+#[tauri::command]
+fn set_project_agent_chain(
+    state: tauri::State<Arc<AppState>>,
+    args: SetProjectAgentChainArgs,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    project::set_agent_chain(&conn, &args.id, &args.chain)
+}
+
+#[derive(Debug, Deserialize)]
 struct GenerateReq {
     session_id: String,
     prompt: String,
@@ -1852,7 +1894,7 @@ async fn generate_image(
         let session_config = session::get(&conn, &req.session_id)?;
         let generation_agent =
             session::generation_agent_definition_key(&session_config.agent_type);
-        let agent_chain = session_config.agent_chain.clone();
+        let agent_chain = effective_agent_chain(&conn, &session_config);
         let project_cwd = session_project_cwd(&conn, &req.session_id);
         let eff = effective_session_params(&conn, &session_config);
         let session_prompt = eff.system_prompt;
@@ -2094,7 +2136,7 @@ async fn regenerate_image(
         let session_config = session::get(&conn, &req.session_id)?;
         let generation_agent =
             session::generation_agent_definition_key(&session_config.agent_type);
-        let agent_chain = session_config.agent_chain.clone();
+        let agent_chain = effective_agent_chain(&conn, &session_config);
         let project_cwd = session_project_cwd(&conn, &req.session_id);
         let eff = effective_session_params(&conn, &session_config);
         let session_prompt = eff.system_prompt;
@@ -2577,6 +2619,7 @@ pub fn run() {
             set_session_model,
             set_session_agent_type,
             set_session_agent_chain,
+            set_project_agent_chain,
             delete_session,
             load_session,
             list_projects,

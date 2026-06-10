@@ -11,6 +11,24 @@ fn decode_llm_params(raw: Option<String>) -> ModelParamSettings {
         .unwrap_or_default()
 }
 
+/// Decode the project-scoped agent flow chain (JSON array of agent_type
+/// strings). Empty / blank entries are dropped; an empty result is treated as
+/// "no chain" (single-agent runs).
+fn decode_agent_chain(raw: Option<String>) -> Option<Vec<String>> {
+    let raw = raw?;
+    let parsed: Vec<String> = serde_json::from_str(&raw).ok()?;
+    let cleaned: Vec<String> = parsed
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub id: String,
@@ -25,12 +43,18 @@ pub struct Project {
     pub llm_params: ModelParamSettings,
     /// Optional context window override (tokens) for project sessions.
     pub context_window: Option<i64>,
+    /// Shared agent flow chain applied to every session in this project. `None`
+    /// / empty means single-agent runs. All sessions in the project read and
+    /// write this one record, so editing the flow on any conversation updates
+    /// the whole project.
+    pub agent_chain: Option<Vec<String>>,
     pub created_at: i64,
     pub updated_at: i64,
 }
 
 fn map_project(r: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
     let raw: Option<String> = r.get(6)?;
+    let chain_raw: Option<String> = r.get(10)?;
     Ok(Project {
         id: r.get(0)?,
         name: r.get(1)?,
@@ -40,13 +64,14 @@ fn map_project(r: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
         history_turns: r.get(5).unwrap_or(DEFAULT_HISTORY_TURNS),
         llm_params: decode_llm_params(raw),
         context_window: r.get(7)?,
+        agent_chain: decode_agent_chain(chain_raw),
         created_at: r.get(8)?,
         updated_at: r.get(9)?,
     })
 }
 
 const SELECT_COLS: &str =
-    "id, name, path, sort_order, system_prompt, history_turns, llm_params, context_window, created_at, updated_at";
+    "id, name, path, sort_order, system_prompt, history_turns, llm_params, context_window, created_at, updated_at, agent_chain";
 
 /// Root directory for auto-created blank projects: `Documents/moyanagentproject`.
 const BLANK_PROJECT_ROOT_NAME: &str = "moyanagentproject";
@@ -78,6 +103,7 @@ pub fn create(conn: &DbConn, name: &str, path: Option<&str>) -> AppResult<Projec
         history_turns: DEFAULT_HISTORY_TURNS,
         llm_params: ModelParamSettings::default(),
         context_window: None,
+        agent_chain: None,
         created_at: now,
         updated_at: now,
     })
@@ -204,6 +230,34 @@ pub fn update_config(
     let n = conn.execute(
         "UPDATE projects SET system_prompt=?1, history_turns=?2, llm_params=?3, context_window=?4, updated_at=?5 WHERE id=?6",
         params![system_prompt, history_turns, params_json, context_window, updated, id],
+    )?;
+    if n == 0 {
+        return Err(AppError::NotFound(format!("project {id}")));
+    }
+    Ok(())
+}
+
+/// Persist the shared agent flow chain for a project. An empty list clears the
+/// chain (sessions fall back to single-agent generation). Because the chain is
+/// stored once per project, this immediately affects every session under it.
+pub fn set_agent_chain(conn: &DbConn, id: &str, chain: &[String]) -> AppResult<()> {
+    let cleaned: Vec<String> = chain
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let stored: Option<String> = if cleaned.is_empty() {
+        None
+    } else {
+        Some(
+            serde_json::to_string(&cleaned)
+                .map_err(|e| AppError::Invalid(format!("failed to serialize agent_chain: {e}")))?,
+        )
+    };
+    let updated = now_ms();
+    let n = conn.execute(
+        "UPDATE projects SET agent_chain=?1, updated_at=?2 WHERE id=?3",
+        params![stored, updated, id],
     )?;
     if n == 0 {
         return Err(AppError::NotFound(format!("project {id}")));

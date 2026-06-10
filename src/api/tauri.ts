@@ -81,6 +81,10 @@ export const api = {
     invoke<void>("set_session_agent_chain", {
       args: { id, chain },
     }),
+  setProjectAgentChain: (id: string, chain: string[]) =>
+    invoke<void>("set_project_agent_chain", {
+      args: { id, chain },
+    }),
   deleteSession: (id: string) => invoke<void>("delete_session", { id }),
   loadSession: (id: string) =>
     invoke<SessionWithMessagesAbs>("load_session", { id }),

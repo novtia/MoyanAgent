@@ -55,6 +55,12 @@ type AddMode = "append" | "insert" | "insertBefore" | "insertAfter" | "floating"
 interface AgentFlowCanvasProps {
   open: boolean;
   sessionId: string | null;
+  /**
+   * Storage scope for the graph (layout + chain). Sessions in a project share
+   * one flow, so this is the project id when in a project, otherwise the
+   * session id. Falls back to `sessionId` when omitted.
+   */
+  scopeId?: string | null;
   chain: string[];
   agents: Agent[];
   knownTypes: Set<string>;
@@ -177,6 +183,7 @@ function chainTailId(g: Graph): string | null {
 export function AgentFlowCanvas({
   open,
   sessionId,
+  scopeId,
   chain,
   agents,
   knownTypes,
@@ -188,6 +195,11 @@ export function AgentFlowCanvas({
 }: AgentFlowCanvasProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // Graph persistence + (re)initialisation is keyed by the flow scope (project
+  // for project sessions, otherwise the session) so conversations under the
+  // same project share a single flow instead of each caching its own.
+  const storageScope = scopeId ?? sessionId;
 
   const [graph, setGraph] = useState<Graph>({ nodes: [], edges: [] });
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -252,15 +264,15 @@ export function AgentFlowCanvas({
   // The main node is always present (even without an active session) so the
   // canvas is never empty; persistence is gated on sessionId elsewhere.
   useEffect(() => {
-    const key = sessionId ?? "__none__";
+    const key = storageScope ?? "__none__";
     if (initedFor.current === key) return;
     initedFor.current = key;
-    const g = sessionId ? loadGraph(sessionId, chain) : buildGraphFromChain(chain);
+    const g = storageScope ? loadGraph(storageScope, chain) : buildGraphFromChain(chain);
     setGraph(g);
     lastPushedOrder.current = JSON.stringify(deriveOrder(g));
     setNeedsFit(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  }, [storageScope]);
 
   // ── prune nodes referencing deleted custom agents ───────────────────────
   useEffect(() => {
@@ -282,9 +294,9 @@ export function AgentFlowCanvas({
 
   // ── persist graph + derive order ─────────────────────────────────────────
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || !storageScope) return;
     try {
-      window.localStorage.setItem(graphKey(sessionId), JSON.stringify(graph));
+      window.localStorage.setItem(graphKey(storageScope), JSON.stringify(graph));
     } catch {
       /* ignore */
     }
@@ -294,7 +306,7 @@ export function AgentFlowCanvas({
       lastPushedOrder.current = serialized;
       onOrderChange(order);
     }
-  }, [graph, sessionId, onOrderChange]);
+  }, [graph, sessionId, storageScope, onOrderChange]);
 
   // ── viewport measurement ─────────────────────────────────────────────────
   useLayoutEffect(() => {

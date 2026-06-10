@@ -40,6 +40,10 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
   const setAgentChain = useSession((s) => s.setAgentChain);
 
   const sessionId = active?.session.id ?? null;
+  const projectId = active?.session.project_id ?? null;
+  // Sessions in a project share one agent flow record, so the canvas keys its
+  // graph (and layout) by the project; standalone chats key by session.
+  const flowScopeId = projectId ?? sessionId;
   const chain = useMemo(() => active?.session.agent_chain ?? [], [active]);
 
   const [builtins, setBuiltins] = useState<AgentSummary[]>([]);
@@ -207,6 +211,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
       <AgentFlowCanvas
         open={open}
         sessionId={sessionId}
+        scopeId={flowScopeId}
         chain={chain}
         agents={agents}
         knownTypes={knownTypes}

@@ -316,6 +316,7 @@ function ProjectItem({ project, sessions, onOpenChat }: ProjectItemProps) {
   const exportProjects = useProject((s) => s.exportProjects);
   const createNew = useSession((s) => s.createNew);
   const refreshSessionList = useSession((s) => s.refreshList);
+  const reloadActiveSession = useSession((s) => s.reloadActiveSession);
   const activeId = useSession((s) => s.activeId);
   const [configOpen, setConfigOpen] = useState(false);
   const [expanded, setExpanded] = useState(
@@ -340,6 +341,9 @@ function ProjectItem({ project, sessions, onOpenChat }: ProjectItemProps) {
     e.stopPropagation();
     const sessionId = await createNew();
     await api.assignSessionToProject(sessionId, project.id);
+    // Re-hydrate the active session so its project_id (and thus the shared
+    // project-level agent flow) is reflected immediately.
+    await reloadActiveSession();
     await refreshSessionList();
     setExpanded(true);
     writeProjectExpanded(project.id, true);

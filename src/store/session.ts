@@ -392,6 +392,11 @@ export const useSession = create<SessionStore>((set, get) => {
     if (!id) return;
     const cleaned = chain.map((s) => s.trim()).filter(Boolean);
     const active = get().active;
+    // Sessions in a project share a single, project-scoped agent flow: editing
+    // the flow on any conversation persists to the project so all of its
+    // conversations (and any new ones) stay in sync. Plain chats keep a
+    // per-session chain.
+    const projectId = active?.session.id === id ? active.session.project_id : null;
     if (active && active.session.id === id) {
       set({
         active: {
@@ -401,7 +406,11 @@ export const useSession = create<SessionStore>((set, get) => {
       });
     }
     try {
-      await api.setSessionAgentChain(id, cleaned);
+      if (projectId) {
+        await api.setProjectAgentChain(projectId, cleaned);
+      } else {
+        await api.setSessionAgentChain(id, cleaned);
+      }
     } catch (e) {
       console.warn(e);
       await get().reloadActiveSession();

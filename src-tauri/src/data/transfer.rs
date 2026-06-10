@@ -296,9 +296,13 @@ pub fn import_archive(
         let new_id = project_id_map.get(&p.id).unwrap();
         sort_base += 1;
         let params_json = serde_json::to_string(&p.llm_params)?;
+        let agent_chain_json = match &p.agent_chain {
+            Some(c) if !c.is_empty() => Some(serde_json::to_string(c)?),
+            _ => None,
+        };
         conn.execute(
-            "INSERT INTO projects(id, name, path, sort_order, system_prompt, history_turns, llm_params, context_window, created_at, updated_at)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            "INSERT INTO projects(id, name, path, sort_order, system_prompt, history_turns, llm_params, context_window, agent_chain, created_at, updated_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
             params![
                 new_id,
                 p.name,
@@ -308,6 +312,7 @@ pub fn import_archive(
                 p.history_turns,
                 params_json,
                 p.context_window,
+                agent_chain_json,
                 now,
                 now,
             ],

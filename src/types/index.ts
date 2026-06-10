@@ -114,6 +114,8 @@ export interface Session {
    * single `agent_type` run applies.
    */
   agent_chain: string[] | null;
+  /** Project this session belongs to, if any. */
+  project_id: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -168,6 +170,12 @@ export interface Project {
   llm_params: ModelParamSettings;
   /** Optional context window override (tokens) for project sessions. */
   context_window: number | null;
+  /**
+   * Shared agent flow chain applied to every session in this project. When set
+   * and non-empty, conversations under the project run as the same multi-agent
+   * pipeline; null means single-agent runs.
+   */
+  agent_chain: string[] | null;
   created_at: number;
   updated_at: number;
 }
