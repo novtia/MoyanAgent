@@ -4,9 +4,10 @@ import { useSession } from "../../store/session";
 import { collectSessionGalleryImages } from "../../sessionGallery";
 import { GalleryContent } from "./SessionGallery";
 import { AgentFlowPanel } from "./AgentFlowPanel";
+import { RoleStatePanel } from "./RoleStatePanel";
 import type { ImageRefAbs } from "../../types";
 
-type TabKind = "empty" | "gallery" | "agent-flow";
+type TabKind = "empty" | "gallery" | "agent-flow" | "role-state";
 
 interface PanelTab {
   id: string;
@@ -49,7 +50,10 @@ function readStoredTabs(): { tabs: PanelTab[]; activeId: string | null } {
           (tb): tb is PanelTab =>
             !!tb &&
             typeof tb.id === "string" &&
-            (tb.kind === "empty" || tb.kind === "gallery" || tb.kind === "agent-flow"),
+            (tb.kind === "empty" ||
+              tb.kind === "gallery" ||
+              tb.kind === "agent-flow" ||
+              tb.kind === "role-state"),
         )
       : [];
     const activeId = tabs.some((tb) => tb.id === parsed.activeId)
@@ -182,6 +186,8 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
         return t("rightPanel.galleryTab");
       case "agent-flow":
         return t("rightPanel.agentFlowTab");
+      case "role-state":
+        return t("rightPanel.roleStateTab");
       default:
         return t("rightPanel.newTab");
     }
@@ -274,6 +280,8 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
             />
           ) : activeTab.kind === "gallery" ? (
             <GalleryContent open={open} onPreviewImage={onPreviewImage} />
+          ) : activeTab.kind === "role-state" ? (
+            <RoleStatePanel open={open} />
           ) : (
             <AgentFlowPanel open={open} />
           )}
@@ -288,7 +296,7 @@ function TypePicker({
   onPick,
 }: {
   tab: number;
-  onPick: (kind: "gallery" | "agent-flow") => void;
+  onPick: (kind: "gallery" | "agent-flow" | "role-state") => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -320,6 +328,20 @@ function TypePicker({
         <span className="right-panel-picker-text">
           <span className="right-panel-picker-name">{t("rightPanel.createAgentFlow")}</span>
           <span className="right-panel-picker-desc">{t("rightPanel.createAgentFlowDesc")}</span>
+        </span>
+      </button>
+      <button
+        type="button"
+        className="right-panel-picker-card"
+        tabIndex={tab}
+        onClick={() => onPick("role-state")}
+      >
+        <span className="right-panel-picker-icon">
+          <RoleStateIcon />
+        </span>
+        <span className="right-panel-picker-text">
+          <span className="right-panel-picker-name">{t("rightPanel.createRoleState")}</span>
+          <span className="right-panel-picker-desc">{t("rightPanel.createRoleStateDesc")}</span>
         </span>
       </button>
     </div>
@@ -360,6 +382,16 @@ function FlowIcon() {
       <rect x="14" y="10" width="7" height="5" rx="1" />
       <rect x="3" y="16" width="7" height="5" rx="1" />
       <path d="M10 6.5h2a2 2 0 0 1 2 2v2M10 18.5h2a2 2 0 0 0 2-2v-2" />
+    </svg>
+  );
+}
+
+function RoleStateIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3 4 7v5c0 4.4 3.2 7.6 8 9 4.8-1.4 8-4.6 8-9V7l-8-4Z" />
+      <circle cx="12" cy="10" r="2.4" />
+      <path d="M8.4 16c.5-1.8 2-2.8 3.6-2.8s3.1 1 3.6 2.8" />
     </svg>
   );
 }

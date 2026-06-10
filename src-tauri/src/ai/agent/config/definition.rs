@@ -114,6 +114,14 @@ pub struct AgentDefinition {
     #[serde(default, rename = "criticalSystemReminder_EXPERIMENTAL")]
     pub critical_system_reminder: Option<String>,
 
+    /// When true, this agent is a side-effect-only stage in an agent flow
+    /// chain (e.g. the `role-state` character state machine). Its own
+    /// textual output is discarded by [`run_agent_chain`] and the upstream
+    /// stage's prose passes through unchanged to the next stage / final
+    /// message.
+    #[serde(default, rename = "passthroughOutput")]
+    pub passthrough_output: bool,
+
     /// Source this definition came from. Used by the merger.
     #[serde(default = "default_source")]
     pub source: AgentSource,
@@ -146,6 +154,7 @@ impl AgentDefinition {
             isolation: Isolation::None,
             omit_claude_md: false,
             critical_system_reminder: None,
+            passthrough_output: false,
             source: AgentSource::BuiltIn,
         }
     }

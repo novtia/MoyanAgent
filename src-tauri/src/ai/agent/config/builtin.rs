@@ -23,6 +23,7 @@ pub const AGENT_PLAN: &str = "Plan";
 pub const AGENT_GUIDE: &str = "claude-code-guide";
 pub const AGENT_VERIFICATION: &str = "verification";
 pub const AGENT_FORK: &str = "fork";
+pub const AGENT_ROLE_STATE: &str = "role-state";
 
 /// Tool names that are unsafe for read-only agents (Explore / Plan /
 /// Verification). Kept in one place so adding a write-tool only needs a
@@ -54,6 +55,7 @@ pub fn builtin_definitions() -> Vec<AgentDefinition> {
         guide(),
         verification(),
         fork(),
+        role_state(),
     ]
 }
 
@@ -121,6 +123,19 @@ fn verification() -> AgentDefinition {
     d.background = true;
     d.disallowed_tools = read_only_deny();
     d.critical_system_reminder = Some(prompts::VERIFICATION_CRITICAL_REMINDER.into());
+    d
+}
+
+fn role_state() -> AgentDefinition {
+    // Character state-machine stage. Designed to sit AFTER the main writer
+    // in an agent flow chain: it reads the upstream prose and mutates the
+    // structured role board through the `RoleState` tool only. The upstream
+    // prose passes through unchanged (`passthrough_output`).
+    let mut d = AgentDefinition::builtin(AGENT_ROLE_STATE, prompts::ROLE_STATE_PROMPT);
+    d.when_to_use = prompts::ROLE_STATE_WHEN_TO_USE.into();
+    d.tools = vec!["RoleState".into()];
+    d.omit_claude_md = true;
+    d.passthrough_output = true;
     d
 }
 

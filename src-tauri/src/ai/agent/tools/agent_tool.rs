@@ -236,6 +236,7 @@ impl AgentTool {
             // project path, the sub-agent gets none either.
             project_cwd: parent_cwd,
             abort_signal: None,
+            session_id: None,
         })
         .await?;
 

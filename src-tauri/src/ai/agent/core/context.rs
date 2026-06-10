@@ -25,6 +25,11 @@ pub struct ToolUseContext {
     pub permission_mode: PermissionMode,
     pub cwd: PathBuf,
 
+    /// Database session id this run belongs to, when known. Tools that
+    /// persist per-conversation state (e.g. `RoleState`) key off this.
+    /// `None` for runs not tied to a chat session.
+    pub session_id: Option<String>,
+
     /// Cancellation. Sub-agents typically have *child* signals so that
     /// killing a parent agent also tears down its workers, but background
     /// tasks keep an isolated controller.
@@ -84,6 +89,7 @@ impl ToolUseContext {
             query_source: QuerySource::Subagent,
             permission_mode: self.permission_mode,
             cwd: self.cwd.clone(),
+            session_id: self.session_id.clone(),
             abort: self.abort.child(),
             read_file_state: Arc::new(Mutex::new(read_clone)),
             nested_memory_attachment_triggers: Arc::new(Mutex::new(HashSet::new())),
@@ -161,6 +167,7 @@ pub struct ToolUseContextBuilder {
     permission_mode: PermissionMode,
     user_context: Option<Arc<UserContext>>,
     parent_system_prompt: Option<String>,
+    session_id: Option<String>,
     /// When set, the built context shares this cancellation controller
     /// (used by the main session so `cancel_generation` can stop in-flight work).
     abort_signal: Option<AbortSignal>,
@@ -175,12 +182,18 @@ impl ToolUseContextBuilder {
             permission_mode: PermissionMode::Default,
             user_context: None,
             parent_system_prompt: None,
+            session_id: None,
             abort_signal: None,
         }
     }
 
     pub fn abort_signal(mut self, signal: AbortSignal) -> Self {
         self.abort_signal = Some(signal);
+        self
+    }
+
+    pub fn session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
         self
     }
 
@@ -217,6 +230,7 @@ impl ToolUseContextBuilder {
             query_source: self.query_source,
             permission_mode: self.permission_mode,
             cwd: self.cwd,
+            session_id: self.session_id,
             abort: signal,
             read_file_state: Arc::new(Mutex::new(HashSet::new())),
             nested_memory_attachment_triggers: Arc::new(Mutex::new(HashSet::new())),

@@ -14,8 +14,8 @@ use crate::ai::agent::memory::UserContextLoader;
 use crate::ai::agent::types::MessageEvent;
 use crate::ai::agent::{
     self, AgentRegistry, FileReadTool, FsSessionMemoryExtractor, FsUserContextLoader,
-    NotificationQueue, ProviderEngine, QueryEngine, RunAgentParams, StaticMcpRegistry, Task,
-    TaskState, TaskStore, ToolPool, UserContextConfig,
+    NotificationQueue, ProviderEngine, QueryEngine, RoleStateStore, RoleStateTool, RunAgentParams,
+    StaticMcpRegistry, Task, TaskState, TaskStore, ToolPool, UserContextConfig,
 };
 use crate::ai::{chat, parameters, router};
 use crate::data::db::DbPool;
@@ -48,6 +48,9 @@ pub struct AppState {
     /// Per-session-memory extractor. Stateless aside from the last
     /// observed [`SessionMemory`] snapshot.
     pub session_memory: Arc<FsSessionMemoryExtractor>,
+    /// Shared, session-scoped character state board mutated by the
+    /// `RoleState` tool and snapshotted per assistant message.
+    pub role_states: Arc<RoleStateStore>,
 }
 
 impl AppState {
@@ -375,23 +378,41 @@ async fn run_agent_chain(
             (r, wrapped)
         };
 
+        // Side-effect-only stages (e.g. the `role-state` character state
+        // machine) must not clobber the prose carried down the chain. Their
+        // own reply is discarded; only token usage and images accumulate.
+        let passthrough = resolve_generation_definition(state, agent_type)
+            .map(|d| d.passthrough_output)
+            .unwrap_or(false);
+
+        // Passthrough stages keep their tool events (so RoleState updates
+        // stream to the UI) but suppress their text deltas so the state
+        // machine's terse reply never lands in the chat transcript.
+        let stage_text_delta = if passthrough {
+            None
+        } else {
+            Some(on_text_delta.clone())
+        };
+
         let resp = run_cancellable_generation(
             state,
             session_id,
             agent_type,
             stage_prompt,
             request,
-            Some(on_text_delta.clone()),
+            stage_text_delta,
             Some(on_tool_event.clone()),
             project_cwd.clone(),
         )
         .await?;
 
-        prev_text = resp.text.clone();
-        merged.text = resp.text;
-        merged.thinking_content = resp.thinking_content;
         merged.usage = resp.usage;
         merged.images.extend(resp.images);
+        if !passthrough {
+            prev_text = resp.text.clone();
+            merged.text = resp.text;
+            merged.thinking_content = resp.thinking_content;
+        }
     }
 
     Ok(merged)
@@ -479,6 +500,7 @@ async fn run_cancellable_generation(
             query_source: Some(agent::QuerySource::ReplMainThread),
             project_cwd,
             abort_signal: Some(abort_signal.clone()),
+            session_id: Some(session_id.to_string()),
         }) => out,
         _ = abort_signal.wait_aborted() => Err(AppError::Canceled),
     };
@@ -819,9 +841,9 @@ fn tool_event_callback(
         }
         MessageEvent::ToolResult {
             id,
+            tool,
             output,
             is_error,
-            ..
         } => {
             if let Ok(mut g) = blocks.lock() {
                 record_tool_result_block(&mut g, id.as_str(), output, *is_error);
@@ -833,6 +855,7 @@ fn tool_event_callback(
                     "request_message_id": &request_message_id,
                     "type": "tool_result",
                     "id": id.as_str(),
+                    "tool": tool,
                     "output": output,
                     "is_error": is_error,
                 }),
@@ -1099,7 +1122,9 @@ fn delete_session(
     {
         let conn = state.conn()?;
         session::delete(&conn, &id)?;
+        let _ = crate::data::role_state::clear_session(&conn, &id);
     }
+    state.role_states.clear(&id);
     let dir = paths::sessions_dir(&app)?.join(&id);
     if dir.exists() {
         let _ = std::fs::remove_dir_all(&dir);
@@ -1114,8 +1139,32 @@ fn load_session(
     id: String,
 ) -> Result<SessionWithMessagesAbs, AppError> {
     let conn = state.conn()?;
+    // Re-hydrate the in-memory role board so the next role-state run sees the
+    // persisted truth and the UI can fetch it via `get_role_states`.
+    if let Ok(roles) = crate::data::role_state::latest_roles(&conn, &id) {
+        state.role_states.load(&id, roles);
+    }
     let s = session::load_with_messages(&conn, &id)?;
     Ok(decorate_session(&app, s))
+}
+
+/// Return the current character state board for a session as a JSON array of
+/// role objects (insertion order preserved).
+#[tauri::command]
+fn get_role_states(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+) -> Result<Vec<serde_json::Value>, AppError> {
+    // Prefer the live in-memory board; fall back to the persisted snapshot
+    // when the session hasn't been touched this process lifetime.
+    let live = state.role_states.snapshot(&session_id);
+    if !live.is_empty() {
+        return Ok(live);
+    }
+    let conn = state.conn()?;
+    let roles = crate::data::role_state::latest_roles(&conn, &session_id)?;
+    state.role_states.load(&session_id, roles.clone());
+    Ok(roles)
 }
 
 // ????????? Projects ?????????
@@ -1251,6 +1300,13 @@ fn delete_message(
     app: AppHandle,
     id: String,
 ) -> Result<(), AppError> {
+    // Capture the owning session before the row is gone so we can roll the
+    // character state board back to whatever it was before this message.
+    let session_id = {
+        let conn = state.conn()?;
+        reload_message(&conn, &id).ok().map(|m| m.session_id)
+    };
+
     let paths = {
         let conn = state.conn()?;
         session::delete_message(&conn, &id)?
@@ -1265,7 +1321,24 @@ fn delete_message(
             }
         }
     }
+
+    if let Some(sid) = session_id {
+        let conn = state.conn()?;
+        if let Ok(roles) = crate::data::role_state::rollback_from_message(&conn, &sid, &id) {
+            state.role_states.load(&sid, roles);
+            emit_role_state_reset(&app, &sid);
+        }
+    }
     Ok(())
+}
+
+/// Tell the UI to discard its in-memory role board for a session and re-fetch
+/// the persisted truth (used after a rollback / message deletion).
+fn emit_role_state_reset(app: &AppHandle, session_id: &str) {
+    let _ = app.emit(
+        "role-state://reset",
+        serde_json::json!({ "session_id": session_id }),
+    );
 }
 
 #[tauri::command]
@@ -1664,6 +1737,7 @@ struct GenerateResult {
 }
 
 /// Dedupe multimodal duplicates, persist assistant row + output images, return API DTO.
+#[allow(clippy::too_many_arguments)]
 fn finalize_generate_assistant_message(
     app: &AppHandle,
     conn: &db::DbConn,
@@ -1672,6 +1746,7 @@ fn finalize_generate_assistant_message(
     params: &parameters::GenerationParameters,
     mut resp: chat::GenerateResponse,
     blocks: Vec<serde_json::Value>,
+    role_states: &RoleStateStore,
 ) -> AppResult<GenerateResult> {
     resp.images = chat::dedupe_image_results(resp.images);
     let mut assistant_params =
@@ -1700,6 +1775,13 @@ fn finalize_generate_assistant_message(
             i as i64,
         )?;
     }
+    // Snapshot the character state board against this assistant message so it
+    // can be re-hydrated on session open and rolled back on delete/regenerate.
+    let roles = role_states.snapshot(session_id);
+    if !roles.is_empty() {
+        let _ = crate::data::role_state::save_snapshot(conn, session_id, &assistant.id, &roles);
+    }
+
     let user_full = reload_message(conn, user_message_id)?;
     let assistant_full = reload_message(conn, &assistant.id)?;
     session::recompute_context_window_used(conn, session_id)?;
@@ -1864,6 +1946,7 @@ async fn generate_image(
                 &params,
                 resp,
                 blocks,
+                &state.role_states,
             )
         }
         Err(AppError::Canceled) => Err(AppError::Canceled),
@@ -2089,6 +2172,7 @@ async fn regenerate_image(
                 &params,
                 resp,
                 blocks,
+                &state.role_states,
             )
         }
         Err(AppError::Canceled) => Err(AppError::Canceled),
@@ -2385,6 +2469,8 @@ pub fn run() {
             tools.register(crate::ai::agent::tools::edit::FileEditTool::new());
             tools.register(crate::ai::agent::tools::bash::BashTool::new());
             tools.register(crate::ai::agent::tools::todo::TodoListTool::new());
+            let role_states = Arc::new(RoleStateStore::new());
+            tools.register(RoleStateTool::new(role_states.clone()));
 
             // Build the agent-callable `Agent` tool. The chat factory
             // lets it materialise a sub-agent `ChatRequest` from the
@@ -2424,6 +2510,7 @@ pub fn run() {
                 mcp,
                 tools,
                 session_memory: Arc::new(FsSessionMemoryExtractor::new()),
+                role_states,
             }));
             Ok(())
         })
@@ -2470,6 +2557,7 @@ pub fn run() {
             refresh_user_context,
             set_mcp_servers,
             list_agent_tools,
+            get_role_states,
             extract_session_memory,
             generate_image,
             regenerate_image,

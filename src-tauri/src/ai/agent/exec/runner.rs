@@ -67,6 +67,10 @@ pub struct RunAgentParams {
     /// Shared cancellation controller for the main session. When set,
     /// `cancel_generation` can abort in-flight provider/tool work promptly.
     pub abort_signal: Option<AbortSignal>,
+    /// Database session id this run belongs to. Threaded onto the
+    /// [`ToolUseContext`] so session-scoped tools (e.g. `RoleState`) can
+    /// persist their state against the right conversation.
+    pub session_id: Option<String>,
 }
 
 /// Output of [`run_agent`].
@@ -105,6 +109,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         query_source,
         project_cwd,
         abort_signal,
+        session_id,
     } = params;
 
     let agent_id = AgentId::new();
@@ -183,6 +188,9 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         .parent_system_prompt(chat_request.system_prompt.clone());
     if let Some(signal) = abort_signal {
         ctx_builder = ctx_builder.abort_signal(signal);
+    }
+    if let Some(sid) = session_id {
+        ctx_builder = ctx_builder.session_id(sid);
     }
     let (context, abort) = ctx_builder.build();
 

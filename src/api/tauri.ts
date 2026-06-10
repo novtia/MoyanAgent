@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import type { Role } from "../store/roleState";
 import type {
   AgentSummary,
   AttachmentDraft,
@@ -241,6 +242,10 @@ export const api = {
     }),
   deleteCustomAgent: (agentType: string) =>
     invoke<void>("delete_custom_agent", { args: { agentType } }),
+
+  // role state board
+  getRoleStates: (sessionId: string) =>
+    invoke<Role[]>("get_role_states", { sessionId }),
 };
 
 export function srcOf(absPath: string | null | undefined): string {

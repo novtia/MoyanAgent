@@ -14,6 +14,7 @@ import {
   agentTypeFromComposerMode,
   composerModeFromAgentType,
 } from "../config/chatMode";
+import { useRoleState, type RoleStateOp } from "./roleState";
 
 interface ComposerState {
   prompt: string;
@@ -55,6 +56,7 @@ interface ToolResultEventPayload {
   request_message_id?: string;
   type: "tool_result";
   id: string;
+  tool?: string;
   output: unknown;
   is_error: boolean;
 }
@@ -304,6 +306,7 @@ export const useSession = create<SessionStore>((set, get) => {
         chatMode: composerModeFromAgentType(data.session.agent_type),
       },
     });
+    void useRoleState.getState().loadLatest(id);
   },
 
   rename: async (id, title) => {
@@ -990,6 +993,7 @@ function syncStreamingMessage(sessionId: string, buf: StreamBuffer) {
 
 let generationStreamListenerStarted = false;
 let toolEventListenerStarted = false;
+let roleStateResetListenerStarted = false;
 
 function ensureGenerationStreamListener() {
   if (!generationStreamListenerStarted) {
@@ -1043,11 +1047,35 @@ function ensureGenerationStreamListener() {
       };
       const nextBlocks = prev.blocks.map((b) => ({ ...b }));
       applyToolEvent(nextBlocks, payload);
+      // Incrementally drive the character state board off RoleState results.
+      if (
+        payload.type === "tool_result" &&
+        payload.tool === "RoleState" &&
+        !payload.is_error &&
+        payload.output &&
+        typeof payload.output === "object"
+      ) {
+        useRoleState
+          .getState()
+          .applyOp(sessionId, payload.output as RoleStateOp);
+      }
       const next: StreamBuffer = { blocks: nextBlocks, requestId };
       streamingBuffers.set(sessionId, next);
       syncStreamingMessage(sessionId, next);
     }).catch((e) => {
       toolEventListenerStarted = false;
+      console.warn(e);
+    });
+  }
+
+  if (!roleStateResetListenerStarted) {
+    roleStateResetListenerStarted = true;
+    listen<{ session_id: string }>("role-state://reset", (event) => {
+      const sessionId = event.payload?.session_id;
+      if (!sessionId) return;
+      void useRoleState.getState().loadLatest(sessionId);
+    }).catch((e) => {
+      roleStateResetListenerStarted = false;
       console.warn(e);
     });
   }

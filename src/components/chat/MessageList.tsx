@@ -402,6 +402,11 @@ function AssistantContent({
           }
           return null;
         }
+        // RoleState mutations render as a terse one-line chip; the full board
+        // lives in the right-panel "role state" tab.
+        if (block.tool === "RoleState") {
+          return <RoleStateChip key={`role:${block.id}:${i}`} block={block} />;
+        }
         return <ToolCallBlock key={`tool:${block.id}:${i}`} block={block} />;
       })}
     </>
@@ -431,6 +436,42 @@ function AgentStageDivider({ label }: { label: string }) {
         <span className="agent-stage-tag">{t("agentFlow.stageTag")}</span>
       </span>
       <span className="agent-stage-line" />
+    </div>
+  );
+}
+
+/** Compact one-line chip for a `RoleState` tool call. The full character board
+ * is rendered separately in the right-panel "role state" tab. */
+function RoleStateChip({
+  block,
+}: {
+  block: Extract<AssistantBlock, { type: "tool_use" }>;
+}) {
+  const { t } = useTranslation();
+  const input = (block.input ?? {}) as {
+    action?: string;
+    id?: string;
+    role?: { name?: string };
+  };
+  const output = (block.output ?? {}) as { role?: { name?: string }; id?: string };
+  const action = input.action ?? "";
+  const name =
+    output.role?.name || input.role?.name || output.id || input.id || "";
+
+  const opLabel =
+    action === "create"
+      ? t("roleState.opCreate")
+      : action === "update"
+        ? t("roleState.opUpdate")
+        : action === "delete"
+          ? t("roleState.opDelete")
+          : t("roleState.opRead");
+
+  return (
+    <div className="rs-inline-chip">
+      <span className="rs-inline-chip-icon">🎭</span>
+      <span className="rs-inline-chip-op">{opLabel}</span>
+      {name && action !== "get" ? <span>{name}</span> : null}
     </div>
   );
 }
