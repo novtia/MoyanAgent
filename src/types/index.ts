@@ -109,15 +109,52 @@ export interface Session {
   /** Main chat agent: `general-purpose` (Agent) or `Plan` (read-only planning). */
   agent_type: string;
   /**
-   * Ordered agent flow chain (agent_type strings). When set and non-empty the
-   * turn runs as a streaming pipeline through each agent in order; otherwise a
-   * single `agent_type` run applies.
+   * Ordered agent flow chain. When set and non-empty the turn runs as a
+   * streaming pipeline through each node in order; otherwise a single
+   * `agent_type` run applies. Each entry is either a bare agent_type string or
+   * a node carrying per-node config overrides (see {@link ChainEntry}).
    */
-  agent_chain: string[] | null;
+  agent_chain: ChainEntry[] | null;
   /** Project this session belongs to, if any. */
   project_id: string | null;
   created_at: number;
   updated_at: number;
+}
+
+/**
+ * Per-node config overrides applied to a single position in an agent flow
+ * chain. Each field is optional; an omitted field keeps the agent's default.
+ * These overrides live only inside the chain and never mutate the global
+ * built-in / custom agent definition.
+ */
+export interface NodeOverrides {
+  system_prompt?: string;
+  model?: string | null;
+  tools?: string[];
+}
+
+/** A chain node carrying per-node overrides. */
+export interface ChainNode {
+  agent_type: string;
+  overrides?: NodeOverrides;
+}
+
+/**
+ * Wire form of a chain entry: a bare `agent_type` string (no overrides) or a
+ * {@link ChainNode} object. The backend serialises nodes without overrides
+ * back to bare strings, so a loaded chain may mix both shapes.
+ */
+export type ChainEntry = string | ChainNode;
+
+/** Full resolved configuration of an agent (from `get_agent_definition`). */
+export interface AgentDefinitionInfo {
+  agent_type: string;
+  when_to_use: string;
+  system_prompt: string;
+  model: string | null;
+  tools: string[];
+  background: boolean;
+  passthrough_output: boolean;
 }
 
 /** A user-defined sub-agent saved globally and reusable across sessions. */

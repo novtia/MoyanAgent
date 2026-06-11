@@ -1,6 +1,8 @@
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -8,6 +10,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { openContextMenu, type ContextMenuItem } from "../context-menu";
+import type { ChainEntry, NodeOverrides } from "../../types";
 
 export const MAIN = "__main__";
 const CUSTOM_PREFIX = "custom:";
@@ -23,6 +26,31 @@ interface FNode {
   agentType: string;
   x: number;
   y: number;
+  /** Per-node config override for this chain position (not the global agent). */
+  overrides?: NodeOverrides;
+}
+
+/** `true` when an override object actually carries at least one value. */
+function hasOverride(ov?: NodeOverrides | null): ov is NodeOverrides {
+  return (
+    !!ov &&
+    (ov.system_prompt !== undefined ||
+      ov.model !== undefined ||
+      ov.tools !== undefined)
+  );
+}
+
+function entryType(e: ChainEntry): string {
+  return typeof e === "string" ? e : e.agent_type;
+}
+
+function entryOverrides(e: ChainEntry): NodeOverrides | undefined {
+  return typeof e === "string" ? undefined : e.overrides;
+}
+
+/** Serialise a node back to a chain entry (bare string unless it has overrides). */
+function nodeToEntry(n: FNode): ChainEntry {
+  return hasOverride(n.overrides) ? { agent_type: n.agentType, overrides: n.overrides } : n.agentType;
 }
 interface FEdge {
   id: string;
@@ -52,6 +80,18 @@ interface Agent {
  */
 type AddMode = "append" | "insert" | "insertBefore" | "insertAfter" | "floating";
 
+/** Info handed to the panel when the user opens the per-node config editor. */
+export interface NodeConfigTarget {
+  nodeId: string;
+  agentType: string;
+  overrides?: NodeOverrides;
+}
+
+/** Imperative handle the panel uses to write per-node overrides back. */
+export interface AgentFlowCanvasHandle {
+  applyNodeOverrides: (nodeId: string, overrides: NodeOverrides | null) => void;
+}
+
 interface AgentFlowCanvasProps {
   open: boolean;
   sessionId: string | null;
@@ -61,14 +101,16 @@ interface AgentFlowCanvasProps {
    * session id. Falls back to `sessionId` when omitted.
    */
   scopeId?: string | null;
-  chain: string[];
+  chain: ChainEntry[];
   agents: Agent[];
   knownTypes: Set<string>;
   nameOf: (agentType: string) => string;
-  onOrderChange: (order: string[]) => void;
+  onOrderChange: (order: ChainEntry[]) => void;
   onRequestNewAgent: () => void;
   onEditAgent: (agentType: string) => void;
   onDeleteAgent: (agentType: string) => void;
+  /** Open the per-node config editor for a chain node. */
+  onEditNodeConfig: (target: NodeConfigTarget) => void;
 }
 
 let idCounter = 0;
@@ -81,19 +123,23 @@ function graphKey(sessionId: string) {
   return `atelier:agent-flow:${sessionId}`;
 }
 
-function normalizeChain(chain: string[]): string[] {
+function normalizeChain(chain: ChainEntry[]): ChainEntry[] {
   if (chain.length === 0) return [MAIN];
-  return chain.includes(MAIN) ? chain : [MAIN, ...chain];
+  return chain.some((e) => entryType(e) === MAIN) ? chain : [MAIN, ...chain];
 }
 
-function buildGraphFromChain(chain: string[]): Graph {
+function buildGraphFromChain(chain: ChainEntry[]): Graph {
   const order = normalizeChain(chain);
-  const nodes: FNode[] = order.map((agentType, i) => ({
-    id: genId("n"),
-    agentType,
-    x: 48 + i * (NODE_W + GAP_X),
-    y: 96,
-  }));
+  const nodes: FNode[] = order.map((entry, i) => {
+    const overrides = entryOverrides(entry);
+    return {
+      id: genId("n"),
+      agentType: entryType(entry),
+      x: 48 + i * (NODE_W + GAP_X),
+      y: 96,
+      ...(hasOverride(overrides) ? { overrides } : {}),
+    };
+  });
   const edges: FEdge[] = [];
   for (let i = 0; i < nodes.length - 1; i++) {
     edges.push({ id: genId("e"), from: nodes[i].id, to: nodes[i + 1].id });
@@ -101,7 +147,7 @@ function buildGraphFromChain(chain: string[]): Graph {
   return { nodes, edges };
 }
 
-function loadGraph(sessionId: string, chain: string[]): Graph {
+function loadGraph(sessionId: string, chain: ChainEntry[]): Graph {
   try {
     const raw = window.localStorage.getItem(graphKey(sessionId));
     if (raw) {
@@ -128,7 +174,7 @@ function loadGraph(sessionId: string, chain: string[]): Graph {
  * (floating nodes or separate components) are intentionally excluded from the
  * executed order — they just live on the canvas.
  */
-function deriveOrder(graph: Graph): string[] {
+function deriveOrder(graph: Graph): ChainEntry[] {
   const { nodes, edges } = graph;
   const main = nodes.find((n) => n.agentType === MAIN);
   if (!main) return [MAIN];
@@ -150,17 +196,17 @@ function deriveOrder(graph: Graph): string[] {
     head = prev;
   }
 
-  // Walk forward from the head collecting agent types.
-  const order: string[] = [];
+  // Walk forward from the head collecting chain entries.
+  const order: ChainEntry[] = [];
   const seen = new Set<string>();
   let cur: string | undefined = head;
   while (cur && !seen.has(cur)) {
     seen.add(cur);
     const node = nodes.find((n) => n.id === cur);
-    if (node) order.push(node.agentType);
+    if (node) order.push(nodeToEntry(node));
     cur = outBy.get(cur);
   }
-  if (!order.includes(MAIN)) order.push(MAIN);
+  if (!order.some((e) => entryType(e) === MAIN)) order.push(MAIN);
   return order;
 }
 
@@ -180,19 +226,24 @@ function chainTailId(g: Graph): string | null {
   return cur;
 }
 
-export function AgentFlowCanvas({
-  open,
-  sessionId,
-  scopeId,
-  chain,
-  agents,
-  knownTypes,
-  nameOf,
-  onOrderChange,
-  onRequestNewAgent,
-  onEditAgent,
-  onDeleteAgent,
-}: AgentFlowCanvasProps) {
+export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvasProps>(
+  function AgentFlowCanvas(
+    {
+      open,
+      sessionId,
+      scopeId,
+      chain,
+      agents,
+      knownTypes,
+      nameOf,
+      onOrderChange,
+      onRequestNewAgent,
+      onEditAgent,
+      onDeleteAgent,
+      onEditNodeConfig,
+    }: AgentFlowCanvasProps,
+    ref,
+  ) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -206,9 +257,28 @@ export function AgentFlowCanvas({
   const [zoom, setZoom] = useState(1);
   const [viewport, setViewport] = useState({ w: 0, h: 0 });
   const [needsFit, setNeedsFit] = useState(false);
-  const [connecting, setConnecting] = useState<{ from: string; wx: number; wy: number } | null>(
-    null,
-  );
+  const [connecting, setConnecting] = useState<{
+    fixedId: string;
+    dir: "out" | "in";
+    wx: number;
+    wy: number;
+  } | null>(null);
+  // Node currently highlighted as the drop target while wiring a connection.
+  const [linkTarget, setLinkTarget] = useState<string | null>(null);
+  // Picker shown when a connection is dropped on empty canvas: lets the user
+  // wire to an existing node or add a new agent at the drop point (`wx`/`wy`
+  // are the drop position in world coordinates).
+  const [connectMenu, setConnectMenu] = useState<{
+    x: number;
+    y: number;
+    wx: number;
+    wy: number;
+    fixedId: string;
+    dir: "out" | "in";
+  } | null>(null);
+  // Edge selected by a left-click; shows a delete affordance and is removable
+  // with the Delete / Backspace key.
+  const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [addMenu, setAddMenu] = useState<
     {
       x: number;
@@ -228,6 +298,25 @@ export function AgentFlowCanvas({
   panRef.current = pan;
   zoomRef.current = zoom;
   graphRef.current = graph;
+
+  // Let the panel write per-node overrides back into the graph; a `null`
+  // override clears the customisation for that node.
+  useImperativeHandle(
+    ref,
+    () => ({
+      applyNodeOverrides: (nodeId: string, overrides: NodeOverrides | null) => {
+        setGraph((g) => ({
+          ...g,
+          nodes: g.nodes.map((n) =>
+            n.id === nodeId
+              ? { ...n, overrides: hasOverride(overrides) ? overrides : undefined }
+              : n,
+          ),
+        }));
+      },
+    }),
+    [],
+  );
 
   const initedFor = useRef<string | null>(null);
   const lastPushedOrder = useRef<string>("");
@@ -331,6 +420,7 @@ export function AgentFlowCanvas({
   const onBgPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     closeMenus();
+    setSelectedEdge(null);
     const start = { x: e.clientX, y: e.clientY };
     const startPan = { ...panRef.current };
     const onMove = (ev: PointerEvent) => {
@@ -365,6 +455,27 @@ export function AgentFlowCanvas({
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
+  // ── delete the selected edge with Delete / Backspace ─────────────────────
+  useEffect(() => {
+    if (!selectedEdge) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (
+        ae &&
+        (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      deleteEdge(selectedEdge);
+      setSelectedEdge(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEdge]);
+
   // ── node drag ────────────────────────────────────────────────────────────
   const onNodePointerDown = (e: React.PointerEvent, nodeId: string) => {
     if (e.button !== 0) return;
@@ -395,43 +506,145 @@ export function AgentFlowCanvas({
     window.addEventListener("pointerup", onUp);
   };
 
-  // ── connect (drag from output port) ──────────────────────────────────────
-  const onPortPointerDown = (e: React.PointerEvent, fromId: string) => {
+  // ── connect (drag from a port) ───────────────────────────────────────────
+  // `dir: "out"` drags forward from `fixedId`'s output toward a target's input
+  // (`fixedId -> target`). `dir: "in"` drags backward from `fixedId`'s input
+  // toward a source's output (`source -> fixedId`).
+  const wouldCycle = (g: Graph, from: string, to: string) => {
+    if (from === to) return true;
+    const outBy = new Map(g.edges.map((e) => [e.from, e.to] as const));
+    let cur: string | undefined = to;
+    const guard = new Set<string>();
+    while (cur && !guard.has(cur)) {
+      if (cur === from) return true;
+      guard.add(cur);
+      cur = outBy.get(cur);
+    }
+    return false;
+  };
+
+  // The node whose (port-inclusive) hit box is under the cursor and to which a
+  // valid, non-cycling connection can be made. Returns `null` otherwise.
+  const findLinkTarget = (wx: number, wy: number, fixedId: string, dir: "out" | "in") => {
+    const g = graphRef.current;
+    const M = 16; // expand the hit box so dropping near the port still connects
+    const hit = g.nodes.find(
+      (n) =>
+        n.id !== fixedId &&
+        wx >= n.x - M &&
+        wx <= n.x + NODE_W + M &&
+        wy >= n.y - M &&
+        wy <= n.y + NODE_H + M,
+    );
+    if (!hit) return null;
+    const from = dir === "out" ? fixedId : hit.id;
+    const to = dir === "out" ? hit.id : fixedId;
+    if (wouldCycle(g, from, to)) return null;
+    return hit.id;
+  };
+
+  const beginConnect = (e: React.PointerEvent, fixedId: string, dir: "out" | "in") => {
     if (e.button !== 0) return;
     e.stopPropagation();
     closeMenus();
+    setSelectedEdge(null);
     const w0 = toWorld(e.clientX, e.clientY);
-    setConnecting({ from: fromId, wx: w0.x, wy: w0.y });
+    setConnecting({ fixedId, dir, wx: w0.x, wy: w0.y });
+    setLinkTarget(null);
     const onMove = (ev: PointerEvent) => {
       const w = toWorld(ev.clientX, ev.clientY);
       setConnecting((c) => (c ? { ...c, wx: w.x, wy: w.y } : c));
+      setLinkTarget(findLinkTarget(w.x, w.y, fixedId, dir));
     };
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       const w = toWorld(ev.clientX, ev.clientY);
-      const target = graphRef.current.nodes.find(
-        (n) => n.id !== fromId && w.x >= n.x && w.x <= n.x + NODE_W && w.y >= n.y && w.y <= n.y + NODE_H,
-      );
-      if (target) connect(fromId, target.id);
+      const cand = findLinkTarget(w.x, w.y, fixedId, dir);
+      if (cand) {
+        // Dropped directly onto a node: wire it immediately.
+        if (dir === "out") connect(fixedId, cand);
+        else connect(cand, fixedId);
+      } else {
+        // Dropped on empty canvas: let the user pick a node to connect to.
+        // Always shown — when no valid target exists (e.g. every other node
+        // would form a cycle) the menu displays an explanatory empty state.
+        const host = containerRef.current?.getBoundingClientRect();
+        setConnectMenu({
+          x: ev.clientX - (host?.left ?? 0),
+          y: ev.clientY - (host?.top ?? 0),
+          wx: w.x,
+          wy: w.y,
+          fixedId,
+          dir,
+        });
+      }
       setConnecting(null);
+      setLinkTarget(null);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
   };
 
+  // Nodes that can validly receive a connection from `fixedId` in `dir`
+  // (excludes self and any target that would introduce a cycle).
+  const validConnectTargets = (fixedId: string, dir: "out" | "in") => {
+    const g = graphRef.current;
+    return g.nodes.filter((n) => {
+      if (n.id === fixedId) return false;
+      const from = dir === "out" ? fixedId : n.id;
+      const to = dir === "out" ? n.id : fixedId;
+      return !wouldCycle(g, from, to);
+    });
+  };
+
+  // Commit a connection chosen from the picker menu.
+  const connectFromMenu = (targetId: string) => {
+    if (!connectMenu) return;
+    if (connectMenu.dir === "out") connect(connectMenu.fixedId, targetId);
+    else connect(targetId, connectMenu.fixedId);
+    setConnectMenu(null);
+  };
+
+  // Create a new agent node at the drop point and wire it in the drag
+  // direction (out: fixed -> new, in: new -> fixed). Mirrors `connect`'s
+  // replacement semantics so each side keeps at most one edge per direction.
+  const addAndConnectFromMenu = (agentType: string) => {
+    if (!connectMenu) return;
+    const { fixedId, dir, wx, wy } = connectMenu;
+    const node: FNode = {
+      id: genId("n"),
+      agentType,
+      x: wx - NODE_W / 2,
+      y: wy - NODE_H / 2,
+    };
+    setGraph((g) => {
+      const from = dir === "out" ? fixedId : node.id;
+      const to = dir === "out" ? node.id : fixedId;
+      const edges = g.edges.filter((e) => e.from !== from && e.to !== to);
+      edges.push({ id: genId("e"), from, to });
+      return { nodes: [...g.nodes, node], edges };
+    });
+    setConnectMenu(null);
+  };
+
+  // Dragging an input port detaches its existing incoming edge (if any) and
+  // re-grabs the dangling end so the user can rewire or drop it to disconnect.
+  // With no incoming edge it starts a backward connection into this node.
+  const onInPortPointerDown = (e: React.PointerEvent, nodeId: string) => {
+    if (e.button !== 0) return;
+    const inEdge = graphRef.current.edges.find((ed) => ed.to === nodeId);
+    if (inEdge) {
+      deleteEdge(inEdge.id);
+      beginConnect(e, inEdge.from, "out");
+    } else {
+      beginConnect(e, nodeId, "in");
+    }
+  };
+
   const connect = (from: string, to: string) => {
     setGraph((g) => {
-      if (from === to) return g;
-      // Reject connections that would create a cycle.
-      const outBy = new Map(g.edges.map((e) => [e.from, e.to] as const));
-      let cur: string | undefined = to;
-      const guard = new Set<string>();
-      while (cur && !guard.has(cur)) {
-        if (cur === from) return g; // would cycle
-        guard.add(cur);
-        cur = outBy.get(cur);
-      }
+      if (wouldCycle(g, from, to)) return g;
       const edges = g.edges.filter((e) => e.from !== from && e.to !== to);
       edges.push({ id: genId("e"), from, to });
       return { ...g, edges };
@@ -531,6 +744,7 @@ export function AgentFlowCanvas({
   const closeMenus = () => {
     setAddMenu(null);
     setNodeMenu(null);
+    setConnectMenu(null);
   };
 
   // Translate a client point into afc-viewport-relative coords so the reused
@@ -627,15 +841,27 @@ export function AgentFlowCanvas({
         },
       },
     ];
-    if (isCustom) {
+    if (!isMain) {
       items.push(
         { type: "separator" },
         {
-          id: "edit",
-          label: t("agentFlow.editAgent"),
-          onSelect: () => onEditAgent(node.agentType),
+          id: "edit-node-config",
+          label: t("agentFlow.editNodeConfig"),
+          onSelect: () =>
+            onEditNodeConfig({
+              nodeId: node.id,
+              agentType: node.agentType,
+              overrides: node.overrides,
+            }),
         },
       );
+    }
+    if (isCustom) {
+      items.push({
+        id: "edit",
+        label: t("agentFlow.editAgent"),
+        onSelect: () => onEditAgent(node.agentType),
+      });
     }
     if (!isMain) {
       items.push({
@@ -783,34 +1009,52 @@ export function AgentFlowCanvas({
                 <path
                   d={e.d}
                   fill="none"
-                  stroke="var(--line-strong)"
-                  strokeWidth={2}
+                  stroke={selectedEdge === e.id ? "var(--blue-500)" : "var(--line-strong)"}
+                  strokeWidth={selectedEdge === e.id ? 2.5 : 2}
                   markerEnd="url(#afc-arrow)"
                 />
                 {/* Wide transparent hit area: re-enable pointer events (the
                     parent SVG sets pointer-events:none) so edges are
-                    right-clickable for delete / insert. */}
+                    clickable (select / delete) and right-clickable. */}
                 <path
                   d={e.d}
                   fill="none"
                   stroke="transparent"
                   strokeWidth={16}
-                  style={{ pointerEvents: "stroke", cursor: "context-menu" }}
+                  style={{ pointerEvents: "stroke", cursor: "pointer" }}
                   onPointerDown={(ev) => ev.stopPropagation()}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    closeMenus();
+                    setSelectedEdge(e.id);
+                  }}
                   onContextMenu={(ev) => onEdgeContextMenu(ev, e.id)}
                 />
               </g>
             ))}
             {connecting &&
               (() => {
-                const a = nodeById.get(connecting.from);
+                const a = nodeById.get(connecting.fixedId);
                 if (!a) return null;
-                const x1 = a.x + NODE_W;
-                const y1 = a.y + NODE_H / 2;
-                const dx = Math.max(40, Math.abs(connecting.wx - x1) / 2);
+                let x1: number;
+                let y1: number;
+                let x2: number;
+                let y2: number;
+                if (connecting.dir === "out") {
+                  x1 = a.x + NODE_W;
+                  y1 = a.y + NODE_H / 2;
+                  x2 = connecting.wx;
+                  y2 = connecting.wy;
+                } else {
+                  x1 = connecting.wx;
+                  y1 = connecting.wy;
+                  x2 = a.x;
+                  y2 = a.y + NODE_H / 2;
+                }
+                const dx = Math.max(40, Math.abs(x2 - x1) / 2);
                 return (
                   <path
-                    d={`M ${x1} ${y1} C ${x1 + dx} ${y1}, ${connecting.wx - dx} ${connecting.wy}, ${connecting.wx} ${connecting.wy}`}
+                    d={`M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`}
                     fill="none"
                     stroke="var(--blue-500)"
                     strokeWidth={2}
@@ -846,18 +1090,47 @@ export function AgentFlowCanvas({
             </button>
           ))}
 
+          {selectedEdge &&
+            (() => {
+              const e = edgePaths.find((p) => p.id === selectedEdge);
+              if (!e) return null;
+              return (
+                <button
+                  type="button"
+                  className="afc-edge-delete"
+                  style={{ left: e.mx - 11, top: e.my + 16 }}
+                  title={t("agentFlow.deleteEdge")}
+                  tabIndex={tab}
+                  onPointerDown={(ev) => ev.stopPropagation()}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    deleteEdge(selectedEdge);
+                    setSelectedEdge(null);
+                  }}
+                >
+                  ×
+                </button>
+              );
+            })()}
+
           {graph.nodes.map((n) => {
             const isMain = n.agentType === MAIN;
             const isCustom = n.agentType.startsWith(CUSTOM_PREFIX);
             return (
               <div
                 key={n.id}
-                className={`afc-node ${isMain ? "is-main" : ""}`}
+                className={`afc-node ${isMain ? "is-main" : ""} ${
+                  linkTarget === n.id ? "is-link-target" : ""
+                }`}
                 style={{ left: n.x, top: n.y, width: NODE_W, height: NODE_H }}
                 onPointerDown={(e) => onNodePointerDown(e, n.id)}
                 onContextMenu={(e) => onNodeContextMenu(e, n)}
               >
-                <span className="afc-node-port in" aria-hidden />
+                <span
+                  className="afc-node-port in"
+                  title={t("agentFlow.connectHint")}
+                  onPointerDown={(e) => onInPortPointerDown(e, n.id)}
+                />
                 <div className="afc-node-body">
                   <span className="afc-node-name" title={isMain ? undefined : n.agentType}>
                     {nameOf(n.agentType)}
@@ -868,6 +1141,11 @@ export function AgentFlowCanvas({
                       : isCustom
                         ? t("agentFlow.customGroup")
                         : t("agentFlow.builtinGroup")}
+                    {hasOverride(n.overrides) && (
+                      <span className="afc-node-badge" title={t("agentFlow.nodeCustomized")}>
+                        {t("agentFlow.nodeCustomized")}
+                      </span>
+                    )}
                   </span>
                 </div>
                 {!isMain && (
@@ -895,7 +1173,7 @@ export function AgentFlowCanvas({
                 <span
                   className="afc-node-port out"
                   title={t("agentFlow.connectHint")}
-                  onPointerDown={(e) => onPortPointerDown(e, n.id)}
+                  onPointerDown={(e) => beginConnect(e, n.id, "out")}
                 />
               </div>
             );
@@ -964,6 +1242,20 @@ export function AgentFlowCanvas({
                 style={{ left: nodeMenu.x, top: nodeMenu.y }}
                 onPointerDown={(e) => e.stopPropagation()}
               >
+                <button
+                  type="button"
+                  className="afc-menu-item"
+                  onClick={() => {
+                    onEditNodeConfig({
+                      nodeId: n.id,
+                      agentType: n.agentType,
+                      overrides: n.overrides,
+                    });
+                    setNodeMenu(null);
+                  }}
+                >
+                  {t("agentFlow.editNodeConfig")}
+                </button>
                 {isCustom && (
                   <button
                     type="button"
@@ -1001,10 +1293,53 @@ export function AgentFlowCanvas({
               </div>
             );
           })()}
+
+        {connectMenu &&
+          (() => {
+            const targets = validConnectTargets(connectMenu.fixedId, connectMenu.dir);
+            return (
+              <div
+                className="afc-menu afc-add-menu"
+                style={{ left: connectMenu.x, top: connectMenu.y }}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                {targets.length > 0 && (
+                  <>
+                    <div className="afc-menu-group">{t("agentFlow.connectTo")}</div>
+                    {targets.map((n) => (
+                      <button
+                        key={n.id}
+                        type="button"
+                        className="afc-menu-item"
+                        onClick={() => connectFromMenu(n.id)}
+                      >
+                        {nameOf(n.agentType)}
+                      </button>
+                    ))}
+                  </>
+                )}
+                <div className="afc-menu-group">{t("agentFlow.connectAddAgent")}</div>
+                {agents.length === 0 ? (
+                  <div className="afc-menu-empty">{t("agentFlow.connectNoTargets")}</div>
+                ) : (
+                  agents.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      className="afc-menu-item"
+                      onClick={() => addAndConnectFromMenu(a.id)}
+                    >
+                      {a.name}
+                    </button>
+                  ))
+                )}
+              </div>
+            );
+          })()}
       </div>
     </div>
   );
-}
+});
 
 function AddMenu({
   x,

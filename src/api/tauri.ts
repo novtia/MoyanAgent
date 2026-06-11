@@ -2,8 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Role } from "../store/roleState";
 import type {
+  AgentDefinitionInfo,
   AgentSummary,
   AttachmentDraft,
+  ChainEntry,
   CustomAgent,
   EditOp,
   GenerateResult,
@@ -77,11 +79,11 @@ export const api = {
     invoke<void>("set_session_agent_type", {
       args: { id, agentType },
     }),
-  setSessionAgentChain: (id: string, chain: string[]) =>
+  setSessionAgentChain: (id: string, chain: ChainEntry[]) =>
     invoke<void>("set_session_agent_chain", {
       args: { id, chain },
     }),
-  setProjectAgentChain: (id: string, chain: string[]) =>
+  setProjectAgentChain: (id: string, chain: ChainEntry[]) =>
     invoke<void>("set_project_agent_chain", {
       args: { id, chain },
     }),
@@ -208,6 +210,8 @@ export const api = {
 
   // agents
   listAgents: () => invoke<AgentSummary[]>("list_agents"),
+  getAgentDefinition: (agentType: string) =>
+    invoke<AgentDefinitionInfo>("get_agent_definition", { agentType }),
   listAgentTools: () => invoke<string[]>("list_agent_tools"),
   listCustomAgents: () => invoke<CustomAgent[]>("list_custom_agents"),
   createCustomAgent: (args: {

@@ -1,10 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/tauri";
 import { dialog } from "../ui";
 import { useSession } from "../../store/session";
-import { AgentFlowCanvas, MAIN } from "./AgentFlowCanvas";
-import type { AgentSummary, CustomAgent } from "../../types";
+import {
+  AgentFlowCanvas,
+  MAIN,
+  type AgentFlowCanvasHandle,
+  type NodeConfigTarget,
+} from "./AgentFlowCanvas";
+import type { AgentSummary, ChainEntry, CustomAgent, NodeOverrides } from "../../types";
 
 const CUSTOM_PREFIX = "custom:";
 
@@ -29,6 +34,34 @@ const EMPTY_FORM: FormState = {
 };
 
 /**
+ * Editor state for a single chain node's config overrides. `def*` fields hold
+ * the agent's resolved default so saving can store only the values that differ
+ * (and so "restore default" can clear them).
+ */
+interface NodeConfigState {
+  nodeId: string;
+  agentType: string;
+  name: string;
+  systemPrompt: string;
+  model: string;
+  tools: string[];
+  defSystemPrompt: string;
+  defModel: string;
+  defTools: string[];
+  loading: boolean;
+}
+
+function sameTools(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sb = new Set(b);
+  return a.every((t) => sb.has(t));
+}
+
+function chainEntryType(e: ChainEntry): string {
+  return typeof e === "string" ? e : e.agent_type;
+}
+
+/**
  * Right-panel tab: a free-form node canvas for arranging a session's agent
  * flow. The main agent is a fixed node; other built-in / custom agents are
  * dragged around it and wired into a sequence. The connection order is
@@ -50,6 +83,8 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
   const [customs, setCustoms] = useState<CustomAgent[]>([]);
   const [allTools, setAllTools] = useState<string[]>([]);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [nodeConfig, setNodeConfig] = useState<NodeConfigState | null>(null);
+  const canvasRef = useRef<AgentFlowCanvasHandle>(null);
 
   const refreshAgents = useCallback(async () => {
     try {
@@ -105,13 +140,122 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
   }, [builtins, customs]);
 
   const onOrderChange = useCallback(
-    (order: string[]) => {
+    (order: ChainEntry[]) => {
       if (!sessionId) return;
-      const onlyMain = order.length === 1 && order[0] === MAIN;
+      const onlyMain = order.length === 1 && chainEntryType(order[0]) === MAIN;
       void setAgentChain(onlyMain ? [] : order);
     },
     [sessionId, setAgentChain],
   );
+
+  // ── per-node config editing ───────────────────────────────────────────────
+  // Opens the node config editor, pre-filled with the node's overrides (if any)
+  // or the agent's resolved defaults otherwise. Editing here only changes this
+  // node in the flow, never the global agent definition.
+  const openNodeConfig = useCallback(
+    async (target: NodeConfigTarget) => {
+      const name = nameOf(target.agentType);
+      setNodeConfig({
+        nodeId: target.nodeId,
+        agentType: target.agentType,
+        name,
+        systemPrompt: "",
+        model: "",
+        tools: [],
+        defSystemPrompt: "",
+        defModel: "",
+        defTools: [],
+        loading: true,
+      });
+      try {
+        const def = await api.getAgentDefinition(target.agentType);
+        const defAll = def.tools.includes("*");
+        const defTools = defAll
+          ? [...allTools]
+          : def.tools.filter((tn) => allTools.includes(tn));
+        const ov = target.overrides;
+        const systemPrompt = ov?.system_prompt ?? def.system_prompt;
+        const model = (ov?.model ?? def.model ?? "") || "";
+        let tools: string[];
+        if (ov?.tools !== undefined) {
+          tools =
+            ov.tools.length === 0
+              ? [...allTools]
+              : ov.tools.filter((tn) => allTools.includes(tn));
+        } else {
+          tools = defTools;
+        }
+        setNodeConfig((c) =>
+          c && c.nodeId === target.nodeId
+            ? {
+                ...c,
+                systemPrompt,
+                model,
+                tools,
+                defSystemPrompt: def.system_prompt,
+                defModel: def.model ?? "",
+                defTools,
+                loading: false,
+              }
+            : c,
+        );
+      } catch (e) {
+        console.warn(e);
+        setNodeConfig((c) =>
+          c && c.nodeId === target.nodeId ? { ...c, loading: false } : c,
+        );
+      }
+    },
+    [allTools, nameOf],
+  );
+
+  const closeNodeConfig = () => setNodeConfig(null);
+
+  const toggleNodeTool = useCallback((tool: string) => {
+    setNodeConfig((c) =>
+      c
+        ? {
+            ...c,
+            tools: c.tools.includes(tool)
+              ? c.tools.filter((t) => t !== tool)
+              : [...c.tools, tool],
+          }
+        : c,
+    );
+  }, []);
+
+  const nodeAllToolsSelected =
+    allTools.length > 0 && nodeConfig?.tools.length === allTools.length;
+  const toggleNodeAllTools = useCallback(() => {
+    setNodeConfig((c) =>
+      c
+        ? { ...c, tools: c.tools.length === allTools.length ? [] : [...allTools] }
+        : c,
+    );
+  }, [allTools]);
+
+  const submitNodeConfig = () => {
+    if (!nodeConfig) return;
+    const { nodeId, systemPrompt, model, tools, defSystemPrompt, defModel, defTools } =
+      nodeConfig;
+    const overrides: NodeOverrides = {};
+    if (systemPrompt !== defSystemPrompt) overrides.system_prompt = systemPrompt;
+    const modelTrim = model.trim();
+    if (modelTrim !== defModel) overrides.model = modelTrim || null;
+    if (!sameTools(tools, defTools)) overrides.tools = [...tools];
+    const has =
+      overrides.system_prompt !== undefined ||
+      overrides.model !== undefined ||
+      overrides.tools !== undefined;
+    canvasRef.current?.applyNodeOverrides(nodeId, has ? overrides : null);
+    setNodeConfig(null);
+  };
+
+  const resetNodeConfig = () => {
+    if (!nodeConfig) return;
+    canvasRef.current?.applyNodeOverrides(nodeConfig.nodeId, null);
+    setNodeConfig(null);
+  };
 
   // New agents start with every available tool enabled (full access); the user
   // can then uncheck tools to restrict the agent.
@@ -209,6 +353,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
   return (
     <>
       <AgentFlowCanvas
+        ref={canvasRef}
         open={open}
         sessionId={sessionId}
         scopeId={flowScopeId}
@@ -220,6 +365,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
         onRequestNewAgent={openNew}
         onEditAgent={openEditByType}
         onDeleteAgent={deleteByType}
+        onEditNodeConfig={openNodeConfig}
       />
       {form.mode !== "closed" && (
         <div
@@ -322,6 +468,105 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
                 onClick={() => void submitForm()}
               >
                 {form.mode === "new" ? t("agentFlow.create") : t("agentFlow.save")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {nodeConfig && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeNodeConfig();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") closeNodeConfig();
+          }}
+        >
+          <div className="modal agent-flow-modal" role="dialog" aria-modal="true">
+            <div className="modal-head">
+              <h3>{t("agentFlow.nodeConfigTitle", { name: nodeConfig.name })}</h3>
+              <button type="button" className="close" onClick={closeNodeConfig}>
+                {t("agentFlow.cancel")}
+              </button>
+            </div>
+            <div className="modal-body">
+              <p className="agent-flow-node-config-hint">{t("agentFlow.nodeConfigHint")}</p>
+              <div className="agent-flow-form agent-flow-form--modal">
+                <label className="agent-flow-field">
+                  <span>{t("agentFlow.formSystemPrompt")}</span>
+                  <textarea
+                    rows={6}
+                    value={nodeConfig.systemPrompt}
+                    disabled={nodeConfig.loading}
+                    placeholder={t("agentFlow.formSystemPromptPlaceholder")}
+                    onChange={(e) =>
+                      setNodeConfig((c) => (c ? { ...c, systemPrompt: e.target.value } : c))
+                    }
+                  />
+                </label>
+                <label className="agent-flow-field">
+                  <span>{t("agentFlow.formModel")}</span>
+                  <input
+                    type="text"
+                    value={nodeConfig.model}
+                    disabled={nodeConfig.loading}
+                    placeholder={t("agentFlow.formModelPlaceholder")}
+                    onChange={(e) =>
+                      setNodeConfig((c) => (c ? { ...c, model: e.target.value } : c))
+                    }
+                  />
+                </label>
+                <div className="agent-flow-field">
+                  <div className="agent-flow-tools-head">
+                    <span>{t("agentFlow.formTools")}</span>
+                    <button
+                      type="button"
+                      className="agent-flow-tools-toggle"
+                      onClick={toggleNodeAllTools}
+                      disabled={allTools.length === 0 || nodeConfig.loading}
+                    >
+                      {nodeAllToolsSelected
+                        ? t("agentFlow.toolsDeselectAll")
+                        : t("agentFlow.toolsSelectAll")}
+                    </button>
+                  </div>
+                  {allTools.length === 0 ? (
+                    <p className="agent-flow-tools-empty">{t("agentFlow.toolsEmpty")}</p>
+                  ) : (
+                    <div className="agent-flow-tools">
+                      {allTools.map((tool) => (
+                        <label key={tool} className="agent-flow-tool">
+                          <input
+                            type="checkbox"
+                            checked={nodeConfig.tools.includes(tool)}
+                            disabled={nodeConfig.loading}
+                            onChange={() => toggleNodeTool(tool)}
+                          />
+                          <span>{tool}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  <p className="agent-flow-tools-hint">{t("agentFlow.formToolsHint")}</p>
+                </div>
+              </div>
+            </div>
+            <div className="modal-foot">
+              <button type="button" className="btn" onClick={resetNodeConfig}>
+                {t("agentFlow.nodeConfigReset")}
+              </button>
+              <span className="agent-flow-modal-foot-spacer" />
+              <button type="button" className="btn" onClick={closeNodeConfig}>
+                {t("agentFlow.cancel")}
+              </button>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={nodeConfig.loading}
+                onClick={submitNodeConfig}
+              >
+                {t("agentFlow.save")}
               </button>
             </div>
           </div>

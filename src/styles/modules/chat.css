@@ -714,6 +714,18 @@
   font-size: 11px;
   color: var(--ink-mute);
 }
+.agent-flow-node-config-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink-mute);
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--blue-500) 8%, transparent);
+}
+.agent-flow-modal-foot-spacer {
+  flex: 1;
+}
 .agent-flow-custom-list {
   list-style: none;
   margin: 0;
@@ -869,6 +881,18 @@
   color: var(--ink-mute);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.afc-node-badge {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 600;
+  color: var(--blue-500);
+  background: color-mix(in srgb, var(--blue-500) 14%, transparent);
+  border-radius: 5px;
+  padding: 1px 5px;
 }
 .afc-node-menu {
   position: absolute;
@@ -910,6 +934,12 @@
 }
 .afc-node-port.in {
   left: -7px;
+  cursor: crosshair;
+  background: var(--blue-500);
+  border-color: var(--blue-500);
+}
+.afc-node-port.in:hover {
+  transform: scale(1.25);
 }
 .afc-node-port.out {
   right: -7px;
@@ -919,6 +949,11 @@
 }
 .afc-node-port.out:hover {
   transform: scale(1.25);
+}
+.afc-node.is-link-target {
+  border-color: var(--blue-500);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue-500) 45%, transparent),
+    var(--shadow-2);
 }
 .afc-insert {
   position: absolute;
@@ -942,6 +977,27 @@
   border-color: var(--blue-500);
   color: var(--blue-500);
   background: color-mix(in srgb, var(--blue-500) 12%, var(--bg));
+}
+.afc-edge-delete {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--danger, #e5484d);
+  background: var(--bg);
+  color: var(--danger, #e5484d);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  z-index: 3;
+  transition: background 0.12s ease;
+}
+.afc-edge-delete:hover {
+  background: color-mix(in srgb, var(--danger, #e5484d) 14%, var(--bg));
 }
 .afc-minimap {
   position: absolute;
@@ -991,6 +1047,11 @@
   color: var(--ink-mute);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+.afc-menu-empty {
+  padding: 7px 8px;
+  font-size: 12px;
+  color: var(--ink-mute);
 }
 .afc-menu-item {
   text-align: left;

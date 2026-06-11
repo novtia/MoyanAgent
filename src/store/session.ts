@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   AssistantBlock,
   AttachmentDraft,
+  ChainEntry,
   MessageAbs,
   ModelParamSettings,
   SessionSummary,
@@ -89,7 +90,7 @@ interface SessionStore {
   setAspectRatio: (s: string) => void;
   setImageSize: (s: string) => void;
   setChatMode: (mode: ComposerChatMode) => Promise<void>;
-  setAgentChain: (chain: string[]) => Promise<void>;
+  setAgentChain: (chain: ChainEntry[]) => Promise<void>;
   addAttachments: (files: File[]) => Promise<void>;
   addAttachmentsFromPaths: (paths: string[]) => Promise<void>;
   addAttachmentFromPath: (path: string) => Promise<void>;
@@ -390,7 +391,19 @@ export const useSession = create<SessionStore>((set, get) => {
   setAgentChain: async (chain) => {
     const id = get().activeId;
     if (!id) return;
-    const cleaned = chain.map((s) => s.trim()).filter(Boolean);
+    const cleaned = chain
+      .map((e): ChainEntry => {
+        if (typeof e === "string") return e.trim();
+        const at = e.agent_type.trim();
+        const ov = e.overrides;
+        const hasOv =
+          !!ov &&
+          (ov.system_prompt !== undefined ||
+            ov.model !== undefined ||
+            ov.tools !== undefined);
+        return hasOv ? { agent_type: at, overrides: ov } : at;
+      })
+      .filter((e) => (typeof e === "string" ? e.length > 0 : e.agent_type.length > 0));
     const active = get().active;
     // Sessions in a project share a single, project-scoped agent flow: editing
     // the flow on any conversation persists to the project so all of its

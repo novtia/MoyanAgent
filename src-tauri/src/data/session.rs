@@ -33,6 +33,118 @@ pub fn generation_agent_definition_key(stored: &str) -> &'static str {
     }
 }
 
+/// Per-node configuration overrides applied to a single position in an agent
+/// flow chain. Each field is optional; `None` keeps the resolved agent
+/// definition's value. These overrides live only inside the chain
+/// (session/project `agent_chain`) and never mutate the global built-in or
+/// custom agent definition.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct NodeOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
+}
+
+impl NodeOverrides {
+    pub fn is_empty(&self) -> bool {
+        self.system_prompt.is_none() && self.model.is_none() && self.tools.is_none()
+    }
+}
+
+/// One node in an agent flow chain: an `agent_type` plus optional per-node
+/// overrides. Serialises to a bare string when there are no overrides (so the
+/// legacy `["Explore", "__main__"]` wire format is preserved), otherwise to
+/// `{ "agent_type": ..., "overrides": {...} }`.
+#[derive(Debug, Clone)]
+pub struct ChainNode {
+    pub agent_type: String,
+    pub overrides: Option<NodeOverrides>,
+}
+
+impl ChainNode {
+    pub fn bare(agent_type: impl Into<String>) -> Self {
+        Self {
+            agent_type: agent_type.into(),
+            overrides: None,
+        }
+    }
+
+    /// The override set, but only when it actually carries at least one value.
+    pub fn effective_overrides(&self) -> Option<&NodeOverrides> {
+        self.overrides.as_ref().filter(|o| !o.is_empty())
+    }
+}
+
+impl Serialize for ChainNode {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self.effective_overrides() {
+            None => self.agent_type.serialize(s),
+            Some(ov) => {
+                #[derive(Serialize)]
+                struct Full<'a> {
+                    agent_type: &'a str,
+                    overrides: &'a NodeOverrides,
+                }
+                Full {
+                    agent_type: &self.agent_type,
+                    overrides: ov,
+                }
+                .serialize(s)
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ChainNode {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bare(String),
+            Full {
+                agent_type: String,
+                #[serde(default)]
+                overrides: Option<NodeOverrides>,
+            },
+        }
+        Ok(match Raw::deserialize(d)? {
+            Raw::Bare(s) => ChainNode {
+                agent_type: s,
+                overrides: None,
+            },
+            Raw::Full {
+                agent_type,
+                overrides,
+            } => ChainNode {
+                agent_type,
+                overrides,
+            },
+        })
+    }
+}
+
+/// Normalise a chain: trim agent types, drop empty entries, and collapse empty
+/// override objects back to `None` so they re-serialise as bare strings.
+pub(crate) fn normalize_chain(chain: &[ChainNode]) -> Vec<ChainNode> {
+    chain
+        .iter()
+        .filter_map(|n| {
+            let agent_type = n.agent_type.trim().to_string();
+            if agent_type.is_empty() {
+                return None;
+            }
+            let overrides = n.overrides.clone().filter(|o| !o.is_empty());
+            Some(ChainNode {
+                agent_type,
+                overrides,
+            })
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
@@ -47,23 +159,20 @@ pub struct Session {
     pub context_window_used: i64,
     /// Which built-in agent definition drives turns (`general-purpose` | `Plan`, …).
     pub agent_type: String,
-    /// Ordered agent flow chain (agent_type strings). `None`/empty means a
-    /// single agent run driven by `agent_type`.
-    pub agent_chain: Option<Vec<String>>,
+    /// Ordered agent flow chain. `None`/empty means a single agent run driven
+    /// by `agent_type`. Each node is an agent type plus optional per-node
+    /// config overrides (see [`ChainNode`]).
+    pub agent_chain: Option<Vec<ChainNode>>,
     /// Project this session belongs to, if any.
     pub project_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
 
-fn decode_agent_chain(raw: Option<String>) -> Option<Vec<String>> {
+fn decode_agent_chain(raw: Option<String>) -> Option<Vec<ChainNode>> {
     let raw = raw?;
-    let parsed: Vec<String> = serde_json::from_str(&raw).ok()?;
-    let cleaned: Vec<String> = parsed
-        .into_iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let parsed: Vec<ChainNode> = serde_json::from_str(&raw).ok()?;
+    let cleaned = normalize_chain(&parsed);
     if cleaned.is_empty() {
         None
     } else {
@@ -166,12 +275,8 @@ pub fn create(conn: &DbConn, title: Option<String>, model: Option<String>) -> Ap
 
 /// Persist the ordered agent flow chain for a session. An empty list clears
 /// the chain (the session falls back to single-agent generation).
-pub fn set_agent_chain(conn: &DbConn, id: &str, chain: &[String]) -> AppResult<()> {
-    let cleaned: Vec<String> = chain
-        .iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+pub fn set_agent_chain(conn: &DbConn, id: &str, chain: &[ChainNode]) -> AppResult<()> {
+    let cleaned = normalize_chain(chain);
     let stored: Option<String> = if cleaned.is_empty() {
         None
     } else {

@@ -275,7 +275,7 @@ fn effective_session_params(
 fn effective_agent_chain(
     conn: &db::DbConn,
     sess: &session::Session,
-) -> Option<Vec<String>> {
+) -> Option<Vec<session::ChainNode>> {
     if let Some(ref pid) = sess.project_id {
         if let Ok(proj) = project::get(conn, pid) {
             return proj.agent_chain;
@@ -392,7 +392,7 @@ async fn run_agent_chain(
     app: &AppHandle,
     session_id: &str,
     request_message_id: &str,
-    chain: &[String],
+    chain: &[session::ChainNode],
     main_agent: &str,
     user_prompt: &str,
     base_request: chat::ChatRequest,
@@ -408,11 +408,14 @@ async fn run_agent_chain(
     let mut prev_text: Option<String> = None;
     let mut merged = chat::GenerateResponse::default();
 
-    for (idx, raw_type) in chain.iter().enumerate() {
+    for (idx, node) in chain.iter().enumerate() {
         // The default main agent is referenced by a sentinel so it tracks the
         // session's `agent_type` (general-purpose / Plan) wherever it sits.
+        let raw_type = node.agent_type.as_str();
         let is_main = raw_type == session::AGENT_CHAIN_MAIN;
-        let agent_type: &str = if is_main { main_agent } else { raw_type.as_str() };
+        let agent_type: &str = if is_main { main_agent } else { raw_type };
+        // Per-node config overrides apply only to this chain position.
+        let overrides = node.effective_overrides();
         let name = if is_main {
             main_agent.to_string()
         } else {
@@ -463,6 +466,7 @@ async fn run_agent_chain(
             stage_text_delta,
             Some(on_tool_event.clone()),
             project_cwd.clone(),
+            overrides,
         )
         .await?;
 
@@ -487,6 +491,7 @@ async fn run_cancellable_generation(
     on_text_delta: Option<chat::TextDeltaCallback>,
     on_tool_event: Option<ToolEventCallback>,
     project_cwd: Option<std::path::PathBuf>,
+    overrides: Option<&session::NodeOverrides>,
 ) -> AppResult<chat::GenerateResponse> {
     let abort_signal = register_generation_abort(state, session_id)?;
 
@@ -500,6 +505,30 @@ async fn run_cancellable_generation(
     }
 
     let mut definition = resolve_generation_definition(state, agent_type)?;
+
+    // Apply this chain node's per-node overrides on top of the resolved
+    // definition. The global built-in / custom agent stays untouched; only this
+    // run sees the overridden prompt / model / tools.
+    if let Some(ov) = overrides {
+        if let Some(sp) = &ov.system_prompt {
+            definition.system_prompt = sp.clone();
+        }
+        if let Some(m) = &ov.model {
+            let trimmed = m.trim();
+            definition.model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        if let Some(tools) = &ov.tools {
+            definition.tools = if tools.is_empty() {
+                vec!["*".into()]
+            } else {
+                tools.clone()
+            };
+        }
+    }
 
     // Prepend user-context when the agent opts in (Plan/Explore omit it).
     if let Ok(ctx) = state.user_context.load() {
@@ -1694,6 +1723,37 @@ fn list_agents(state: tauri::State<Arc<AppState>>) -> Result<Vec<AgentSummary>, 
     Ok(out)
 }
 
+/// Full resolved configuration for one agent type, used to pre-fill the
+/// per-node config editor with the agent's default values. Resolves built-ins
+/// from the registry and custom agents from the DB.
+#[derive(Debug, Serialize)]
+struct AgentDefinitionInfo {
+    agent_type: String,
+    when_to_use: String,
+    system_prompt: String,
+    model: Option<String>,
+    tools: Vec<String>,
+    background: bool,
+    passthrough_output: bool,
+}
+
+#[tauri::command]
+fn get_agent_definition(
+    state: tauri::State<Arc<AppState>>,
+    agent_type: String,
+) -> Result<AgentDefinitionInfo, AppError> {
+    let d = resolve_generation_definition(&state, &agent_type)?;
+    Ok(AgentDefinitionInfo {
+        agent_type: d.agent_type,
+        when_to_use: d.when_to_use,
+        system_prompt: d.system_prompt,
+        model: d.model,
+        tools: d.tools,
+        background: d.background,
+        passthrough_output: d.passthrough_output,
+    })
+}
+
 #[tauri::command]
 fn list_custom_agents(
     state: tauri::State<Arc<AppState>>,
@@ -1783,7 +1843,7 @@ fn delete_custom_agent(
 #[serde(rename_all = "camelCase")]
 struct SetSessionAgentChainArgs {
     id: String,
-    chain: Vec<String>,
+    chain: Vec<session::ChainNode>,
 }
 
 #[tauri::command]
@@ -1799,7 +1859,7 @@ fn set_session_agent_chain(
 #[serde(rename_all = "camelCase")]
 struct SetProjectAgentChainArgs {
     id: String,
-    chain: Vec<String>,
+    chain: Vec<session::ChainNode>,
 }
 
 #[tauri::command]
@@ -2009,6 +2069,7 @@ async fn generate_image(
                 Some(on_text_delta),
                 Some(on_tool_event),
                 project_cwd,
+                None,
             )
             .await
         }
@@ -2236,6 +2297,7 @@ async fn regenerate_image(
                 Some(on_text_delta),
                 Some(on_tool_event),
                 project_cwd,
+                None,
             )
             .await
         }
@@ -2642,6 +2704,7 @@ pub fn run() {
             list_agent_tasks,
             cancel_agent_task,
             list_agents,
+            get_agent_definition,
             list_custom_agents,
             create_custom_agent,
             update_custom_agent,

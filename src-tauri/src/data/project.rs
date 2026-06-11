@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use ulid::Ulid;
 use crate::data::db::{now_ms, DbConn};
+use crate::data::session::{normalize_chain, ChainNode};
 use crate::data::settings::{validate_model_param_settings, ModelParamSettings, DEFAULT_HISTORY_TURNS};
 use crate::error::{AppError, AppResult};
 
@@ -11,17 +12,14 @@ fn decode_llm_params(raw: Option<String>) -> ModelParamSettings {
         .unwrap_or_default()
 }
 
-/// Decode the project-scoped agent flow chain (JSON array of agent_type
-/// strings). Empty / blank entries are dropped; an empty result is treated as
-/// "no chain" (single-agent runs).
-fn decode_agent_chain(raw: Option<String>) -> Option<Vec<String>> {
+/// Decode the project-scoped agent flow chain (JSON array of chain nodes, each
+/// a bare agent_type string or `{ agent_type, overrides }`). Empty / blank
+/// entries are dropped; an empty result is treated as "no chain" (single-agent
+/// runs).
+fn decode_agent_chain(raw: Option<String>) -> Option<Vec<ChainNode>> {
     let raw = raw?;
-    let parsed: Vec<String> = serde_json::from_str(&raw).ok()?;
-    let cleaned: Vec<String> = parsed
-        .into_iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let parsed: Vec<ChainNode> = serde_json::from_str(&raw).ok()?;
+    let cleaned = normalize_chain(&parsed);
     if cleaned.is_empty() {
         None
     } else {
@@ -46,8 +44,9 @@ pub struct Project {
     /// Shared agent flow chain applied to every session in this project. `None`
     /// / empty means single-agent runs. All sessions in the project read and
     /// write this one record, so editing the flow on any conversation updates
-    /// the whole project.
-    pub agent_chain: Option<Vec<String>>,
+    /// the whole project. Each node is an agent type plus optional per-node
+    /// config overrides (see [`crate::data::session::ChainNode`]).
+    pub agent_chain: Option<Vec<ChainNode>>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -240,12 +239,8 @@ pub fn update_config(
 /// Persist the shared agent flow chain for a project. An empty list clears the
 /// chain (sessions fall back to single-agent generation). Because the chain is
 /// stored once per project, this immediately affects every session under it.
-pub fn set_agent_chain(conn: &DbConn, id: &str, chain: &[String]) -> AppResult<()> {
-    let cleaned: Vec<String> = chain
-        .iter()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+pub fn set_agent_chain(conn: &DbConn, id: &str, chain: &[ChainNode]) -> AppResult<()> {
+    let cleaned = normalize_chain(chain);
     let stored: Option<String> = if cleaned.is_empty() {
         None
     } else {
