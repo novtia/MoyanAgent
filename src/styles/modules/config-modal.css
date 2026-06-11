@@ -24,11 +24,13 @@
   white-space: nowrap;
 }
 
-/* body：去掉默认 padding，改为左右两栏 */
+/* body：去掉默认 padding，改为左右两栏。
+   内部两栏各自滚动，外层禁止滚动，避免切换分区时入场动画撑出横向滚动条。 */
 .config-modal-body {
   display: flex;
   padding: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 /* ── 左侧导航 ── */
@@ -117,6 +119,7 @@
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 22px 26px 26px;
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;

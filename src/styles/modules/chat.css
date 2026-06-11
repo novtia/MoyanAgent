@@ -590,6 +590,20 @@
   color: var(--ink-1);
   font-size: 12px;
 }
+.agent-flow-form--page .agent-flow-select {
+  flex: none;
+  width: 100%;
+  height: 34px;
+  cursor: pointer;
+}
+.agent-flow-form--page .agent-flow-select:focus {
+  outline: none;
+  border-color: var(--blue-500);
+}
+.agent-flow-form--page .agent-flow-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .agent-flow-add-btn {
   flex-shrink: 0;
 }
@@ -619,6 +633,21 @@
 }
 .agent-flow-modal {
   width: min(460px, 92vw);
+}
+.agent-flow-editor-modal {
+  width: min(860px, 94vw);
+  height: min(620px, 88vh);
+}
+.agent-flow-form--page {
+  padding: 0;
+  border: none;
+  background: transparent;
+  gap: 14px;
+}
+.agent-flow-tools--page {
+  max-height: none;
+  flex: 1;
+  min-height: 120px;
 }
 .agent-flow-form--modal {
   padding: 0;
@@ -688,6 +717,52 @@
   background: var(--bg);
   max-height: 160px;
   overflow-y: auto;
+}
+.agent-flow-tools--list {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 0;
+  padding: 0;
+  max-height: none;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.agent-flow-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s ease;
+}
+.agent-flow-tool-row:last-child {
+  border-bottom: none;
+}
+.agent-flow-tool-row:hover {
+  background: var(--bg-sunk);
+}
+.agent-flow-tool-row input {
+  margin: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.agent-flow-tool-name {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-1);
+  white-space: nowrap;
+}
+.agent-flow-tool-desc {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-mute);
 }
 .agent-flow-tool {
   display: inline-flex;

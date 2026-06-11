@@ -3,13 +3,20 @@ import { useTranslation } from "react-i18next";
 import { api } from "../../api/tauri";
 import { dialog } from "../ui";
 import { useSession } from "../../store/session";
+import { useSettings } from "../../store/settings";
 import {
   AgentFlowCanvas,
   MAIN,
   type AgentFlowCanvasHandle,
   type NodeConfigTarget,
 } from "./AgentFlowCanvas";
-import type { AgentSummary, ChainEntry, CustomAgent, NodeOverrides } from "../../types";
+import type {
+  AgentSummary,
+  ChainEntry,
+  CustomAgent,
+  ModelProvider,
+  NodeOverrides,
+} from "../../types";
 
 const CUSTOM_PREFIX = "custom:";
 
@@ -33,6 +40,22 @@ const EMPTY_FORM: FormState = {
   tools: [],
 };
 
+type FormSection = "basic" | "prompt" | "model" | "tools";
+
+type ConfigSection = Exclude<FormSection, "basic">;
+
+const FORM_SECTIONS: Array<{ id: FormSection; labelKey: string; descKey: string; icon: () => JSX.Element }> = [
+  { id: "basic", labelKey: "agentFlow.formNavBasic", descKey: "agentFlow.formNavBasicDesc", icon: BasicIcon },
+  { id: "prompt", labelKey: "agentFlow.formNavPrompt", descKey: "agentFlow.formNavPromptDesc", icon: PromptIcon },
+  { id: "model", labelKey: "agentFlow.formNavModel", descKey: "agentFlow.formNavModelDesc", icon: ModelIcon },
+  { id: "tools", labelKey: "agentFlow.formNavTools", descKey: "agentFlow.formNavToolsDesc", icon: ToolsIcon },
+];
+
+const NODE_CONFIG_SECTIONS = FORM_SECTIONS.filter(
+  (s): s is { id: ConfigSection; labelKey: string; descKey: string; icon: () => JSX.Element } =>
+    s.id !== "basic",
+);
+
 /**
  * Editor state for a single chain node's config overrides. `def*` fields hold
  * the agent's resolved default so saving can store only the values that differ
@@ -49,6 +72,83 @@ interface NodeConfigState {
   defModel: string;
   defTools: string[];
   loading: boolean;
+}
+
+function toolDescription(t: (key: string, opts?: { defaultValue?: string }) => string, name: string) {
+  return t(`agentFlow.toolDescriptions.${name}`, { defaultValue: name });
+}
+
+/**
+ * Model-override picker. Lists every model from the user's enabled providers,
+ * grouped by provider. An empty value means "inherit the session model". A
+ * value pointing at a model that no longer exists is still shown so the user
+ * can see (and keep) the current override.
+ */
+function ModelOverrideSelect({
+  value,
+  disabled,
+  providers,
+  t,
+  onChange,
+}: {
+  value: string;
+  disabled?: boolean;
+  providers: ModelProvider[];
+  t: (key: string) => string;
+  onChange: (model: string) => void;
+}) {
+  const known = providers.some((p) => p.models.some((m) => m.id === value));
+  return (
+    <select
+      className="agent-flow-select"
+      value={value}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">{t("agentFlow.formModelDefault")}</option>
+      {value && !known && <option value={value}>{value}</option>}
+      {providers.map((p) => (
+        <optgroup key={p.id} label={p.name}>
+          {p.models.map((m) => (
+            <option key={`${p.id}:${m.id}`} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+}
+
+function AgentToolsList({
+  tools,
+  selected,
+  onToggle,
+  disabled,
+  t,
+}: {
+  tools: string[];
+  selected: string[];
+  onToggle: (tool: string) => void;
+  disabled?: boolean;
+  t: (key: string, opts?: { defaultValue?: string }) => string;
+}) {
+  return (
+    <div className="agent-flow-tools agent-flow-tools--list">
+      {tools.map((tool) => (
+        <label key={tool} className="agent-flow-tool-row">
+          <input
+            type="checkbox"
+            checked={selected.includes(tool)}
+            disabled={disabled}
+            onChange={() => onToggle(tool)}
+          />
+          <span className="agent-flow-tool-name">{tool}</span>
+          <span className="agent-flow-tool-desc">{toolDescription(t, tool)}</span>
+        </label>
+      ))}
+    </div>
+  );
 }
 
 function sameTools(a: string[], b: string[]): boolean {
@@ -71,6 +171,15 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
   const { t } = useTranslation();
   const active = useSession((s) => s.active);
   const setAgentChain = useSession((s) => s.setAgentChain);
+  const settings = useSettings((s) => s.settings);
+
+  const modelProviders = useMemo(
+    () =>
+      (settings?.model_services ?? []).filter(
+        (p) => p.enabled !== false && p.models.length > 0,
+      ),
+    [settings?.model_services],
+  );
 
   const sessionId = active?.session.id ?? null;
   const projectId = active?.session.project_id ?? null;
@@ -83,7 +192,9 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
   const [customs, setCustoms] = useState<CustomAgent[]>([]);
   const [allTools, setAllTools] = useState<string[]>([]);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [formSection, setFormSection] = useState<FormSection>("basic");
   const [nodeConfig, setNodeConfig] = useState<NodeConfigState | null>(null);
+  const [nodeConfigSection, setNodeConfigSection] = useState<ConfigSection>("prompt");
   const canvasRef = useRef<AgentFlowCanvasHandle>(null);
 
   const refreshAgents = useCallback(async () => {
@@ -155,6 +266,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
   const openNodeConfig = useCallback(
     async (target: NodeConfigTarget) => {
       const name = nameOf(target.agentType);
+      setNodeConfigSection("prompt");
       setNodeConfig({
         nodeId: target.nodeId,
         agentType: target.agentType,
@@ -259,11 +371,15 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
 
   // New agents start with every available tool enabled (full access); the user
   // can then uncheck tools to restrict the agent.
-  const openNew = () => setForm({ ...EMPTY_FORM, mode: "new", tools: [...allTools] });
+  const openNew = () => {
+    setFormSection("basic");
+    setForm({ ...EMPTY_FORM, mode: "new", tools: [...allTools] });
+  };
   const openEditByType = useCallback(
     (agentType: string) => {
       const c = customs.find((x) => x.agent_type === agentType);
       if (!c) return;
+      setFormSection("basic");
       // An empty stored list means "all tools"; reflect that as everything checked.
       const tools = c.tools.length > 0 ? c.tools : [...allTools];
       setForm({
@@ -377,84 +493,136 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
             if (e.key === "Escape") closeForm();
           }}
         >
-          <div className="modal agent-flow-modal" role="dialog" aria-modal="true">
+          <div
+            className="modal config-modal agent-flow-editor-modal"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
             <div className="modal-head">
               <h3>{form.mode === "new" ? t("agentFlow.newAgent") : t("agentFlow.editAgent")}</h3>
               <button type="button" className="close" onClick={closeForm}>
                 {t("agentFlow.cancel")}
               </button>
             </div>
-            <div className="modal-body">
-              <div className="agent-flow-form agent-flow-form--modal">
-                <label className="agent-flow-field">
-                  <span>{t("agentFlow.formName")}</span>
-                  <input
-                    type="text"
-                    value={form.name}
-                    autoFocus
-                    placeholder={t("agentFlow.formNamePlaceholder")}
-                    onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  />
-                </label>
-                <label className="agent-flow-field">
-                  <span>{t("agentFlow.formWhenToUse")}</span>
-                  <input
-                    type="text"
-                    value={form.whenToUse}
-                    placeholder={t("agentFlow.formWhenToUsePlaceholder")}
-                    onChange={(e) => setForm((f) => ({ ...f, whenToUse: e.target.value }))}
-                  />
-                </label>
-                <label className="agent-flow-field">
-                  <span>{t("agentFlow.formSystemPrompt")}</span>
-                  <textarea
-                    rows={6}
-                    value={form.systemPrompt}
-                    placeholder={t("agentFlow.formSystemPromptPlaceholder")}
-                    onChange={(e) => setForm((f) => ({ ...f, systemPrompt: e.target.value }))}
-                  />
-                </label>
-                <label className="agent-flow-field">
-                  <span>{t("agentFlow.formModel")}</span>
-                  <input
-                    type="text"
-                    value={form.model}
-                    placeholder={t("agentFlow.formModelPlaceholder")}
-                    onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-                  />
-                </label>
-                <div className="agent-flow-field">
-                  <div className="agent-flow-tools-head">
-                    <span>{t("agentFlow.formTools")}</span>
-                    <button
-                      type="button"
-                      className="agent-flow-tools-toggle"
-                      onClick={toggleAllTools}
-                      disabled={allTools.length === 0}
-                    >
-                      {allToolsSelected
-                        ? t("agentFlow.toolsDeselectAll")
-                        : t("agentFlow.toolsSelectAll")}
-                    </button>
-                  </div>
-                  {allTools.length === 0 ? (
-                    <p className="agent-flow-tools-empty">{t("agentFlow.toolsEmpty")}</p>
-                  ) : (
-                    <div className="agent-flow-tools">
-                      {allTools.map((tool) => (
-                        <label key={tool} className="agent-flow-tool">
-                          <input
-                            type="checkbox"
-                            checked={form.tools.includes(tool)}
-                            onChange={() => toggleTool(tool)}
-                          />
-                          <span>{tool}</span>
-                        </label>
-                      ))}
+            <div className="modal-body config-modal-body">
+              <nav className="config-modal-nav">
+                {FORM_SECTIONS.map(({ id, labelKey, descKey, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`config-modal-nav-item ${formSection === id ? "active" : ""}`}
+                    onClick={() => setFormSection(id)}
+                  >
+                    <span className="config-modal-nav-icon">
+                      <Icon />
+                    </span>
+                    <span className="config-modal-nav-text">
+                      <span className="config-modal-nav-label">{t(labelKey)}</span>
+                      <span className="config-modal-nav-desc">{t(descKey)}</span>
+                    </span>
+                  </button>
+                ))}
+              </nav>
+              <div className="config-modal-content" key={formSection}>
+                {formSection === "basic" && (
+                  <>
+                    <div className="config-modal-section-head">
+                      <h4 className="config-modal-section-title">{t("agentFlow.formNavBasic")}</h4>
+                      <p className="config-modal-section-desc">{t("agentFlow.formNavBasicDesc")}</p>
                     </div>
-                  )}
-                  <p className="agent-flow-tools-hint">{t("agentFlow.formToolsHint")}</p>
-                </div>
+                    <div className="agent-flow-form agent-flow-form--page">
+                      <label className="agent-flow-field">
+                        <span>{t("agentFlow.formName")}</span>
+                        <input
+                          type="text"
+                          value={form.name}
+                          autoFocus
+                          placeholder={t("agentFlow.formNamePlaceholder")}
+                          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                        />
+                      </label>
+                      <label className="agent-flow-field">
+                        <span>{t("agentFlow.formWhenToUse")}</span>
+                        <input
+                          type="text"
+                          value={form.whenToUse}
+                          placeholder={t("agentFlow.formWhenToUsePlaceholder")}
+                          onChange={(e) => setForm((f) => ({ ...f, whenToUse: e.target.value }))}
+                        />
+                      </label>
+                    </div>
+                  </>
+                )}
+                {formSection === "prompt" && (
+                  <>
+                    <div className="config-modal-section-head">
+                      <h4 className="config-modal-section-title">{t("agentFlow.formNavPrompt")}</h4>
+                      <p className="config-modal-section-desc">{t("agentFlow.formNavPromptDesc")}</p>
+                    </div>
+                    <textarea
+                      className="field-input field-input--lg config-modal-prompt"
+                      value={form.systemPrompt}
+                      spellCheck={false}
+                      placeholder={t("agentFlow.formSystemPromptPlaceholder")}
+                      onChange={(e) => setForm((f) => ({ ...f, systemPrompt: e.target.value }))}
+                    />
+                  </>
+                )}
+                {formSection === "model" && (
+                  <>
+                    <div className="config-modal-section-head">
+                      <h4 className="config-modal-section-title">{t("agentFlow.formNavModel")}</h4>
+                      <p className="config-modal-section-desc">{t("agentFlow.formNavModelDesc")}</p>
+                    </div>
+                    <div className="agent-flow-form agent-flow-form--page">
+                      <label className="agent-flow-field">
+                        <span>{t("agentFlow.formModel")}</span>
+                        <ModelOverrideSelect
+                          value={form.model}
+                          providers={modelProviders}
+                          t={t}
+                          onChange={(model) => setForm((f) => ({ ...f, model }))}
+                        />
+                        <p className="agent-flow-tools-hint">{t("agentFlow.formModelHint")}</p>
+                      </label>
+                    </div>
+                  </>
+                )}
+                {formSection === "tools" && (
+                  <>
+                    <div className="config-modal-section-head">
+                      <h4 className="config-modal-section-title">{t("agentFlow.formNavTools")}</h4>
+                      <p className="config-modal-section-desc">{t("agentFlow.formNavToolsDesc")}</p>
+                    </div>
+                    <div className="agent-flow-field">
+                      <div className="agent-flow-tools-head">
+                        <span>{t("agentFlow.formTools")}</span>
+                        <button
+                          type="button"
+                          className="agent-flow-tools-toggle"
+                          onClick={toggleAllTools}
+                          disabled={allTools.length === 0}
+                        >
+                          {allToolsSelected
+                            ? t("agentFlow.toolsDeselectAll")
+                            : t("agentFlow.toolsSelectAll")}
+                        </button>
+                      </div>
+                      {allTools.length === 0 ? (
+                        <p className="agent-flow-tools-empty">{t("agentFlow.toolsEmpty")}</p>
+                      ) : (
+                        <AgentToolsList
+                          tools={allTools}
+                          selected={form.tools}
+                          onToggle={toggleTool}
+                          t={t}
+                        />
+                      )}
+                      <p className="agent-flow-tools-hint">{t("agentFlow.formToolsHint")}</p>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
             <div className="modal-foot">
@@ -483,73 +651,115 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
             if (e.key === "Escape") closeNodeConfig();
           }}
         >
-          <div className="modal agent-flow-modal" role="dialog" aria-modal="true">
+          <div
+            className="modal config-modal agent-flow-editor-modal"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
             <div className="modal-head">
               <h3>{t("agentFlow.nodeConfigTitle", { name: nodeConfig.name })}</h3>
               <button type="button" className="close" onClick={closeNodeConfig}>
                 {t("agentFlow.cancel")}
               </button>
             </div>
-            <div className="modal-body">
-              <p className="agent-flow-node-config-hint">{t("agentFlow.nodeConfigHint")}</p>
-              <div className="agent-flow-form agent-flow-form--modal">
-                <label className="agent-flow-field">
-                  <span>{t("agentFlow.formSystemPrompt")}</span>
-                  <textarea
-                    rows={6}
-                    value={nodeConfig.systemPrompt}
-                    disabled={nodeConfig.loading}
-                    placeholder={t("agentFlow.formSystemPromptPlaceholder")}
-                    onChange={(e) =>
-                      setNodeConfig((c) => (c ? { ...c, systemPrompt: e.target.value } : c))
-                    }
-                  />
-                </label>
-                <label className="agent-flow-field">
-                  <span>{t("agentFlow.formModel")}</span>
-                  <input
-                    type="text"
-                    value={nodeConfig.model}
-                    disabled={nodeConfig.loading}
-                    placeholder={t("agentFlow.formModelPlaceholder")}
-                    onChange={(e) =>
-                      setNodeConfig((c) => (c ? { ...c, model: e.target.value } : c))
-                    }
-                  />
-                </label>
-                <div className="agent-flow-field">
-                  <div className="agent-flow-tools-head">
-                    <span>{t("agentFlow.formTools")}</span>
-                    <button
-                      type="button"
-                      className="agent-flow-tools-toggle"
-                      onClick={toggleNodeAllTools}
-                      disabled={allTools.length === 0 || nodeConfig.loading}
-                    >
-                      {nodeAllToolsSelected
-                        ? t("agentFlow.toolsDeselectAll")
-                        : t("agentFlow.toolsSelectAll")}
-                    </button>
-                  </div>
-                  {allTools.length === 0 ? (
-                    <p className="agent-flow-tools-empty">{t("agentFlow.toolsEmpty")}</p>
-                  ) : (
-                    <div className="agent-flow-tools">
-                      {allTools.map((tool) => (
-                        <label key={tool} className="agent-flow-tool">
-                          <input
-                            type="checkbox"
-                            checked={nodeConfig.tools.includes(tool)}
-                            disabled={nodeConfig.loading}
-                            onChange={() => toggleNodeTool(tool)}
-                          />
-                          <span>{tool}</span>
-                        </label>
-                      ))}
+            <div className="modal-body config-modal-body">
+              <nav className="config-modal-nav">
+                {NODE_CONFIG_SECTIONS.map(({ id, labelKey, descKey, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`config-modal-nav-item ${nodeConfigSection === id ? "active" : ""}`}
+                    onClick={() => setNodeConfigSection(id)}
+                  >
+                    <span className="config-modal-nav-icon">
+                      <Icon />
+                    </span>
+                    <span className="config-modal-nav-text">
+                      <span className="config-modal-nav-label">{t(labelKey)}</span>
+                      <span className="config-modal-nav-desc">{t(descKey)}</span>
+                    </span>
+                  </button>
+                ))}
+                <div className="config-modal-nav-note">{t("agentFlow.nodeConfigHint")}</div>
+              </nav>
+              <div className="config-modal-content" key={nodeConfigSection}>
+                {nodeConfigSection === "prompt" && (
+                  <>
+                    <div className="config-modal-section-head">
+                      <h4 className="config-modal-section-title">{t("agentFlow.formNavPrompt")}</h4>
+                      <p className="config-modal-section-desc">{t("agentFlow.formNavPromptDesc")}</p>
                     </div>
-                  )}
-                  <p className="agent-flow-tools-hint">{t("agentFlow.formToolsHint")}</p>
-                </div>
+                    <textarea
+                      className="field-input field-input--lg config-modal-prompt"
+                      value={nodeConfig.systemPrompt}
+                      disabled={nodeConfig.loading}
+                      spellCheck={false}
+                      placeholder={t("agentFlow.formSystemPromptPlaceholder")}
+                      onChange={(e) =>
+                        setNodeConfig((c) => (c ? { ...c, systemPrompt: e.target.value } : c))
+                      }
+                    />
+                  </>
+                )}
+                {nodeConfigSection === "model" && (
+                  <>
+                    <div className="config-modal-section-head">
+                      <h4 className="config-modal-section-title">{t("agentFlow.formNavModel")}</h4>
+                      <p className="config-modal-section-desc">{t("agentFlow.formNavModelDesc")}</p>
+                    </div>
+                    <div className="agent-flow-form agent-flow-form--page">
+                      <label className="agent-flow-field">
+                        <span>{t("agentFlow.formModel")}</span>
+                        <ModelOverrideSelect
+                          value={nodeConfig.model}
+                          disabled={nodeConfig.loading}
+                          providers={modelProviders}
+                          t={t}
+                          onChange={(model) =>
+                            setNodeConfig((c) => (c ? { ...c, model } : c))
+                          }
+                        />
+                        <p className="agent-flow-tools-hint">{t("agentFlow.formModelHint")}</p>
+                      </label>
+                    </div>
+                  </>
+                )}
+                {nodeConfigSection === "tools" && (
+                  <>
+                    <div className="config-modal-section-head">
+                      <h4 className="config-modal-section-title">{t("agentFlow.formNavTools")}</h4>
+                      <p className="config-modal-section-desc">{t("agentFlow.formNavToolsDesc")}</p>
+                    </div>
+                    <div className="agent-flow-field">
+                      <div className="agent-flow-tools-head">
+                        <span>{t("agentFlow.formTools")}</span>
+                        <button
+                          type="button"
+                          className="agent-flow-tools-toggle"
+                          onClick={toggleNodeAllTools}
+                          disabled={allTools.length === 0 || nodeConfig.loading}
+                        >
+                          {nodeAllToolsSelected
+                            ? t("agentFlow.toolsDeselectAll")
+                            : t("agentFlow.toolsSelectAll")}
+                        </button>
+                      </div>
+                      {allTools.length === 0 ? (
+                        <p className="agent-flow-tools-empty">{t("agentFlow.toolsEmpty")}</p>
+                      ) : (
+                        <AgentToolsList
+                          tools={allTools}
+                          selected={nodeConfig.tools}
+                          onToggle={toggleNodeTool}
+                          disabled={nodeConfig.loading}
+                          t={t}
+                        />
+                      )}
+                      <p className="agent-flow-tools-hint">{t("agentFlow.formToolsHint")}</p>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
             <div className="modal-foot">
@@ -573,5 +783,37 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
         </div>
       )}
     </>
+  );
+}
+
+function BasicIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </svg>
+  );
+}
+function PromptIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" />
+      <path d="M8 9h8M8 13h5" />
+    </svg>
+  );
+}
+function ModelIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2 2 7l10 5 10-5-10-5Z" />
+      <path d="M2 17l10 5 10-5M2 12l10 5 10-5" />
+    </svg>
+  );
+}
+function ToolsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z" />
+    </svg>
   );
 }
