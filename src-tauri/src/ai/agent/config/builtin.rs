@@ -24,6 +24,7 @@ pub const AGENT_GUIDE: &str = "claude-code-guide";
 pub const AGENT_VERIFICATION: &str = "verification";
 pub const AGENT_FORK: &str = "fork";
 pub const AGENT_ROLE_STATE: &str = "role-state";
+pub const AGENT_RPG: &str = "RPG";
 
 /// Tool names that are unsafe for read-only agents (Explore / Plan /
 /// Verification). Kept in one place so adding a write-tool only needs a
@@ -56,6 +57,7 @@ pub fn builtin_definitions() -> Vec<AgentDefinition> {
         verification(),
         fork(),
         role_state(),
+        rpg(),
     ]
 }
 
@@ -134,6 +136,21 @@ fn role_state() -> AgentDefinition {
     let mut d = AgentDefinition::builtin(AGENT_ROLE_STATE, prompts::ROLE_STATE_PROMPT);
     d.when_to_use = prompts::ROLE_STATE_WHEN_TO_USE.into();
     d.tools = vec!["RoleState".into()];
+    d.omit_claude_md = true;
+    d.passthrough_output = true;
+    d
+}
+
+fn rpg() -> AgentDefinition {
+    // Option-generator stage. Designed to sit AFTER the main writer in an
+    // agent flow chain: it reads the upstream prose and emits the next set of
+    // branching choices through the `RpgChoice` tool ONLY. It writes NO story
+    // text of its own — the upstream prose passes through unchanged
+    // (`passthrough_output`), and clicking an option fills the player's input
+    // box with that action.
+    let mut d = AgentDefinition::builtin(AGENT_RPG, prompts::RPG_PROMPT);
+    d.when_to_use = prompts::RPG_WHEN_TO_USE.into();
+    d.tools = vec!["RpgChoice".into()];
     d.omit_claude_md = true;
     d.passthrough_output = true;
     d

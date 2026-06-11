@@ -22,6 +22,7 @@ pub mod bash;
 pub mod edit;
 pub mod fs;
 pub mod role_state;
+pub mod rpg_choice;
 pub mod todo;
 
 use std::collections::HashMap;

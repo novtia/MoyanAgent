@@ -91,6 +91,19 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const sizeLabel = composer.imageSize === "auto" ? t("composer.sizeAuto") : composer.imageSize;
 
   useEffect(() => {
+    const onFocusComposer = () => {
+      const ta = taRef.current;
+      if (!ta) return;
+      ta.focus();
+      const len = ta.value.length;
+      ta.setSelectionRange(len, len);
+    };
+    window.addEventListener("atelier:focus-composer", onFocusComposer);
+    return () =>
+      window.removeEventListener("atelier:focus-composer", onFocusComposer);
+  }, []);
+
+  useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       if (!e.clipboardData) return;
       const files = Array.from(e.clipboardData.files || []);

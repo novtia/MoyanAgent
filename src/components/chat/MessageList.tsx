@@ -407,6 +407,11 @@ function AssistantContent({
         if (block.tool === "RoleState") {
           return <RoleStateChip key={`role:${block.id}:${i}`} block={block} />;
         }
+        // RpgChoice renders as clickable option buttons; picking one inserts
+        // the option's text into the composer input box.
+        if (block.tool === "RpgChoice") {
+          return <RpgChoiceCard key={`rpg:${block.id}:${i}`} block={block} />;
+        }
         return <ToolCallBlock key={`tool:${block.id}:${i}`} block={block} />;
       })}
     </>
@@ -472,6 +477,79 @@ function RoleStateChip({
       <span className="rs-inline-chip-icon">🎭</span>
       <span className="rs-inline-chip-op">{opLabel}</span>
       {name && action !== "get" ? <span>{name}</span> : null}
+    </div>
+  );
+}
+
+interface RpgOption {
+  id?: string;
+  label: string;
+  text?: string;
+}
+
+/** Parse the (possibly streaming/partial) RpgChoice tool input into a prompt
+ * line plus a list of well-formed options. */
+function parseRpgChoiceInput(input: unknown): {
+  prompt: string;
+  options: RpgOption[];
+} {
+  const obj =
+    input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const prompt = typeof obj.prompt === "string" ? obj.prompt : "";
+  const rawOptions = Array.isArray(obj.options) ? obj.options : [];
+  const options: RpgOption[] = rawOptions.flatMap((v) => {
+    if (!v || typeof v !== "object") return [];
+    const o = v as Record<string, unknown>;
+    if (typeof o.label !== "string" || !o.label.trim()) return [];
+    return [
+      {
+        id: typeof o.id === "string" ? o.id : undefined,
+        label: o.label,
+        text: typeof o.text === "string" ? o.text : undefined,
+      },
+    ];
+  });
+  return { prompt, options };
+}
+
+/** RpgChoice tool card: the game master's branching action options rendered as
+ * buttons. Clicking one drops that option's text into the composer input box
+ * (without sending) so the player can edit and submit it as their next move. */
+function RpgChoiceCard({
+  block,
+}: {
+  block: Extract<AssistantBlock, { type: "tool_use" }>;
+}) {
+  const setPrompt = useSession((s) => s.setPrompt);
+  const { prompt, options } = useMemo(
+    () => parseRpgChoiceInput(block.input),
+    [block.input],
+  );
+
+  if (options.length === 0) return null;
+
+  const pick = (opt: RpgOption) => {
+    setPrompt((opt.text && opt.text.trim()) || opt.label);
+    window.dispatchEvent(new CustomEvent("atelier:focus-composer"));
+  };
+
+  return (
+    <div className="rpg-choice">
+      {prompt.trim() && <div className="rpg-choice-prompt">{prompt}</div>}
+      <div className="rpg-choice-options">
+        {options.map((opt, i) => (
+          <button
+            type="button"
+            key={opt.id || `${opt.label}:${i}`}
+            className="rpg-choice-option"
+            onClick={() => pick(opt)}
+            title={opt.text || opt.label}
+          >
+            <span className="rpg-choice-index">{i + 1}</span>
+            <span className="rpg-choice-label">{opt.label}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

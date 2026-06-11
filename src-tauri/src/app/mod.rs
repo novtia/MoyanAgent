@@ -2561,6 +2561,7 @@ pub fn run() {
             tools.register(crate::ai::agent::tools::todo::TodoListTool::new());
             let role_states = Arc::new(RoleStateStore::new());
             tools.register(RoleStateTool::new(role_states.clone()));
+            tools.register(crate::ai::agent::tools::rpg_choice::RpgChoiceTool::new());
 
             // Build the agent-callable `Agent` tool. The chat factory
             // lets it materialise a sub-agent `ChatRequest` from the
