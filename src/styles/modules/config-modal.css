@@ -264,51 +264,9 @@
 .cfg-slider-wrap {
   margin-top: 8px;
 }
-.cfg-slider {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 16px;
-  background: transparent;
-  cursor: pointer;
-  outline: none;
-}
-/* WebKit：轨道由伪元素绘制（细），输入框本身保留 thumb 的高度空间 */
-.cfg-slider::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 999px;
-  background: var(--cfg-fill, var(--line-strong));
-}
-.cfg-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  box-sizing: border-box;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--bg);
-  border: 2px solid var(--ink);
-  box-shadow: var(--shadow-1);
-  cursor: pointer;
-  /* 轨道 4px、thumb 16px，居中：(4 - 16) / 2 = -6px */
-  margin-top: -6px;
-}
-/* Firefox：轨道与 thumb（thumb 会自动相对轨道居中） */
-.cfg-slider::-moz-range-track {
-  height: 4px;
-  border-radius: 999px;
-  background: var(--cfg-fill, var(--line-strong));
-}
-.cfg-slider::-moz-range-thumb {
-  box-sizing: border-box;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--bg);
-  border: 2px solid var(--ink);
-  box-shadow: var(--shadow-1);
-  cursor: pointer;
-}
+/* The slider itself uses the shared `.app-slider` style (see forms.css);
+   the filled-track gradient is supplied per-value via the `--slider-track`
+   CSS variable set inline by `trackStyle()`. */
 .cfg-slider-marks {
   position: relative;
   height: 16px;

@@ -330,7 +330,7 @@ interface SliderMark {
 function trackStyle(pct: number): CSSProperties {
   const clamped = Math.max(0, Math.min(100, pct));
   return {
-    ["--cfg-fill" as string]: `linear-gradient(to right, var(--ink) ${clamped}%, var(--line-strong) ${clamped}%)`,
+    ["--slider-track" as string]: `linear-gradient(to right, var(--ink) ${clamped}%, var(--line-strong) ${clamped}%)`,
   };
 }
 
@@ -378,7 +378,7 @@ function SliderParamRow({
         <div className="cfg-slider-wrap">
           <input
             type="range"
-            className="cfg-slider"
+            className="app-slider"
             min={min}
             max={max}
             step={step}
@@ -433,7 +433,7 @@ function ContextSliderRow({
       <div className="cfg-slider-wrap">
         <input
           type="range"
-          className="cfg-slider"
+          className="app-slider"
           min={0}
           max={max}
           step={1}

@@ -137,6 +137,74 @@ input.field-input--mono {
   box-shadow: none;
 }
 
+/* ───── unified range slider ─────
+   Single source of truth for every <input type="range"> in the app.
+   Colors are parameterized via CSS variables so dark contexts (e.g. the
+   image editor) can override them while sharing one structure:
+     --slider-track         track background (supports a fill gradient)
+     --slider-thumb-bg      thumb fill
+     --slider-thumb-border  thumb border color
+     --slider-thumb-shadow  thumb box-shadow */
+.app-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+}
+.app-slider:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.app-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--slider-track, var(--line-strong));
+}
+.app-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--slider-thumb-bg, var(--bg));
+  border: 2px solid var(--slider-thumb-border, var(--ink));
+  box-shadow: var(--slider-thumb-shadow, var(--shadow-1));
+  /* track 4px, thumb 16px → center: (4 - 16) / 2 = -6px */
+  margin-top: -6px;
+  transition: transform 0.14s var(--ease-out);
+}
+.app-slider:not(:disabled)::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+.app-slider:not(:disabled)::-webkit-slider-thumb:active {
+  transform: scale(0.95);
+}
+.app-slider::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--slider-track, var(--line-strong));
+  border: none;
+}
+.app-slider::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--slider-thumb-bg, var(--bg));
+  border: 2px solid var(--slider-thumb-border, var(--ink));
+  box-shadow: var(--slider-thumb-shadow, var(--shadow-1));
+}
+.app-slider:not(:disabled)::-moz-range-thumb:hover {
+  transform: scale(1.15);
+}
+.app-slider:not(:disabled)::-moz-range-thumb:active {
+  transform: scale(0.95);
+}
+
 .chips {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

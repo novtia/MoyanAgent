@@ -144,6 +144,122 @@
   background: var(--rose-50);
 }
 
+/* ───── chat font settings panel ───── */
+.chat-topbar-font {
+  position: relative;
+}
+.chat-font-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 264px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card);
+  padding: 14px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transform-origin: top right;
+  animation: popover-expand 0.2s var(--ease-pop);
+}
+.chat-font-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.chat-font-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-1);
+}
+.chat-font-reset {
+  border: none;
+  background: none;
+  color: var(--blue-500);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.chat-font-reset:hover {
+  background: var(--bg-sunk);
+}
+.chat-font-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.chat-font-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+.chat-font-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.chat-font-select {
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink-1);
+  font-size: 12px;
+  cursor: pointer;
+}
+.chat-font-select:focus {
+  outline: none;
+  border-color: var(--blue-500);
+}
+.chat-font-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.chat-font-color-input {
+  width: 36px;
+  height: 30px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: pointer;
+}
+.chat-font-color-default {
+  flex: 1;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+.chat-font-color-default:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  background: var(--bg-sunk);
+}
+.chat-font-color-default.is-active {
+  border-color: var(--blue-500);
+  color: var(--blue-500);
+}
+.chat-font-color-default:disabled {
+  cursor: default;
+}
+
 /* ───── session gallery (right docked panel) ───── */
 .chat-gallery {
   position: relative;

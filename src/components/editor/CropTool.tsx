@@ -96,7 +96,7 @@ export function CropTool({ target, busy, setBusy, onApplied }: Props) {
         <span className="editor-toolbar-label">{t("editor.crop.zoom")}</span>
         <input
           type="range"
-          className="editor-range"
+          className="app-slider editor-range"
           min={1}
           max={6}
           step={0.01}

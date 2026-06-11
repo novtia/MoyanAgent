@@ -272,56 +272,16 @@
   border-radius: 6px;
 }
 
-/* dark themed range slider (used for crop zoom + brush size) */
+/* Dark-context overrides for the shared `.app-slider` (crop zoom + brush size).
+   The editor toolbar is always a dark overlay, so the slider keeps a white
+   thumb on a translucent track regardless of the app theme. */
 .editor-range {
-  -webkit-appearance: none;
-  appearance: none;
   width: 130px;
-  height: 26px;
-  background: transparent;
-  cursor: pointer;
   flex-shrink: 0;
-}
-.editor-range:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-.editor-range::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.16);
-}
-.editor-range::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #fff;
-  border: none;
-  margin-top: -5px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
-  transition: transform 0.14s var(--ease-out);
-}
-.editor-range:not(:disabled)::-webkit-slider-thumb:hover {
-  transform: scale(1.18);
-}
-.editor-range:not(:disabled)::-webkit-slider-thumb:active {
-  transform: scale(0.95);
-}
-.editor-range::-moz-range-track {
-  height: 4px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.16);
-  border: none;
-}
-.editor-range::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #fff;
-  border: none;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  --slider-track: rgba(255, 255, 255, 0.16);
+  --slider-thumb-bg: #fff;
+  --slider-thumb-border: #fff;
+  --slider-thumb-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
 }
 
 /* Dark themed numeric input. The selector is intentionally `input.editor-num`

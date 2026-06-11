@@ -256,7 +256,7 @@ export function MaskTool({ target, busy, setBusy, onApplied }: Props) {
         <span className="editor-toolbar-label">{t("editor.mask.brush")}</span>
         <input
           type="range"
-          className="editor-range"
+          className="app-slider editor-range"
           min={4}
           max={120}
           step={1}

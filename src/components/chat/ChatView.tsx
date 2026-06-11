@@ -6,6 +6,7 @@ import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { EmptyChat } from "./EmptyChat";
 import { RightPanel } from "./RightPanel";
+import { ChatFontPanel } from "./ChatFontPanel";
 import type { AttachmentDraft, ImageRefAbs } from "../../types";
 
 interface ChatViewProps {
@@ -28,7 +29,9 @@ export function ChatView({
 
   const [moreOpen, setMoreOpen] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
+  const [fontOpen, setFontOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement | null>(null);
+  const fontRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!moreOpen) return;
@@ -40,6 +43,17 @@ export function ChatView({
     window.addEventListener("mousedown", onDoc);
     return () => window.removeEventListener("mousedown", onDoc);
   }, [moreOpen]);
+
+  useEffect(() => {
+    if (!fontOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (fontRef.current && !fontRef.current.contains(e.target as Node)) {
+        setFontOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onDoc);
+    return () => window.removeEventListener("mousedown", onDoc);
+  }, [fontOpen]);
 
   const isEmpty = !active || active.messages.length === 0;
   const title = active?.session.title || t("chat.defaultTitle");
@@ -96,6 +110,18 @@ export function ChatView({
             )}
           </div>
           <div className="chat-topbar-right">
+            <div className="chat-topbar-font" ref={fontRef}>
+              <button
+                type="button"
+                className={`ghost-btn ${fontOpen ? "is-active" : ""}`}
+                title={t("chat.fontSettings")}
+                aria-pressed={fontOpen}
+                onClick={() => setFontOpen((v) => !v)}
+              >
+                <FontIcon />
+              </button>
+              {fontOpen && <ChatFontPanel />}
+            </div>
             <button
               type="button"
               className={`ghost-btn ${galleryOpen ? "is-active" : ""}`}
@@ -141,6 +167,24 @@ function DotsIcon() {
       <circle cx="5" cy="12" r="1.6" />
       <circle cx="12" cy="12" r="1.6" />
       <circle cx="19" cy="12" r="1.6" />
+    </svg>
+  );
+}
+
+function FontIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 20l5-14h2l5 14" />
+      <path d="M6.5 14h6" />
+      <path d="M16 20l2.5-7h1L22 20" />
+      <path d="M17 17.5h3.5" />
     </svg>
   );
 }
