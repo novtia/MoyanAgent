@@ -987,6 +987,24 @@ fn get_llm_model_catalog(
     llm_catalog::fetch_for_frontend(&conn)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FetchProviderModelsArgs {
+    sdk: String,
+    endpoint: String,
+    #[serde(default)]
+    api_key: String,
+}
+
+/// Pull the live model catalog a provider advertises via its `/models`
+/// endpoint so the settings dialog can browse and import models.
+#[tauri::command]
+async fn fetch_provider_models(
+    args: FetchProviderModelsArgs,
+) -> Result<Vec<String>, AppError> {
+    crate::ai::providers::model_list::fetch_models(&args.sdk, &args.endpoint, &args.api_key).await
+}
+
 // ????????? App info ?????????
 
 #[derive(Debug, Serialize)]
@@ -2671,6 +2689,7 @@ pub fn run() {
             get_settings,
             update_settings,
             get_llm_model_catalog,
+            fetch_provider_models,
             get_app_info,
             open_path,
             toggle_devtools,

@@ -42,6 +42,10 @@ export const api = {
   updateSettings: (patch: SettingsPatch) =>
     invoke<Settings>("update_settings", { patch }),
   getLlmModelCatalog: () => invoke<LlmModelCatalog>("get_llm_model_catalog"),
+  fetchProviderModels: (sdk: string, endpoint: string, apiKey: string) =>
+    invoke<string[]>("fetch_provider_models", {
+      args: { sdk, endpoint, apiKey },
+    }),
 
   // app info
   getAppInfo: () =>

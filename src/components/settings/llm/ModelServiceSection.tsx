@@ -132,7 +132,7 @@ export function ModelServiceSection() {
   const [editProviderTarget, setEditProviderTarget] = useState<ModelProvider | null>(
     null,
   );
-  const [manageMode, setManageMode] = useState(false);
+  const [manageModelsOpen, setManageModelsOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<ModelServiceModel | null>(null);
   const [addProviderOpen, setAddProviderOpen] = useState(false);
   const [addModelOpen, setAddModelOpen] = useState(false);
@@ -218,6 +218,7 @@ export function ModelServiceSection() {
   useEffect(() => {
     setAddModelOpen(false);
     setAddProviderOpen(false);
+    setManageModelsOpen(false);
     setCollapsedGroups(new Set());
   }, [selectedProvider?.id]);
 
@@ -514,6 +515,12 @@ export function ModelServiceSection() {
     if (!selectedProvider) return;
     const ok = await dialog.confirm(`删除模型 ${modelId}？`, { type: "danger", confirmLabel: "删除" });
     if (!ok) return;
+    await removeModelById(modelId);
+    setEditingModel(null);
+  };
+
+  const removeModelById = async (modelId: string) => {
+    if (!selectedProvider) return;
     const nextModels = selectedProvider.models.filter((model) => model.id !== modelId);
     await patchProvider(
       selectedProvider.id,
@@ -523,7 +530,15 @@ export function ModelServiceSection() {
         model: settings?.model === modelId ? nextModels[0]?.id ?? "" : settings?.model,
       },
     );
-    setEditingModel(null);
+  };
+
+  const addModelById = async (modelId: string) => {
+    if (!selectedProvider) return;
+    const trimmed = modelId.trim();
+    if (!trimmed || selectedProvider.models.some((m) => m.id === trimmed)) return;
+    await patchProvider(selectedProvider.id, {
+      models: [...selectedProvider.models, makeModel(trimmed)],
+    });
   };
 
   const setActiveModel = async (model: ModelServiceModel) => {
@@ -712,8 +727,8 @@ export function ModelServiceSection() {
                 <div className="model-list-actions">
                   <button
                     type="button"
-                    className={`btn ${manageMode ? "primary" : ""}`}
-                    onClick={() => setManageMode((value) => !value)}
+                    className="btn"
+                    onClick={() => setManageModelsOpen(true)}
                   >
                     <ListIcon />
                     <span>管理</span>
@@ -791,16 +806,14 @@ export function ModelServiceSection() {
                                 >
                                   <GearIcon />
                                 </button>
-                                {manageMode && (
-                                  <button
-                                    type="button"
-                                    className="settings-icon-btn danger"
-                                    title="删除模型"
-                                    onClick={() => deleteModel(model.id)}
-                                  >
-                                    <TrashIcon />
-                                  </button>
-                                )}
+                                <button
+                                  type="button"
+                                  className="settings-icon-btn model-remove-btn"
+                                  title="删除模型"
+                                  onClick={() => deleteModel(model.id)}
+                                >
+                                  <MinusIcon />
+                                </button>
                               </div>
                             </div>
                           );
@@ -849,6 +862,19 @@ export function ModelServiceSection() {
           existingIds={selectedProvider.models.map((m) => m.id)}
           onClose={() => setAddModelOpen(false)}
           onAdd={submitNewModel}
+        />
+      )}
+
+      {manageModelsOpen && selectedProvider && (
+        <ManageModelsModal
+          providerName={providerDraft.name || selectedProvider.name}
+          sdk={selectedProvider.sdk}
+          endpoint={providerDraft.endpoint || selectedProvider.endpoint}
+          apiKey={providerDraft.api_key || selectedProvider.api_key}
+          localModels={selectedProvider.models}
+          onAdd={addModelById}
+          onRemove={removeModelById}
+          onClose={() => setManageModelsOpen(false)}
         />
       )}
 
@@ -1210,6 +1236,190 @@ function AddModelModal({
   );
 }
 
+interface ManageModelsModalProps {
+  providerName: string;
+  sdk?: string;
+  endpoint: string;
+  apiKey: string;
+  localModels: ModelServiceModel[];
+  onAdd: (modelId: string) => void | Promise<void>;
+  onRemove: (modelId: string) => void | Promise<void>;
+  onClose: () => void;
+}
+
+function ManageModelsModal({
+  providerName,
+  sdk,
+  endpoint,
+  apiKey,
+  localModels,
+  onAdd,
+  onRemove,
+  onClose,
+}: ManageModelsModalProps) {
+  const [remoteModels, setRemoteModels] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  const localIds = useMemo(
+    () => new Set(localModels.map((m) => m.id)),
+    [localModels],
+  );
+
+  const load = () => {
+    setLoading(true);
+    setError(null);
+    let cancelled = false;
+    void api
+      .fetchProviderModels(normalizeProviderSdk(sdk), endpoint, apiKey)
+      .then((ids) => {
+        if (!cancelled) setRemoteModels(ids);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  };
+
+  useEffect(() => {
+    const cleanup = load();
+    return cleanup;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const entries = useMemo(() => {
+    const list: { id: string; inLocal: boolean }[] = [];
+    const seen = new Set<string>();
+    for (const model of localModels) {
+      if (seen.has(model.id)) continue;
+      seen.add(model.id);
+      list.push({ id: model.id, inLocal: true });
+    }
+    for (const id of remoteModels) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      list.push({ id, inLocal: false });
+    }
+    const q = search.trim().toLowerCase();
+    return q ? list.filter((e) => e.id.toLowerCase().includes(q)) : list;
+  }, [localModels, remoteModels, search]);
+
+  const toggle = async (entry: { id: string; inLocal: boolean }) => {
+    setBusyId(entry.id);
+    try {
+      if (entry.inLocal) {
+        await onRemove(entry.id);
+      } else {
+        await onAdd(entry.id);
+      }
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const addedCount = entries.filter((e) => e.inLocal).length;
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <div
+        className="modal model-settings-modal manage-models-modal"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="modal-head">
+          <h3>管理模型 · {providerName}</h3>
+          <button type="button" className="close" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+        <div className="modal-body">
+          <div className="manage-models-toolbar">
+            <div className="input-affix manage-models-search">
+              <SearchIcon />
+              <input
+                type="search"
+                value={search}
+                placeholder="搜索模型 ID..."
+                autoFocus
+                spellCheck={false}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <button
+              type="button"
+              className="btn"
+              disabled={loading}
+              onClick={() => load()}
+            >
+              {loading ? "拉取中…" : "刷新"}
+            </button>
+          </div>
+
+          {loading ? (
+            <div className="model-empty-state model-empty-state--center">
+              正在从供应商拉取模型列表…
+            </div>
+          ) : error ? (
+            <div className="manage-models-error">
+              <div className="hint is-error">{error}</div>
+              <button type="button" className="btn" onClick={() => load()}>
+                重试
+              </button>
+            </div>
+          ) : entries.length === 0 ? (
+            <div className="model-empty-state model-empty-state--center">
+              {search.trim() ? "没有匹配的模型。" : "没有可用的模型。"}
+            </div>
+          ) : (
+            <div className="manage-models-list">
+              {entries.map((entry) => (
+                <div
+                  key={entry.id}
+                  className={`manage-models-row ${entry.inLocal ? "is-added" : ""}`}
+                >
+                  <span className="manage-models-id" title={entry.id}>
+                    {entry.id}
+                  </span>
+                  {entry.inLocal && (
+                    <span className="manage-models-tag">已添加</span>
+                  )}
+                  <button
+                    type="button"
+                    className={`manage-models-toggle ${
+                      entry.inLocal ? "remove" : "add"
+                    }`}
+                    disabled={busyId === entry.id}
+                    title={entry.inLocal ? "从本地删除" : "添加到本地"}
+                    onClick={() => toggle(entry)}
+                  >
+                    {entry.inLocal ? <MinusIcon /> : <PlusIcon />}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="modal-foot">
+          <div className="manage-models-count">
+            已添加 {addedCount} / 共 {entries.length}
+          </div>
+          <button type="button" className="btn primary" onClick={onClose}>
+            完成
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface ModelSettingsModalProps {
   sdkConfig: ProviderSdkConfig;
   model: ModelServiceModel;
@@ -1416,11 +1626,19 @@ function GearIcon() {
   );
 }
 
-function TrashIcon() {
+function MinusIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="3 6 5 6 21 6" />
-      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="11" cy="11" r="7" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
     </svg>
   );
 }
