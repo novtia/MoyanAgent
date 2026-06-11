@@ -972,7 +972,7 @@
 .afc-node-menu {
   position: absolute;
   top: 4px;
-  right: 4px;
+  right: 28px;
   width: 22px;
   height: 22px;
   display: inline-flex;
@@ -996,6 +996,42 @@
 .afc-node-menu svg {
   width: 14px;
   height: 14px;
+}
+.afc-node-power {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.afc-node-power svg {
+  width: 14px;
+  height: 14px;
+}
+.afc-node-power.is-on {
+  color: var(--blue-500);
+}
+.afc-node-power.is-off {
+  color: var(--ink-mute);
+}
+.afc-node-power:hover {
+  background: var(--line);
+}
+.afc-node.is-disabled {
+  opacity: 0.6;
+  border-style: dashed;
+}
+.afc-node.is-disabled .afc-node-name {
+  text-decoration: line-through;
+  color: var(--ink-mute);
 }
 .afc-node-port {
   position: absolute;

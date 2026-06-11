@@ -146,6 +146,8 @@ const enUS: Resource = {
     fitView: "Fit view",
     removeNode: "Remove from flow",
     nodeMenu: "More",
+    enableNode: "Enable node",
+    disableNode: "Disable node",
     connectHint: "Drag a blue port to connect; drag the left port to detach/rewire",
     connectTo: "Connect to…",
     connectNoTargets: "No connectable nodes (would form a cycle)",

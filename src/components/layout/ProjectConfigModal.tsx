@@ -22,7 +22,6 @@ export function ProjectConfigModal({ project, onClose }: ProjectConfigModalProps
       subtitle={project.name}
       scopeNote="以下参数应用于该项目下所有会话，会话自身的参数设置不再生效。"
       promptPlaceholder="应用于项目所有会话；留空则不发送 system 提示词。"
-      historyHint="0 表示不携带历史；适用于项目所有会话。"
       paramsHint="应用于项目所有会话的请求体；留空则不发送对应字段。"
       initial={{
         systemPrompt: project.system_prompt ?? "",

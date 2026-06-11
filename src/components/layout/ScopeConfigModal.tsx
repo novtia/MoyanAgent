@@ -3,14 +3,11 @@
  * Layout: left navigation rail + right content panel (mirrors the global
  * settings page), so both "项目设置" and "会话设置" share one consistent UI.
  */
-import { useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { ModelParamSettings } from "../../types";
 import { EMPTY_MODEL_PARAMS } from "../settings/llm/modelServices";
-import { NUMERIC_FIELDS } from "../settings/llm/modelParams";
-import { NumericParamField } from "../settings/llm/NumericParamField";
 
-type ConfigSection = "prompt" | "context" | "model";
+type ConfigSection = "prompt" | "model";
 
 export interface ScopeConfigInitial {
   systemPrompt: string;
@@ -26,7 +23,7 @@ interface ScopeConfigModalProps {
   /** 作用范围说明，显示在底栏左侧 */
   scopeNote: string;
   promptPlaceholder: string;
-  historyHint: string;
+  historyHint?: string;
   paramsHint: string;
   initial: ScopeConfigInitial;
   onSave: (
@@ -44,8 +41,7 @@ const SECTIONS: Array<{
   icon: () => JSX.Element;
 }> = [
   { id: "prompt", label: "系统提示词", desc: "定义模型的角色与行为", icon: PromptIcon },
-  { id: "context", label: "上下文", desc: "多轮会话历史携带策略", icon: HistoryIcon },
-  { id: "model", label: "模型参数", desc: "思考推理与采样参数", icon: TuneIcon },
+  { id: "model", label: "模型参数", desc: "采样 · 上下文 · 推理", icon: TuneIcon },
 ];
 
 export function ScopeConfigModal({
@@ -59,9 +55,8 @@ export function ScopeConfigModal({
   onSave,
   onClose,
 }: ScopeConfigModalProps) {
-  const { t } = useTranslation();
-
   const [section, setSection] = useState<ConfigSection>("prompt");
+  const [paramsResetKey, setParamsResetKey] = useState(0);
   const [systemPromptDraft, setSystemPromptDraft] = useState(initial.systemPrompt);
   const [historyTurnsDraft, setHistoryTurnsDraft] = useState(String(initial.historyTurns));
   const [llmParamsDraft, setLlmParamsDraft] = useState<ModelParamSettings>({
@@ -85,6 +80,8 @@ export function ScopeConfigModal({
     const turns = Number.parseInt(raw.trim(), 10);
     return Number.isFinite(turns) && turns >= 0 && turns <= 200 ? turns : null;
   };
+
+  const historyTurns = parseTurns(historyTurnsDraft) ?? 0;
 
   // 自动保存：草稿变化 400ms 后持久化
   useEffect(() => {
@@ -190,35 +187,6 @@ export function ScopeConfigModal({
               </>
             )}
 
-            {section === "context" && (
-              <>
-                <div className="config-modal-section-head">
-                  <h4 className="config-modal-section-title">上下文</h4>
-                  <p className="config-modal-section-desc">
-                    控制每次请求携带多少条历史消息。
-                  </p>
-                </div>
-                <div className="row">
-                  <label className="field-label">多轮会话历史条数</label>
-                  <input
-                    type="number"
-                    className="field-input field-input--mono config-modal-history-input"
-                    min={0}
-                    max={200}
-                    step={1}
-                    value={historyTurnsDraft}
-                    onChange={(e) => {
-                      setHistoryTurnsDraft(e.target.value);
-                      setError(null);
-                    }}
-                  />
-                  <div className={`hint ${error ? "is-error" : ""}`}>
-                    {error ?? historyHint}
-                  </div>
-                </div>
-              </>
-            )}
-
             {section === "model" && (
               <>
                 <div className="config-modal-section-head">
@@ -226,66 +194,371 @@ export function ScopeConfigModal({
                   <p className="config-modal-section-desc">{paramsHint}</p>
                 </div>
 
-                <div className="config-modal-group">
-                  <div className="config-modal-group-title">思考 / 推理</div>
-                  <div className="config-thinking-row">
-                    <label className="config-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={llmParamsDraft.thinking_enabled === true}
-                        onChange={(e) =>
-                          setLlmParamsDraft((cur) => ({
-                            ...cur,
-                            thinking_enabled: e.target.checked ? true : null,
-                          }))
-                        }
-                      />
-                      <span>开启（OpenAI: reasoning_effort；Claude: output_config.effort）</span>
-                    </label>
-                    <label className="field-label config-thinking-effort-label">强度</label>
-                    <select
-                      className="field-input field-input--mono config-thinking-effort-select"
-                      value={llmParamsDraft.thinking_effort ?? ""}
-                      onChange={(e) =>
-                        setLlmParamsDraft((cur) => ({
-                          ...cur,
-                          thinking_effort: e.target.value.trim() ? e.target.value.trim() : null,
-                        }))
-                      }
-                      disabled={llmParamsDraft.thinking_enabled !== true}
-                    >
-                      <option value="">默认 high</option>
-                      <option value="low">low</option>
-                      <option value="medium">medium</option>
-                      <option value="high">high</option>
-                      <option value="max">max</option>
-                    </select>
-                  </div>
+                <div className="cfg-params" key={paramsResetKey}>
+                  <SliderParamRow
+                    label="模型温度"
+                    hint="控制随机性；越高越发散，越低越确定。"
+                    value={llmParamsDraft.temperature}
+                    defaultValue={0.7}
+                    min={0}
+                    max={2}
+                    step={0.1}
+                    marks={[{ v: 0, label: "0" }, { v: 0.7, label: "0.7" }, { v: 2, label: "2" }]}
+                    onChange={(next) =>
+                      setLlmParamsDraft((cur) => ({ ...cur, temperature: next }))
+                    }
+                  />
+
+                  <SliderParamRow
+                    label="Top-P"
+                    hint="核采样阈值；与温度二选一调节即可。"
+                    value={llmParamsDraft.top_p}
+                    defaultValue={0.9}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    marks={[{ v: 0, label: "0" }, { v: 0.5, label: "0.5" }, { v: 1, label: "1" }]}
+                    onChange={(next) =>
+                      setLlmParamsDraft((cur) => ({ ...cur, top_p: next }))
+                    }
+                  />
+
+                  <ContextSliderRow
+                    value={historyTurns}
+                    hint={error ?? historyHint}
+                    isError={!!error}
+                    onChange={(next) => {
+                      setHistoryTurnsDraft(String(next));
+                      setError(null);
+                    }}
+                  />
+
+                  <TokenParamRow
+                    value={llmParamsDraft.max_tokens}
+                    onChange={(next) =>
+                      setLlmParamsDraft((cur) => ({ ...cur, max_tokens: next }))
+                    }
+                  />
+
+                  <SliderParamRow
+                    label="频率惩罚"
+                    hint="降低重复用词的倾向（frequency_penalty）。"
+                    value={llmParamsDraft.frequency_penalty}
+                    defaultValue={0}
+                    min={-2}
+                    max={2}
+                    step={0.1}
+                    marks={[{ v: -2, label: "-2" }, { v: 0, label: "0" }, { v: 2, label: "2" }]}
+                    onChange={(next) =>
+                      setLlmParamsDraft((cur) => ({ ...cur, frequency_penalty: next }))
+                    }
+                  />
+
+                  <SliderParamRow
+                    label="存在惩罚"
+                    hint="鼓励谈论新主题（presence_penalty）。"
+                    value={llmParamsDraft.presence_penalty}
+                    defaultValue={0}
+                    min={-2}
+                    max={2}
+                    step={0.1}
+                    marks={[{ v: -2, label: "-2" }, { v: 0, label: "0" }, { v: 2, label: "2" }]}
+                    onChange={(next) =>
+                      setLlmParamsDraft((cur) => ({ ...cur, presence_penalty: next }))
+                    }
+                  />
+
+                  <ThinkingParamRow
+                    enabled={llmParamsDraft.thinking_enabled === true}
+                    effort={llmParamsDraft.thinking_effort}
+                    onToggle={(on) =>
+                      setLlmParamsDraft((cur) => ({
+                        ...cur,
+                        thinking_enabled: on ? true : null,
+                      }))
+                    }
+                    onEffort={(val) =>
+                      setLlmParamsDraft((cur) => ({ ...cur, thinking_effort: val }))
+                    }
+                  />
                 </div>
 
-                <div className="config-modal-group">
-                  <div className="config-modal-group-title">采样参数</div>
-                  <div className="settings-params-grid">
-                    {NUMERIC_FIELDS.map((field) => (
-                      <NumericParamField
-                        key={field.key}
-                        def={field}
-                        value={llmParamsDraft[field.key]}
-                        onCommit={(next) =>
-                          setLlmParamsDraft((cur) => ({ ...cur, [field.key]: next }))
-                        }
-                        invalidLabel={t("settings.llm.paramInvalid")}
-                        label={t(field.labelKey)}
-                        hint={t(field.hintKey)}
-                      />
-                    ))}
-                  </div>
+                <div className="cfg-params-footer">
+                  <button
+                    type="button"
+                    className="cfg-reset-btn"
+                    onClick={() => {
+                      setLlmParamsDraft({ ...EMPTY_MODEL_PARAMS });
+                      setParamsResetKey((k) => k + 1);
+                    }}
+                  >
+                    <ResetIcon />
+                    <span>重置</span>
+                  </button>
                 </div>
               </>
             )}
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Parameter rows（图片同款：开关 + 滑块 + 数值）────────────────────────────
+
+function formatNum(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+}
+
+function ParamSwitch({
+  checked,
+  onChange,
+  title,
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={title}
+      title={title}
+      className={`cfg-switch ${checked ? "cfg-switch--on" : ""}`}
+      onClick={() => onChange(!checked)}
+    >
+      <span className="cfg-switch-thumb" />
+    </button>
+  );
+}
+
+interface SliderMark {
+  v: number;
+  label: string;
+}
+
+function trackStyle(pct: number): CSSProperties {
+  const clamped = Math.max(0, Math.min(100, pct));
+  return {
+    ["--cfg-fill" as string]: `linear-gradient(to right, var(--ink) ${clamped}%, var(--line-strong) ${clamped}%)`,
+  };
+}
+
+function SliderParamRow({
+  label,
+  hint,
+  value,
+  defaultValue,
+  min,
+  max,
+  step,
+  marks,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  value: number | null;
+  defaultValue: number;
+  min: number;
+  max: number;
+  step: number;
+  marks: SliderMark[];
+  onChange: (next: number | null) => void;
+}) {
+  const enabled = value !== null && value !== undefined;
+  const current = enabled ? (value as number) : defaultValue;
+  const pct = ((current - min) / (max - min)) * 100;
+
+  return (
+    <div className="cfg-param">
+      <div className="cfg-param-head">
+        <span className="cfg-param-label" title={hint}>
+          {label}
+        </span>
+        <div className="cfg-param-trailing">
+          {enabled && <span className="cfg-param-value">{formatNum(current)}</span>}
+          <ParamSwitch
+            checked={enabled}
+            title={label}
+            onChange={(on) => onChange(on ? defaultValue : null)}
+          />
+        </div>
+      </div>
+      {enabled && (
+        <div className="cfg-slider-wrap">
+          <input
+            type="range"
+            className="cfg-slider"
+            min={min}
+            max={max}
+            step={step}
+            value={current}
+            style={trackStyle(pct)}
+            onChange={(e) => onChange(Number(e.target.value))}
+          />
+          <div className="cfg-slider-marks">
+            {marks.map((m) => (
+              <span
+                key={m.v}
+                style={{ left: `${((m.v - min) / (max - min)) * 100}%` }}
+              >
+                {m.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ContextSliderRow({
+  value,
+  hint,
+  isError,
+  onChange,
+}: {
+  value: number;
+  hint?: string;
+  isError?: boolean;
+  onChange: (next: number) => void;
+}) {
+  const max = 100;
+  const display = Math.min(value, max);
+  const pct = (display / max) * 100;
+  const marks: SliderMark[] = [
+    { v: 0, label: "0" },
+    { v: 25, label: "25" },
+    { v: 50, label: "50" },
+    { v: 75, label: "75" },
+    { v: 100, label: "不限" },
+  ];
+
+  return (
+    <div className="cfg-param">
+      <div className="cfg-param-head">
+        <span className="cfg-param-label">上下文数</span>
+        <span className="cfg-param-value">{value >= max ? "不限" : value}</span>
+      </div>
+      <div className="cfg-slider-wrap">
+        <input
+          type="range"
+          className="cfg-slider"
+          min={0}
+          max={max}
+          step={1}
+          value={display}
+          style={trackStyle(pct)}
+          onChange={(e) => onChange(Number(e.target.value))}
+        />
+        <div className="cfg-slider-marks">
+          {marks.map((m) => (
+            <span key={m.v} style={{ left: `${(m.v / max) * 100}%` }}>
+              {m.label}
+            </span>
+          ))}
+        </div>
+      </div>
+      {hint && <div className={`hint ${isError ? "is-error" : ""}`}>{hint}</div>}
+    </div>
+  );
+}
+
+function TokenParamRow({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (next: number | null) => void;
+}) {
+  const enabled = value !== null && value !== undefined;
+  const [draft, setDraft] = useState(value == null ? "" : String(value));
+
+  const commit = (raw: string) => {
+    setDraft(raw);
+    const trimmed = raw.trim();
+    if (trimmed === "") return; // 留空时保持开启，等待输入
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(parsed) && parsed >= 1) onChange(parsed);
+  };
+
+  return (
+    <div className="cfg-param">
+      <div className="cfg-param-head">
+        <span className="cfg-param-label">最大 Token 数</span>
+        <ParamSwitch
+          checked={enabled}
+          title="最大 Token 数"
+          onChange={(on) => {
+            if (on) {
+              const fallback = draft.trim() || "2048";
+              setDraft(fallback);
+              onChange(Number.parseInt(fallback, 10) || 2048);
+            } else {
+              onChange(null);
+            }
+          }}
+        />
+      </div>
+      {enabled && (
+        <input
+          type="number"
+          className="field-input field-input--mono cfg-number"
+          inputMode="numeric"
+          min={1}
+          step={1}
+          value={draft}
+          placeholder="2048"
+          onChange={(e) => commit(e.target.value)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ThinkingParamRow({
+  enabled,
+  effort,
+  onToggle,
+  onEffort,
+}: {
+  enabled: boolean;
+  effort: string | null;
+  onToggle: (on: boolean) => void;
+  onEffort: (val: string | null) => void;
+}) {
+  return (
+    <div className="cfg-param">
+      <div className="cfg-param-head">
+        <span
+          className="cfg-param-label"
+          title="开启扩展推理（OpenAI: reasoning_effort；Claude: output_config.effort）"
+        >
+          思考 / 推理
+        </span>
+        <ParamSwitch checked={enabled} title="思考 / 推理" onChange={onToggle} />
+      </div>
+      {enabled && (
+        <div className="cfg-param-inline">
+          <span className="cfg-param-inline-label">推理强度</span>
+          <select
+            className="field-input field-input--mono cfg-select"
+            value={effort ?? ""}
+            onChange={(e) =>
+              onEffort(e.target.value.trim() ? e.target.value.trim() : null)
+            }
+          >
+            <option value="">默认 high</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="max">max</option>
+          </select>
+        </div>
+      )}
     </div>
   );
 }
@@ -300,12 +573,11 @@ function PromptIcon() {
     </svg>
   );
 }
-function HistoryIcon() {
+function ResetIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 12a9 9 0 1 0 2.6-6.4L3 8" />
       <path d="M3 3v5h5" />
-      <path d="M12 7v5l3 2" />
     </svg>
   );
 }

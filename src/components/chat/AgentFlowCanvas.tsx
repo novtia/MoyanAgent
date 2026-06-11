@@ -28,6 +28,11 @@ interface FNode {
   y: number;
   /** Per-node config override for this chain position (not the global agent). */
   overrides?: NodeOverrides;
+  /**
+   * When `true` the node is kept on the canvas (and in the wiring) but skipped
+   * when deriving the executed chain. The main node can never be disabled.
+   */
+  disabled?: boolean;
 }
 
 /** `true` when an override object actually carries at least one value. */
@@ -203,7 +208,8 @@ function deriveOrder(graph: Graph): ChainEntry[] {
   while (cur && !seen.has(cur)) {
     seen.add(cur);
     const node = nodes.find((n) => n.id === cur);
-    if (node) order.push(nodeToEntry(node));
+    // Disabled nodes stay wired but are skipped in the executed chain.
+    if (node && !node.disabled) order.push(nodeToEntry(node));
     cur = outBy.get(cur);
   }
   if (!order.some((e) => entryType(e) === MAIN)) order.push(MAIN);
@@ -741,6 +747,16 @@ export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvas
     setGraph((g) => removeNodeFromGraph(g, nodeId));
   };
 
+  // Toggle a node's enabled/disabled state. The main node is always enabled.
+  const toggleNodeDisabled = (nodeId: string) => {
+    setGraph((g) => ({
+      ...g,
+      nodes: g.nodes.map((n) =>
+        n.id === nodeId && n.agentType !== MAIN ? { ...n, disabled: !n.disabled } : n,
+      ),
+    }));
+  };
+
   const closeMenus = () => {
     setAddMenu(null);
     setNodeMenu(null);
@@ -861,6 +877,13 @@ export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvas
         id: "edit",
         label: t("agentFlow.editAgent"),
         onSelect: () => onEditAgent(node.agentType),
+      });
+    }
+    if (!isMain) {
+      items.push({
+        id: "toggle-disabled",
+        label: node.disabled ? t("agentFlow.enableNode") : t("agentFlow.disableNode"),
+        onSelect: () => toggleNodeDisabled(node.id),
       });
     }
     if (!isMain) {
@@ -1121,7 +1144,7 @@ export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvas
                 key={n.id}
                 className={`afc-node ${isMain ? "is-main" : ""} ${
                   linkTarget === n.id ? "is-link-target" : ""
-                }`}
+                } ${n.disabled ? "is-disabled" : ""}`}
                 style={{ left: n.x, top: n.y, width: NODE_W, height: NODE_H }}
                 onPointerDown={(e) => onNodePointerDown(e, n.id)}
                 onContextMenu={(e) => onNodeContextMenu(e, n)}
@@ -1148,6 +1171,21 @@ export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvas
                     )}
                   </span>
                 </div>
+                {!isMain && (
+                  <button
+                    type="button"
+                    className={`afc-node-power ${n.disabled ? "is-off" : "is-on"}`}
+                    title={n.disabled ? t("agentFlow.enableNode") : t("agentFlow.disableNode")}
+                    tabIndex={tab}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleNodeDisabled(n.id);
+                    }}
+                  >
+                    <PowerIcon />
+                  </button>
+                )}
                 {!isMain && (
                   <button
                     type="button"
@@ -1272,6 +1310,16 @@ export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvas
                   type="button"
                   className="afc-menu-item"
                   onClick={() => {
+                    toggleNodeDisabled(n.id);
+                    setNodeMenu(null);
+                  }}
+                >
+                  {n.disabled ? t("agentFlow.enableNode") : t("agentFlow.disableNode")}
+                </button>
+                <button
+                  type="button"
+                  className="afc-menu-item"
+                  onClick={() => {
                     removeNode(n.id);
                     setNodeMenu(null);
                   }}
@@ -1389,6 +1437,14 @@ function PlusIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+function PowerIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3v9" />
+      <path d="M7.5 6.5a7 7 0 1 0 9 0" />
     </svg>
   );
 }

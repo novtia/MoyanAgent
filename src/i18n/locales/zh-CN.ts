@@ -140,6 +140,8 @@ const zhCN = {
     fitView: "适应视图",
     removeNode: "从流程移除",
     nodeMenu: "更多",
+    enableNode: "启用节点",
+    disableNode: "停用节点",
     connectHint: "拖拽蓝色端口连线；拖动左侧端口可断开重连",
     connectTo: "连接到…",
     connectNoTargets: "没有可连接的节点（会形成环路）",
