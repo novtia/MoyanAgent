@@ -328,7 +328,14 @@ const zhCN = {
     backToApp: "返回应用",
     tabAppearance: "外观",
     tabLlm: "模型服务",
+    tabDefault: "默认模型设置",
     tabSystem: "系统",
+    default: {
+      quickModelTitle: "快速模型",
+      quickModelDesc: "用于执行会话标题重命名等轻量任务的模型。新会话发出首条消息后会自动生成标题。",
+      quickModelNone: "未设置",
+      quickModelEmpty: "请先在「模型服务」中添加并启用模型。",
+    },
     appearance: {
       themeTitle: "主题",
       themeDesc: "使用浅色、深色，或匹配系统设置",

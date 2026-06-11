@@ -1059,6 +1059,7 @@ function syncStreamingMessage(sessionId: string, buf: StreamBuffer) {
 let generationStreamListenerStarted = false;
 let toolEventListenerStarted = false;
 let roleStateResetListenerStarted = false;
+let sessionTitleListenerStarted = false;
 
 function ensureGenerationStreamListener() {
   if (!generationStreamListenerStarted) {
@@ -1141,6 +1142,30 @@ function ensureGenerationStreamListener() {
       void useRoleState.getState().loadLatest(sessionId);
     }).catch((e) => {
       roleStateResetListenerStarted = false;
+      console.warn(e);
+    });
+  }
+
+  if (!sessionTitleListenerStarted) {
+    sessionTitleListenerStarted = true;
+    listen<{ session_id: string; title: string }>("session://title", (event) => {
+      const sessionId = event.payload?.session_id;
+      const title = event.payload?.title;
+      if (!sessionId || !title) return;
+      const state = useSession.getState();
+      useSession.setState({
+        sessions: state.sessions.map((s) =>
+          s.id === sessionId ? { ...s, title } : s,
+        ),
+      });
+      if (state.activeId === sessionId && state.active) {
+        const a = state.active;
+        useSession.setState({
+          active: { ...a, session: { ...a.session, title } },
+        });
+      }
+    }).catch((e) => {
+      sessionTitleListenerStarted = false;
       console.warn(e);
     });
   }

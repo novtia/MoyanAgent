@@ -1,6 +1,6 @@
 import type { ThemeMode } from "../../theme";
 
-export type SettingsTab = "appearance" | "llm" | "system";
+export type SettingsTab = "appearance" | "llm" | "default" | "system";
 export type { ThemeMode };
 
 export interface SettingsViewProps {

@@ -9,6 +9,8 @@ pub const KEY_ENDPOINT: &str = "endpoint";
 pub const KEY_MODEL: &str = "model";
 pub const KEY_ACTIVE_PROVIDER_ID: &str = "active_provider_id";
 pub const KEY_MODEL_SERVICES: &str = "model_services";
+pub const KEY_QUICK_MODEL_PROVIDER_ID: &str = "quick_model_provider_id";
+pub const KEY_QUICK_MODEL: &str = "quick_model";
 pub const KEY_DEFAULT_RATIO: &str = "default_aspect_ratio";
 pub const KEY_DEFAULT_SIZE: &str = "default_image_size";
 pub const KEY_DEFAULT_THINKING_ENABLED: &str = "default_thinking_enabled";
@@ -110,6 +112,13 @@ pub struct Settings {
     pub model: String,
     pub active_provider_id: String,
     pub model_services: Vec<ModelProvider>,
+    /// Provider id of the "quick model" used for lightweight tasks such as
+    /// auto-generating session titles. Empty means unset.
+    #[serde(default)]
+    pub quick_model_provider_id: String,
+    /// Model id of the "quick model". Empty means unset.
+    #[serde(default)]
+    pub quick_model: String,
     pub default_aspect_ratio: String,
     pub default_image_size: String,
     /// Global default for the composer thinking toggle (reasoning models only).
@@ -137,6 +146,8 @@ impl Default for Settings {
             model: String::new(),
             active_provider_id: String::new(),
             model_services: Vec::new(),
+            quick_model_provider_id: String::new(),
+            quick_model: String::new(),
             default_aspect_ratio: String::new(),
             default_image_size: String::new(),
             default_thinking_enabled: false,
@@ -182,6 +193,10 @@ pub struct SettingsPatch {
     #[serde(default)]
     pub model_services: Option<Vec<ModelProvider>>,
     #[serde(default)]
+    pub quick_model_provider_id: Option<String>,
+    #[serde(default)]
+    pub quick_model: Option<String>,
+    #[serde(default)]
     pub default_aspect_ratio: Option<String>,
     #[serde(default)]
     pub default_image_size: Option<String>,
@@ -226,6 +241,8 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             KEY_MODEL_SERVICES => {
                 parsed_services = serde_json::from_str::<Vec<ModelProvider>>(&v).ok()
             }
+            KEY_QUICK_MODEL_PROVIDER_ID => s.quick_model_provider_id = v,
+            KEY_QUICK_MODEL => s.quick_model = v,
             KEY_DEFAULT_RATIO => s.default_aspect_ratio = v,
             KEY_DEFAULT_SIZE => s.default_image_size = v,
             KEY_DEFAULT_THINKING_ENABLED => s.default_thinking_enabled = v == "true" || v == "1",
@@ -319,6 +336,30 @@ pub fn active_provider(s: &Settings) -> Option<&ModelProvider> {
         .iter()
         .find(|p| p.enabled)
         .or_else(|| s.model_services.first())
+}
+
+/// Resolve the configured "quick model" into a usable provider + model id.
+///
+/// Returns `None` when the quick model is unset, the referenced provider is
+/// missing/disabled/incomplete (no endpoint or API key), or the model id is no
+/// longer present on that provider.
+pub fn quick_model_target(s: &Settings) -> Option<(&ModelProvider, String)> {
+    let provider_id = s.quick_model_provider_id.trim();
+    let model_id = s.quick_model.trim();
+    if provider_id.is_empty() || model_id.is_empty() {
+        return None;
+    }
+    let provider = s.model_services.iter().find(|p| p.id == provider_id)?;
+    if !provider.enabled
+        || provider.endpoint.trim().is_empty()
+        || provider.api_key.trim().is_empty()
+    {
+        return None;
+    }
+    if !provider.models.iter().any(|m| m.id == model_id) {
+        return None;
+    }
+    Some((provider, model_id.to_string()))
 }
 
 pub fn validate_model_param_settings(p: &ModelParamSettings) -> AppResult<()> {
@@ -503,6 +544,12 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
         let json = serde_json::to_string(&normalize_services(v))
             .map_err(|e| AppError::Invalid(e.to_string()))?;
         write_kv(conn, KEY_MODEL_SERVICES, &json)?;
+    }
+    if let Some(v) = patch.quick_model_provider_id {
+        write_kv(conn, KEY_QUICK_MODEL_PROVIDER_ID, &v)?;
+    }
+    if let Some(v) = patch.quick_model {
+        write_kv(conn, KEY_QUICK_MODEL, &v)?;
     }
     if let Some(v) = patch.default_aspect_ratio {
         write_kv(conn, KEY_DEFAULT_RATIO, &v)?;

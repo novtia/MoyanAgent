@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { TAB_TITLE_KEYS } from "./constants";
 import { AppearanceSection } from "./appearance/AppearanceSection";
+import { DefaultModelSection } from "./default/DefaultModelSection";
 import { LlmSection } from "./llm/LlmSection";
 import { SettingsSide } from "./SettingsSide";
 import { SystemSection } from "./system/SystemSection";
@@ -34,6 +35,7 @@ export function SettingsView({
             />
           )}
           {activeTab === "llm" && <LlmSection />}
+          {activeTab === "default" && <DefaultModelSection />}
           {activeTab === "system" && <SystemSection />}
         </div>
       </div>

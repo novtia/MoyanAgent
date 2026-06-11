@@ -27,7 +27,7 @@ type AppRoute =
   | { view: "chat" }
   | { view: "settings"; tab: SettingsTab };
 
-const SETTINGS_TABS: SettingsTab[] = ["appearance", "llm", "system"];
+const SETTINGS_TABS: SettingsTab[] = ["appearance", "llm", "default", "system"];
 
 function parseRoute(): AppRoute {
   const [, view, tab] = window.location.hash.match(/^#\/([^/]+)\/?([^/]*)?/) || [];

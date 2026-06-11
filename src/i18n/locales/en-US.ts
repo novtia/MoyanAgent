@@ -338,7 +338,15 @@ const enUS: Resource = {
     backToApp: "Back to app",
     tabAppearance: "Appearance",
     tabLlm: "Model services",
+    tabDefault: "Default model",
     tabSystem: "System",
+    default: {
+      quickModelTitle: "Quick model",
+      quickModelDesc:
+        "Model used for lightweight tasks such as renaming session titles. A title is generated automatically after the first message in a new session.",
+      quickModelNone: "Not set",
+      quickModelEmpty: "Add and enable a model in Model services first.",
+    },
     appearance: {
       themeTitle: "Theme",
       themeDesc: "Light, dark, or follow the system",

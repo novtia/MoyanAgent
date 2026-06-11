@@ -67,6 +67,10 @@ export interface Settings {
   model: string;
   active_provider_id: string;
   model_services: ModelProvider[];
+  /** Provider id of the quick model used for lightweight tasks (e.g. session title generation). */
+  quick_model_provider_id: string;
+  /** Model id of the quick model. */
+  quick_model: string;
   default_aspect_ratio: string;
   default_image_size: string;
   /** Global default for the composer thinking toggle (reasoning models only). */
@@ -88,6 +92,8 @@ export interface SettingsPatch {
   model?: string;
   active_provider_id?: string;
   model_services?: ModelProvider[];
+  quick_model_provider_id?: string;
+  quick_model?: string;
   default_aspect_ratio?: string;
   default_image_size?: string;
   default_thinking_enabled?: boolean;
