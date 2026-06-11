@@ -7,6 +7,7 @@ import {
   nsfwScalars,
   nsfwSensitiveSpots,
   nsfwStatus,
+  resolveAppearance,
   resolveGender,
   resolveSemen,
   semenMl,
@@ -462,6 +463,8 @@ export const RoleStateCard = memo(function RoleStateCard({ role }: RoleStateCard
 
   const tags = Array.isArray(role.tags) ? role.tags : [];
   const gender = resolveGender(role);
+  const appearance = resolveAppearance(role);
+  const appearanceChanged = useChangedString(appearance);
   const hasNsfw = role.nsfw && typeof role.nsfw === "object" && Object.keys(role.nsfw).length > 0;
 
   return (
@@ -488,7 +491,7 @@ export const RoleStateCard = memo(function RoleStateCard({ role }: RoleStateCard
         </div>
       </header>
 
-      {(role.mood || role.location || role.outfit) && (
+      {(role.mood || role.location || role.outfit || appearance) && (
         <div className="rs-meta">
           {role.location && (
             <div className="rs-kv">
@@ -506,6 +509,12 @@ export const RoleStateCard = memo(function RoleStateCard({ role }: RoleStateCard
             <div className="rs-kv">
               <span className="rs-kv-key">{t("roleState.outfit")}</span>
               <span className="rs-kv-value">{role.outfit}</span>
+            </div>
+          )}
+          {appearance && (
+            <div className={`rs-kv rs-kv-appearance ${appearanceChanged ? "is-changed" : ""}`}>
+              <span className="rs-kv-key">{t("roleState.appearance")}</span>
+              <span className="rs-kv-value">{appearance}</span>
             </div>
           )}
         </div>

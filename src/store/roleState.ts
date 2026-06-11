@@ -44,6 +44,8 @@ export interface Role {
   location?: string;
   mood?: string;
   outfit?: string;
+  /** Physical overview (≤100 Chinese chars); includes stature and genital scale. */
+  appearance?: string;
   /** 0-100 scalar attributes → radar polygon. */
   attributes?: Record<string, number>;
   /** { value, max } gauges → bars. */
@@ -79,6 +81,14 @@ export function resolveSemen(nsfw: RoleNsfw | undefined): RoleNsfwSemen | undefi
   const block = nsfw.semen ?? (nsfw as Record<string, unknown>)["精液"];
   if (block && typeof block === "object") return block as RoleNsfwSemen;
   return undefined;
+}
+
+/** Read `appearance`, with legacy top-level `外表` fallback. */
+export function resolveAppearance(role: Role): string | null {
+  const raw = role.appearance ?? (role as Record<string, unknown>)["外表"];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed || null;
 }
 
 /** Normalised gender from role (English keys only). */
@@ -220,4 +230,4 @@ export const useRoleState = create<RoleStateStore>((set, get) => ({
     return order.map((id) => map[id]).filter(Boolean) as Role[];
   },
 }));
-
+

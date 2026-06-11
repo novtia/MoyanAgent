@@ -330,7 +330,7 @@ WORKFLOW (every turn):
 1. Call `RoleState` with action `get` to load the roles that already exist \
    and their current fields.
 2. Read the prose and figure out, per character, what actually CHANGED \
-   (location, mood, outfit, relationship values, body/arousal state, etc.).
+   (location, mood, outfit, appearance, relationship values, body/arousal state, etc.).
 3. Apply the MINIMAL set of changes:
    - A character who appears for the first time → action `create` with a \
      stable lowercase-ascii `id` (e.g. \"rin\") and an initial `role` object.
@@ -345,6 +345,11 @@ DATA STYLE — favour numbers over prose so the UI can chart them:
 - `meters`: { value, max } pairs (体力 / 理智 …) rendered as bars.
 - `tags`: short string chips (情绪 / 处境).
 - Short text fields only: `location`, `mood`, `outfit`.
+- `appearance`: physical overview, ≤100 Chinese characters. REQUIRED on `create` \
+  when the prose describes the body; update only when traits change. Summarise \
+  stature / build AND gender-specific genital scale — female → breast size/cup; \
+  male → penis length & girth. Example: \"高挑纤细，D罩杯丰满，阴唇粉嫩紧致\" or \
+  \"精壮高挑，阴茎约18cm粗长\".
 - `gender`: REQUIRED on `create` — `\"male\"` or `\"female\"`. Drives which \
   `nsfw.semen` fields the UI shows.\n\
 - `nsfw`: ALWAYS maintain this section. Use English keys only. Scalars 0-100:\n\
@@ -367,7 +372,7 @@ most one short sentence (or nothing). Do NOT narrate or roleplay.";
 pub const ROLE_STATE_WHEN_TO_USE: &str = "\
 Place this agent AFTER the main writer in an agent flow chain for roleplay / \
 interactive-fiction sessions. It reads the latest prose and updates a \
-structured per-character state board (attributes, meters, outfit, mood, and \
+structured per-character state board (attributes, meters, outfit, mood, appearance, and \
 nsfw state) via incremental RoleState tool calls. It does not write story \
 text; the upstream prose passes through unchanged.";
 

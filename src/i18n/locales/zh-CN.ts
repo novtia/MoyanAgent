@@ -100,6 +100,7 @@ const zhCN = {
     location: "位置",
     mood: "情绪",
     outfit: "着装",
+    appearance: "外表",
     nsfwSection: "私密状态",
     nsfwArousal: "兴奋度",
     nsfwWetness: "湿润度",

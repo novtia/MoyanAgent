@@ -26,6 +26,7 @@
 //! {
 //!   "id": "rin", "name": "凛", "gender": "female",
 //!   "location": "…", "mood": "…", "outfit": "…",
+//!   "appearance": "高挑纤细，D罩杯丰满，阴唇粉嫩紧致",
 //!   "attributes": { "好感": 72, "信任": 55 },
 //!   "meters": { "体力": { "value": 80, "max": 100 } },
 //!   "tags": ["害羞"],
@@ -40,6 +41,10 @@
 //! }
 //! ```
 //! `gender` is `"male"` or `"female"` (required on `create`).
+//! `appearance` — brief physical overview (≤100 Chinese characters). Set on
+//! `create`; update only when the prose establishes or changes body traits.
+//! Include stature / build and gender-specific genital scale, e.g. female
+//! breast cup / size, male penis length & girth.
 //! Semen fields under `nsfw.semen` depend on gender — use English keys only:
 //! - **male** → `texture` (TEXT: semen quality / viscosity / warmth).
 //! - **female** → `exterior` (TEXT: external residue) plus `swallowed` /
@@ -294,8 +299,12 @@ lowercase ascii `id` (e.g. \"rin\", \"alice\") plus the initial `role` object.\n
 using dot-paths in `set` / `unset`. Do NOT recreate it.\n\
 4. For a character that left the scene for good → `delete`.\n\n\
 ━━━ ROLE OBJECT SHAPE (prefer numbers over prose; English keys for nsfw) ━━━\n\
-{\n  \"name\": \"凛\", \"gender\": \"female\",\n  \"location\": \"…\", \"mood\": \"…\", \"outfit\": \"…\",\n  \"attributes\": { \"好感\": 72, \"信任\": 55 },   // 0-100, radar polygon\n  \"meters\": { \"体力\": { \"value\": 80, \"max\": 100 } }, // bars\n  \"tags\": [\"害羞\"],\n  \"nsfw\": {\n    \"arousal\": 40, \"wetness\": 55, \"status\": \"迷离\",\n    \"sensitive_spots\": [\"颈部\"],\n    \"semen\": { \"exterior\": \"小腹至大腿漫溢\", \"swallowed\": 850, \"vaginal\": 2400, \"anal\": 0 }\n  }\n}\n\
+{\n  \"name\": \"凛\", \"gender\": \"female\",\n  \"location\": \"…\", \"mood\": \"…\", \"outfit\": \"…\",\n  \"appearance\": \"高挑纤细，D罩杯丰满，阴唇粉嫩紧致\",\n  \"attributes\": { \"好感\": 72, \"信任\": 55 },   // 0-100, radar polygon\n  \"meters\": { \"体力\": { \"value\": 80, \"max\": 100 } }, // bars\n  \"tags\": [\"害羞\"],\n  \"nsfw\": {\n    \"arousal\": 40, \"wetness\": 55, \"status\": \"迷离\",\n    \"sensitive_spots\": [\"颈部\"],\n    \"semen\": { \"exterior\": \"小腹至大腿漫溢\", \"swallowed\": 850, \"vaginal\": 2400, \"anal\": 0 }\n  }\n}\n\
 `gender` — REQUIRED on `create`: `\"male\"` or `\"female\"`.\n\
+`appearance` — physical overview, ≤100 Chinese characters. REQUIRED on `create` \
+when the prose describes the body; update only when traits change. Summarise \
+stature / build AND gender-specific genital scale: female → breast size/cup; \
+male → penis length & girth. Example male: \"精壮高挑，阴茎约18cm粗长\".\n\
 `nsfw.semen` — gender-specific (update only what changed):\n\
   • **male** → `texture` (TEXT: semen quality — viscosity, warmth, colour, volume feel).\n\
   • **female** → `exterior` (TEXT: external residue on body) + `swallowed` / `vaginal` / \

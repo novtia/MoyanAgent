@@ -103,6 +103,7 @@ const enUS: Resource = {
     location: "Location",
     mood: "Mood",
     outfit: "Outfit",
+    appearance: "Appearance",
     nsfwSection: "Intimate state",
     nsfwArousal: "Arousal",
     nsfwWetness: "Wetness",
