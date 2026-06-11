@@ -69,6 +69,10 @@ export interface Settings {
   model_services: ModelProvider[];
   default_aspect_ratio: string;
   default_image_size: string;
+  /** Global default for the composer thinking toggle (reasoning models only). */
+  default_thinking_enabled: boolean;
+  /** Global default reasoning effort; empty string means provider default (high). */
+  default_thinking_effort: string;
   system_prompt: string;
   temperature: number | null;
   top_p: number | null;
@@ -86,6 +90,8 @@ export interface SettingsPatch {
   model_services?: ModelProvider[];
   default_aspect_ratio?: string;
   default_image_size?: string;
+  default_thinking_enabled?: boolean;
+  default_thinking_effort?: string;
   system_prompt?: string;
   temperature?: number | null;
   top_p?: number | null;

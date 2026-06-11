@@ -50,6 +50,7 @@ export const CAPABILITY_OPTIONS = [
   { id: "vision", label: "视觉" },
   { id: "web", label: "联网" },
   { id: "reasoning", label: "推理" },
+  { id: "image", label: "生图" },
   { id: "tools", label: "工具" },
   { id: "text", label: "文本" },
 ] as const;
@@ -128,6 +129,15 @@ export function inferCapabilities(model: string) {
     id.includes("deepseek")
   ) {
     caps.add("reasoning");
+  }
+  if (
+    id.includes("image") ||
+    id.includes("seedream") ||
+    id.includes("imagine") ||
+    id.includes("dall") ||
+    id.includes("flux")
+  ) {
+    caps.add("image");
   }
   if (caps.size === 0) caps.add("text");
   return Array.from(caps);

@@ -41,7 +41,7 @@ const SECTIONS: Array<{
   icon: () => JSX.Element;
 }> = [
   { id: "prompt", label: "系统提示词", desc: "定义模型的角色与行为", icon: PromptIcon },
-  { id: "model", label: "模型参数", desc: "采样 · 上下文 · 推理", icon: TuneIcon },
+  { id: "model", label: "模型参数", desc: "采样 · 上下文", icon: TuneIcon },
 ];
 
 export function ScopeConfigModal({
@@ -268,19 +268,6 @@ export function ScopeConfigModal({
                     }
                   />
 
-                  <ThinkingParamRow
-                    enabled={llmParamsDraft.thinking_enabled === true}
-                    effort={llmParamsDraft.thinking_effort}
-                    onToggle={(on) =>
-                      setLlmParamsDraft((cur) => ({
-                        ...cur,
-                        thinking_enabled: on ? true : null,
-                      }))
-                    }
-                    onEffort={(val) =>
-                      setLlmParamsDraft((cur) => ({ ...cur, thinking_effort: val }))
-                    }
-                  />
                 </div>
 
                 <div className="cfg-params-footer">
@@ -514,50 +501,6 @@ function TokenParamRow({
           placeholder="2048"
           onChange={(e) => commit(e.target.value)}
         />
-      )}
-    </div>
-  );
-}
-
-function ThinkingParamRow({
-  enabled,
-  effort,
-  onToggle,
-  onEffort,
-}: {
-  enabled: boolean;
-  effort: string | null;
-  onToggle: (on: boolean) => void;
-  onEffort: (val: string | null) => void;
-}) {
-  return (
-    <div className="cfg-param">
-      <div className="cfg-param-head">
-        <span
-          className="cfg-param-label"
-          title="开启扩展推理（OpenAI: reasoning_effort；Claude: output_config.effort）"
-        >
-          思考 / 推理
-        </span>
-        <ParamSwitch checked={enabled} title="思考 / 推理" onChange={onToggle} />
-      </div>
-      {enabled && (
-        <div className="cfg-param-inline">
-          <span className="cfg-param-inline-label">推理强度</span>
-          <select
-            className="field-input field-input--mono cfg-select"
-            value={effort ?? ""}
-            onChange={(e) =>
-              onEffort(e.target.value.trim() ? e.target.value.trim() : null)
-            }
-          >
-            <option value="">默认 high</option>
-            <option value="low">low</option>
-            <option value="medium">medium</option>
-            <option value="high">high</option>
-            <option value="max">max</option>
-          </select>
-        </div>
       )}
     </div>
   );

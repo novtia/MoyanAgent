@@ -24,6 +24,15 @@ const MODEL_POPOVER_GAP = 8;
 /** Min space (px) above topbar for upward popover; otherwise open downward. */
 const MODEL_POPOVER_MIN_SPACE_ABOVE = 100;
 
+/** Reasoning effort options for the composer thinking picker. Empty = provider default (high). */
+const THINKING_EFFORTS = [
+  { value: "", labelKey: "composer.thinkingDefault" },
+  { value: "low", labelKey: "composer.thinkingLow" },
+  { value: "medium", labelKey: "composer.thinkingMedium" },
+  { value: "high", labelKey: "composer.thinkingHigh" },
+  { value: "max", labelKey: "composer.thinkingMax" },
+] as const;
+
 function scrollableAncestors(el: HTMLElement | null): HTMLElement[] {
   const out: HTMLElement[] = [];
   let node = el?.parentElement ?? null;
@@ -47,6 +56,8 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const setPrompt = useSession((s) => s.setPrompt);
   const setAspectRatio = useSession((s) => s.setAspectRatio);
   const setImageSize = useSession((s) => s.setImageSize);
+  const setThinkingEnabled = useSession((s) => s.setThinkingEnabled);
+  const setThinkingEffort = useSession((s) => s.setThinkingEffort);
   const addAttachments = useSession((s) => s.addAttachments);
   const addAttachmentsFromPaths = useSession((s) => s.addAttachmentsFromPaths);
   const addAttachmentFromPath = useSession((s) => s.addAttachmentFromPath);
@@ -64,10 +75,12 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
 
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const paramsRef = useRef<HTMLDivElement | null>(null);
+  const thinkingRef = useRef<HTMLDivElement | null>(null);
   const modeRef = useRef<HTMLDivElement | null>(null);
   const modelRef = useRef<HTMLDivElement | null>(null);
 
   const [paramsOpen, setParamsOpen] = useState(false);
+  const [thinkingOpen, setThinkingOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [modelPopoverMaxPx, setModelPopoverMaxPx] = useState(480);
@@ -89,6 +102,30 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const modelLabel = modelName.length > 12 ? `${modelName.slice(0, 12)}…` : modelName;
   const ratioLabel = composer.aspectRatio === "auto" ? t("composer.ratioAuto") : composer.aspectRatio;
   const sizeLabel = composer.imageSize === "auto" ? t("composer.sizeAuto") : composer.imageSize;
+
+  const activeCapabilities = useMemo(() => {
+    const provider = (settings?.model_services ?? []).find(
+      (p) => p.id === settings?.active_provider_id,
+    );
+    const model = provider?.models?.find((m) => m.id === settings?.model);
+    return model?.capabilities ?? [];
+  }, [settings?.model_services, settings?.active_provider_id, settings?.model]);
+  const showImageParams = activeCapabilities.includes("image");
+  const showThinking = activeCapabilities.includes("reasoning");
+
+  const thinkingLabel = composer.thinkingEnabled
+    ? composer.thinkingEffort.trim() || t("composer.thinkingDefault")
+    : t("composer.thinkingOff");
+
+  const applyThinking = (enabled: boolean, effort: string) => {
+    setThinkingEnabled(enabled);
+    setThinkingEffort(effort);
+    void update({
+      default_thinking_enabled: enabled,
+      default_thinking_effort: effort,
+    });
+    setThinkingOpen(false);
+  };
 
   useEffect(() => {
     const onFocusComposer = () => {
@@ -126,6 +163,17 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     window.addEventListener("mousedown", onDoc);
     return () => window.removeEventListener("mousedown", onDoc);
   }, [paramsOpen]);
+
+  useEffect(() => {
+    if (!thinkingOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (thinkingRef.current && !thinkingRef.current.contains(e.target as Node)) {
+        setThinkingOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onDoc);
+    return () => window.removeEventListener("mousedown", onDoc);
+  }, [thinkingOpen]);
 
   useEffect(() => {
     if (!modeOpen) return;
@@ -433,6 +481,56 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
             >
               <PlusIcon />
             </button>
+            {showThinking && (
+              <div className="composer-thinking" ref={thinkingRef}>
+                <button
+                  type="button"
+                  className={`composer-pill ${composer.thinkingEnabled ? "is-thinking" : ""} ${thinkingOpen ? "active" : ""}`}
+                  title={t("composer.thinkingTitle")}
+                  onClick={() => setThinkingOpen((v) => !v)}
+                >
+                  <BrainIcon />
+                  <span>{thinkingLabel}</span>
+                  <CaretIcon />
+                </button>
+                {thinkingOpen && (
+                  <div
+                    className="composer-mode-popover"
+                    role="listbox"
+                    aria-label={t("composer.thinkingTitle")}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      role="option"
+                      className={`composer-mode-option ${!composer.thinkingEnabled ? "active" : ""}`}
+                      onClick={() => applyThinking(false, "")}
+                    >
+                      <span className="composer-mode-option-title">{t("composer.thinkingOff")}</span>
+                    </button>
+                    {THINKING_EFFORTS.map((opt) => {
+                      const isActive =
+                        composer.thinkingEnabled &&
+                        (composer.thinkingEffort.trim() || "") === opt.value;
+                      return (
+                        <button
+                          key={opt.value || "default"}
+                          type="button"
+                          role="option"
+                          className={`composer-mode-option ${isActive ? "active" : ""}`}
+                          onClick={() => applyThinking(true, opt.value)}
+                        >
+                          <span className="composer-mode-option-title">
+                            {t(opt.labelKey)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+            {showImageParams && (
             <div className="composer-params" ref={paramsRef}>
               <button
                 type="button"
@@ -495,6 +593,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                 </div>
               )}
             </div>
+            )}
           </div>
           <div className="composer-bar-right">
             <div className="composer-ring-model-cluster">
@@ -731,6 +830,15 @@ function SlidersIcon() {
       <line x1="4" y1="18" x2="14" y2="18" />
       <line x1="18" y1="18" x2="20" y2="18" />
       <circle cx="16" cy="18" r="2" />
+    </svg>
+  );
+}
+function BrainIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-1.5 5.6A3 3 0 0 0 6 17a3 3 0 0 0 3 3Z" />
+      <path d="M15 3a3 3 0 0 1 3 3 3 3 0 0 1 1.5 5.6A3 3 0 0 1 18 17a3 3 0 0 1-3 3Z" />
+      <path d="M9 3v17M15 3v17" />
     </svg>
   );
 }

@@ -48,6 +48,8 @@ export default function App() {
   const refreshProjects = useProject((s) => s.refreshList);
   const setAspectRatio = useSession((s) => s.setAspectRatio);
   const setImageSize = useSession((s) => s.setImageSize);
+  const setThinkingEnabled = useSession((s) => s.setThinkingEnabled);
+  const setThinkingEffort = useSession((s) => s.setThinkingEffort);
 
   const [editorTarget, setEditorTarget] = useState<AttachmentDraft | null>(null);
   const [preview, setPreview] = useState<{ items: ImageRefAbs[]; index: number } | null>(null);
@@ -96,7 +98,9 @@ export default function App() {
     if (!settings) return;
     if (settings.default_aspect_ratio) setAspectRatio(settings.default_aspect_ratio);
     if (settings.default_image_size) setImageSize(settings.default_image_size);
-  }, [settings, setAspectRatio, setImageSize]);
+    setThinkingEnabled(settings.default_thinking_enabled ?? false);
+    setThinkingEffort(settings.default_thinking_effort ?? "");
+  }, [settings, setAspectRatio, setImageSize, setThinkingEnabled, setThinkingEffort]);
 
   const activeProvider = settings?.model_services?.find(
     (provider) => provider.id === settings.active_provider_id,

@@ -149,6 +149,8 @@ export const api = {
       attachment_ids: string[];
       aspect_ratio: string;
       image_size: string;
+      thinking_enabled?: boolean | null;
+      thinking_effort?: string | null;
     },
     session?: Session | null,
   ) => {
@@ -167,6 +169,8 @@ export const api = {
       user_message_id: string;
       aspect_ratio: string;
       image_size: string;
+      thinking_enabled?: boolean | null;
+      thinking_effort?: string | null;
     },
     session?: Session | null,
   ) => {

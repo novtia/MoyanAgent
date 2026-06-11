@@ -291,6 +291,15 @@
   position: relative;
 }
 
+.composer-thinking {
+  position: relative;
+}
+
+.composer-thinking .composer-pill.is-thinking {
+  border-color: rgba(0, 102, 102, 0.45);
+  color: var(--ink-2);
+}
+
 .composer-mode-wrap {
   position: relative;
 }

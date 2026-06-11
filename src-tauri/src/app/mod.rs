@@ -1896,6 +1896,10 @@ struct GenerateReq {
     attachment_ids: Vec<String>,
     aspect_ratio: String,
     image_size: String,
+    #[serde(default)]
+    thinking_enabled: Option<bool>,
+    #[serde(default)]
+    thinking_effort: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1977,7 +1981,15 @@ async fn generate_image(
         let eff = effective_session_params(&conn, &session_config);
         let session_prompt = eff.system_prompt;
         let history_turns = eff.history_turns;
-        let model_params = eff.llm_params;
+        // Thinking is now driven by the composer (per-request) rather than
+        // session/project config: override any stored llm_params thinking values.
+        let mut model_params = eff.llm_params;
+        model_params.thinking_enabled = req.thinking_enabled;
+        model_params.thinking_effort = req
+            .thinking_effort
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         let mut atts: Vec<chat::AttachmentBytes> = Vec::new();
         let mut ids: Vec<String> = Vec::new();
         for id in &req.attachment_ids {
@@ -2182,6 +2194,10 @@ struct RegenerateReq {
     user_message_id: String,
     aspect_ratio: String,
     image_size: String,
+    #[serde(default)]
+    thinking_enabled: Option<bool>,
+    #[serde(default)]
+    thinking_effort: Option<String>,
 }
 
 #[tauri::command]
@@ -2220,7 +2236,15 @@ async fn regenerate_image(
         let eff = effective_session_params(&conn, &session_config);
         let session_prompt = eff.system_prompt;
         let history_turns = eff.history_turns;
-        let model_params = eff.llm_params;
+        // Thinking is now driven by the composer (per-request) rather than
+        // session/project config: override any stored llm_params thinking values.
+        let mut model_params = eff.llm_params;
+        model_params.thinking_enabled = req.thinking_enabled;
+        model_params.thinking_effort = req
+            .thinking_effort
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         let mut atts: Vec<chat::AttachmentBytes> = Vec::new();
         let mut input_images: Vec<&session::ImageRef> = user_msg_existing
             .images

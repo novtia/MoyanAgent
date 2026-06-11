@@ -16,6 +16,7 @@ import {
   composerModeFromAgentType,
 } from "../config/chatMode";
 import { useRoleState, type RoleStateOp } from "./roleState";
+import { useSettings } from "./settings";
 
 interface ComposerState {
   prompt: string;
@@ -23,7 +24,25 @@ interface ComposerState {
   pendingAttachments: PendingAttachmentDraft[];
   aspectRatio: string;
   imageSize: string;
+  /** Composer thinking toggle (only meaningful for reasoning-capable models). */
+  thinkingEnabled: boolean;
+  /** Reasoning effort; empty string means provider default (high). */
+  thinkingEffort: string;
   chatMode: ComposerChatMode;
+}
+
+/**
+ * Capabilities of the currently active model (global active provider + model).
+ * Used to decide whether per-request thinking params should be forwarded.
+ */
+function activeModelCapabilities(): string[] {
+  const settings = useSettings.getState().settings;
+  if (!settings) return [];
+  const provider = settings.model_services?.find(
+    (p) => p.id === settings.active_provider_id,
+  );
+  const model = provider?.models?.find((m) => m.id === settings.model);
+  return model?.capabilities ?? [];
 }
 
 interface PendingAttachmentDraft {
@@ -89,6 +108,8 @@ interface SessionStore {
   setPrompt: (s: string) => void;
   setAspectRatio: (s: string) => void;
   setImageSize: (s: string) => void;
+  setThinkingEnabled: (on: boolean) => void;
+  setThinkingEffort: (effort: string) => void;
   setChatMode: (mode: ComposerChatMode) => Promise<void>;
   setAgentChain: (chain: ChainEntry[]) => Promise<void>;
   addAttachments: (files: File[]) => Promise<void>;
@@ -256,6 +277,8 @@ export const useSession = create<SessionStore>((set, get) => {
     pendingAttachments: [],
     aspectRatio: "auto",
     imageSize: "auto",
+    thinkingEnabled: false,
+    thinkingEffort: "",
     chatMode: "agent",
   },
 
@@ -372,6 +395,10 @@ export const useSession = create<SessionStore>((set, get) => {
   setPrompt: (s) => set({ composer: { ...get().composer, prompt: s } }),
   setAspectRatio: (s) => set({ composer: { ...get().composer, aspectRatio: s } }),
   setImageSize: (s) => set({ composer: { ...get().composer, imageSize: s } }),
+  setThinkingEnabled: (on) =>
+    set({ composer: { ...get().composer, thinkingEnabled: on } }),
+  setThinkingEffort: (effort) =>
+    set({ composer: { ...get().composer, thinkingEffort: effort } }),
 
   setChatMode: async (mode) => {
     const id = get().activeId;
@@ -696,6 +723,12 @@ export const useSession = create<SessionStore>((set, get) => {
     }));
 
     const c = get().composer;
+    const canReason = activeModelCapabilities().includes("reasoning");
+    const thinkingEnabled = canReason ? c.thinkingEnabled : null;
+    const thinkingEffort =
+      canReason && c.thinkingEnabled && c.thinkingEffort.trim()
+        ? c.thinkingEffort.trim()
+        : null;
     setSessionBusy(sid, true);
     ensureGenerationStreamListener();
     try {
@@ -705,6 +738,8 @@ export const useSession = create<SessionStore>((set, get) => {
           user_message_id: messageId,
           aspect_ratio: c.aspectRatio,
           image_size: c.imageSize,
+          thinking_enabled: thinkingEnabled,
+          thinking_effort: thinkingEffort,
         },
         a.session,
       );
@@ -791,6 +826,12 @@ export const useSession = create<SessionStore>((set, get) => {
     const attachmentIds = c.attachments.map((a) => a.image_id);
     const aspectRatio = c.aspectRatio;
     const imageSize = c.imageSize;
+    const canReason = activeModelCapabilities().includes("reasoning");
+    const thinkingEnabled = canReason ? c.thinkingEnabled : null;
+    const thinkingEffort =
+      canReason && c.thinkingEnabled && c.thinkingEffort.trim()
+        ? c.thinkingEffort.trim()
+        : null;
 
     updateActiveSession(sid, (active) => ({
       ...active,
@@ -815,6 +856,8 @@ export const useSession = create<SessionStore>((set, get) => {
           attachment_ids: attachmentIds,
           aspect_ratio: aspectRatio,
           image_size: imageSize,
+          thinking_enabled: thinkingEnabled,
+          thinking_effort: thinkingEffort,
         },
         sessionForLog,
       );

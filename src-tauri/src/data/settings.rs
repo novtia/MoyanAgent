@@ -11,6 +11,8 @@ pub const KEY_ACTIVE_PROVIDER_ID: &str = "active_provider_id";
 pub const KEY_MODEL_SERVICES: &str = "model_services";
 pub const KEY_DEFAULT_RATIO: &str = "default_aspect_ratio";
 pub const KEY_DEFAULT_SIZE: &str = "default_image_size";
+pub const KEY_DEFAULT_THINKING_ENABLED: &str = "default_thinking_enabled";
+pub const KEY_DEFAULT_THINKING_EFFORT: &str = "default_thinking_effort";
 pub const KEY_SYSTEM_PROMPT: &str = "system_prompt";
 pub const KEY_TEMPERATURE: &str = "temperature";
 pub const KEY_TOP_P: &str = "top_p";
@@ -110,6 +112,12 @@ pub struct Settings {
     pub model_services: Vec<ModelProvider>,
     pub default_aspect_ratio: String,
     pub default_image_size: String,
+    /// Global default for the composer thinking toggle (reasoning models only).
+    #[serde(default)]
+    pub default_thinking_enabled: bool,
+    /// Global default reasoning effort; empty means provider default (high).
+    #[serde(default)]
+    pub default_thinking_effort: String,
     pub system_prompt: String,
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
@@ -131,6 +139,8 @@ impl Default for Settings {
             model_services: Vec::new(),
             default_aspect_ratio: String::new(),
             default_image_size: String::new(),
+            default_thinking_enabled: false,
+            default_thinking_effort: String::new(),
             system_prompt: String::new(),
             temperature: None,
             top_p: None,
@@ -176,6 +186,10 @@ pub struct SettingsPatch {
     #[serde(default)]
     pub default_image_size: Option<String>,
     #[serde(default)]
+    pub default_thinking_enabled: Option<bool>,
+    #[serde(default)]
+    pub default_thinking_effort: Option<String>,
+    #[serde(default)]
     pub system_prompt: Option<String>,
     #[serde(default)]
     pub temperature: Patchable<f64>,
@@ -214,6 +228,8 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             }
             KEY_DEFAULT_RATIO => s.default_aspect_ratio = v,
             KEY_DEFAULT_SIZE => s.default_image_size = v,
+            KEY_DEFAULT_THINKING_ENABLED => s.default_thinking_enabled = v == "true" || v == "1",
+            KEY_DEFAULT_THINKING_EFFORT => s.default_thinking_effort = v,
             KEY_SYSTEM_PROMPT => s.system_prompt = v,
             KEY_TEMPERATURE => s.temperature = parse_optional_f64(&v),
             KEY_TOP_P => s.top_p = parse_optional_f64(&v),
@@ -455,6 +471,14 @@ fn infer_capabilities(id: &str) -> Vec<String> {
     if id.contains("reason") || id.contains("thinking") || id.contains("o1") || id.contains("o3") {
         out.push("reasoning".into());
     }
+    if id.contains("image")
+        || id.contains("seedream")
+        || id.contains("imagine")
+        || id.contains("dall")
+        || id.contains("flux")
+    {
+        out.push("image".into());
+    }
     if out.is_empty() {
         out.push("text".into());
     }
@@ -485,6 +509,12 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
     }
     if let Some(v) = patch.default_image_size {
         write_kv(conn, KEY_DEFAULT_SIZE, &v)?;
+    }
+    if let Some(v) = patch.default_thinking_enabled {
+        write_kv(conn, KEY_DEFAULT_THINKING_ENABLED, if v { "true" } else { "false" })?;
+    }
+    if let Some(v) = patch.default_thinking_effort {
+        write_kv(conn, KEY_DEFAULT_THINKING_EFFORT, &v)?;
     }
     if let Some(v) = patch.system_prompt {
         write_kv(conn, KEY_SYSTEM_PROMPT, &v)?;
