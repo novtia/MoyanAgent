@@ -11,6 +11,7 @@
 
 pub mod attachment;
 pub mod context;
+pub mod file_snapshot;
 pub mod permission;
 pub mod task;
 pub mod worktree;

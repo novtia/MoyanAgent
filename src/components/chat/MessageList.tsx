@@ -445,6 +445,11 @@ function AssistantContent({
         if (block.tool === "CreateDoc") {
           return <CreateDocCard key={`doc:${block.id}:${i}`} block={block} />;
         }
+        // Delete renders as a dedicated "removed document" card, distinct from
+        // the generic tool-call block.
+        if (block.tool === "Delete") {
+          return <DeleteDocCard key={`del:${block.id}:${i}`} block={block} />;
+        }
         return <ToolCallBlock key={`tool:${block.id}:${i}`} block={block} />;
       })}
     </>
@@ -696,6 +701,60 @@ function DocGlyphIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M6 2h7l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" />
       <path d="M13 2v5h5" />
+    </svg>
+  );
+}
+
+/** Dedicated card for the `Delete` tool. Renders as a distinct "removed
+ * document" tile (struck-through file name + trash glyph), separate from the
+ * generic tool-call block. Non-interactive: the file is gone. */
+function DeleteDocCard({
+  block,
+}: {
+  block: Extract<AssistantBlock, { type: "tool_use" }>;
+}) {
+  const { t } = useTranslation();
+  const status = block.status;
+  const input = (block.input ?? {}) as { path?: string };
+  const output = (block.output ?? {}) as { name?: string; path?: string };
+
+  const fullPath = output.path || input.path || "";
+  const name =
+    (output.name || "").trim() ||
+    fullPath.split(/[\\/]/).filter(Boolean).pop() ||
+    t("message.deleteDocUntitled");
+
+  return (
+    <div className={`delete-doc-card ${status}`}>
+      <div className="delete-doc-card-glyph">
+        <TrashGlyphIcon />
+      </div>
+      <div className="delete-doc-card-body">
+        <div className="delete-doc-card-kicker">
+          {status === "pending"
+            ? t("message.deleteDocDeleting")
+            : status === "error"
+              ? t("message.deleteDocFailed")
+              : t("message.deleteDocDeleted")}
+        </div>
+        <div className="delete-doc-card-title" title={fullPath || name}>
+          {name}
+        </div>
+      </div>
+      {status === "pending" && (
+        <span className="delete-doc-card-spinner" aria-hidden />
+      )}
+    </div>
+  );
+}
+
+function TrashGlyphIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
     </svg>
   );
 }

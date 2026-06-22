@@ -1,5 +1,6 @@
 pub(crate) mod custom_agents;
 pub(crate) mod db;
+pub(crate) mod file_snapshot;
 pub(crate) mod llm_catalog;
 pub(crate) mod paths;
 pub(crate) mod project;

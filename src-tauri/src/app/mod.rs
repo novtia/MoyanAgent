@@ -13,9 +13,10 @@ use crate::ai::agent::exec::query::ToolEventCallback;
 use crate::ai::agent::memory::UserContextLoader;
 use crate::ai::agent::types::MessageEvent;
 use crate::ai::agent::{
-    self, AgentRegistry, FileReadTool, FsSessionMemoryExtractor, FsUserContextLoader,
-    NotificationQueue, ProviderEngine, QueryEngine, RoleStateStore, RoleStateTool, RunAgentParams,
-    StaticMcpRegistry, Task, TaskState, TaskStore, ToolPool, UserContextConfig,
+    self, AgentRegistry, FileReadTool, FileSnapshotStore, FsSessionMemoryExtractor,
+    FsUserContextLoader, NotificationQueue, ProviderEngine, QueryEngine, RoleStateStore,
+    RoleStateTool, RunAgentParams, StaticMcpRegistry, Task, TaskState, TaskStore, ToolPool,
+    UserContextConfig,
 };
 use crate::ai::{chat, parameters, router};
 use crate::data::db::DbPool;
@@ -51,6 +52,10 @@ pub struct AppState {
     /// Shared, session-scoped character state board mutated by the
     /// `RoleState` tool and snapshotted per assistant message.
     pub role_states: Arc<RoleStateStore>,
+    /// Shared, session-scoped buffer of pending agent file mutations. Drained
+    /// per assistant message into `file_snapshots` for delete/regenerate
+    /// rollback of created / updated / deleted files.
+    pub file_snapshots: Arc<FileSnapshotStore>,
 }
 
 impl AppState {
@@ -749,6 +754,7 @@ fn persist_streamed_assistant_snapshot(
     fallback_text: Option<&str>,
     fallback_thinking: Option<&str>,
     mut params: serde_json::Value,
+    file_snapshots: &FileSnapshotStore,
 ) -> AppResult<()> {
     session::get(conn, session_id)?;
 
@@ -790,7 +796,21 @@ fn persist_streamed_assistant_snapshot(
     } else {
         Some(text.as_str())
     };
-    session::insert_message(conn, session_id, "assistant", text_opt, Some(&params_json))?;
+    let assistant =
+        session::insert_message(conn, session_id, "assistant", text_opt, Some(&params_json))?;
+
+    // Bind any file mutations captured before the interrupt / error to this
+    // partial message so they roll back if the message is deleted.
+    let file_changes = file_snapshots.take(session_id);
+    if !file_changes.is_empty() {
+        let _ = crate::data::file_snapshot::save_changes(
+            conn,
+            session_id,
+            &assistant.id,
+            &file_changes,
+        );
+    }
+
     session::recompute_context_window_used(conn, session_id)?;
     Ok(())
 }
@@ -1238,8 +1258,10 @@ fn delete_session(
         let conn = state.conn()?;
         session::delete(&conn, &id)?;
         let _ = crate::data::role_state::clear_session(&conn, &id);
+        let _ = crate::data::file_snapshot::clear_session(&conn, &id);
     }
     state.role_states.clear(&id);
+    state.file_snapshots.clear(&id);
     let dir = paths::sessions_dir(&app)?.join(&id);
     if dir.exists() {
         let _ = std::fs::remove_dir_all(&dir);
@@ -1461,8 +1483,33 @@ fn delete_message(
             state.role_states.load(&sid, roles);
             emit_role_state_reset(&app, &sid);
         }
+        // Roll the workspace back: restore / delete every file this message (and
+        // any later ones) created, updated or removed.
+        if let Ok(restores) = crate::data::file_snapshot::rollback_from_message(&conn, &sid, &id) {
+            for r in &restores {
+                apply_file_restore(r);
+            }
+        }
     }
     Ok(())
+}
+
+/// Apply a single file-snapshot rollback action to disk: delete a file that
+/// was created within the rolled-back range, or rewrite a file with its
+/// captured pre-image.
+fn apply_file_restore(restore: &crate::data::file_snapshot::FileRestore) {
+    if restore.delete {
+        let _ = std::fs::remove_file(&restore.path);
+        return;
+    }
+    if let Some(content) = &restore.content {
+        if let Some(parent) = restore.path.parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        let _ = std::fs::write(&restore.path, content.as_bytes());
+    }
 }
 
 /// Tell the UI to discard its in-memory role board for a session and re-fetch
@@ -1931,6 +1978,7 @@ fn finalize_generate_assistant_message(
     mut resp: chat::GenerateResponse,
     blocks: Vec<serde_json::Value>,
     role_states: &RoleStateStore,
+    file_snapshots: &FileSnapshotStore,
 ) -> AppResult<GenerateResult> {
     resp.images = chat::dedupe_image_results(resp.images);
     let mut assistant_params =
@@ -1964,6 +2012,18 @@ fn finalize_generate_assistant_message(
     let roles = role_states.snapshot(session_id);
     if !roles.is_empty() {
         let _ = crate::data::role_state::save_snapshot(conn, session_id, &assistant.id, &roles);
+    }
+
+    // Bind any file mutations captured during this generation to this message
+    // so they can be rolled back when it is deleted / regenerated.
+    let file_changes = file_snapshots.take(session_id);
+    if !file_changes.is_empty() {
+        let _ = crate::data::file_snapshot::save_changes(
+            conn,
+            session_id,
+            &assistant.id,
+            &file_changes,
+        );
     }
 
     let user_full = reload_message(conn, user_message_id)?;
@@ -2165,6 +2225,7 @@ async fn generate_image(
                 resp,
                 blocks,
                 &state.role_states,
+                &state.file_snapshots,
             )
         }
         Err(AppError::Canceled) => Err(AppError::Canceled),
@@ -2178,6 +2239,7 @@ async fn generate_image(
                 None,
                 None,
                 serde_json::json!({ "partial_before_error": true }),
+                &state.file_snapshots,
             )?;
             let msg_text = format!("{}", e);
             let err_msg = session::insert_message(
@@ -2222,6 +2284,7 @@ fn save_cancelled_message(
         Some(text.as_str()),
         Some(thinking.as_str()),
         serde_json::json!({ "cancelled": true }),
+        &state.file_snapshots,
     )
 }
 
@@ -2404,6 +2467,7 @@ async fn regenerate_image(
                 resp,
                 blocks,
                 &state.role_states,
+                &state.file_snapshots,
             )
         }
         Err(AppError::Canceled) => Err(AppError::Canceled),
@@ -2417,6 +2481,7 @@ async fn regenerate_image(
                 None,
                 None,
                 serde_json::json!({ "partial_before_error": true }),
+                &state.file_snapshots,
             )?;
             let msg_text = format!("{}", e);
             let err_msg = session::insert_message(
@@ -2781,10 +2846,20 @@ pub fn run() {
             // `Arc` immediately so we can register `AgentTool` self-
             // referentially below.
             let tools: Arc<ToolPool> = Arc::new(ToolPool::new());
+            let file_snapshots = Arc::new(FileSnapshotStore::new());
             tools.register(FileReadTool::new());
-            tools.register(crate::ai::agent::tools::edit::FileWriteTool::new());
-            tools.register(crate::ai::agent::tools::edit::FileEditTool::new());
-            tools.register(crate::ai::agent::tools::create_doc::CreateDocTool::new());
+            tools.register(crate::ai::agent::tools::edit::FileWriteTool::new(
+                file_snapshots.clone(),
+            ));
+            tools.register(crate::ai::agent::tools::edit::FileEditTool::new(
+                file_snapshots.clone(),
+            ));
+            tools.register(crate::ai::agent::tools::create_doc::CreateDocTool::new(
+                file_snapshots.clone(),
+            ));
+            tools.register(crate::ai::agent::tools::delete::DeleteTool::new(
+                file_snapshots.clone(),
+            ));
             tools.register(crate::ai::agent::tools::bash::BashTool::new());
             tools.register(crate::ai::agent::tools::todo::TodoListTool::new());
             let role_states = Arc::new(RoleStateStore::new());
@@ -2830,6 +2905,7 @@ pub fn run() {
                 tools,
                 session_memory: Arc::new(FsSessionMemoryExtractor::new()),
                 role_states,
+                file_snapshots,
             }));
             Ok(())
         })

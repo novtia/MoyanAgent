@@ -10,9 +10,11 @@
 //! does not yet exist — creating new files is always fine.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 
+use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
@@ -22,17 +24,13 @@ const EDIT_TOOL: &str = "Edit";
 #[derive(Clone)]
 pub struct FileWriteTool {
     spec: ToolSpec,
-}
-
-impl Default for FileWriteTool {
-    fn default() -> Self {
-        Self::new()
-    }
+    snapshots: Arc<FileSnapshotStore>,
 }
 
 impl FileWriteTool {
-    pub fn new() -> Self {
+    pub fn new(snapshots: Arc<FileSnapshotStore>) -> Self {
         Self {
+            snapshots,
             spec: ToolSpec {
                 name: WRITE_TOOL.to_string(),
                 description: "Write a UTF-8 file to disk, creating parent directories as needed. \
@@ -88,6 +86,13 @@ impl Tool for FileWriteTool {
                     })?;
                 }
             }
+
+            // Snapshot the pre-image (before overwriting / creating) so the
+            // change can be rolled back if its message is deleted.
+            let op = if exists { FileOp::Update } else { FileOp::Create };
+            self.snapshots
+                .record_before(invocation.context.session_id.as_deref(), &path, op);
+
             std::fs::write(&path, content.as_bytes())
                 .map_err(|e| AppError::Other(format!("Write: write {:?}: {e}", path)))?;
 
@@ -105,17 +110,13 @@ impl Tool for FileWriteTool {
 #[derive(Clone)]
 pub struct FileEditTool {
     spec: ToolSpec,
-}
-
-impl Default for FileEditTool {
-    fn default() -> Self {
-        Self::new()
-    }
+    snapshots: Arc<FileSnapshotStore>,
 }
 
 impl FileEditTool {
-    pub fn new() -> Self {
+    pub fn new(snapshots: Arc<FileSnapshotStore>) -> Self {
         Self {
+            snapshots,
             spec: ToolSpec {
                 name: EDIT_TOOL.to_string(),
                 description: "Replace `old_string` with `new_string` inside a file. \
@@ -208,6 +209,14 @@ impl Tool for FileEditTool {
             } else {
                 original.replacen(old, new, 1)
             };
+
+            // Snapshot the pre-image before mutating for rollback support.
+            self.snapshots.record_before(
+                invocation.context.session_id.as_deref(),
+                &path,
+                FileOp::Update,
+            );
+
             std::fs::write(&path, updated.as_bytes())
                 .map_err(|e| AppError::Other(format!("Edit: write {:?}: {e}", path)))?;
 

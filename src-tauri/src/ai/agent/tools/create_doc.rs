@@ -10,9 +10,11 @@
 //! the reader panel with a single click.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 
+use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
@@ -24,17 +26,13 @@ const FALLBACK_DIR_NAME: &str = "moyanagent";
 #[derive(Clone)]
 pub struct CreateDocTool {
     spec: ToolSpec,
-}
-
-impl Default for CreateDocTool {
-    fn default() -> Self {
-        Self::new()
-    }
+    snapshots: Arc<FileSnapshotStore>,
 }
 
 impl CreateDocTool {
-    pub fn new() -> Self {
+    pub fn new(snapshots: Arc<FileSnapshotStore>) -> Self {
         Self {
+            snapshots,
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
                 description: "Create a text document from a title, its content, and a type. \
@@ -133,6 +131,12 @@ impl Tool for CreateDocTool {
             let file_name = format!("{}.{ext}", sanitize_file_name(&title));
             let path = dir.join(&file_name);
             let created = !path.exists();
+
+            // Snapshot the pre-image before writing so the document can be
+            // rolled back (deleted when created, restored when overwritten).
+            let op = if created { FileOp::Create } else { FileOp::Update };
+            self.snapshots
+                .record_before(invocation.context.session_id.as_deref(), &path, op);
 
             std::fs::write(&path, content.as_bytes())
                 .map_err(|e| AppError::Other(format!("{TOOL_NAME}: write {:?}: {e}", path)))?;

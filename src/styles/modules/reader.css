@@ -385,3 +385,78 @@
     transform: rotate(360deg);
   }
 }
+
+/* ═══════════ Delete: dedicated "removed document" tile (not a generic tool card) ═══════════ */
+.delete-doc-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0;
+  padding: 11px 14px;
+  border: 1px solid color-mix(in srgb, var(--rose-500) 28%, var(--line));
+  border-left: 3px solid color-mix(in srgb, var(--rose-500) 60%, var(--line));
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--rose-50) 55%, var(--bg)) 0%, var(--bg) 75%);
+  box-shadow: var(--shadow-1);
+  position: relative;
+}
+.delete-doc-card.error {
+  border-color: color-mix(in srgb, var(--rose-500) 45%, var(--line));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--rose-50) 75%, var(--bg)) 0%, var(--bg) 70%);
+}
+
+.delete-doc-card-glyph {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: var(--rose-500);
+  background: color-mix(in srgb, var(--rose-500) 12%, transparent);
+}
+.delete-doc-card-glyph svg {
+  width: 18px;
+  height: 18px;
+}
+
+.delete-doc-card-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+.delete-doc-card-kicker {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--rose-500);
+}
+.delete-doc-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--rose-500) 55%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.delete-doc-card-spinner {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--rose-500) 30%, var(--line));
+  border-top-color: var(--rose-500);
+  animation: create-doc-spin 0.7s linear infinite;
+}

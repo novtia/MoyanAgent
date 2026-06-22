@@ -90,6 +90,8 @@ mod re_exports {
     // tools
     pub use super::tools::agent_tool::{AgentInvocation, AgentTool, AgentToolResult};
     pub use super::tools::bash::BashTool;
+    pub use super::tools::create_doc::CreateDocTool;
+    pub use super::tools::delete::DeleteTool;
     pub use super::tools::edit::{FileEditTool, FileWriteTool};
     pub use super::tools::fs::FileReadTool;
     pub use super::tools::role_state::{RoleStateStore, RoleStateTool};
@@ -101,6 +103,7 @@ mod re_exports {
         Attachment, AttachmentKind, NotificationQueue, TaskNotification,
     };
     pub use super::core::context::{ToolUseContext, ToolUseContextBuilder};
+    pub use super::core::file_snapshot::{FileOp, FileSnapshotStore, PendingFileChange};
     pub use super::core::permission::{
         AllowAllResolver, BASH_WRITE_PREFIXES, PermissionDecision, PermissionMode,
         PermissionResolver, PlanModeResolver, WRITE_TOOLS,

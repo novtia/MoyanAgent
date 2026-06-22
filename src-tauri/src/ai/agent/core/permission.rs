@@ -125,6 +125,8 @@ pub const WRITE_TOOLS: &[&str] = &[
     "Patch",
     "FileWrite",
     "FileEdit",
+    "CreateDoc",
+    "Delete",
 ];
 
 /// Bash-prefix patterns that imply the command will mutate state. Used
