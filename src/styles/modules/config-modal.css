@@ -162,6 +162,26 @@
   line-height: 1.6;
 }
 
+/* ───── 项目地址编辑 ───── */
+.config-modal-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.config-modal-path-input {
+  flex: 1;
+  min-width: 0;
+}
+.config-modal-path-browse {
+  flex: 0 0 auto;
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.config-modal-path-browse:hover {
+  background: var(--bg-hover);
+  border-color: var(--line-strong);
+}
+
 /* ───── 模型参数（图片同款：开关 + 滑块 + 数值）───── */
 .cfg-params {
   display: flex;

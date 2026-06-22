@@ -16,6 +16,7 @@ import {
   composerModeFromAgentType,
 } from "../config/chatMode";
 import { useRoleState, type RoleStateOp } from "./roleState";
+import { useReader, readerDocFromToolOutput } from "./reader";
 import { useSettings } from "./settings";
 
 interface ComposerState {
@@ -1086,6 +1087,12 @@ function applyToolEvent(blocks: AssistantBlock[], event: ToolEventPayload) {
         output: event.output,
         is_error: event.is_error || undefined,
       };
+      // Auto-open the reader for successful file reads so the document shows
+      // in the right panel as soon as the tool completes.
+      if (b.tool === "Read" && !event.is_error) {
+        const doc = readerDocFromToolOutput(event.output);
+        if (doc) useReader.getState().openDoc(doc);
+      }
       return;
     }
   }

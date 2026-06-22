@@ -32,6 +32,7 @@ pub const AGENT_RPG: &str = "RPG";
 const WRITE_TOOLS: &[&str] = &[
     "Edit",
     "Write",
+    "CreateDoc",
     "NotebookEdit",
     "ExitPlanMode",
     "TodoList",

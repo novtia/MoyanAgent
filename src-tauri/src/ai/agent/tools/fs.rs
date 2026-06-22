@@ -105,7 +105,16 @@ impl Tool for FileReadTool {
 
             let bytes = std::fs::read(&canonical)
                 .map_err(|e| AppError::Other(format!("Read: open {:?}: {e}", canonical)))?;
-            let (text, truncated) = decode_with_cap(&bytes);
+            // Decode the full file once for accurate word-count stats, then
+            // cap the text actually returned to the model.
+            let full_text = String::from_utf8_lossy(&bytes).into_owned();
+            let (text, truncated) = cap_text(&full_text);
+
+            // Word-count stats computed over the WHOLE file (not the capped
+            // text): `chars` is the non-whitespace character count (counts CJK
+            // characters; excludes spaces/tabs/newlines), `lines` the line count.
+            let chars = full_text.chars().filter(|c| !c.is_whitespace()).count();
+            let lines = full_text.lines().count();
 
             // Record both for nested-memory injection and for the read
             // de-dup set on the active context.
@@ -119,6 +128,8 @@ impl Tool for FileReadTool {
             let mut content = serde_json::json!({
                 "path": canonical.to_string_lossy(),
                 "bytes": bytes.len(),
+                "chars": chars,
+                "lines": lines,
                 "text": text,
             });
             if truncated {
@@ -132,12 +143,18 @@ impl Tool for FileReadTool {
     }
 }
 
-fn decode_with_cap(bytes: &[u8]) -> (String, bool) {
-    if bytes.len() <= MAX_READ_BYTES {
-        return (String::from_utf8_lossy(bytes).into_owned(), false);
+/// Cap the decoded text to `MAX_READ_BYTES` bytes for the model. Truncation
+/// happens on a UTF-8 char boundary so we never split a multi-byte character.
+fn cap_text(full: &str) -> (String, bool) {
+    if full.len() <= MAX_READ_BYTES {
+        return (full.to_string(), false);
     }
-    let head = &bytes[..MAX_READ_BYTES];
-    let mut s = String::from_utf8_lossy(head).into_owned();
+    // Walk back to the nearest char boundary at or below the cap.
+    let mut end = MAX_READ_BYTES;
+    while end > 0 && !full.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut s = full[..end].to_string();
     s.push_str("\n\n<truncated>");
     (s, true)
 }

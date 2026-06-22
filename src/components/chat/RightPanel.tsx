@@ -5,9 +5,11 @@ import { collectSessionGalleryImages } from "../../sessionGallery";
 import { GalleryContent } from "./SessionGallery";
 import { AgentFlowPanel } from "./AgentFlowPanel";
 import { RoleStatePanel } from "./RoleStatePanel";
+import { DocumentReader } from "./DocumentReader";
+import { useReader } from "../../store/reader";
 import type { ImageRefAbs } from "../../types";
 
-type TabKind = "empty" | "gallery" | "agent-flow" | "role-state";
+type TabKind = "empty" | "gallery" | "agent-flow" | "role-state" | "reader";
 
 interface PanelTab {
   id: string;
@@ -53,7 +55,8 @@ function readStoredTabs(): { tabs: PanelTab[]; activeId: string | null } {
             (tb.kind === "empty" ||
               tb.kind === "gallery" ||
               tb.kind === "agent-flow" ||
-              tb.kind === "role-state"),
+              tb.kind === "role-state" ||
+              tb.kind === "reader"),
         )
       : [];
     const activeId = tabs.some((tb) => tb.id === parsed.activeId)
@@ -77,6 +80,25 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
   const initial = useRef(readStoredTabs());
   const [tabs, setTabs] = useState<PanelTab[]>(initial.current.tabs);
   const [activeTabId, setActiveTabId] = useState<string | null>(initial.current.activeId);
+
+  // Auto-open: when a document is requested (openSeq bumps), ensure a reader
+  // tab exists and make it active so the document shows immediately.
+  const readerOpenSeq = useReader((s) => s.openSeq);
+  const lastReaderSeq = useRef(readerOpenSeq);
+  useEffect(() => {
+    if (readerOpenSeq === lastReaderSeq.current) return;
+    lastReaderSeq.current = readerOpenSeq;
+    setTabs((prev) => {
+      const existing = prev.find((tb) => tb.kind === "reader");
+      if (existing) {
+        setActiveTabId(existing.id);
+        return prev;
+      }
+      const tab: PanelTab = { id: newId(), kind: "reader" };
+      setActiveTabId(tab.id);
+      return [...prev, tab];
+    });
+  }, [readerOpenSeq]);
 
   const galleryCount = useMemo(
     () => collectSessionGalleryImages(active).length,
@@ -188,6 +210,8 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
         return t("rightPanel.agentFlowTab");
       case "role-state":
         return t("rightPanel.roleStateTab");
+      case "reader":
+        return t("rightPanel.readerTab");
       default:
         return t("rightPanel.newTab");
     }
@@ -282,6 +306,8 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
             <GalleryContent open={open} onPreviewImage={onPreviewImage} />
           ) : activeTab.kind === "role-state" ? (
             <RoleStatePanel open={open} />
+          ) : activeTab.kind === "reader" ? (
+            <DocumentReader />
           ) : (
             <AgentFlowPanel open={open} />
           )}
@@ -296,7 +322,7 @@ function TypePicker({
   onPick,
 }: {
   tab: number;
-  onPick: (kind: "gallery" | "agent-flow" | "role-state") => void;
+  onPick: (kind: "gallery" | "agent-flow" | "role-state" | "reader") => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -342,6 +368,20 @@ function TypePicker({
         <span className="right-panel-picker-text">
           <span className="right-panel-picker-name">{t("rightPanel.createRoleState")}</span>
           <span className="right-panel-picker-desc">{t("rightPanel.createRoleStateDesc")}</span>
+        </span>
+      </button>
+      <button
+        type="button"
+        className="right-panel-picker-card"
+        tabIndex={tab}
+        onClick={() => onPick("reader")}
+      >
+        <span className="right-panel-picker-icon">
+          <ReaderIcon />
+        </span>
+        <span className="right-panel-picker-text">
+          <span className="right-panel-picker-name">{t("rightPanel.createReader")}</span>
+          <span className="right-panel-picker-desc">{t("rightPanel.createReaderDesc")}</span>
         </span>
       </button>
     </div>
@@ -392,6 +432,15 @@ function RoleStateIcon() {
       <path d="M12 3 4 7v5c0 4.4 3.2 7.6 8 9 4.8-1.4 8-4.6 8-9V7l-8-4Z" />
       <circle cx="12" cy="10" r="2.4" />
       <path d="M8.4 16c.5-1.8 2-2.8 3.6-2.8s3.1 1 3.6 2.8" />
+    </svg>
+  );
+}
+
+function ReaderIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v15H5.5A1.5 1.5 0 0 1 4 17.5Z" />
+      <path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v15h5.5a1.5 1.5 0 0 0 1.5-1.5Z" />
     </svg>
   );
 }

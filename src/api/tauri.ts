@@ -103,6 +103,8 @@ export const api = {
     invoke<Project>("create_project", { args: { name, path: path ?? null } }),
   renameProject: (id: string, name: string) =>
     invoke<void>("rename_project", { id, name }),
+  updateProjectPath: (id: string, path: string | null) =>
+    invoke<void>("update_project_path", { id, path }),
   deleteProject: (id: string) => invoke<void>("delete_project", { id }),
   reorderProjects: (orderedIds: string[]) =>
     invoke<void>("reorder_projects", { orderedIds }),

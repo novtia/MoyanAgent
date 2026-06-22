@@ -209,6 +209,24 @@ pub fn rename(conn: &DbConn, id: &str, name: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Update a project's working-directory path. An empty / whitespace-only
+/// value clears the path (stored as NULL).
+pub fn set_path(conn: &DbConn, id: &str, path: Option<&str>) -> AppResult<()> {
+    let normalized = match path {
+        Some(p) if !p.trim().is_empty() => Some(p.trim().to_string()),
+        _ => None,
+    };
+    let updated = now_ms();
+    let n = conn.execute(
+        "UPDATE projects SET path=?1, updated_at=?2 WHERE id=?3",
+        params![normalized.as_deref(), updated, id],
+    )?;
+    if n == 0 {
+        return Err(AppError::NotFound(format!("project {id}")));
+    }
+    Ok(())
+}
+
 pub fn update_config(
     conn: &DbConn,
     id: &str,

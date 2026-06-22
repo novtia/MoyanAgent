@@ -8,6 +8,7 @@ interface ProjectStore {
   createBlank: (name: string) => Promise<Project>;
   createFromFolder: (name: string, path: string) => Promise<Project>;
   rename: (id: string, name: string) => Promise<void>;
+  updatePath: (id: string, path: string | null) => Promise<void>;
   remove: (id: string) => Promise<void>;
   reorder: (orderedIds: string[]) => Promise<void>;
   updateConfig: (
@@ -43,6 +44,11 @@ export const useProject = create<ProjectStore>((set, get) => ({
 
   rename: async (id, name) => {
     await api.renameProject(id, name);
+    await get().refreshList();
+  },
+
+  updatePath: async (id, path) => {
+    await api.updateProjectPath(id, path && path.trim() ? path.trim() : null);
     await get().refreshList();
   },
 

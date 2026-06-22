@@ -23,6 +23,7 @@
 
 @import './modules/messages.css';
 @import './modules/role-state.css';
+@import './modules/reader.css';
 @import './modules/composer.css';
 @import './modules/forms.css';
 @import './modules/dropzone.css';

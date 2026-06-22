@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
+import { useReader } from "../../store/reader";
 import { dialog } from "../ui";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
@@ -32,6 +33,16 @@ export function ChatView({
   const [fontOpen, setFontOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement | null>(null);
   const fontRef = useRef<HTMLDivElement | null>(null);
+
+  // Open the right panel whenever a document is sent to the reader (from a
+  // Read tool result or the "open in reader" button on a tool card).
+  const readerOpenSeq = useReader((s) => s.openSeq);
+  const lastReaderSeq = useRef(readerOpenSeq);
+  useEffect(() => {
+    if (readerOpenSeq === lastReaderSeq.current) return;
+    lastReaderSeq.current = readerOpenSeq;
+    setGalleryOpen(true);
+  }, [readerOpenSeq]);
 
   useEffect(() => {
     if (!moreOpen) return;

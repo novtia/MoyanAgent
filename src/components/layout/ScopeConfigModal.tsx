@@ -7,12 +7,22 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { ModelParamSettings } from "../../types";
 import { EMPTY_MODEL_PARAMS } from "../settings/llm/modelServices";
 
-type ConfigSection = "prompt" | "model";
+type ConfigSection = "address" | "prompt" | "model";
 
 export interface ScopeConfigInitial {
   systemPrompt: string;
   historyTurns: number;
   llmParams: ModelParamSettings;
+}
+
+/** Optional editable working-directory path (project scope only). */
+export interface ScopeConfigPathField {
+  /** Current persisted path (null/empty means unset). */
+  value: string | null;
+  /** Open a folder picker; resolves to the chosen absolute path or null. */
+  onBrowse: () => Promise<string | null>;
+  /** Persist a new path value (empty string clears it). */
+  onSave: (path: string) => Promise<void> | void;
 }
 
 interface ScopeConfigModalProps {
@@ -26,6 +36,8 @@ interface ScopeConfigModalProps {
   historyHint?: string;
   paramsHint: string;
   initial: ScopeConfigInitial;
+  /** 当提供时，显示"项目地址"分区，允许编辑工作目录路径 */
+  pathField?: ScopeConfigPathField;
   onSave: (
     systemPrompt: string,
     historyTurns: number,
@@ -34,7 +46,7 @@ interface ScopeConfigModalProps {
   onClose: () => void;
 }
 
-const SECTIONS: Array<{
+const BASE_SECTIONS: Array<{
   id: ConfigSection;
   label: string;
   desc: string;
@@ -44,6 +56,13 @@ const SECTIONS: Array<{
   { id: "model", label: "模型参数", desc: "采样 · 上下文", icon: TuneIcon },
 ];
 
+const ADDRESS_SECTION = {
+  id: "address" as const,
+  label: "项目地址",
+  desc: "工作目录路径",
+  icon: FolderIcon,
+};
+
 export function ScopeConfigModal({
   title,
   subtitle,
@@ -52,10 +71,14 @@ export function ScopeConfigModal({
   historyHint,
   paramsHint,
   initial,
+  pathField,
   onSave,
   onClose,
 }: ScopeConfigModalProps) {
-  const [section, setSection] = useState<ConfigSection>("prompt");
+  const sections = pathField ? [ADDRESS_SECTION, ...BASE_SECTIONS] : BASE_SECTIONS;
+  const [section, setSection] = useState<ConfigSection>(
+    pathField ? "address" : "prompt",
+  );
   const [paramsResetKey, setParamsResetKey] = useState(0);
   const [systemPromptDraft, setSystemPromptDraft] = useState(initial.systemPrompt);
   const [historyTurnsDraft, setHistoryTurnsDraft] = useState(String(initial.historyTurns));
@@ -66,6 +89,25 @@ export function ScopeConfigModal({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedOnce, setSavedOnce] = useState(false);
+  const [pathDraft, setPathDraft] = useState(pathField?.value ?? "");
+  const pathSavedRef = useRef(pathField?.value ?? "");
+
+  const commitPath = (next: string) => {
+    if (!pathField) return;
+    const trimmed = next.trim();
+    if (trimmed === pathSavedRef.current.trim()) return;
+    pathSavedRef.current = trimmed;
+    setSavedOnce(true);
+    void Promise.resolve(pathField.onSave(trimmed));
+  };
+
+  const browsePath = async () => {
+    if (!pathField) return;
+    const picked = await pathField.onBrowse();
+    if (picked == null) return;
+    setPathDraft(picked);
+    commitPath(picked);
+  };
 
   // 上一次已持久化内容的快照，避免重复保存
   const savedRef = useRef(
@@ -149,7 +191,7 @@ export function ScopeConfigModal({
 
         <div className="modal-body config-modal-body">
           <nav className="config-modal-nav">
-            {SECTIONS.map(({ id, label, desc, icon: Icon }) => (
+            {sections.map(({ id, label, desc, icon: Icon }) => (
               <button
                 key={id}
                 type="button"
@@ -169,6 +211,39 @@ export function ScopeConfigModal({
           </nav>
 
           <div className="config-modal-content" key={section}>
+            {section === "address" && pathField && (
+              <>
+                <div className="config-modal-section-head">
+                  <h4 className="config-modal-section-title">项目地址</h4>
+                  <p className="config-modal-section-desc">
+                    该项目的工作目录路径，供 Agent 读写文件等使用。留空则不绑定目录。
+                  </p>
+                </div>
+                <div className="config-modal-path-row">
+                  <input
+                    type="text"
+                    className="field-input field-input--mono config-modal-path-input"
+                    value={pathDraft}
+                    spellCheck={false}
+                    placeholder="例如 C:\\Users\\you\\Documents\\my-project"
+                    onChange={(e) => setPathDraft(e.target.value)}
+                    onBlur={(e) => commitPath(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitPath((e.target as HTMLInputElement).value);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="cfg-reset-btn config-modal-path-browse"
+                    onClick={() => void browsePath()}
+                  >
+                    <FolderIcon />
+                    <span>浏览…</span>
+                  </button>
+                </div>
+              </>
+            )}
+
             {section === "prompt" && (
               <>
                 <div className="config-modal-section-head">
@@ -529,6 +604,13 @@ function TuneIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3" />
       <path d="M1 14h6M9 8h6M17 16h6" />
+    </svg>
+  );
+}
+function FolderIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
     </svg>
   );
 }

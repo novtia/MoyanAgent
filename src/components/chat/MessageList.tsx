@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
+import { useReader, readerDocFromToolOutput } from "../../store/reader";
 import { srcOf, api } from "../../api/tauri";
 import { dialog } from "../ui";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
@@ -250,6 +251,25 @@ function ThinkingChevronIcon() {
   );
 }
 
+function OpenDocIcon() {
+  return (
+    <svg
+      className="tool-call-open-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M14 3h7v7" />
+      <path d="M10 14 21 3" />
+      <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
+    </svg>
+  );
+}
+
 function ThinkingBlock({
   content,
   streaming,
@@ -420,6 +440,11 @@ function AssistantContent({
         if (block.tool === "RpgChoice") {
           return <RpgChoiceCard key={`rpg:${block.id}:${i}`} block={block} />;
         }
+        // CreateDoc renders as a dedicated document card; clicking it opens
+        // the freshly created file in the reader panel.
+        if (block.tool === "CreateDoc") {
+          return <CreateDocCard key={`doc:${block.id}:${i}`} block={block} />;
+        }
         return <ToolCallBlock key={`tool:${block.id}:${i}`} block={block} />;
       })}
     </>
@@ -562,6 +587,119 @@ function RpgChoiceCard({
   );
 }
 
+/** Dedicated card for the `CreateDoc` tool. Renders as a distinct "document"
+ * tile (NOT the generic tool-call block): a typed file glyph, the document
+ * title, and word-count stats. Clicking the whole tile opens the freshly
+ * created file in the right-panel reader. */
+function CreateDocCard({
+  block,
+}: {
+  block: Extract<AssistantBlock, { type: "tool_use" }>;
+}) {
+  const { t } = useTranslation();
+  const status = block.status;
+  const input = (block.input ?? {}) as {
+    title?: string;
+    doc_type?: string;
+    content?: string;
+  };
+  const output = (block.output ?? {}) as {
+    title?: string;
+    doc_type?: string;
+    chars?: number;
+    lines?: number;
+    created?: boolean;
+    path?: string;
+  };
+
+  const readerDoc = useMemo(
+    () => (status === "success" ? readerDocFromToolOutput(block.output) : null),
+    [block.output, status],
+  );
+
+  const title =
+    (output.title || input.title || "").trim() || t("message.createDocUntitled");
+  const docType = (output.doc_type || input.doc_type || "txt")
+    .toString()
+    .toLowerCase();
+  const chars = typeof output.chars === "number" ? output.chars : undefined;
+  const lines = typeof output.lines === "number" ? output.lines : undefined;
+  const canOpen = !!readerDoc;
+
+  const openDoc = () => {
+    if (readerDoc) useReader.getState().openDoc(readerDoc);
+  };
+
+  return (
+    <div
+      className={`create-doc-card ${status} ${canOpen ? "is-openable" : ""}`}
+      role={canOpen ? "button" : undefined}
+      tabIndex={canOpen ? 0 : undefined}
+      title={canOpen ? t("message.openInReader") : undefined}
+      onClick={canOpen ? openDoc : undefined}
+      onKeyDown={
+        canOpen
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                openDoc();
+              }
+            }
+          : undefined
+      }
+    >
+      <div className={`create-doc-card-glyph ${docType === "md" ? "is-md" : "is-txt"}`}>
+        <DocGlyphIcon />
+        <span className="create-doc-card-ext">{docType}</span>
+      </div>
+
+      <div className="create-doc-card-body">
+        <div className="create-doc-card-kicker">
+          {status === "pending"
+            ? t("message.createDocWriting")
+            : status === "error"
+              ? t("message.createDocFailed")
+              : output.created === false
+                ? t("message.createDocUpdated")
+                : t("message.createDocCreated")}
+        </div>
+        <div className="create-doc-card-title">{title}</div>
+        {status === "success" && (chars !== undefined || lines !== undefined) && (
+          <div className="create-doc-card-stats">
+            {chars !== undefined && (
+              <span className="create-doc-card-stat">
+                <strong>{chars}</strong> {t("message.createDocCharsUnit")}
+              </span>
+            )}
+            {lines !== undefined && (
+              <span className="create-doc-card-stat">
+                <strong>{lines}</strong> {t("message.createDocLinesUnit")}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {canOpen && (
+        <div className="create-doc-card-action">
+          <OpenDocIcon />
+          <span>{t("message.openInReader")}</span>
+        </div>
+      )}
+      {status === "pending" && <span className="create-doc-card-spinner" aria-hidden />}
+    </div>
+  );
+}
+
+function DocGlyphIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M6 2h7l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" />
+      <path d="M13 2v5h5" />
+    </svg>
+  );
+}
+
 function ToolCallIcon({ status }: { status: "pending" | "success" | "error" }) {
   if (status === "pending") {
     return (
@@ -630,7 +768,7 @@ function summarizeToolInput(input: unknown): string {
     const o = input as Record<string, unknown>;
     // Heuristic: surface the most identifying field first.
     const primary =
-      o.path ?? o.file_path ?? o.command ?? o.query ?? o.prompt ?? o.name;
+      o.title ?? o.path ?? o.file_path ?? o.command ?? o.query ?? o.prompt ?? o.name;
     if (typeof primary === "string" && primary.trim()) return primary;
     const entries = Object.entries(o).slice(0, 2);
     return entries
@@ -675,6 +813,15 @@ function ToolCallBlock({
     [block.output],
   );
 
+  // Read tool results can be opened in the document reader panel.
+  const readerDoc = useMemo(
+    () =>
+      block.tool === "Read" && status === "success"
+        ? readerDocFromToolOutput(block.output)
+        : null,
+    [block.tool, block.output, status],
+  );
+
   return (
     <div
       className={`tool-call-block ${status} ${open ? "is-open" : ""}`}
@@ -691,6 +838,27 @@ function ToolCallBlock({
         <span className="tool-call-name">{block.tool}</span>
         {summary && <span className="tool-call-args">{summary}</span>}
         <span className="tool-call-spacer" aria-hidden />
+        {readerDoc && (
+          <span
+            className="tool-call-read-btn"
+            role="button"
+            tabIndex={0}
+            title={t("message.openInReader")}
+            onClick={(e) => {
+              e.stopPropagation();
+              useReader.getState().openDoc(readerDoc);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                useReader.getState().openDoc(readerDoc);
+              }
+            }}
+          >
+            {t("message.openInReader")}
+          </span>
+        )}
         <span className={`tool-call-badge ${status}`}>{statusLabel}</span>
         {hasDetail && <ThinkingChevronIcon />}
       </button>

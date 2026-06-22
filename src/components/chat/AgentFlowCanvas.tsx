@@ -95,6 +95,7 @@ export interface NodeConfigTarget {
 /** Imperative handle the panel uses to write per-node overrides back. */
 export interface AgentFlowCanvasHandle {
   applyNodeOverrides: (nodeId: string, overrides: NodeOverrides | null) => void;
+  getNodeOverrides: (nodeId: string) => NodeOverrides | undefined;
 }
 
 interface AgentFlowCanvasProps {
@@ -152,21 +153,43 @@ function buildGraphFromChain(chain: ChainEntry[]): Graph {
   return { nodes, edges };
 }
 
+/** Apply per-node overrides from the persisted chain onto canvas nodes. */
+function mergeChainOverrides(graph: Graph, chain: ChainEntry[]): Graph {
+  if (chain.length === 0) return graph;
+  const overridesByType = new Map<string, NodeOverrides>();
+  for (const entry of normalizeChain(chain)) {
+    if (typeof entry === "string") continue;
+    if (hasOverride(entry.overrides)) {
+      overridesByType.set(entry.agent_type, entry.overrides);
+    }
+  }
+  if (overridesByType.size === 0) return graph;
+  let changed = false;
+  const nodes = graph.nodes.map((n) => {
+    const ov = overridesByType.get(n.agentType);
+    if (!ov || JSON.stringify(n.overrides) === JSON.stringify(ov)) return n;
+    changed = true;
+    return { ...n, overrides: ov };
+  });
+  return changed ? { ...graph, nodes } : graph;
+}
+
 function loadGraph(sessionId: string, chain: ChainEntry[]): Graph {
+  let graph: Graph | null = null;
   try {
     const raw = window.localStorage.getItem(graphKey(sessionId));
     if (raw) {
       const parsed = JSON.parse(raw) as Graph;
       if (Array.isArray(parsed.nodes) && Array.isArray(parsed.edges)) {
         if (parsed.nodes.some((n) => n.agentType === MAIN)) {
-          return parsed;
+          graph = parsed;
         }
       }
     }
   } catch {
     /* ignore */
   }
-  return buildGraphFromChain(chain);
+  return mergeChainOverrides(graph ?? buildGraphFromChain(chain), chain);
 }
 
 /**
@@ -320,6 +343,8 @@ export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvas
           ),
         }));
       },
+      getNodeOverrides: (nodeId: string) =>
+        graphRef.current.nodes.find((n) => n.id === nodeId)?.overrides,
     }),
     [],
   );
@@ -355,6 +380,8 @@ export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvas
     setPan({ x: (w - (maxX + minX) * z) / 2, y: (h - (maxY + minY) * z) / 2 });
   }, []);
 
+  const chainKey = useMemo(() => JSON.stringify(chain), [chain]);
+
   // ── init graph per session ──────────────────────────────────────────────
   // The main node is always present (even without an active session) so the
   // canvas is never empty; persistence is gated on sessionId elsewhere.
@@ -368,6 +395,13 @@ export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvas
     setNeedsFit(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageScope]);
+
+  // Keep per-node overrides in sync when agent_chain updates (e.g. after save).
+  useEffect(() => {
+    if (!initedFor.current || initedFor.current === "__none__") return;
+    setGraph((g) => mergeChainOverrides(g, chain));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chainKey]);
 
   // ── prune nodes referencing deleted custom agents ───────────────────────
   useEffect(() => {
@@ -857,25 +891,23 @@ export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvas
         },
       },
     ];
-    if (!isMain) {
-      items.push(
-        { type: "separator" },
-        {
-          id: "edit-node-config",
-          label: t("agentFlow.editNodeConfig"),
-          onSelect: () =>
-            onEditNodeConfig({
-              nodeId: node.id,
-              agentType: node.agentType,
-              overrides: node.overrides,
-            }),
-        },
-      );
-    }
+    items.push(
+      { type: "separator" },
+      {
+        id: "edit-node-config",
+        label: t("agentFlow.editAgent"),
+        onSelect: () =>
+          onEditNodeConfig({
+            nodeId: node.id,
+            agentType: node.agentType,
+            overrides: node.overrides,
+          }),
+      },
+    );
     if (isCustom) {
       items.push({
-        id: "edit",
-        label: t("agentFlow.editAgent"),
+        id: "edit-global",
+        label: t("agentFlow.editAgentGlobal"),
         onSelect: () => onEditAgent(node.agentType),
       });
     }
@@ -1186,28 +1218,26 @@ export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvas
                     <PowerIcon />
                   </button>
                 )}
-                {!isMain && (
-                  <button
-                    type="button"
-                    className="afc-node-menu"
-                    title={t("agentFlow.nodeMenu")}
-                    tabIndex={tab}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const host = containerRef.current?.getBoundingClientRect();
-                      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                      setAddMenu(null);
-                      setNodeMenu({
-                        x: r.left - (host?.left ?? 0),
-                        y: r.bottom - (host?.top ?? 0) + 4,
-                        nodeId: n.id,
-                      });
-                    }}
-                  >
-                    <DotsIcon />
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="afc-node-menu"
+                  title={t("agentFlow.nodeMenu")}
+                  tabIndex={tab}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const host = containerRef.current?.getBoundingClientRect();
+                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    setAddMenu(null);
+                    setNodeMenu({
+                      x: r.left - (host?.left ?? 0),
+                      y: r.bottom - (host?.top ?? 0) + 4,
+                      nodeId: n.id,
+                    });
+                  }}
+                >
+                  <DotsIcon />
+                </button>
                 <span
                   className="afc-node-port out"
                   title={t("agentFlow.connectHint")}
@@ -1273,6 +1303,7 @@ export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvas
           (() => {
             const n = graph.nodes.find((x) => x.id === nodeMenu.nodeId);
             if (!n) return null;
+            const isMain = n.agentType === MAIN;
             const isCustom = n.agentType.startsWith(CUSTOM_PREFIX);
             return (
               <div
@@ -1292,7 +1323,7 @@ export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvas
                     setNodeMenu(null);
                   }}
                 >
-                  {t("agentFlow.editNodeConfig")}
+                  {t("agentFlow.editAgent")}
                 </button>
                 {isCustom && (
                   <button
@@ -1303,29 +1334,33 @@ export const AgentFlowCanvas = forwardRef<AgentFlowCanvasHandle, AgentFlowCanvas
                       setNodeMenu(null);
                     }}
                   >
-                    {t("agentFlow.editAgent")}
+                    {t("agentFlow.editAgentGlobal")}
                   </button>
                 )}
-                <button
-                  type="button"
-                  className="afc-menu-item"
-                  onClick={() => {
-                    toggleNodeDisabled(n.id);
-                    setNodeMenu(null);
-                  }}
-                >
-                  {n.disabled ? t("agentFlow.enableNode") : t("agentFlow.disableNode")}
-                </button>
-                <button
-                  type="button"
-                  className="afc-menu-item"
-                  onClick={() => {
-                    removeNode(n.id);
-                    setNodeMenu(null);
-                  }}
-                >
-                  {t("agentFlow.removeNode")}
-                </button>
+                {!isMain && (
+                  <>
+                    <button
+                      type="button"
+                      className="afc-menu-item"
+                      onClick={() => {
+                        toggleNodeDisabled(n.id);
+                        setNodeMenu(null);
+                      }}
+                    >
+                      {n.disabled ? t("agentFlow.enableNode") : t("agentFlow.disableNode")}
+                    </button>
+                    <button
+                      type="button"
+                      className="afc-menu-item"
+                      onClick={() => {
+                        removeNode(n.id);
+                        setNodeMenu(null);
+                      }}
+                    >
+                      {t("agentFlow.removeNode")}
+                    </button>
+                  </>
+                )}
                 {isCustom && (
                   <button
                     type="button"

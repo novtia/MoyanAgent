@@ -3,6 +3,7 @@
  * All sessions in the project inherit these settings instead of their own.
  * UI is provided by the shared ScopeConfigModal (left nav + content panel).
  */
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useProject } from "../../store/project";
 import type { Project } from "../../types";
 import { EMPTY_MODEL_PARAMS } from "../settings/llm/modelServices";
@@ -15,6 +16,7 @@ interface ProjectConfigModalProps {
 
 export function ProjectConfigModal({ project, onClose }: ProjectConfigModalProps) {
   const updateConfig = useProject((s) => s.updateConfig);
+  const updatePath = useProject((s) => s.updatePath);
 
   return (
     <ScopeConfigModal
@@ -27,6 +29,20 @@ export function ProjectConfigModal({ project, onClose }: ProjectConfigModalProps
         systemPrompt: project.system_prompt ?? "",
         historyTurns: project.history_turns ?? 10,
         llmParams: { ...EMPTY_MODEL_PARAMS, ...(project.llm_params ?? EMPTY_MODEL_PARAMS) },
+      }}
+      pathField={{
+        value: project.path,
+        onBrowse: async () => {
+          const result = await openDialog({
+            directory: true,
+            multiple: false,
+            title: "选择项目文件夹",
+          });
+          return typeof result === "string" ? result : null;
+        },
+        onSave: async (path) => {
+          await updatePath(project.id, path);
+        },
       }}
       onSave={async (systemPrompt, historyTurns, llmParams) => {
         await updateConfig(

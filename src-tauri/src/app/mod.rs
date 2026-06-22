@@ -522,11 +522,13 @@ async fn run_cancellable_generation(
             };
         }
         if let Some(tools) = &ov.tools {
-            definition.tools = if tools.is_empty() {
-                vec!["*".into()]
-            } else {
-                tools.clone()
-            };
+            // Per-node override tool semantics:
+            //   ["*"]   → all (non-denied) tools
+            //   [names] → exactly those tools
+            //   []      → NO tools (empty allow-list; the agent runs with zero
+            //             tools). This lets a node — including the main agent —
+            //             be configured for pure generation without tool access.
+            definition.tools = tools.clone();
         }
     }
 
@@ -1321,6 +1323,16 @@ fn rename_project(
 ) -> Result<(), AppError> {
     let conn = state.conn()?;
     project::rename(&conn, &id, &name)
+}
+
+#[tauri::command]
+fn update_project_path(
+    state: tauri::State<Arc<AppState>>,
+    id: String,
+    path: Option<String>,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    project::set_path(&conn, &id, path.as_deref())
 }
 
 #[tauri::command]
@@ -2772,6 +2784,7 @@ pub fn run() {
             tools.register(FileReadTool::new());
             tools.register(crate::ai::agent::tools::edit::FileWriteTool::new());
             tools.register(crate::ai::agent::tools::edit::FileEditTool::new());
+            tools.register(crate::ai::agent::tools::create_doc::CreateDocTool::new());
             tools.register(crate::ai::agent::tools::bash::BashTool::new());
             tools.register(crate::ai::agent::tools::todo::TodoListTool::new());
             let role_states = Arc::new(RoleStateStore::new());
@@ -2842,6 +2855,7 @@ pub fn run() {
             list_projects,
             create_project,
             rename_project,
+            update_project_path,
             delete_project,
             reorder_projects,
             assign_session_to_project,

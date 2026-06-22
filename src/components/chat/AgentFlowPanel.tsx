@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/tauri";
+import { SESSION_AGENT_GENERAL } from "../../config/chatMode";
 import { dialog } from "../ui";
 import { useSession } from "../../store/session";
 import { useSettings } from "../../store/settings";
@@ -21,13 +22,16 @@ import type {
 const CUSTOM_PREFIX = "custom:";
 
 interface FormState {
-  mode: "closed" | "new" | "edit";
+  mode: "closed" | "new" | "edit" | "edit-node";
+  /** Chain canvas node id when mode is `edit-node`. */
+  nodeId?: string;
   agentType: string;
   name: string;
   whenToUse: string;
   systemPrompt: string;
   model: string;
   tools: string[];
+  loading: boolean;
 }
 
 const EMPTY_FORM: FormState = {
@@ -38,11 +42,10 @@ const EMPTY_FORM: FormState = {
   systemPrompt: "",
   model: "",
   tools: [],
+  loading: false,
 };
 
 type FormSection = "basic" | "prompt" | "model" | "tools";
-
-type ConfigSection = Exclude<FormSection, "basic">;
 
 const FORM_SECTIONS: Array<{ id: FormSection; labelKey: string; descKey: string; icon: () => JSX.Element }> = [
   { id: "basic", labelKey: "agentFlow.formNavBasic", descKey: "agentFlow.formNavBasicDesc", icon: BasicIcon },
@@ -51,39 +54,12 @@ const FORM_SECTIONS: Array<{ id: FormSection; labelKey: string; descKey: string;
   { id: "tools", labelKey: "agentFlow.formNavTools", descKey: "agentFlow.formNavToolsDesc", icon: ToolsIcon },
 ];
 
-const NODE_CONFIG_SECTIONS = FORM_SECTIONS.filter(
-  (s): s is { id: ConfigSection; labelKey: string; descKey: string; icon: () => JSX.Element } =>
-    s.id !== "basic",
-);
-
-/**
- * Editor state for a single chain node's config overrides. `def*` fields hold
- * the agent's resolved default so saving can store only the values that differ
- * (and so "restore default" can clear them).
- */
-interface NodeConfigState {
-  nodeId: string;
-  agentType: string;
-  name: string;
-  systemPrompt: string;
-  model: string;
-  tools: string[];
-  defSystemPrompt: string;
-  defModel: string;
-  defTools: string[];
-  loading: boolean;
-}
+const NODE_PARAM_SECTIONS = FORM_SECTIONS.filter((s) => s.id !== "basic");
 
 function toolDescription(t: (key: string, opts?: { defaultValue?: string }) => string, name: string) {
   return t(`agentFlow.toolDescriptions.${name}`, { defaultValue: name });
 }
 
-/**
- * Model-override picker. Lists every model from the user's enabled providers,
- * grouped by provider. An empty value means "inherit the session model". A
- * value pointing at a model that no longer exists is still shown so the user
- * can see (and keep) the current override.
- */
 function ModelOverrideSelect({
   value,
   disabled,
@@ -151,14 +127,42 @@ function AgentToolsList({
   );
 }
 
-function sameTools(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  const sb = new Set(b);
-  return a.every((t) => sb.has(t));
+function resolveDefTools(defToolsRaw: string[], defAll: boolean, allTools: string[]): string[] {
+  return defAll ? [...allTools] : defToolsRaw.filter((tn) => allTools.includes(tn));
+}
+
+function resolveSelectedTools(
+  ov: NodeOverrides | undefined,
+  defTools: string[],
+  allTools: string[],
+): string[] {
+  // Node-override tool semantics:
+  //   undefined → inherit the agent's default tool set
+  //   ["*"]     → all tools
+  //   []        → NO tools (empty allow-list)
+  //   [names]   → exactly those tools
+  if (ov?.tools === undefined) return defTools;
+  if (ov.tools.includes("*")) return [...allTools];
+  return ov.tools.filter((tn) => allTools.includes(tn));
 }
 
 function chainEntryType(e: ChainEntry): string {
   return typeof e === "string" ? e : e.agent_type;
+}
+
+function entryHasOverrides(e: ChainEntry): boolean {
+  if (typeof e === "string") return false;
+  const ov = e.overrides;
+  return (
+    !!ov &&
+    (ov.system_prompt !== undefined ||
+      ov.model !== undefined ||
+      ov.tools !== undefined)
+  );
+}
+
+function resolveDefinitionAgentType(agentType: string, sessionAgentType: string): string {
+  return agentType === MAIN ? sessionAgentType : agentType;
 }
 
 /**
@@ -183,18 +187,15 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
 
   const sessionId = active?.session.id ?? null;
   const projectId = active?.session.project_id ?? null;
-  // Sessions in a project share one agent flow record, so the canvas keys its
-  // graph (and layout) by the project; standalone chats key by session.
   const flowScopeId = projectId ?? sessionId;
   const chain = useMemo(() => active?.session.agent_chain ?? [], [active]);
+  const sessionAgentType = active?.session.agent_type ?? SESSION_AGENT_GENERAL;
 
   const [builtins, setBuiltins] = useState<AgentSummary[]>([]);
   const [customs, setCustoms] = useState<CustomAgent[]>([]);
   const [allTools, setAllTools] = useState<string[]>([]);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [formSection, setFormSection] = useState<FormSection>("basic");
-  const [nodeConfig, setNodeConfig] = useState<NodeConfigState | null>(null);
-  const [nodeConfigSection, setNodeConfigSection] = useState<ConfigSection>("prompt");
   const canvasRef = useRef<AgentFlowCanvasHandle>(null);
 
   const refreshAgents = useCallback(async () => {
@@ -254,133 +255,72 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
     (order: ChainEntry[]) => {
       if (!sessionId) return;
       const onlyMain = order.length === 1 && chainEntryType(order[0]) === MAIN;
-      void setAgentChain(onlyMain ? [] : order);
+      void setAgentChain(onlyMain && !entryHasOverrides(order[0]) ? [] : order);
     },
     [sessionId, setAgentChain],
   );
 
-  // ── per-node config editing ───────────────────────────────────────────────
-  // Opens the node config editor, pre-filled with the node's overrides (if any)
-  // or the agent's resolved defaults otherwise. Editing here only changes this
-  // node in the flow, never the global agent definition.
-  const openNodeConfig = useCallback(
+  const closeForm = () => setForm(EMPTY_FORM);
+
+  /** Open the full parameter editor for any chain node (including MainAgent). */
+  const openNodeEditor = useCallback(
     async (target: NodeConfigTarget) => {
-      const name = nameOf(target.agentType);
-      setNodeConfigSection("prompt");
-      setNodeConfig({
+      setFormSection("prompt");
+      setForm({
+        mode: "edit-node",
         nodeId: target.nodeId,
         agentType: target.agentType,
-        name,
+        name: nameOf(target.agentType),
+        whenToUse: "",
         systemPrompt: "",
         model: "",
         tools: [],
-        defSystemPrompt: "",
-        defModel: "",
-        defTools: [],
         loading: true,
       });
       try {
-        const def = await api.getAgentDefinition(target.agentType);
+        const defAgentType = resolveDefinitionAgentType(target.agentType, sessionAgentType);
+        const def = await api.getAgentDefinition(defAgentType);
         const defAll = def.tools.includes("*");
-        const defTools = defAll
-          ? [...allTools]
-          : def.tools.filter((tn) => allTools.includes(tn));
-        const ov = target.overrides;
-        const systemPrompt = ov?.system_prompt ?? def.system_prompt;
-        const model = (ov?.model ?? def.model ?? "") || "";
-        let tools: string[];
-        if (ov?.tools !== undefined) {
-          tools =
-            ov.tools.length === 0
-              ? [...allTools]
-              : ov.tools.filter((tn) => allTools.includes(tn));
-        } else {
-          tools = defTools;
-        }
-        setNodeConfig((c) =>
-          c && c.nodeId === target.nodeId
+        const defTools = resolveDefTools(def.tools, defAll, allTools);
+        const ov =
+          canvasRef.current?.getNodeOverrides(target.nodeId) ?? target.overrides;
+        setForm((f) =>
+          f.mode === "edit-node" && f.nodeId === target.nodeId
             ? {
-                ...c,
-                systemPrompt,
-                model,
-                tools,
-                defSystemPrompt: def.system_prompt,
-                defModel: def.model ?? "",
-                defTools,
+                ...f,
+                systemPrompt: ov?.system_prompt ?? def.system_prompt,
+                model: (ov?.model !== undefined ? ov.model ?? "" : def.model ?? "") || "",
+                tools: resolveSelectedTools(ov, defTools, allTools),
                 loading: false,
               }
-            : c,
+            : f,
         );
       } catch (e) {
         console.warn(e);
-        setNodeConfig((c) =>
-          c && c.nodeId === target.nodeId ? { ...c, loading: false } : c,
+        setForm((f) =>
+          f.mode === "edit-node" && f.nodeId === target.nodeId ? { ...f, loading: false } : f,
         );
       }
     },
-    [allTools, nameOf],
+    [allTools, nameOf, sessionAgentType],
   );
 
-  const closeNodeConfig = () => setNodeConfig(null);
-
-  const toggleNodeTool = useCallback((tool: string) => {
-    setNodeConfig((c) =>
-      c
-        ? {
-            ...c,
-            tools: c.tools.includes(tool)
-              ? c.tools.filter((t) => t !== tool)
-              : [...c.tools, tool],
-          }
-        : c,
-    );
-  }, []);
-
-  const nodeAllToolsSelected =
-    allTools.length > 0 && nodeConfig?.tools.length === allTools.length;
-  const toggleNodeAllTools = useCallback(() => {
-    setNodeConfig((c) =>
-      c
-        ? { ...c, tools: c.tools.length === allTools.length ? [] : [...allTools] }
-        : c,
-    );
-  }, [allTools]);
-
-  const submitNodeConfig = () => {
-    if (!nodeConfig) return;
-    const { nodeId, systemPrompt, model, tools, defSystemPrompt, defModel, defTools } =
-      nodeConfig;
-    const overrides: NodeOverrides = {};
-    if (systemPrompt !== defSystemPrompt) overrides.system_prompt = systemPrompt;
-    const modelTrim = model.trim();
-    if (modelTrim !== defModel) overrides.model = modelTrim || null;
-    if (!sameTools(tools, defTools)) overrides.tools = [...tools];
-    const has =
-      overrides.system_prompt !== undefined ||
-      overrides.model !== undefined ||
-      overrides.tools !== undefined;
-    canvasRef.current?.applyNodeOverrides(nodeId, has ? overrides : null);
-    setNodeConfig(null);
+  const resetNodeEditor = () => {
+    if (form.mode !== "edit-node" || !form.nodeId) return;
+    canvasRef.current?.applyNodeOverrides(form.nodeId, null);
+    closeForm();
   };
 
-  const resetNodeConfig = () => {
-    if (!nodeConfig) return;
-    canvasRef.current?.applyNodeOverrides(nodeConfig.nodeId, null);
-    setNodeConfig(null);
-  };
-
-  // New agents start with every available tool enabled (full access); the user
-  // can then uncheck tools to restrict the agent.
   const openNew = () => {
     setFormSection("basic");
     setForm({ ...EMPTY_FORM, mode: "new", tools: [...allTools] });
   };
+
   const openEditByType = useCallback(
     (agentType: string) => {
       const c = customs.find((x) => x.agent_type === agentType);
       if (!c) return;
       setFormSection("basic");
-      // An empty stored list means "all tools"; reflect that as everything checked.
       const tools = c.tools.length > 0 ? c.tools : [...allTools];
       setForm({
         mode: "edit",
@@ -390,11 +330,11 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
         systemPrompt: c.system_prompt,
         model: c.model ?? "",
         tools,
+        loading: false,
       });
     },
     [customs, allTools],
   );
-  const closeForm = () => setForm(EMPTY_FORM);
 
   const toggleTool = useCallback((tool: string) => {
     setForm((f) => {
@@ -415,10 +355,24 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
   }, [allTools]);
 
   const submitForm = async () => {
+    if (form.mode === "edit-node") {
+      if (!form.nodeId || form.loading) return;
+      // All selected → ["*"] (canonical wildcard). Otherwise persist the exact
+      // selection verbatim, so an empty selection means "no tools" rather than
+      // silently falling back to full access.
+      const tools = allToolsSelected ? ["*"] : [...form.tools];
+      const overrides: NodeOverrides = {
+        system_prompt: form.systemPrompt,
+        model: form.model.trim() || null,
+        tools,
+      };
+      canvasRef.current?.applyNodeOverrides(form.nodeId, overrides);
+      closeForm();
+      return;
+    }
+
     const name = form.name.trim();
     if (!name) return;
-    // When every tool is selected, persist an empty list so the agent keeps
-    // full access and automatically picks up tools added later.
     const tools = allToolsSelected ? [] : form.tools;
     try {
       if (form.mode === "new") {
@@ -466,6 +420,17 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
     [customs, refreshAgents, t],
   );
 
+  const isNodeEditor = form.mode === "edit-node";
+  const navSections = isNodeEditor ? NODE_PARAM_SECTIONS : FORM_SECTIONS;
+  const formTitle = isNodeEditor
+    ? t("agentFlow.nodeConfigTitle", { name: form.name })
+    : form.mode === "new"
+      ? t("agentFlow.newAgent")
+      : t("agentFlow.editAgent");
+  const saveDisabled = isNodeEditor
+    ? form.loading
+    : !form.name.trim();
+
   return (
     <>
       <AgentFlowCanvas
@@ -481,7 +446,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
         onRequestNewAgent={openNew}
         onEditAgent={openEditByType}
         onDeleteAgent={deleteByType}
-        onEditNodeConfig={openNodeConfig}
+        onEditNodeConfig={openNodeEditor}
       />
       {form.mode !== "closed" && (
         <div
@@ -500,14 +465,14 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
             onMouseDown={(e) => e.stopPropagation()}
           >
             <div className="modal-head">
-              <h3>{form.mode === "new" ? t("agentFlow.newAgent") : t("agentFlow.editAgent")}</h3>
+              <h3>{formTitle}</h3>
               <button type="button" className="close" onClick={closeForm}>
                 {t("agentFlow.cancel")}
               </button>
             </div>
             <div className="modal-body config-modal-body">
               <nav className="config-modal-nav">
-                {FORM_SECTIONS.map(({ id, labelKey, descKey, icon: Icon }) => (
+                {navSections.map(({ id, labelKey, descKey, icon: Icon }) => (
                   <button
                     key={id}
                     type="button"
@@ -523,9 +488,12 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
                     </span>
                   </button>
                 ))}
+                {isNodeEditor && (
+                  <div className="config-modal-nav-note">{t("agentFlow.nodeConfigHint")}</div>
+                )}
               </nav>
               <div className="config-modal-content" key={formSection}>
-                {formSection === "basic" && (
+                {formSection === "basic" && !isNodeEditor && (
                   <>
                     <div className="config-modal-section-head">
                       <h4 className="config-modal-section-title">{t("agentFlow.formNavBasic")}</h4>
@@ -563,6 +531,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
                     <textarea
                       className="field-input field-input--lg config-modal-prompt"
                       value={form.systemPrompt}
+                      disabled={form.loading}
                       spellCheck={false}
                       placeholder={t("agentFlow.formSystemPromptPlaceholder")}
                       onChange={(e) => setForm((f) => ({ ...f, systemPrompt: e.target.value }))}
@@ -580,6 +549,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
                         <span>{t("agentFlow.formModel")}</span>
                         <ModelOverrideSelect
                           value={form.model}
+                          disabled={form.loading}
                           providers={modelProviders}
                           t={t}
                           onChange={(model) => setForm((f) => ({ ...f, model }))}
@@ -602,7 +572,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
                           type="button"
                           className="agent-flow-tools-toggle"
                           onClick={toggleAllTools}
-                          disabled={allTools.length === 0}
+                          disabled={allTools.length === 0 || form.loading}
                         >
                           {allToolsSelected
                             ? t("agentFlow.toolsDeselectAll")
@@ -616,6 +586,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
                           tools={allTools}
                           selected={form.tools}
                           onToggle={toggleTool}
+                          disabled={form.loading}
                           t={t}
                         />
                       )}
@@ -626,157 +597,22 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
               </div>
             </div>
             <div className="modal-foot">
+              {isNodeEditor && (
+                <button type="button" className="btn" onClick={resetNodeEditor}>
+                  {t("agentFlow.nodeConfigReset")}
+                </button>
+              )}
+              {isNodeEditor && <span className="agent-flow-modal-foot-spacer" />}
               <button type="button" className="btn" onClick={closeForm}>
                 {t("agentFlow.cancel")}
               </button>
               <button
                 type="button"
                 className="btn primary"
-                disabled={!form.name.trim()}
+                disabled={saveDisabled}
                 onClick={() => void submitForm()}
               >
                 {form.mode === "new" ? t("agentFlow.create") : t("agentFlow.save")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {nodeConfig && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) closeNodeConfig();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") closeNodeConfig();
-          }}
-        >
-          <div
-            className="modal config-modal agent-flow-editor-modal"
-            role="dialog"
-            aria-modal="true"
-            onMouseDown={(e) => e.stopPropagation()}
-          >
-            <div className="modal-head">
-              <h3>{t("agentFlow.nodeConfigTitle", { name: nodeConfig.name })}</h3>
-              <button type="button" className="close" onClick={closeNodeConfig}>
-                {t("agentFlow.cancel")}
-              </button>
-            </div>
-            <div className="modal-body config-modal-body">
-              <nav className="config-modal-nav">
-                {NODE_CONFIG_SECTIONS.map(({ id, labelKey, descKey, icon: Icon }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={`config-modal-nav-item ${nodeConfigSection === id ? "active" : ""}`}
-                    onClick={() => setNodeConfigSection(id)}
-                  >
-                    <span className="config-modal-nav-icon">
-                      <Icon />
-                    </span>
-                    <span className="config-modal-nav-text">
-                      <span className="config-modal-nav-label">{t(labelKey)}</span>
-                      <span className="config-modal-nav-desc">{t(descKey)}</span>
-                    </span>
-                  </button>
-                ))}
-                <div className="config-modal-nav-note">{t("agentFlow.nodeConfigHint")}</div>
-              </nav>
-              <div className="config-modal-content" key={nodeConfigSection}>
-                {nodeConfigSection === "prompt" && (
-                  <>
-                    <div className="config-modal-section-head">
-                      <h4 className="config-modal-section-title">{t("agentFlow.formNavPrompt")}</h4>
-                      <p className="config-modal-section-desc">{t("agentFlow.formNavPromptDesc")}</p>
-                    </div>
-                    <textarea
-                      className="field-input field-input--lg config-modal-prompt"
-                      value={nodeConfig.systemPrompt}
-                      disabled={nodeConfig.loading}
-                      spellCheck={false}
-                      placeholder={t("agentFlow.formSystemPromptPlaceholder")}
-                      onChange={(e) =>
-                        setNodeConfig((c) => (c ? { ...c, systemPrompt: e.target.value } : c))
-                      }
-                    />
-                  </>
-                )}
-                {nodeConfigSection === "model" && (
-                  <>
-                    <div className="config-modal-section-head">
-                      <h4 className="config-modal-section-title">{t("agentFlow.formNavModel")}</h4>
-                      <p className="config-modal-section-desc">{t("agentFlow.formNavModelDesc")}</p>
-                    </div>
-                    <div className="agent-flow-form agent-flow-form--page">
-                      <label className="agent-flow-field">
-                        <span>{t("agentFlow.formModel")}</span>
-                        <ModelOverrideSelect
-                          value={nodeConfig.model}
-                          disabled={nodeConfig.loading}
-                          providers={modelProviders}
-                          t={t}
-                          onChange={(model) =>
-                            setNodeConfig((c) => (c ? { ...c, model } : c))
-                          }
-                        />
-                        <p className="agent-flow-tools-hint">{t("agentFlow.formModelHint")}</p>
-                      </label>
-                    </div>
-                  </>
-                )}
-                {nodeConfigSection === "tools" && (
-                  <>
-                    <div className="config-modal-section-head">
-                      <h4 className="config-modal-section-title">{t("agentFlow.formNavTools")}</h4>
-                      <p className="config-modal-section-desc">{t("agentFlow.formNavToolsDesc")}</p>
-                    </div>
-                    <div className="agent-flow-field">
-                      <div className="agent-flow-tools-head">
-                        <span>{t("agentFlow.formTools")}</span>
-                        <button
-                          type="button"
-                          className="agent-flow-tools-toggle"
-                          onClick={toggleNodeAllTools}
-                          disabled={allTools.length === 0 || nodeConfig.loading}
-                        >
-                          {nodeAllToolsSelected
-                            ? t("agentFlow.toolsDeselectAll")
-                            : t("agentFlow.toolsSelectAll")}
-                        </button>
-                      </div>
-                      {allTools.length === 0 ? (
-                        <p className="agent-flow-tools-empty">{t("agentFlow.toolsEmpty")}</p>
-                      ) : (
-                        <AgentToolsList
-                          tools={allTools}
-                          selected={nodeConfig.tools}
-                          onToggle={toggleNodeTool}
-                          disabled={nodeConfig.loading}
-                          t={t}
-                        />
-                      )}
-                      <p className="agent-flow-tools-hint">{t("agentFlow.formToolsHint")}</p>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-            <div className="modal-foot">
-              <button type="button" className="btn" onClick={resetNodeConfig}>
-                {t("agentFlow.nodeConfigReset")}
-              </button>
-              <span className="agent-flow-modal-foot-spacer" />
-              <button type="button" className="btn" onClick={closeNodeConfig}>
-                {t("agentFlow.cancel")}
-              </button>
-              <button
-                type="button"
-                className="btn primary"
-                disabled={nodeConfig.loading}
-                onClick={submitNodeConfig}
-              >
-                {t("agentFlow.save")}
               </button>
             </div>
           </div>
