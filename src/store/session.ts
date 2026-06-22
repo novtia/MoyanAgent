@@ -158,6 +158,49 @@ function isGenerationCancelled(e: unknown) {
   return String(e).includes("generation cancelled");
 }
 
+/** Bumped when the user stops, deletes, or resends — stale in-flight runs must not persist/reload. */
+const generationEpochBySession = new Map<string, number>();
+/** Tracks backend `generate_image` / `regenerate_image` invokes still settling after cancel. */
+const generationFlights = new Map<string, Promise<void>>();
+
+function getGenerationEpoch(sessionId: string) {
+  return generationEpochBySession.get(sessionId) ?? 0;
+}
+
+function bumpGenerationEpoch(sessionId: string) {
+  const next = getGenerationEpoch(sessionId) + 1;
+  generationEpochBySession.set(sessionId, next);
+  streamingBuffers.delete(sessionId);
+  const state = useSession.getState();
+  if (state.activeId === sessionId && state.active) {
+    useSession.setState({
+      active: {
+        ...state.active,
+        messages: state.active.messages.filter((m) => !m.id.startsWith("tmp-assistant-")),
+      },
+    });
+  }
+  return next;
+}
+
+function trackGenerationFlight(sessionId: string, run: Promise<unknown>): Promise<void> {
+  const flight = run.then(
+    () => {},
+    () => {},
+  ).finally(() => {
+    if (generationFlights.get(sessionId) === flight) {
+      generationFlights.delete(sessionId);
+    }
+  });
+  generationFlights.set(sessionId, flight);
+  return flight;
+}
+
+async function waitForGenerationIdle(sessionId: string) {
+  const pending = generationFlights.get(sessionId);
+  if (pending) await pending;
+}
+
 /**
  * Extract partial streaming content for the in-flight assistant message
  * of a given session. Returns:
@@ -264,6 +307,31 @@ export const useSession = create<SessionStore>((set, get) => {
       console.warn(e);
     }
   };
+
+  /** Cancel in-flight generation and wait for the invoke to settle. */
+  const abortInFlightGeneration = async (sessionId: string) => {
+    const busy = !!get().busyBySession[sessionId];
+    const hasFlight = generationFlights.has(sessionId);
+    if (!busy && !hasFlight) return;
+
+    if (busy && !cancellingSessions.has(sessionId)) {
+      cancellingSessions.add(sessionId);
+      setSessionBusy(sessionId, false);
+      freezeStreamingUi(sessionId);
+      void api.cancelGeneration(sessionId).catch((e) => {
+        console.warn("[atelier] cancel_generation failed", e);
+      });
+    }
+    bumpGenerationEpoch(sessionId);
+    await waitForGenerationIdle(sessionId);
+  };
+
+  /** Message ids after `idx` that exist in the DB (skip optimistic tmp rows). */
+  const persistedIdsAfter = (messages: MessageAbs[], idx: number) =>
+    messages
+      .slice(idx + 1)
+      .filter((msg) => !msg.id.startsWith("tmp-"))
+      .map((msg) => msg.id);
 
   return ({
   sessions: [],
@@ -677,14 +745,29 @@ export const useSession = create<SessionStore>((set, get) => {
   },
 
   deleteMessage: async (messageId) => {
-    const sid = get().active?.session.id;
-    try {
-      await api.deleteMessage(messageId);
-    } catch (e) {
-      console.warn(e);
-      return;
+    const a = get().active;
+    if (!a) return;
+    const sid = a.session.id;
+    const idx = a.messages.findIndex((x) => x.id === messageId);
+    if (idx < 0) return;
+    const target = a.messages[idx];
+
+    await abortInFlightGeneration(sid);
+
+    const toDelete = [messageId];
+    // Same branch cut as resend: removing a user turn drops everything after it.
+    if (target.role === "user") {
+      toDelete.push(...persistedIdsAfter(a.messages, idx));
     }
-    if (sid) await reloadActiveSessionIfViewing(sid);
+
+    for (const id of toDelete) {
+      try {
+        await api.deleteMessage(id);
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+    await reloadActiveSessionIfViewing(sid);
     await get().refreshList();
   },
 
@@ -699,16 +782,12 @@ export const useSession = create<SessionStore>((set, get) => {
     const text = (m.text || "").trim();
     if (!text) return;
     if (get().busyBySession[sid]) return;
-
-    const toDelete: string[] = [];
-    for (let j = idx + 1; j < a.messages.length; j++) {
-      const next = a.messages[j];
-      if (next.role === "assistant" || next.role === "error") {
-        toDelete.push(next.id);
-      } else {
-        break;
-      }
+    if (generationFlights.has(sid)) {
+      bumpGenerationEpoch(sid);
+      await waitForGenerationIdle(sid);
     }
+
+    const toDelete = persistedIdsAfter(a.messages, idx);
 
     for (const id of toDelete) {
       try {
@@ -717,10 +796,10 @@ export const useSession = create<SessionStore>((set, get) => {
         console.warn(e);
       }
     }
-    updateActiveSession(sid, (active) => ({
-      ...active,
-      messages: active.messages.filter((x) => !toDelete.includes(x.id)),
-    }));
+
+    bumpGenerationEpoch(sid);
+    await reloadActiveSessionIfViewing(sid);
+    const epoch = getGenerationEpoch(sid);
 
     const c = get().composer;
     const canReason = activeModelCapabilities().includes("reasoning");
@@ -731,35 +810,42 @@ export const useSession = create<SessionStore>((set, get) => {
         : null;
     setSessionBusy(sid, true);
     ensureGenerationStreamListener();
-    try {
-      await api.regenerateImage(
-        {
-          session_id: sid,
-          user_message_id: messageId,
-          aspect_ratio: c.aspectRatio,
-          image_size: c.imageSize,
-          thinking_enabled: thinkingEnabled,
-          thinking_effort: thinkingEffort,
-        },
-        a.session,
-      );
-      await reloadActiveSessionIfViewing(sid);
-      await get().refreshList();
-    } catch (e: unknown) {
-      if (isGenerationCancelled(e)) {
+    const run = (async () => {
+      try {
+        await api.regenerateImage(
+          {
+            session_id: sid,
+            user_message_id: messageId,
+            aspect_ratio: c.aspectRatio,
+            image_size: c.imageSize,
+            thinking_enabled: thinkingEnabled,
+            thinking_effort: thinkingEffort,
+          },
+          a.session,
+        );
+        if (epoch !== getGenerationEpoch(sid)) return;
+        await reloadActiveSessionIfViewing(sid);
+        await get().refreshList();
+      } catch (e: unknown) {
+        if (epoch !== getGenerationEpoch(sid)) return;
+        if (isGenerationCancelled(e)) {
+          await persistPartialStreamIfAny(sid);
+          await reloadActiveSessionIfViewing(sid);
+          await get().refreshList();
+          return;
+        }
+        console.error(e);
         await persistPartialStreamIfAny(sid);
         await reloadActiveSessionIfViewing(sid);
         await get().refreshList();
-        return;
+      } finally {
+        cancellingSessions.delete(sid);
+        if (epoch === getGenerationEpoch(sid)) {
+          setSessionBusy(sid, false);
+        }
       }
-      console.error(e);
-      await persistPartialStreamIfAny(sid);
-      await reloadActiveSessionIfViewing(sid);
-      await get().refreshList();
-    } finally {
-      cancellingSessions.delete(sid);
-      setSessionBusy(sid, false);
-    }
+    })();
+    await trackGenerationFlight(sid, run);
   },
 
   editMessage: async (messageId, text, imageIds) => {
@@ -799,6 +885,8 @@ export const useSession = create<SessionStore>((set, get) => {
     if (c.pendingAttachments.length > 0) return;
     const sid = await get().ensureActive();
     if (get().busyBySession[sid]) return;
+    await waitForGenerationIdle(sid);
+    const epoch = getGenerationEpoch(sid);
 
     const optimisticId = `tmp-user-${Date.now()}`;
     const optimisticUser: MessageAbs = {
@@ -845,43 +933,50 @@ export const useSession = create<SessionStore>((set, get) => {
     setSessionBusy(sid, true);
     ensureGenerationStreamListener();
 
-    try {
-      const active = get().active;
-      const sessionForLog =
-        active && active.session.id === sid ? active.session : null;
-      await api.generateImage(
-        {
-          session_id: sid,
-          prompt: text,
-          attachment_ids: attachmentIds,
-          aspect_ratio: aspectRatio,
-          image_size: imageSize,
-          thinking_enabled: thinkingEnabled,
-          thinking_effort: thinkingEffort,
-        },
-        sessionForLog,
-      );
-      await reloadActiveSessionIfViewing(sid);
-      await get().refreshList();
-    } catch (e: unknown) {
-      if (isGenerationCancelled(e)) {
-        await persistPartialStreamIfAny(sid);
-        try {
-          await reloadActiveSessionIfViewing(sid);
-          await get().refreshList();
-        } catch (reloadError) {
-          console.warn(reloadError);
+    const run = (async () => {
+      try {
+        const active = get().active;
+        const sessionForLog =
+          active && active.session.id === sid ? active.session : null;
+        await api.generateImage(
+          {
+            session_id: sid,
+            prompt: text,
+            attachment_ids: attachmentIds,
+            aspect_ratio: aspectRatio,
+            image_size: imageSize,
+            thinking_enabled: thinkingEnabled,
+            thinking_effort: thinkingEffort,
+          },
+          sessionForLog,
+        );
+        if (epoch !== getGenerationEpoch(sid)) return;
+        await reloadActiveSessionIfViewing(sid);
+        await get().refreshList();
+      } catch (e: unknown) {
+        if (epoch !== getGenerationEpoch(sid)) return;
+        if (isGenerationCancelled(e)) {
+          await persistPartialStreamIfAny(sid);
+          try {
+            await reloadActiveSessionIfViewing(sid);
+            await get().refreshList();
+          } catch (reloadError) {
+            console.warn(reloadError);
+          }
+          return;
         }
-        return;
+        console.error(e);
+        await persistPartialStreamIfAny(sid);
+        await reloadActiveSessionIfViewing(sid);
+        await get().refreshList();
+      } finally {
+        cancellingSessions.delete(sid);
+        if (epoch === getGenerationEpoch(sid)) {
+          setSessionBusy(sid, false);
+        }
       }
-      console.error(e);
-      await persistPartialStreamIfAny(sid);
-      await reloadActiveSessionIfViewing(sid);
-      await get().refreshList();
-    } finally {
-      cancellingSessions.delete(sid);
-      setSessionBusy(sid, false);
-    }
+    })();
+    await trackGenerationFlight(sid, run);
   },
 
   interrupt: () => {
@@ -895,6 +990,7 @@ export const useSession = create<SessionStore>((set, get) => {
     cancellingSessions.add(sid);
     // Stop accepting stream deltas and release the send button immediately.
     setSessionBusy(sid, false);
+    freezeStreamingUi(sid);
     void api.cancelGeneration(sid).catch((e) => {
       console.warn("[atelier] cancel_generation failed", e);
     });
@@ -1052,6 +1148,26 @@ function syncStreamingMessage(sessionId: string, buf: StreamBuffer) {
       messages,
     },
   });
+}
+
+/** Stop streaming indicators and freeze in-flight tool cards the moment the user hits Stop. */
+function freezeStreamingUi(sessionId: string) {
+  const buf = streamingBuffers.get(sessionId);
+  if (!buf) return;
+  const nextBlocks = buf.blocks.map((b) => {
+    if (b.type === "tool_use" && b.status === "pending") {
+      return {
+        ...b,
+        status: "error" as const,
+        is_error: true,
+        output: "Cancelled",
+      };
+    }
+    return { ...b };
+  });
+  const next: StreamBuffer = { ...buf, blocks: nextBlocks };
+  streamingBuffers.set(sessionId, next);
+  syncStreamingMessage(sessionId, next);
 }
 
 // ─── Stream listeners ─────────────────────────────────────────────────────────

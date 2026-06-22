@@ -334,9 +334,17 @@ function ThinkingBlock({
 function AssistantContent({
   blocks,
   isStreaming,
+  suppressText,
 }: {
   blocks: AssistantBlock[];
   isStreaming: boolean;
+  /**
+   * When the message text was manually edited it diverges from the text held in
+   * `blocks`. In that case the edited `m.text` is rendered separately, so the
+   * original text blocks must be suppressed here to avoid showing stale content
+   * alongside the edit.
+   */
+  suppressText?: boolean;
 }) {
   const lastThinkingIdx = useMemo(() => {
     for (let i = blocks.length - 1; i >= 0; i--) {
@@ -373,7 +381,7 @@ function AssistantContent({
           );
         }
         if (block.type === "text") {
-          if (!block.content) return null;
+          if (suppressText || !block.content) return null;
           return (
             <div key={`text:${i}`} className="text">
               {block.content}
@@ -941,7 +949,9 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
   const isUser = m.role === "user";
   const isAssistant = m.role === "assistant";
   const isError = m.role === "error";
-  const isStreamingDraft = m.id.startsWith("tmp-assistant-");
+  const busyBySession = useSession((s) => s.busyBySession);
+  const isStreamingDraft =
+    m.id.startsWith("tmp-assistant-") && !!busyBySession[m.session_id];
   const hasText = !!(m.text && m.text.trim());
   const canEditUser = isUser && (hasText || inputs.length > 0);
   const canEditAssistant = isAssistant && !isStreamingDraft;
@@ -1243,6 +1253,7 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
             <AssistantContent
               blocks={blocks as AssistantBlock[]}
               isStreaming={isStreamingDraft}
+              suppressText={showMessageText}
             />
           )}
 

@@ -52,8 +52,18 @@ interface ComposerProps {
 
 export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: ComposerProps) {
   const { t } = useTranslation();
-  const composer = useSession((s) => s.composer);
-  const setPrompt = useSession((s) => s.setPrompt);
+  // Subscribe to composer fields granularly (not the whole `composer` object)
+  // so that typing — which replaces the composer object on every keystroke —
+  // doesn't re-render this heavy component. The prompt text itself lives in the
+  // isolated `ComposerTextarea` leaf below.
+  const attachments = useSession((s) => s.composer.attachments);
+  const pendingAttachments = useSession((s) => s.composer.pendingAttachments);
+  const aspectRatio = useSession((s) => s.composer.aspectRatio);
+  const imageSize = useSession((s) => s.composer.imageSize);
+  const thinkingEnabled = useSession((s) => s.composer.thinkingEnabled);
+  const thinkingEffort = useSession((s) => s.composer.thinkingEffort);
+  const chatMode = useSession((s) => s.composer.chatMode);
+  const promptEmpty = useSession((s) => s.composer.prompt.trim().length === 0);
   const setAspectRatio = useSession((s) => s.setAspectRatio);
   const setImageSize = useSession((s) => s.setImageSize);
   const setThinkingEnabled = useSession((s) => s.setThinkingEnabled);
@@ -88,8 +98,8 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const [dragOver, setDragOver] = useState(false);
   const dragDepth = useRef(0);
 
-  const hasPendingAttachments = composer.pendingAttachments.length > 0;
-  const hasAttachments = composer.attachments.length > 0 || hasPendingAttachments;
+  const hasPendingAttachments = pendingAttachments.length > 0;
+  const hasAttachments = attachments.length > 0 || hasPendingAttachments;
 
   const enabledProviders = useMemo(
     () =>
@@ -100,8 +110,8 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   );
   const modelName = shortModelName(settings?.model);
   const modelLabel = modelName.length > 12 ? `${modelName.slice(0, 12)}…` : modelName;
-  const ratioLabel = composer.aspectRatio === "auto" ? t("composer.ratioAuto") : composer.aspectRatio;
-  const sizeLabel = composer.imageSize === "auto" ? t("composer.sizeAuto") : composer.imageSize;
+  const ratioLabel = aspectRatio === "auto" ? t("composer.ratioAuto") : aspectRatio;
+  const sizeLabel = imageSize === "auto" ? t("composer.sizeAuto") : imageSize;
 
   const activeCapabilities = useMemo(() => {
     const provider = (settings?.model_services ?? []).find(
@@ -113,8 +123,8 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const showImageParams = activeCapabilities.includes("image");
   const showThinking = activeCapabilities.includes("reasoning");
 
-  const thinkingLabel = composer.thinkingEnabled
-    ? composer.thinkingEffort.trim() || t("composer.thinkingDefault")
+  const thinkingLabel = thinkingEnabled
+    ? thinkingEffort.trim() || t("composer.thinkingDefault")
     : t("composer.thinkingOff");
 
   const applyThinking = (enabled: boolean, effort: string) => {
@@ -268,7 +278,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const onSubmit = async () => {
     if (busy) return;
     if (hasPendingAttachments) return;
-    if (!composer.prompt.trim()) return;
+    if (!useSession.getState().composer.prompt.trim()) return;
     await send();
   };
   const onSendButtonClick = () => {
@@ -370,7 +380,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
 
         {hasAttachments && (
           <div className="composer-attachments">
-            {composer.pendingAttachments.map((a) => (
+            {pendingAttachments.map((a) => (
               <div className="attachment pending" key={a.id} title={a.label}>
                 <div className="attachment-placeholder" aria-hidden>
                   <span className="attachment-spinner" />
@@ -378,7 +388,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                 <span className="badge">{t("composer.uploading")}</span>
               </div>
             ))}
-            {composer.attachments.map((a) => (
+            {attachments.map((a) => (
               <div className="attachment" key={a.image_id} title={a.rel_path}>
                 <img src={srcOf(a.thumb_abs_path || a.abs_path)} alt="" />
                 <button
@@ -414,14 +424,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
               ? t("composer.placeholderWithAttachments")
               : t("composer.placeholderDefault")
           }
-          value={composer.prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              onSubmit();
-            }
-          }}
+          onSubmit={onSubmit}
           disabled={busy}
         />
 
@@ -430,12 +433,12 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
             <div className="composer-mode-wrap" ref={modeRef}>
               <button
                 type="button"
-                className={`composer-pill composer-mode-pill ${composer.chatMode === "plan" ? "is-plan" : ""} ${modeOpen ? "active" : ""}`}
+                className={`composer-pill composer-mode-pill ${chatMode === "plan" ? "is-plan" : ""} ${modeOpen ? "active" : ""}`}
                 title={t("composer.modePickerTitle")}
                 onClick={() => setModeOpen((v) => !v)}
               >
                 <span className="composer-mode-label">
-                  {composer.chatMode === "plan" ? t("composer.modePlan") : t("composer.modeAgent")}
+                  {chatMode === "plan" ? t("composer.modePlan") : t("composer.modeAgent")}
                 </span>
                 <CaretIcon />
               </button>
@@ -449,7 +452,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                   <button
                     type="button"
                     role="option"
-                    className={`composer-mode-option ${composer.chatMode === "agent" ? "active" : ""}`}
+                    className={`composer-mode-option ${chatMode === "agent" ? "active" : ""}`}
                     onClick={() => {
                       void setChatMode("agent");
                       setModeOpen(false);
@@ -461,7 +464,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                   <button
                     type="button"
                     role="option"
-                    className={`composer-mode-option ${composer.chatMode === "plan" ? "active" : ""}`}
+                    className={`composer-mode-option ${chatMode === "plan" ? "active" : ""}`}
                     onClick={() => {
                       void setChatMode("plan");
                       setModeOpen(false);
@@ -485,7 +488,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
               <div className="composer-thinking" ref={thinkingRef}>
                 <button
                   type="button"
-                  className={`composer-pill ${composer.thinkingEnabled ? "is-thinking" : ""} ${thinkingOpen ? "active" : ""}`}
+                  className={`composer-pill ${thinkingEnabled ? "is-thinking" : ""} ${thinkingOpen ? "active" : ""}`}
                   title={t("composer.thinkingTitle")}
                   onClick={() => setThinkingOpen((v) => !v)}
                 >
@@ -503,15 +506,15 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                     <button
                       type="button"
                       role="option"
-                      className={`composer-mode-option ${!composer.thinkingEnabled ? "active" : ""}`}
+                      className={`composer-mode-option ${!thinkingEnabled ? "active" : ""}`}
                       onClick={() => applyThinking(false, "")}
                     >
                       <span className="composer-mode-option-title">{t("composer.thinkingOff")}</span>
                     </button>
                     {THINKING_EFFORTS.map((opt) => {
                       const isActive =
-                        composer.thinkingEnabled &&
-                        (composer.thinkingEffort.trim() || "") === opt.value;
+                        thinkingEnabled &&
+                        (thinkingEffort.trim() || "") === opt.value;
                       return (
                         <button
                           key={opt.value || "default"}
@@ -550,7 +553,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                         <button
                           key={r}
                           type="button"
-                          className={`chip ${composer.aspectRatio === r ? "active" : ""}`}
+                          className={`chip ${aspectRatio === r ? "active" : ""}`}
                           onClick={() => {
                             setAspectRatio(r);
                             update({ default_aspect_ratio: r });
@@ -561,12 +564,12 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                       ))}
                     </div>
                     <div className="hint">
-                      {composer.aspectRatio === "auto"
+                      {aspectRatio === "auto"
                         ? t("composer.ratioHintAuto")
                         : t("composer.ratioHint", {
-                            ratio: composer.aspectRatio,
+                            ratio: aspectRatio,
                             pixels:
-                              RATIO_PIXEL_HINT[composer.aspectRatio] || composer.aspectRatio,
+                              RATIO_PIXEL_HINT[aspectRatio] || aspectRatio,
                           })}
                     </div>
                   </div>
@@ -578,7 +581,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                         <button
                           key={s}
                           type="button"
-                          className={`chip ${composer.imageSize === s ? "active" : ""}`}
+                          className={`chip ${imageSize === s ? "active" : ""}`}
                           onClick={() => {
                             setImageSize(s);
                             update({ default_image_size: s });
@@ -660,7 +663,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
               className={`send-btn ${busy ? "busy" : ""}`}
               type="button"
               onClick={onSendButtonClick}
-              disabled={!busy && (hasPendingAttachments || !composer.prompt.trim())}
+              disabled={!busy && (hasPendingAttachments || promptEmpty)}
               title={
                 busy
                   ? t("composer.sendInterrupt")
