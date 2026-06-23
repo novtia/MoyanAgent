@@ -232,7 +232,14 @@
   overflow: hidden;
   box-sizing: border-box;
   user-select: none;
-  font-family: 'Instrument Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+  /* Fixed gutter typography — never follow --chat-font-* reader settings. */
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 11px;
+  letter-spacing: 0;
+  color: var(--ink-mute);
 }
 
 .reader-editor-wrap--plain .reader-editor-gutter {
@@ -243,11 +250,25 @@
   display: flex;
   align-items: flex-start;
   justify-content: flex-end;
-  min-height: 1lh;
+  box-sizing: border-box;
+  min-height: 11px;
   padding-right: 2px;
-  color: var(--ink-mute);
   opacity: 0.55;
+  font: inherit;
+  font-size: 11px;
+  line-height: 11px;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
+  overflow: hidden;
+}
+
+.reader-editor-gutter-num {
+  display: block;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 11px;
+  line-height: 11px;
+  font-weight: 400;
 }
 
 .reader-editor-block {
@@ -569,12 +590,15 @@
   min-width: 28px;
   text-align: right;
   user-select: none;
-  color: var(--ink-mute);
   opacity: 0.55;
   padding: 0 4px 0 6px;
-  font-family: 'Instrument Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
-  font-size: 0.92em;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  font-size: 11px;
+  line-height: 11px;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
+  color: var(--ink-mute);
 }
 
 .reader-diff-gutter {

@@ -137,6 +137,8 @@ impl FileEditTool {
             spec: ToolSpec {
                 name: EDIT_TOOL.to_string(),
                 description: "Edit a numbered paragraph in a file (Read labels `[P001]`, …; one line = one paragraph). \
+                    Read the file once up front; then Edit from memory — do NOT Read before each Edit. \
+                    Ranged Read only when Edit fails and you need the exact snippet. \
                     Three modes: (1) Insert after P00N — set `paragraph_number` to N, leave \
                     `original_content` empty, put new text in `modified_content` (one or more \
                     lines). (2) Replace a fragment inside P00N \

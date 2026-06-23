@@ -162,19 +162,22 @@ export function buildDocumentDiffSegments(
   const hunks: HunkPlacement[] = blocks.map((block) => {
     const rows = buildDiffRows(block.before, block.after);
     const newLines = block.after.split("\n");
-    let start = findLineSubsequence(tabLines, newLines);
-    if (start < 0 && block.after.trim()) {
-      start = findLineSubsequence(block.textAfter.split("\n"), newLines);
-    }
-    if (start < 0 && block.paragraphNumber != null) {
+    const oldLines = block.before.split("\n");
+    let start = -1;
+    if (block.paragraphNumber != null) {
       start =
         block.before.trim() === "" && block.after.trim() !== ""
           ? lineAfterParagraph(tabText, block.paragraphNumber)
           : paragraphStartLine(tabText, block.paragraphNumber);
     }
+    if (start < 0 && block.after.trim()) {
+      start = findLineSubsequence(tabLines, newLines);
+    }
     if (start < 0) start = 0;
 
-    const skip = block.after.trim() ? newLines.length : Math.max(block.before.split("\n").length, 1);
+    const skip = block.after.trim()
+      ? newLines.length
+      : Math.max(oldLines.length, 1);
     return {
       blockId: block.id,
       rows,
@@ -229,19 +232,22 @@ export function buildPendingDiffLineRanges(
 
   return blocks.map((block) => {
     const newLines = block.after.split("\n");
-    let start = findLineSubsequence(tabLines, newLines);
-    if (start < 0 && block.after.trim()) {
-      start = findLineSubsequence(block.textAfter.split("\n"), newLines);
-    }
-    if (start < 0 && block.paragraphNumber != null) {
+    const oldLines = block.before.split("\n");
+    let start = -1;
+    if (block.paragraphNumber != null) {
       start =
         block.before.trim() === "" && block.after.trim() !== ""
           ? lineAfterParagraph(tabText, block.paragraphNumber)
           : paragraphStartLine(tabText, block.paragraphNumber);
     }
+    if (start < 0 && block.after.trim()) {
+      start = findLineSubsequence(tabLines, newLines);
+    }
     if (start < 0) start = 0;
 
-    const lineCount = block.after.trim() ? newLines.length : Math.max(block.before.split("\n").length, 1);
+    const lineCount = block.after.trim()
+      ? newLines.length
+      : Math.max(oldLines.length, 1);
     const endLine = Math.min(tabLines.length - 1, start + lineCount - 1);
 
     return {
@@ -267,6 +273,7 @@ export type EditorDisplaySegment =
       kind: "hunk";
       blockId: string;
       before: string;
+      after: string;
       tabStart: number;
       tabEnd: number;
       paragraphNumber?: number;
@@ -301,6 +308,7 @@ export function buildEditorDisplaySegments(
       kind: "hunk",
       blockId: range.blockId,
       before: range.before,
+      after: range.after,
       tabStart: range.startLine,
       tabEnd: range.endLine,
       paragraphNumber: block?.paragraphNumber,

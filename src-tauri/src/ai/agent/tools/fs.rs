@@ -21,12 +21,51 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use crate::ai::agent::tools::paragraph::{number_paragraphs, paragraph_count};
+use crate::ai::agent::tools::paragraph::{number_paragraph_range, paragraph_count};
 use crate::ai::agent::tools::text_decode::decode_file_bytes;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
 const TOOL_NAME: &str = "Read";
+
+fn parse_optional_paragraph(v: Option<&Value>, field: &str) -> AppResult<Option<usize>> {
+    let Some(val) = v else {
+        return Ok(None);
+    };
+    if val.is_null() {
+        return Ok(None);
+    }
+    let n = val.as_i64().ok_or_else(|| {
+        AppError::Invalid(format!("Read: `{field}` must be a positive integer"))
+    })?;
+    if n < 1 {
+        return Err(AppError::Invalid(format!(
+            "Read: `{field}` must be >= 1"
+        )));
+    }
+    Ok(Some(n as usize))
+}
+
+fn resolve_paragraph_range(
+    paragraph_from: Option<usize>,
+    paragraph_to: Option<usize>,
+) -> AppResult<Option<(usize, usize)>> {
+    match (paragraph_from, paragraph_to) {
+        (None, None) => Ok(None),
+        (Some(from), None) => Ok(Some((from, from))),
+        (Some(from), Some(to)) => {
+            if to < from {
+                return Err(AppError::Invalid(format!(
+                    "Read: `paragraph_to` ({to}) must be >= `paragraph_from` ({from})"
+                )));
+            }
+            Ok(Some((from, to)))
+        }
+        (None, Some(to)) => Err(AppError::Invalid(format!(
+            "Read: `paragraph_from` is required when `paragraph_to` is {to}"
+        ))),
+    }
+}
 
 #[derive(Clone)]
 pub struct FileReadTool {
@@ -45,10 +84,11 @@ impl FileReadTool {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
                 description: "Read a text file from the local filesystem. \
-                    Returns the full file content (never truncated) with each line \
-                    prefixed by a label `[P001]`, `[P002]`, … (one line = one paragraph; \
-                    empty lines are numbered too). Use these labels with Edit's \
-                    `paragraph_number`. Supports UTF-8, UTF-16, and on Windows GBK/ANSI."
+                    Returns file content with each line prefixed by `[P001]`, `[P002]`, … \
+                    (one line = one paragraph). Read the target file once at the start of \
+                    a prose task (full file is fine). Use ranged Read (`paragraph_from`, \
+                    optional `paragraph_to`) ONLY when Edit failed and you need the exact \
+                    paragraph text to fix `original_content`. Do not re-read before every Edit."
                     .to_string(),
                 schema: serde_json::json!({
                     "type": "object",
@@ -56,6 +96,16 @@ impl FileReadTool {
                         "path": {
                             "type": "string",
                             "description": "Absolute path to the file to read."
+                        },
+                        "paragraph_from": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "First paragraph to return (1-based, inclusive). Omit to read the full file."
+                        },
+                        "paragraph_to": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Last paragraph to return (1-based, inclusive). Defaults to `paragraph_from` when omitted."
                         }
                     },
                     "required": ["path"]
@@ -80,6 +130,9 @@ impl Tool for FileReadTool {
         if path.trim().is_empty() {
             return Err(AppError::Invalid("Read: `path` must be non-empty".into()));
         }
+        let from = parse_optional_paragraph(input.get("paragraph_from"), "paragraph_from")?;
+        let to = parse_optional_paragraph(input.get("paragraph_to"), "paragraph_to")?;
+        resolve_paragraph_range(from, to)?;
         Ok(())
     }
 
@@ -107,10 +160,46 @@ impl Tool for FileReadTool {
             let bytes = std::fs::read(&canonical)
                 .map_err(|e| AppError::Other(format!("Read: open {:?}: {e}", canonical)))?;
             let text = decode_file_bytes(&bytes);
-            let numbered = number_paragraphs(&text);
-            let chars = text.chars().filter(|c| !c.is_whitespace()).count();
-            let lines = text.lines().count();
-            let paragraphs = paragraph_count(&text);
+            let paragraphs_total = paragraph_count(&text);
+
+            let from = parse_optional_paragraph(invocation.input.get("paragraph_from"), "paragraph_from")?;
+            let to = parse_optional_paragraph(invocation.input.get("paragraph_to"), "paragraph_to")?;
+            let range = resolve_paragraph_range(from, to)?;
+
+            let (paragraph_from, paragraph_to) = match range {
+                None => (1, paragraphs_total),
+                Some((f, t)) => {
+                    if f == 0 || f > paragraphs_total {
+                        return Ok(ToolResult::error(format!(
+                            "Read: `paragraph_from` {f} out of range (file has {paragraphs_total} paragraphs)"
+                        )));
+                    }
+                    if t > paragraphs_total {
+                        return Ok(ToolResult::error(format!(
+                            "Read: `paragraph_to` {t} out of range (file has {paragraphs_total} paragraphs)"
+                        )));
+                    }
+                    (f, t)
+                }
+            };
+
+            let numbered = number_paragraph_range(&text, paragraph_from, paragraph_to);
+            let slice_text: String = text
+                .split('\n')
+                .enumerate()
+                .filter_map(|(i, line)| {
+                    let n = i + 1;
+                    if n >= paragraph_from && n <= paragraph_to {
+                        Some(line)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            let chars = slice_text.chars().filter(|c| !c.is_whitespace()).count();
+            let paragraphs_returned = paragraph_to - paragraph_from + 1;
+            let ranged = range.is_some();
 
             // Record both for nested-memory injection and for the read
             // de-dup set on the active context.
@@ -125,8 +214,12 @@ impl Tool for FileReadTool {
                 "path": canonical.to_string_lossy(),
                 "bytes": bytes.len(),
                 "chars": chars,
-                "lines": lines,
-                "paragraphs": paragraphs,
+                "lines": paragraphs_returned,
+                "paragraphs_total": paragraphs_total,
+                "paragraph_from": paragraph_from,
+                "paragraph_to": paragraph_to,
+                "paragraphs_returned": paragraphs_returned,
+                "ranged": ranged,
                 "text": numbered,
             })))
         })

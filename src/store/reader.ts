@@ -155,6 +155,44 @@ export function applyParagraphEdit(
   return paragraphs.join("\n");
 }
 
+/** Undo one Edit on in-memory text (inverse of `applyParagraphEdit`). */
+export function revertParagraphEdit(
+  fileText: string,
+  paragraphNumber: number,
+  originalContent: string,
+  modifiedContent: string,
+): string | null {
+  const original = stripParagraphLabel(originalContent);
+  const modified = stripParagraphLabel(modifiedContent);
+  const paragraphs = splitParagraphs(fileText);
+  if (paragraphNumber < 1 || paragraphNumber > paragraphs.length) return null;
+  const idx = paragraphNumber - 1;
+  const para = paragraphs[idx] ?? "";
+
+  if (original === "") {
+    const inserted = splitAgentParagraphs(modified);
+    if (para.trim() === "" && inserted.length <= 1) {
+      paragraphs[idx] = original;
+    } else if (inserted.length > 0) {
+      const start = idx + 1;
+      const end = start + inserted.length;
+      if (end > paragraphs.length) return null;
+      const slice = paragraphs.slice(start, end);
+      if (slice.some((p, i) => p !== (inserted[i] ?? ""))) return null;
+      paragraphs.splice(start, inserted.length);
+    } else {
+      return null;
+    }
+  } else if (original === para || original === para.trim()) {
+    paragraphs[idx] = original;
+  } else {
+    const occurrences = para.split(modified).length - 1;
+    if (occurrences !== 1) return null;
+    paragraphs[idx] = para.replace(modified, original);
+  }
+  return paragraphs.join("\n");
+}
+
 /** 1-based paragraph index, matches Edit `paragraph_number`. */
 export function paragraphAt(text: string, oneBased: number): string {
   const paras = splitParagraphs(text);
@@ -180,9 +218,45 @@ export function buildLineParagraphLabels(text: string): (number | null)[] {
   return text.split("\n").map((_, i) => i + 1);
 }
 
-/** Normalize paths for stable comparison across `/` and `\`. */
+/** Strip Windows `\\?\` extended path prefix and normalize for comparison. */
 export function normalizeReaderPath(path: string): string {
-  return path.replace(/\\/g, "/").toLowerCase();
+  let p = path.trim();
+  if (p.startsWith("\\\\?\\")) {
+    p = p.slice(4);
+  }
+  return p.replace(/\\/g, "/").toLowerCase();
+}
+
+/** Store/display path without the extended prefix. */
+export function sanitizeReaderPath(path: string): string {
+  let p = path.trim();
+  if (p.startsWith("\\\\?\\")) {
+    p = p.slice(4);
+  }
+  return p;
+}
+
+export function resolveToolFilePath(input: unknown, output: unknown): string {
+  const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const o = output && typeof output === "object" ? (output as Record<string, unknown>) : {};
+  const raw =
+    (typeof inp.path === "string" && inp.path.trim()) ||
+    (typeof o.path === "string" && o.path.trim()) ||
+    "";
+  return raw ? sanitizeReaderPath(raw) : "";
+}
+
+export function parseEditParagraphNumber(input: unknown): number | undefined {
+  const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const n = inp.paragraph_number;
+  if (typeof n === "number" && Number.isFinite(n) && n >= 1) {
+    return Math.trunc(n);
+  }
+  if (typeof n === "string" && /^\d+$/.test(n)) {
+    const parsed = parseInt(n, 10);
+    return parsed >= 1 ? parsed : undefined;
+  }
+  return undefined;
 }
 
 /** Infer the renderable file type from a path's extension. */
@@ -224,7 +298,7 @@ function docToTab(doc: ReaderDoc): ReaderFileTab {
   const text = stripParagraphLabels(doc.text);
   return {
     id: newTabId(),
-    path: doc.path,
+    path: sanitizeReaderPath(doc.path),
     text,
     fileType: doc.fileType,
     chars: doc.chars ?? countChars(text),
@@ -258,6 +332,7 @@ function loadPersisted(sessionId: string | null): {
     };
     const tabs: ReaderFileTab[] = (parsed.tabs ?? []).map((t) => ({
       ...t,
+      path: sanitizeReaderPath(t.path),
       id: newTabId(),
       pendingDiffs: [],
       dirty: false,
@@ -429,8 +504,9 @@ export const useReader = create<ReaderStore>((set, get) => ({
 
   appendPendingDiff: (path, diff) => {
     const block: ReaderPendingDiff = { ...diff, id: diff.id ?? newDiffId() };
+    const key = normalizeReaderPath(path);
     set((s) => {
-      const idx = findTabIndex(s.tabs, path);
+      const idx = s.tabs.findIndex((t) => normalizeReaderPath(t.path) === key);
       if (idx < 0) return s;
       const tabs = s.tabs.map((t, i) =>
         i === idx
@@ -517,7 +593,7 @@ export function readerDocFromToolOutput(output: unknown): ReaderDoc | null {
   const path = typeof o.path === "string" ? o.path : "";
   const clean = stripParagraphLabels(text);
   return {
-    path,
+    path: sanitizeReaderPath(path),
     text: clean,
     fileType: inferFileType(path),
     chars: typeof o.chars === "number" ? o.chars : countChars(clean),

@@ -18,7 +18,7 @@ use crate::ai::agent::{
     RoleStateTool, RunAgentParams, StaticMcpRegistry, Task, TaskState, TaskStore, ToolPool,
     UserContextConfig,
 };
-use crate::ai::{chat, parameters, router};
+use crate::ai::{chat, parameters, router, token_log};
 use crate::data::db::DbPool;
 use crate::data::{custom_agents, db, llm_catalog, paths, project, session, settings};
 use crate::error::{AppError, AppResult};
@@ -56,6 +56,8 @@ pub struct AppState {
     /// per assistant message into `file_snapshots` for delete/regenerate
     /// rollback of created / updated / deleted files.
     pub file_snapshots: Arc<FileSnapshotStore>,
+    /// Structured token usage logger (JSONL + SQLite).
+    pub token_logger: Arc<token_log::TokenUsageLogger>,
 }
 
 impl AppState {
@@ -217,8 +219,6 @@ fn session_project_cwd(conn: &db::DbConn, session_id: &str) -> Option<std::path:
     Some(std::path::PathBuf::from(path_str))
 }
 
-const MOYAN_FALLBACK_DIR: &str = "moyanagent";
-
 /// Allowed roots for user-initiated writes from the reader panel.
 fn reader_write_roots(session_cwd: Option<&std::path::Path>) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
@@ -227,11 +227,11 @@ fn reader_write_roots(session_cwd: Option<&std::path::Path>) -> Vec<PathBuf> {
             roots.push(cwd.to_path_buf());
         }
     }
-    if let Some(home) = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-    {
-        roots.push(home.join("Documents").join(MOYAN_FALLBACK_DIR));
+    if let Ok(root) = paths::user_moyan_root() {
+        roots.push(root);
+    }
+    if let Ok(root) = paths::blank_projects_root() {
+        roots.push(root);
     }
     roots
 }
@@ -287,6 +287,21 @@ fn write_project_file(
         AppError::Other(format!("write_project_file: write {:?}: {e}", resolved))
     })?;
     Ok(())
+}
+
+#[tauri::command]
+fn read_project_file(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+    path: String,
+) -> Result<String, AppError> {
+    let conn = state.conn()?;
+    let file_path = PathBuf::from(&path);
+    let cwd = session_project_cwd(&conn, &session_id);
+    let resolved = validate_reader_write_path(&file_path, cwd.as_deref())?;
+    std::fs::read_to_string(&resolved).map_err(|e| {
+        AppError::Other(format!("read_project_file: read {:?}: {e}", resolved))
+    })
 }
 
 /// Effective generation parameters for a session.
@@ -526,6 +541,7 @@ async fn run_agent_chain(
             Some(on_tool_event.clone()),
             project_cwd.clone(),
             overrides,
+            Some(request_message_id),
         )
         .await?;
 
@@ -551,6 +567,7 @@ async fn run_cancellable_generation(
     on_tool_event: Option<ToolEventCallback>,
     project_cwd: Option<std::path::PathBuf>,
     overrides: Option<&session::NodeOverrides>,
+    correlation_id: Option<&str>,
 ) -> AppResult<chat::GenerateResponse> {
     let abort_signal = register_generation_abort(state, session_id)?;
 
@@ -657,6 +674,8 @@ async fn run_cancellable_generation(
             project_cwd,
             abort_signal: Some(abort_signal.clone()),
             session_id: Some(session_id.to_string()),
+            correlation_id: correlation_id.map(str::to_string),
+            token_logger: Some(state.token_logger.clone()),
         }) => out,
         _ = abort_signal.wait_aborted() => Err(AppError::Canceled),
     };
@@ -1407,6 +1426,7 @@ fn delete_session(
     }
     state.role_states.clear(&id);
     state.file_snapshots.clear(&id);
+    state.token_logger.delete_session_log(&id);
     let dir = paths::sessions_dir(&app)?.join(&id);
     if dir.exists() {
         let _ = std::fs::remove_dir_all(&dir);
@@ -1606,6 +1626,13 @@ fn delete_message(
         let conn = state.conn()?;
         reload_message(&conn, &id).ok().map(|m| m.session_id)
     };
+
+    if let Some(ref sid) = session_id {
+        let conn = state.conn()?;
+        state
+            .token_logger
+            .rollback_jsonl_from_message(&conn, sid, &id);
+    }
 
     let paths = {
         let conn = state.conn()?;
@@ -1927,6 +1954,61 @@ fn extract_session_memory(
     })
 }
 
+#[derive(Debug, Deserialize)]
+struct TokenUsageSummaryArgs {
+    #[serde(default)]
+    from_ms: Option<i64>,
+    #[serde(default)]
+    to_ms: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListTokenUsageEventsArgs {
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    event_kind: Option<String>,
+    #[serde(default)]
+    from_ms: Option<i64>,
+    #[serde(default)]
+    to_ms: Option<i64>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+}
+
+#[tauri::command]
+fn get_token_usage_summary(
+    state: tauri::State<Arc<AppState>>,
+    args: TokenUsageSummaryArgs,
+) -> Result<crate::data::token_log::TokenUsageSummary, AppError> {
+    let conn = state.conn()?;
+    crate::data::token_log::query_summary(&conn, args.from_ms, args.to_ms)
+}
+
+#[tauri::command]
+fn list_token_usage_events(
+    state: tauri::State<Arc<AppState>>,
+    args: ListTokenUsageEventsArgs,
+) -> Result<Vec<crate::data::token_log::TokenUsageEvent>, AppError> {
+    let conn = state.conn()?;
+    crate::data::token_log::list_events(
+        &conn,
+        &crate::data::token_log::TokenUsageListFilter {
+            session_id: args.session_id,
+            model: args.model,
+            event_kind: args.event_kind,
+            from_ms: args.from_ms,
+            to_ms: args.to_ms,
+            limit: args.limit.unwrap_or(100),
+            offset: args.offset.unwrap_or(0),
+        },
+    )
+}
+
 #[tauri::command]
 fn list_agents(state: tauri::State<Arc<AppState>>) -> Result<Vec<AgentSummary>, AppError> {
     let mut out: Vec<AgentSummary> = state
@@ -2124,6 +2206,10 @@ fn finalize_generate_assistant_message(
     blocks: Vec<serde_json::Value>,
     role_states: &RoleStateStore,
     file_snapshots: &FileSnapshotStore,
+    token_logger: &token_log::TokenUsageLogger,
+    agent_type: &str,
+    model: &str,
+    provider: &str,
 ) -> AppResult<GenerateResult> {
     resp.images = chat::dedupe_image_results(resp.images);
     let block_text = concat_block_text(&blocks, "text");
@@ -2198,6 +2284,19 @@ fn finalize_generate_assistant_message(
             &file_changes,
         );
     }
+
+    token_logger.log_turn_summary(token_log::TurnSummaryLog {
+        ctx: token_log::LogContext {
+            session_id: Some(session_id.to_string()),
+            correlation_id: Some(user_message_id.to_string()),
+            agent_id: None,
+            agent_type: Some(agent_type.to_string()),
+        },
+        message_id: assistant.id.clone(),
+        model: model.to_string(),
+        provider: provider.to_string(),
+        usage: resp.usage.clone(),
+    });
 
     let user_full = reload_message(conn, user_message_id)?;
     let assistant_full = reload_message(conn, &assistant.id)?;
@@ -2338,6 +2437,8 @@ async fn generate_image(
         user_msg.id.clone(),
         stream_blocks.clone(),
     );
+    let log_model = chat_request.model.clone();
+    let log_provider = chat_request.provider.id.clone();
     let result = match agent_chain.as_ref().filter(|c| !c.is_empty()) {
         Some(chain) => {
             run_agent_chain(
@@ -2370,6 +2471,7 @@ async fn generate_image(
                 Some(on_tool_event),
                 project_cwd,
                 None,
+                Some(&user_msg.id),
             )
             .await
         }
@@ -2399,6 +2501,10 @@ async fn generate_image(
                 blocks,
                 &state.role_states,
                 &state.file_snapshots,
+                &state.token_logger,
+                generation_agent,
+                &log_model,
+                &log_provider,
             )
         }
         Err(AppError::Canceled) => Err(AppError::Canceled),
@@ -2581,6 +2687,8 @@ async fn regenerate_image(
         req.user_message_id.clone(),
         stream_blocks.clone(),
     );
+    let log_model = chat_request.model.clone();
+    let log_provider = chat_request.provider.id.clone();
     let result = match agent_chain.as_ref().filter(|c| !c.is_empty()) {
         Some(chain) => {
             run_agent_chain(
@@ -2613,6 +2721,7 @@ async fn regenerate_image(
                 Some(on_tool_event),
                 project_cwd,
                 None,
+                Some(&req.user_message_id),
             )
             .await
         }
@@ -2641,6 +2750,10 @@ async fn regenerate_image(
                 blocks,
                 &state.role_states,
                 &state.file_snapshots,
+                &state.token_logger,
+                generation_agent,
+                &log_model,
+                &log_provider,
             )
         }
         Err(AppError::Canceled) => Err(AppError::Canceled),
@@ -3067,6 +3180,12 @@ pub fn run() {
             .with_chat_factory(chat_factory);
             tools.register(agent_tool);
 
+            let logs_dir = paths::token_logs_dir()?;
+            let token_logger = Arc::new(token_log::TokenUsageLogger::new(
+                pool.clone(),
+                logs_dir,
+            ));
+
             app.manage(Arc::new(AppState {
                 pool,
                 generation_abort: Mutex::new(HashMap::new()),
@@ -3081,6 +3200,7 @@ pub fn run() {
                 session_memory: Arc::new(FsSessionMemoryExtractor::new()),
                 role_states,
                 file_snapshots,
+                token_logger,
             }));
             Ok(())
         })
@@ -3133,6 +3253,8 @@ pub fn run() {
             list_agent_tools,
             get_role_states,
             extract_session_memory,
+            get_token_usage_summary,
+            list_token_usage_events,
             generate_image,
             regenerate_image,
             save_cancelled_message,
@@ -3142,6 +3264,7 @@ pub fn run() {
             export_session_archive,
             import_archive,
             write_project_file,
+            read_project_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

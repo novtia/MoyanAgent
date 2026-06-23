@@ -79,8 +79,8 @@ pub type QueryFuture<'a> = Pin<Box<dyn Future<Output = AppResult<QueryResult>> +
 /// 2. Stream `assistant` / `tool_use` events back to the caller.
 /// 3. For each `tool_use`, call [`ToolPool::execute`] and re-feed the result.
 /// 4. At turn boundaries, drain attachments from the notification queue.
-/// 5. Stop when the model emits a turn without `tool_use`, or `max_turns`
-///    is exhausted, or `context.abort.aborted()` is true.
+/// 5. Stop when the model emits a turn without `tool_use`, the run is
+///    aborted, or TodoList nudges are exhausted. There is no fixed turn cap.
 pub trait QueryEngine: Send + Sync {
     fn query<'a>(
         &'a self,

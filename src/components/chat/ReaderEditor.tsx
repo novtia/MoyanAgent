@@ -13,10 +13,8 @@ import { useSession } from "../../store/session";
 import {
   buildLineParagraphLabels,
   formatParagraphNumber,
-  paragraphAt,
   useReader,
   type ReaderFileTab,
-  type ReaderPendingDiff,
 } from "../../store/reader";
 import { api } from "../../api/tauri";
 import {
@@ -70,16 +68,6 @@ interface ReaderEditorProps {
   tab: ReaderFileTab;
 }
 
-function resolveDiffBlock(block: ReaderPendingDiff): ReaderPendingDiff {
-  let before = block.before;
-  let after = block.after;
-  if (!before.trim() && !after.trim() && block.paragraphNumber != null) {
-    before = paragraphAt(block.textBefore, block.paragraphNumber);
-    after = paragraphAt(block.textAfter, block.paragraphNumber);
-  }
-  return { ...block, before, after };
-}
-
 function GutterStack({
   labels,
   heights,
@@ -95,7 +83,9 @@ function GutterStack({
           className="reader-editor-gutter-item"
           style={{ height: heights[i] > 0 ? heights[i] : undefined }}
         >
-          {label != null ? formatParagraphNumber(label) : ""}
+          {label != null ? (
+            <span className="reader-editor-gutter-num">{formatParagraphNumber(label)}</span>
+          ) : null}
         </div>
       ))}
     </>
@@ -302,17 +292,14 @@ export function ReaderEditor({ tab }: ReaderEditorProps) {
 
   const diffBlocks = useMemo(
     () =>
-      tab.pendingDiffs.map((d) => {
-        const s = resolveDiffBlock(d);
-        return {
-          id: s.id,
-          before: s.before,
-          after: s.after,
-          textBefore: s.textBefore,
-          textAfter: s.textAfter,
-          paragraphNumber: s.paragraphNumber,
-        };
-      }),
+      tab.pendingDiffs.map((d) => ({
+        id: d.id,
+        before: d.before,
+        after: d.after,
+        textBefore: d.textBefore,
+        textAfter: d.textAfter,
+        paragraphNumber: d.paragraphNumber,
+      })),
     [tab.pendingDiffs],
   );
 
@@ -442,12 +429,13 @@ export function ReaderEditor({ tab }: ReaderEditorProps) {
 
   const renderHunk = (seg: Extract<EditorDisplaySegment, { kind: "hunk" }>) => {
     const deleteLines = seg.before.trim() ? seg.before.split("\n") : [];
-    const insertLines: string[] = [];
-    const insertLabels: (number | null)[] = [];
-    for (let i = seg.tabStart; i <= seg.tabEnd; i += 1) {
-      insertLines.push(fileLines[i] ?? "");
-      insertLabels.push(paraLabels[i] ?? null);
-    }
+    const insertLines = seg.after ? seg.after.split("\n") : [];
+    const insertLabels: (number | null)[] = insertLines.map((_, i) => {
+      if (seg.paragraphNumber == null) return null;
+      return seg.before.trim() === "" && seg.after.trim() !== ""
+        ? seg.paragraphNumber + 1 + i
+        : seg.paragraphNumber + i;
+    });
 
     return (
       <div
@@ -471,7 +459,7 @@ export function ReaderEditor({ tab }: ReaderEditorProps) {
           <SegmentBlock
             labels={insertLabels}
             lines={insertLines}
-            value={sliceTabLines(tab.text, seg.tabStart, seg.tabEnd)}
+            value={seg.after}
             onChange={(value) => onSegmentChange(seg.tabStart, seg.tabEnd, value)}
             className="reader-editor-field is-insert-field"
             sign="+"
@@ -545,7 +533,9 @@ function DeleteLineRow({ label, line }: { label: number | null; line: string }) 
           className="reader-editor-gutter-item"
           style={{ height: heights[0] > 0 ? heights[0] : undefined }}
         >
-          {label != null ? formatParagraphNumber(label) : ""}
+          {label != null ? (
+            <span className="reader-editor-gutter-num">{formatParagraphNumber(label)}</span>
+          ) : null}
         </div>
       </div>
       <span className="reader-editor-line-sign" aria-hidden>

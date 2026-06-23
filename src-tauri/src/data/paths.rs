@@ -6,6 +6,55 @@ use crate::error::{AppError, AppResult};
 
 pub const APP_SUBDIR: &str = "atelier";
 
+/// User-visible root under Documents (e.g. `C:\Users\<user>\Documents\MoYanAgent`).
+pub const MOYAN_DOCS_ROOT: &str = "MoYanAgent";
+pub const MOYAN_LOGS_DIR: &str = "logs";
+pub const MOYAN_PROJECTS_DIR: &str = "Project";
+
+fn user_documents_dir() -> AppResult<PathBuf> {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .ok_or_else(|| AppError::Config("cannot resolve user home directory".into()))?;
+    Ok(home.join("Documents"))
+}
+
+/// `Documents/MoYanAgent` — created on first use.
+pub fn user_moyan_root() -> AppResult<PathBuf> {
+    let dir = user_documents_dir()?.join(MOYAN_DOCS_ROOT);
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        AppError::Other(format!(
+            "failed to create MoYanAgent root {}: {e}",
+            dir.display()
+        ))
+    })?;
+    Ok(dir)
+}
+
+/// `Documents/MoYanAgent/logs/{session_id}.jsonl` — per-session token JSONL logs.
+pub fn token_logs_dir() -> AppResult<PathBuf> {
+    let dir = user_moyan_root()?.join(MOYAN_LOGS_DIR);
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        AppError::Other(format!(
+            "failed to create token logs directory {}: {e}",
+            dir.display()
+        ))
+    })?;
+    Ok(dir)
+}
+
+/// `Documents/MoYanAgent/Project` — auto-created blank project folders.
+pub fn blank_projects_root() -> AppResult<PathBuf> {
+    let dir = user_moyan_root()?.join(MOYAN_PROJECTS_DIR);
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        AppError::Other(format!(
+            "failed to create blank projects root {}: {e}",
+            dir.display()
+        ))
+    })?;
+    Ok(dir)
+}
+
 pub fn root_dir(app: &AppHandle) -> AppResult<PathBuf> {
     let base = app
         .path()

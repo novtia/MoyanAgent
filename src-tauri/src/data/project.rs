@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use ulid::Ulid;
 use crate::data::db::{now_ms, DbConn};
+use crate::data::paths;
 use crate::data::session::{normalize_chain, ChainNode};
 use crate::data::settings::{validate_model_param_settings, ModelParamSettings, DEFAULT_HISTORY_TURNS};
 use crate::error::{AppError, AppResult};
@@ -72,8 +73,10 @@ fn map_project(r: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
 const SELECT_COLS: &str =
     "id, name, path, sort_order, system_prompt, history_turns, llm_params, context_window, created_at, updated_at, agent_chain";
 
-/// Root directory for auto-created blank projects: `Documents/moyanagentproject`.
-const BLANK_PROJECT_ROOT_NAME: &str = "moyanagentproject";
+/// Root directory for auto-created blank projects: `Documents/MoYanAgent/Project`.
+fn blank_projects_root() -> AppResult<PathBuf> {
+    paths::blank_projects_root()
+}
 
 pub fn create(conn: &DbConn, name: &str, path: Option<&str>) -> AppResult<Project> {
     let resolved_path = match path {
@@ -108,25 +111,9 @@ pub fn create(conn: &DbConn, name: &str, path: Option<&str>) -> AppResult<Projec
     })
 }
 
-/// Resolve `~/Documents/moyanagentproject` (Windows: `C:\Users\<user>\Documents\...`).
-fn blank_projects_root() -> AppResult<PathBuf> {
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .ok_or_else(|| AppError::Config("cannot resolve user home directory".into()))?;
-    let documents = home.join("Documents");
-    Ok(documents.join(BLANK_PROJECT_ROOT_NAME))
-}
-
 /// Create a unique subdirectory under [`blank_projects_root`] for a blank project.
-fn allocate_blank_project_dir(project_name: &str) -> AppResult<PathBuf> {    let root = blank_projects_root()?;
-    std::fs::create_dir_all(&root).map_err(|e| {
-        AppError::Other(format!(
-            "failed to create blank-project root {}: {e}",
-            root.display()
-        ))
-    })?;
-
+fn allocate_blank_project_dir(project_name: &str) -> AppResult<PathBuf> {
+    let root = blank_projects_root()?;
     let base = sanitize_folder_name(project_name);
     for candidate in unique_dir_candidates(&root, &base) {
         match std::fs::create_dir(&candidate) {

@@ -19,10 +19,22 @@ pub fn paragraph_count(text: &str) -> usize {
 
 /// Prefix each line with `[P001]`, `[P002]`, … for agent Read output.
 pub fn number_paragraphs(text: &str) -> String {
+    number_paragraph_range(text, 1, paragraph_count(text))
+}
+
+/// Prefix paragraphs in the 1-based inclusive range `[from, to]`.
+pub fn number_paragraph_range(text: &str, from: usize, to: usize) -> String {
     split_paragraphs(text)
         .into_iter()
         .enumerate()
-        .map(|(i, p)| format!("[P{:03}] {p}", i + 1))
+        .filter_map(|(i, p)| {
+            let n = i + 1;
+            if n >= from && n <= to {
+                Some(format!("[P{:03}] {p}", n))
+            } else {
+                None
+            }
+        })
         .collect::<Vec<_>>()
         .join(PARAGRAPH_SEP)
 }
@@ -135,5 +147,24 @@ mod tests {
     fn round_trip_join_split() {
         let parts = vec!["x".into(), String::new(), "y".into()];
         assert_eq!(split_paragraphs(&join_paragraphs(&parts)), parts);
+    }
+
+    #[test]
+    fn number_paragraph_range_middle_slice() {
+        let text = "a\nb\nc\nd\ne";
+        let numbered = number_paragraph_range(text, 2, 4);
+        assert_eq!(numbered, "[P002] b\n[P003] c\n[P004] d");
+    }
+
+    #[test]
+    fn number_paragraph_range_single() {
+        let text = "a\nb\nc";
+        assert_eq!(number_paragraph_range(text, 2, 2), "[P002] b");
+    }
+
+    #[test]
+    fn number_paragraph_range_full_matches_whole_file() {
+        let text = "a\n\nb";
+        assert_eq!(number_paragraphs(text), number_paragraph_range(text, 1, 3));
     }
 }

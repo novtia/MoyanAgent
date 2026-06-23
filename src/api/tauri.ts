@@ -18,6 +18,8 @@ import type {
   SessionSearchResult,
   SessionSummary,
   SessionWithMessagesAbs,
+  TokenUsageEventRow,
+  TokenUsageSummary,
   Session,
   Settings,
   SettingsPatch,
@@ -267,6 +269,41 @@ export const api = {
 
   writeProjectFile: (sessionId: string, path: string, content: string) =>
     invoke<void>("write_project_file", { sessionId, path, content }),
+
+  readProjectFile: (sessionId: string, path: string) =>
+    invoke<string>("read_project_file", { sessionId, path }),
+
+  getTokenUsageSummary: (args?: {
+    fromMs?: number | null;
+    toMs?: number | null;
+  }) =>
+    invoke<TokenUsageSummary>("get_token_usage_summary", {
+      args: {
+        from_ms: args?.fromMs ?? null,
+        to_ms: args?.toMs ?? null,
+      },
+    }),
+
+  listTokenUsageEvents: (args?: {
+    sessionId?: string | null;
+    model?: string | null;
+    eventKind?: string | null;
+    fromMs?: number | null;
+    toMs?: number | null;
+    limit?: number | null;
+    offset?: number | null;
+  }) =>
+    invoke<TokenUsageEventRow[]>("list_token_usage_events", {
+      args: {
+        session_id: args?.sessionId ?? null,
+        model: args?.model ?? null,
+        event_kind: args?.eventKind ?? null,
+        from_ms: args?.fromMs ?? null,
+        to_ms: args?.toMs ?? null,
+        limit: args?.limit ?? null,
+        offset: args?.offset ?? null,
+      },
+    }),
 };
 
 export function srcOf(absPath: string | null | undefined): string {

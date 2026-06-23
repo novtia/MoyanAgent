@@ -17,6 +17,7 @@ use tokio::sync::watch;
 use crate::ai::agent::memory::UserContext;
 use crate::ai::agent::core::permission::PermissionMode;
 use crate::ai::agent::types::{AgentId, MessageRole, QuerySource};
+use crate::ai::token_log::TokenUsageLogger;
 
 /// Snapshot of the runtime context attached to every tool invocation.
 pub struct ToolUseContext {
@@ -29,6 +30,15 @@ pub struct ToolUseContext {
     /// persist per-conversation state (e.g. `RoleState`) key off this.
     /// `None` for runs not tied to a chat session.
     pub session_id: Option<String>,
+
+    /// Correlates all token events within one user send / assistant reply turn.
+    pub correlation_id: Option<String>,
+
+    /// Agent definition type driving this run (e.g. `general-purpose`).
+    pub agent_type: Option<String>,
+
+    /// Structured token usage logger; `None` disables telemetry for this run.
+    pub token_logger: Option<Arc<TokenUsageLogger>>,
 
     /// Cancellation. Sub-agents typically have *child* signals so that
     /// killing a parent agent also tears down its workers, but background
@@ -90,6 +100,9 @@ impl ToolUseContext {
             permission_mode: self.permission_mode,
             cwd: self.cwd.clone(),
             session_id: self.session_id.clone(),
+            correlation_id: self.correlation_id.clone(),
+            agent_type: self.agent_type.clone(),
+            token_logger: self.token_logger.clone(),
             abort: self.abort.child(),
             read_file_state: Arc::new(Mutex::new(read_clone)),
             nested_memory_attachment_triggers: Arc::new(Mutex::new(HashSet::new())),
@@ -168,6 +181,9 @@ pub struct ToolUseContextBuilder {
     user_context: Option<Arc<UserContext>>,
     parent_system_prompt: Option<String>,
     session_id: Option<String>,
+    correlation_id: Option<String>,
+    agent_type: Option<String>,
+    token_logger: Option<Arc<TokenUsageLogger>>,
     /// When set, the built context shares this cancellation controller
     /// (used by the main session so `cancel_generation` can stop in-flight work).
     abort_signal: Option<AbortSignal>,
@@ -183,6 +199,9 @@ impl ToolUseContextBuilder {
             user_context: None,
             parent_system_prompt: None,
             session_id: None,
+            correlation_id: None,
+            agent_type: None,
+            token_logger: None,
             abort_signal: None,
         }
     }
@@ -194,6 +213,21 @@ impl ToolUseContextBuilder {
 
     pub fn session_id(mut self, session_id: impl Into<String>) -> Self {
         self.session_id = Some(session_id.into());
+        self
+    }
+
+    pub fn correlation_id(mut self, correlation_id: impl Into<String>) -> Self {
+        self.correlation_id = Some(correlation_id.into());
+        self
+    }
+
+    pub fn agent_type(mut self, agent_type: impl Into<String>) -> Self {
+        self.agent_type = Some(agent_type.into());
+        self
+    }
+
+    pub fn token_logger(mut self, logger: Arc<TokenUsageLogger>) -> Self {
+        self.token_logger = Some(logger);
         self
     }
 
@@ -231,6 +265,9 @@ impl ToolUseContextBuilder {
             permission_mode: self.permission_mode,
             cwd: self.cwd,
             session_id: self.session_id,
+            correlation_id: self.correlation_id,
+            agent_type: self.agent_type,
+            token_logger: self.token_logger,
             abort: signal,
             read_file_state: Arc::new(Mutex::new(HashSet::new())),
             nested_memory_attachment_triggers: Arc::new(Mutex::new(HashSet::new())),

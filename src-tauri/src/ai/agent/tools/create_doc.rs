@@ -4,7 +4,7 @@
 //! absolute path and a prior read receipt), `CreateDoc` asks the model for
 //! only three things: a `title`, the `content`, and a `doc_type` (`md` or
 //! `txt`). The file is written into the session's project working directory
-//! (`ToolUseContext::cwd`), falling back to `~/Documents/moyanagent` when the
+//! (`ToolUseContext::cwd`), falling back to `Documents/MoYanAgent/Project` when the
 //! session has no project path. The successful result echoes the full text
 //! plus word-count stats so the UI can open the freshly created document in
 //! the reader panel with a single click.
@@ -22,7 +22,7 @@ use crate::error::{AppError, AppResult};
 const TOOL_NAME: &str = "CreateDoc";
 
 /// Sub-directory used when no project working directory is available.
-const FALLBACK_DIR_NAME: &str = "moyanagent";
+use crate::data::paths;
 
 #[derive(Clone)]
 pub struct CreateDocTool {
@@ -173,18 +173,12 @@ impl Tool for CreateDocTool {
 }
 
 /// Resolve the directory to write into: the project working directory when
-/// available and absolute, otherwise `~/Documents/<FALLBACK_DIR_NAME>`.
+/// available and absolute, otherwise `Documents/MoYanAgent/Project`.
 fn resolve_output_dir(cwd: &Path) -> AppResult<PathBuf> {
     if !cwd.as_os_str().is_empty() && cwd.is_absolute() {
         return Ok(cwd.to_path_buf());
     }
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .ok_or_else(|| {
-            AppError::Other(format!("{TOOL_NAME}: cannot resolve user home directory"))
-        })?;
-    Ok(home.join("Documents").join(FALLBACK_DIR_NAME))
+    paths::blank_projects_root()
 }
 
 /// Make a title safe to use as a file name across platforms. Strips path

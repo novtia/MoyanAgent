@@ -25,6 +25,7 @@ use crate::ai::agent::exec::query::{QueryEngine, QueryRequest, QueryResult, Tool
 use crate::ai::agent::tools::ToolPool;
 use crate::ai::agent::types::{AgentId, AgentRunMode, QuerySource, TokenUsage};
 use crate::ai::chat::{ChatRequest, ImageResult, TextDeltaCallback};
+use crate::ai::token_log::TokenUsageLogger;
 use crate::error::AppResult;
 
 /// Inputs to [`run_agent`].
@@ -71,6 +72,10 @@ pub struct RunAgentParams {
     /// [`ToolUseContext`] so session-scoped tools (e.g. `RoleState`) can
     /// persist their state against the right conversation.
     pub session_id: Option<String>,
+    /// User message id correlating token events for this generation turn.
+    pub correlation_id: Option<String>,
+    /// Token usage logger shared from [`AppState`].
+    pub token_logger: Option<Arc<TokenUsageLogger>>,
 }
 
 /// Output of [`run_agent`].
@@ -110,6 +115,8 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         project_cwd,
         abort_signal,
         session_id,
+        correlation_id,
+        token_logger,
     } = params;
 
     let agent_id = AgentId::new();
@@ -191,6 +198,13 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
     }
     if let Some(sid) = session_id {
         ctx_builder = ctx_builder.session_id(sid);
+    }
+    if let Some(cid) = correlation_id {
+        ctx_builder = ctx_builder.correlation_id(cid);
+    }
+    ctx_builder = ctx_builder.agent_type(definition.agent_type.clone());
+    if let Some(logger) = token_logger {
+        ctx_builder = ctx_builder.token_logger(logger);
     }
     let (context, abort) = ctx_builder.build();
 

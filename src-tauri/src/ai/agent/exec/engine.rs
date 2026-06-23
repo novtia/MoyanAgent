@@ -10,7 +10,7 @@
 //! - [`ProviderQueryEngine`]: concrete implementation of
 //!   [`QueryEngine`]. Runs the structurally-correct tool loop (drains
 //!   attachments at turn boundaries, executes `tool_use` blocks through
-//!   the [`ToolPool`], honors `max_turns` and abort signals).
+//!   the [`ToolPool`], honors abort signals).
 //!
 //! Today none of the providers surface `tool_use` blocks via
 //! [`GenerateResponse`], so the loop terminates after the first turn.
@@ -32,6 +32,7 @@ use crate::ai::agent::tools::{ToolInvocation, ToolPool, ToolResult};
 use crate::ai::agent::types::{AgentId, MessageEvent, MessageId};
 use crate::ai::chat::{ChatRequest, GenerateResponse, StreamDelta, TextDeltaCallback};
 use crate::ai::providers::ProviderFactory;
+use crate::ai::token_log::{ApiCallLog, LogContext, ToolCallLog};
 use crate::error::AppResult;
 
 /// One model turn as observed by the engine.
@@ -121,8 +122,6 @@ impl ProviderEngine {
 pub struct ProviderQueryEngine {
     provider: Arc<ProviderEngine>,
     resolver: Arc<dyn PermissionResolver>,
-    /// Default max turns when [`QueryRequest::max_turns`] is `None`.
-    default_max_turns: u32,
     /// Compaction policy applied between turns. `None` ⇒ disabled.
     compaction: Option<crate::ai::agent::memory::compaction::CompactionPolicy>,
 }
@@ -132,7 +131,6 @@ impl Default for ProviderQueryEngine {
         Self {
             provider: Arc::new(ProviderEngine::new()),
             resolver: Arc::new(AllowAllResolver),
-            default_max_turns: 25,
             compaction: Some(Default::default()),
         }
     }
@@ -143,14 +141,8 @@ impl ProviderQueryEngine {
         Self {
             provider,
             resolver,
-            default_max_turns: 25,
             compaction: Some(Default::default()),
         }
-    }
-
-    pub fn with_max_turns(mut self, max_turns: u32) -> Self {
-        self.default_max_turns = max_turns;
-        self
     }
 
     pub fn with_compaction(
@@ -173,7 +165,7 @@ impl QueryEngine for ProviderQueryEngine {
             let QueryRequest {
                 mut chat,
                 source: _,
-                max_turns,
+                max_turns: _max_turns,
                 initial_attachments,
                 on_text_delta,
                 on_tool_event,
@@ -192,7 +184,6 @@ impl QueryEngine for ProviderQueryEngine {
                 chat.tools = collect_tool_definitions(&tools);
             }
 
-            let max_turns = max_turns.unwrap_or(self.default_max_turns);
             let mut events: Vec<MessageEvent> = Vec::new();
             let mut usage = crate::ai::tokens::TokenUsage::default();
             let mut tool_call_count: u32 = 0;
@@ -201,28 +192,12 @@ impl QueryEngine for ProviderQueryEngine {
             let mut final_images = Vec::new();
 
             // When the model tries to stop with unfinished TodoList items,
-            // inject a nudge and grant bonus turns so multi-step work completes.
+            // inject a nudge so multi-step work can continue (no fixed turn cap).
             const MAX_TODO_NUDGES: u32 = 8;
-            const BONUS_TURNS_PER_NUDGE: u32 = 3;
             let mut turn_count: u32 = 0;
-            let mut max_allowed = max_turns;
             let mut todo_nudges: u32 = 0;
 
             loop {
-                if turn_count >= max_allowed {
-                    if let Some(nudge) = tools.incomplete_todo_nudge() {
-                        if todo_nudges < MAX_TODO_NUDGES {
-                            todo_nudges += 1;
-                            max_allowed = max_allowed.saturating_add(BONUS_TURNS_PER_NUDGE);
-                            inject_todo_continuation(&mut chat, &nudge);
-                            final_text = None;
-                            final_thinking = None;
-                            continue;
-                        }
-                    }
-                    break;
-                }
-
                 if context.abort.aborted() {
                     return Ok(QueryResult {
                         final_text,
@@ -315,6 +290,15 @@ impl QueryEngine for ProviderQueryEngine {
                 }
                 // Accumulate billing tokens across all tool-call rounds.
                 accumulate_usage(&mut usage, &response.usage);
+                if let Some(logger) = context.token_logger.as_ref() {
+                    logger.log_api_call(ApiCallLog {
+                        ctx: log_context(context.as_ref()),
+                        model: chat.model.clone(),
+                        provider: chat.provider.id.clone(),
+                        turn_index: turn_count,
+                        usage: response.usage.clone(),
+                    });
+                }
                 final_images = response.images.clone();
 
                 // Compaction window: run *before* enqueuing the next
@@ -338,7 +322,6 @@ impl QueryEngine for ProviderQueryEngine {
                     if let Some(nudge) = tools.incomplete_todo_nudge() {
                         if todo_nudges < MAX_TODO_NUDGES {
                             todo_nudges += 1;
-                            max_allowed = max_allowed.saturating_add(BONUS_TURNS_PER_NUDGE);
                             inject_todo_continuation(&mut chat, &nudge);
                             // Discard the premature summary — work continues.
                             final_text = None;
@@ -426,6 +409,15 @@ impl QueryEngine for ProviderQueryEngine {
                         is_error: result.is_error,
                     });
 
+                    if let Some(logger) = context.token_logger.as_ref() {
+                        logger.log_tool_call(ToolCallLog {
+                            ctx: log_context(context.as_ref()),
+                            tool_name: req.tool_name.clone(),
+                            result: result.clone(),
+                            input: req.input.clone(),
+                        });
+                    }
+
                     let result_event = MessageEvent::ToolResult {
                         id: req.id.clone(),
                         tool: req.tool_name.clone(),
@@ -452,15 +444,6 @@ impl QueryEngine for ProviderQueryEngine {
                     inject_attachments_into_history(&mut chat, &attachments);
                 }
             }
-
-            Ok(QueryResult {
-                final_text,
-                thinking_content: final_thinking,
-                events,
-                usage,
-                tool_call_count,
-                images: final_images,
-            })
         })
     }
 }
@@ -471,6 +454,15 @@ impl QueryEngine for ProviderQueryEngine {
 fn fire_tool_event(cb: &Option<ToolEventCallback>, event: &MessageEvent) {
     if let Some(cb) = cb.as_ref() {
         cb(event);
+    }
+}
+
+fn log_context(context: &ToolUseContext) -> LogContext {
+    LogContext {
+        session_id: context.session_id.clone(),
+        correlation_id: context.correlation_id.clone(),
+        agent_id: Some(context.agent_id.as_str().to_string()),
+        agent_type: context.agent_type.clone(),
     }
 }
 

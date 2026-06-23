@@ -318,6 +318,47 @@ export interface SessionWithMessagesAbs {
   messages: MessageAbs[];
 }
 
+export interface TokenUsageEventRow {
+  id: string;
+  created_at: number;
+  event_kind: string;
+  session_id?: string | null;
+  correlation_id?: string | null;
+  message_id?: string | null;
+  agent_id?: string | null;
+  agent_type?: string | null;
+  model?: string | null;
+  provider?: string | null;
+  turn_index?: number | null;
+  tool_name?: string | null;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  total_tokens?: number | null;
+  output_chars?: number | null;
+  output_bytes?: number | null;
+  is_error: boolean;
+  metadata_json?: string | null;
+}
+
+export interface ModelUsageRow {
+  model: string;
+  provider?: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  event_count: number;
+}
+
+export interface TokenUsageSummary {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  api_call_count: number;
+  tool_call_count: number;
+  turn_summary_count: number;
+  by_model: ModelUsageRow[];
+}
+
 export interface AttachmentDraft {
   image_id: string;
   rel_path: string;

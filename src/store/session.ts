@@ -18,9 +18,13 @@ import {
 import { useRoleState, type RoleStateOp } from "./roleState";
 import {
   applyParagraphEdit,
+  revertParagraphEdit,
   useReader,
   readerDocFromToolOutput,
   stripParagraphLabels,
+  resolveToolFilePath,
+  parseEditParagraphNumber,
+  inferFileType,
 } from "./reader";
 import { useSettings } from "./settings";
 
@@ -1076,7 +1080,7 @@ function appendDelta(
 /**
  * Sync reader panel state when an agent file tool completes.
  */
-function handleReaderToolComplete(
+async function handleReaderToolComplete(
   tool: string,
   input: unknown,
   output: unknown,
@@ -1084,7 +1088,7 @@ function handleReaderToolComplete(
 ) {
   if (isError) return;
   const o = (output && typeof output === "object" ? output : {}) as Record<string, unknown>;
-  const path = typeof o.path === "string" ? o.path : "";
+  const path = resolveToolFilePath(input, output);
 
   if (tool === "CreateDoc") {
     const doc = readerDocFromToolOutput(output);
@@ -1094,22 +1098,42 @@ function handleReaderToolComplete(
 
   if (!path) return;
   const reader = useReader.getState();
-  const existing = reader.getTabByPath(path);
+  let existing = reader.getTabByPath(path);
 
   if (tool === "Edit") {
-    if (!existing) return;
     const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
     const original =
       typeof inp.original_content === "string" ? inp.original_content : "";
     const modified =
       typeof inp.modified_content === "string" ? inp.modified_content : "";
-    const paragraphNumber =
-      typeof inp.paragraph_number === "number" ? inp.paragraph_number : undefined;
-    const textBefore = existing.text;
-    const textAfter =
-      paragraphNumber != null
-        ? applyParagraphEdit(existing.text, paragraphNumber, original, modified)
-        : null;
+    const paragraphNumber = parseEditParagraphNumber(input);
+    if (paragraphNumber == null) return;
+
+    let textBefore = existing?.text;
+    if (textBefore == null) {
+      const sessionId = useSession.getState().activeId;
+      if (!sessionId) return;
+      try {
+        const textAfterDisk = await api.readProjectFile(sessionId, path);
+        textBefore =
+          revertParagraphEdit(textAfterDisk, paragraphNumber, original, modified) ??
+          textAfterDisk;
+        reader.openDoc(
+          {
+            path,
+            text: textAfterDisk,
+            fileType: inferFileType(path),
+          },
+          { activate: false },
+        );
+        existing = reader.getTabByPath(path);
+      } catch (e) {
+        console.warn("Edit: failed to load file for reader diff", e);
+        return;
+      }
+    }
+
+    const textAfter = applyParagraphEdit(textBefore, paragraphNumber, original, modified);
     if (textAfter == null) return;
     reader.appendPendingDiff(path, {
       before: original,
@@ -1154,7 +1178,7 @@ function applyToolEvent(blocks: AssistantBlock[], event: ToolEventPayload) {
         is_error: event.is_error || undefined,
       };
       if (!event.is_error) {
-        handleReaderToolComplete(b.tool, b.input, event.output, event.is_error);
+        void handleReaderToolComplete(b.tool, b.input, event.output, event.is_error);
       }
       return;
     }

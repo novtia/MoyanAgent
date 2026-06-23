@@ -167,6 +167,7 @@ impl AgentTool {
             // Host-side path has no parent ToolUseContext; without a
             // DB-derived path the sub-agent runs without a CWD.
             None,
+            None,
         )
         .await
     }
@@ -202,6 +203,7 @@ impl AgentTool {
         initial_attachments: Vec<Attachment>,
         parent_hint: Option<String>,
         parent_cwd: Option<std::path::PathBuf>,
+        parent_ctx: Option<&crate::ai::agent::core::context::ToolUseContext>,
     ) -> AppResult<AgentToolResult> {
         let run_mode = if agent_type == AGENT_FORK {
             AgentRunMode::Fork
@@ -236,7 +238,9 @@ impl AgentTool {
             // project path, the sub-agent gets none either.
             project_cwd: parent_cwd,
             abort_signal: None,
-            session_id: None,
+            session_id: parent_ctx.and_then(|c| c.session_id.clone()),
+            correlation_id: parent_ctx.and_then(|c| c.correlation_id.clone()),
+            token_logger: parent_ctx.and_then(|c| c.token_logger.clone()),
         })
         .await?;
 
@@ -351,6 +355,7 @@ impl Tool for AgentTool {
                     initial_attachments,
                     parent_hint,
                     parent_cwd,
+                    Some(invocation.context),
                 )
                 .await
             {
