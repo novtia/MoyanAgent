@@ -240,12 +240,22 @@
   justify-content: space-between;
   gap: 8px;
   padding-top: 4px;
+  min-width: 0;
 }
 .composer-bar-left,
 .composer-bar-right {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+.composer-bar-left {
+  min-width: 0;
+  flex: 1 1 auto;
+  /* Popovers (Agent mode, thinking, params) open upward — must not clip. */
+  overflow: visible;
+}
+.composer-bar-right {
+  flex-shrink: 0;
 }
 
 /* Match `.composer-pill` typography so auxiliary controls (context ring) align to the same line box. */
@@ -416,6 +426,13 @@
   height: 12px;
   flex: 0 0 auto;
   color: var(--ink-soft);
+}
+
+/* Narrow composer: hide low-priority controls so the send button stays inside the card. */
+@container composer (max-width: 560px) {
+  .composer-add-btn {
+    display: none;
+  }
 }
 
 /* When the composer is narrow, collapse the params pill to its icon only
@@ -636,6 +653,7 @@
 }
 
 .send-btn {
+  flex-shrink: 0;
   width: 30px;
   height: 30px;
   background: var(--ink);

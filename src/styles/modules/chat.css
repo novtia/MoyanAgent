@@ -6,6 +6,8 @@
   background: var(--bg);
   overflow: hidden;
   min-height: 0;
+  min-width: 0;
+  height: 100%;
 }
 .chat-main {
   flex: 1 1 auto;

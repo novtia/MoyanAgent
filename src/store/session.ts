@@ -16,7 +16,12 @@ import {
   composerModeFromAgentType,
 } from "../config/chatMode";
 import { useRoleState, type RoleStateOp } from "./roleState";
-import { useReader, readerDocFromToolOutput, stripParagraphLabels } from "./reader";
+import {
+  applyParagraphEdit,
+  useReader,
+  readerDocFromToolOutput,
+  stripParagraphLabels,
+} from "./reader";
 import { useSettings } from "./settings";
 
 interface ComposerState {
@@ -1098,15 +1103,18 @@ function handleReaderToolComplete(
       typeof inp.original_content === "string" ? inp.original_content : "";
     const modified =
       typeof inp.modified_content === "string" ? inp.modified_content : "";
-    const textBefore =
-      typeof o.text_before === "string" ? stripParagraphLabels(o.text_before) : existing.text;
+    const paragraphNumber =
+      typeof inp.paragraph_number === "number" ? inp.paragraph_number : undefined;
+    const textBefore = existing.text;
     const textAfter =
-      typeof o.text === "string" ? stripParagraphLabels(o.text) : existing.text;
+      paragraphNumber != null
+        ? applyParagraphEdit(existing.text, paragraphNumber, original, modified)
+        : null;
+    if (textAfter == null) return;
     reader.appendPendingDiff(path, {
       before: original,
       after: modified,
-      paragraphNumber:
-        typeof inp.paragraph_number === "number" ? inp.paragraph_number : undefined,
+      paragraphNumber,
       textBefore,
       textAfter,
     });

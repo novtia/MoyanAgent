@@ -285,7 +285,6 @@ impl Tool for FileEditTool {
             }
 
             let updated = join_paragraphs(&paragraphs);
-            let text_before = file_content.clone();
 
             // Snapshot the pre-image before mutating for rollback support.
             self.snapshots.record_before(
@@ -299,23 +298,12 @@ impl Tool for FileEditTool {
 
             record_read_receipt(&invocation, &path);
 
-            let chars = updated.chars().filter(|c| !c.is_whitespace()).count();
-            let lines = if updated.is_empty() {
-                0
-            } else {
-                updated.lines().count()
-            };
-
             Ok(ToolResult::ok(json!({
                 "path": path.to_string_lossy(),
                 "paragraph_number": paragraph_number,
                 "inserted": inserted,
                 "replaced": if inserted > 0 { 0 } else { replaced },
                 "paragraphs_total": paragraphs.len(),
-                "text": updated,
-                "text_before": text_before,
-                "chars": chars,
-                "lines": lines,
             })))
         })
     }

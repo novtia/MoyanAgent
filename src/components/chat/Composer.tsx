@@ -478,7 +478,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
             </div>
             <button
               type="button"
-              className="composer-btn"
+              className="composer-btn composer-add-btn"
               title={t("composer.addImage")}
               onClick={pickAttachments}
             >

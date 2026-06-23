@@ -83,6 +83,78 @@ export function splitParagraphs(text: string): string[] {
   return text.split("\n");
 }
 
+function stripParagraphLabel(s: string): string {
+  const trimmed = s.trimStart();
+  if (!trimmed.startsWith("[P")) return s;
+  const rest = trimmed.slice(2);
+  const closeIdx = rest.indexOf("]");
+  if (closeIdx < 0) return s;
+  const digits = rest.slice(0, closeIdx);
+  if (!/^\d+$/.test(digits)) return s;
+  return rest.slice(closeIdx + 1).trimStart();
+}
+
+function splitAgentParagraphs(text: string): string[] {
+  return splitParagraphs(stripParagraphLabels(text));
+}
+
+function insertParagraphsAfter(
+  paragraphs: string[],
+  afterIndex: number,
+  content: string,
+): number {
+  const newParas = splitAgentParagraphs(content);
+  if (newParas.length === 0 || newParas.every((p) => p === "")) return 0;
+  const insertAt = afterIndex + 1;
+  for (let offset = 0; offset < newParas.length; offset++) {
+    paragraphs.splice(insertAt + offset, 0, newParas[offset]!);
+  }
+  return newParas.length;
+}
+
+function replaceParagraphWith(paragraphs: string[], index: number, content: string): void {
+  const newParas = splitAgentParagraphs(content);
+  if (newParas.length === 0) {
+    paragraphs[index] = "";
+    return;
+  }
+  if (newParas.length === 1) {
+    paragraphs[index] = newParas[0]!;
+    return;
+  }
+  paragraphs.splice(index, 1, ...newParas);
+}
+
+/** Apply one Edit tool call to in-memory file text (mirrors backend Edit). */
+export function applyParagraphEdit(
+  fileText: string,
+  paragraphNumber: number,
+  originalContent: string,
+  modifiedContent: string,
+): string | null {
+  const original = stripParagraphLabel(originalContent);
+  const modified = stripParagraphLabel(modifiedContent);
+  const paragraphs = splitParagraphs(fileText);
+  if (paragraphNumber < 1 || paragraphNumber > paragraphs.length) return null;
+  const idx = paragraphNumber - 1;
+  const para = paragraphs[idx] ?? "";
+
+  if (original === "") {
+    if (para.trim() === "") {
+      paragraphs[idx] = modified;
+    } else if (insertParagraphsAfter(paragraphs, idx, modified) === 0) {
+      return null;
+    }
+  } else if (original === para || original === para.trim()) {
+    replaceParagraphWith(paragraphs, idx, modified);
+  } else {
+    const occurrences = para.split(original).length - 1;
+    if (occurrences !== 1) return null;
+    paragraphs[idx] = para.replace(original, modified);
+  }
+  return paragraphs.join("\n");
+}
+
 /** 1-based paragraph index, matches Edit `paragraph_number`. */
 export function paragraphAt(text: string, oneBased: number): string {
   const paras = splitParagraphs(text);

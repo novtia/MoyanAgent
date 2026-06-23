@@ -3,7 +3,7 @@
 .document-reader {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
   width: 100%;
@@ -190,8 +190,6 @@
 }
 
 /* Editable source view — typography follows chat font settings via .reader-workspace */
-.reader-editor-gutter,
-.reader-editor-gutter-item,
 .reader-editor,
 .reader-editor-field,
 .reader-editor-segment,
@@ -234,6 +232,7 @@
   overflow: hidden;
   box-sizing: border-box;
   user-select: none;
+  font-family: 'Instrument Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 .reader-editor-wrap--plain .reader-editor-gutter {
@@ -573,6 +572,7 @@
   color: var(--ink-mute);
   opacity: 0.55;
   padding: 0 4px 0 6px;
+  font-family: 'Instrument Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 0.92em;
   font-variant-numeric: tabular-nums;
 }

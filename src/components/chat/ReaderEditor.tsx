@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent,
   type RefObject,
 } from "react";
 import { useSession } from "../../store/session";
@@ -29,9 +30,41 @@ import {
   measureWrappedLineHeights,
   textareaContentWidth,
 } from "../../utils/readerGutter";
+import { handleReaderIndentKeyDown } from "../../utils/readerIndent";
 import { ReaderDiffActionBar } from "./ReaderDiffActionBar";
 
 const SAVE_DEBOUNCE_MS = 600;
+
+function usePendingSelection(
+  ref: RefObject<HTMLTextAreaElement | null>,
+  contentKey: string,
+) {
+  const pending = useRef<[number, number] | null>(null);
+
+  const queueSelection = useCallback((start: number, end: number) => {
+    pending.current = [start, end];
+  }, []);
+
+  useLayoutEffect(() => {
+    const pendingSel = pending.current;
+    if (!pendingSel || !ref.current) return;
+    pending.current = null;
+    ref.current.setSelectionRange(pendingSel[0], pendingSel[1]);
+  }, [contentKey, ref]);
+
+  return queueSelection;
+}
+
+function onIndentKeyDown(
+  e: KeyboardEvent<HTMLTextAreaElement>,
+  text: string,
+  apply: (next: string, selStart: number, selEnd: number) => void,
+) {
+  const result = handleReaderIndentKeyDown(e, text);
+  if (!result) return;
+  e.preventDefault();
+  apply(result.text, result.selectionStart, result.selectionEnd);
+}
 
 interface ReaderEditorProps {
   tab: ReaderFileTab;
@@ -80,11 +113,21 @@ function useLineHeights(
   useLayoutEffect(() => {
     const el = styleRef.current;
     if (!el || contentWidth <= 0) {
-      setHeights(lines.map(() => 0));
+      setHeights((prev) => {
+        const zeros = lines.map(() => 0);
+        if (prev.length === zeros.length && prev.every((h) => h === 0)) return prev;
+        return zeros;
+      });
       return;
     }
-    setHeights(measureWrappedLineHeights(lines, contentWidth, el));
-  }, [contentKey, contentWidth, styleRef, lines]);
+    const measured = measureWrappedLineHeights(lines, contentWidth, el);
+    setHeights((prev) => {
+      if (prev.length === measured.length && prev.every((h, i) => h === measured[i])) {
+        return prev;
+      }
+      return measured;
+    });
+  }, [contentKey, contentWidth, styleRef]);
 
   return heights;
 }
@@ -112,19 +155,23 @@ function SegmentBlock({
 }) {
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
+  const queueSelection = usePendingSelection(fieldRef, value);
   const [contentWidth, setContentWidth] = useState(0);
 
   useLayoutEffect(() => {
     const el = fieldRef.current;
     if (!el) return;
-    const update = () => setContentWidth(textareaContentWidth(el));
+    const update = () => {
+      const next = textareaContentWidth(el);
+      setContentWidth((prev) => (prev === next ? prev : next));
+    };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
     const wrap = el.closest(".reader-editor-wrap");
     if (wrap) ro.observe(wrap);
     return () => ro.disconnect();
-  }, [value, lines.join("\n")]);
+  }, [value]);
 
   const heights = useLineHeights(lines, contentWidth, fieldRef, value);
 
@@ -155,6 +202,15 @@ function SegmentBlock({
         value={value}
         readOnly={readOnly}
         onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+        onKeyDown={
+          onChange
+            ? (e) =>
+                onIndentKeyDown(e, value, (next, selStart, selEnd) => {
+                  onChange(next);
+                  queueSelection(selStart, selEnd);
+                })
+            : undefined
+        }
         onScroll={syncScroll}
         spellCheck={false}
         aria-label={ariaLabel}
@@ -173,6 +229,7 @@ function PlainReader({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
+  const queueSelection = usePendingSelection(textareaRef, tab.text);
   const lines = useMemo(() => tab.text.split("\n"), [tab.text]);
   const labels = useMemo(() => buildLineParagraphLabels(tab.text), [tab.text]);
   const [contentWidth, setContentWidth] = useState(0);
@@ -180,7 +237,10 @@ function PlainReader({
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    const update = () => setContentWidth(textareaContentWidth(el));
+    const update = () => {
+      const next = textareaContentWidth(el);
+      setContentWidth((prev) => (prev === next ? prev : next));
+    };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
@@ -208,6 +268,12 @@ function PlainReader({
           className="reader-editor"
           value={tab.text}
           onChange={(e) => applyText(e.target.value)}
+          onKeyDown={(e) =>
+            onIndentKeyDown(e, tab.text, (next, selStart, selEnd) => {
+              applyText(next);
+              queueSelection(selStart, selEnd);
+            })
+          }
           onScroll={syncScroll}
           spellCheck={false}
           aria-label={tab.path}
@@ -458,7 +524,10 @@ function DeleteLineRow({ label, line }: { label: number | null; line: string }) 
   useLayoutEffect(() => {
     const el = textRef.current;
     if (!el) return;
-    const update = () => setContentWidth(el.clientWidth);
+    const update = () => {
+      const next = el.clientWidth;
+      setContentWidth((prev) => (prev === next ? prev : next));
+    };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);

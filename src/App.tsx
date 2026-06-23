@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Sidebar } from "./components/layout/Sidebar";
 import { ChatView } from "./components/chat/ChatView";
 import { Dropzone } from "./components/media/Dropzone";
@@ -63,6 +64,27 @@ export default function App() {
     refreshList();
     refreshProjects();
   }, [loadSettings, refreshList, refreshProjects]);
+
+  // Keep shell height in sync with the native window — 100vh alone can lag in WebView2.
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    const syncHeight = () => {
+      root.style.setProperty("--app-height", `${window.innerHeight}px`);
+    };
+    syncHeight();
+    window.addEventListener("resize", syncHeight);
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onResized(syncHeight)
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      window.removeEventListener("resize", syncHeight);
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     const onHashChange = () => setRoute(parseRoute());
