@@ -15,10 +15,12 @@
 //! - [`session`]       per-session `summary.md` extractor
 //! - [`nested`]        path-scoped rule injection driven by tool reads
 //! - [`compaction`]    history compression once token-budget crosses a threshold
+//! - [`tool_chain`]    in-loop tool round window (TodoList exempt)
 
 pub mod compaction;
 pub mod nested;
 pub mod session;
+pub mod tool_chain;
 pub mod user_context;
 
 use std::path::PathBuf;

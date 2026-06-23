@@ -15,6 +15,7 @@ import type {
   MessageAbs,
   ModelParamSettings,
   Project,
+  ProjectDirEntry,
   SessionSearchResult,
   SessionSummary,
   SessionWithMessagesAbs,
@@ -272,6 +273,28 @@ export const api = {
 
   readProjectFile: (sessionId: string, path: string) =>
     invoke<string>("read_project_file", { sessionId, path }),
+
+  listProjectDir: (sessionId: string, path?: string | null) =>
+    invoke<ProjectDirEntry[]>("list_project_dir", {
+      sessionId,
+      path: path ?? null,
+    }),
+
+  createProjectDir: (sessionId: string, path: string) =>
+    invoke<void>("create_project_dir", { sessionId, path }),
+
+  createProjectFile: (sessionId: string, path: string, content?: string | null) =>
+    invoke<void>("create_project_file", {
+      sessionId,
+      path,
+      content: content ?? null,
+    }),
+
+  renameProjectPath: (sessionId: string, from: string, to: string) =>
+    invoke<void>("rename_project_path", { sessionId, from, to }),
+
+  deleteProjectPath: (sessionId: string, path: string) =>
+    invoke<void>("delete_project_path", { sessionId, path }),
 
   getTokenUsageSummary: (args?: {
     fromMs?: number | null;

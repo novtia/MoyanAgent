@@ -6,7 +6,10 @@ import {
   readerFileName,
   type ReaderFileTab,
 } from "../../store/reader";
+import { useReaderFind } from "../../store/readerFind";
 import { ReaderEditor } from "./ReaderEditor";
+import { ReaderFileDrawer } from "./ReaderFileDrawer";
+import { ReaderFindBar, useReaderFindShortcuts } from "./ReaderFindBar";
 
 function CloseIcon() {
   return (
@@ -19,6 +22,11 @@ function CloseIcon() {
 function ReaderFilePane({ tab }: { tab: ReaderFileTab }) {
   const { t } = useTranslation();
   const fileName = readerFileName(tab.path);
+  const hasPendingDiff = tab.pendingDiffs.length > 0;
+  const findOpen = useReaderFind((s) => s.open);
+  const findScope = useReaderFind((s) => s.scope);
+  const findQuery = useReaderFind((s) => s.query);
+  const findSearching = useReaderFind((s) => s.searching);
   const chars = useMemo(
     () => (typeof tab.chars === "number" ? tab.chars : countChars(tab.text)),
     [tab.chars, tab.text],
@@ -27,6 +35,8 @@ function ReaderFilePane({ tab }: { tab: ReaderFileTab }) {
     () => (typeof tab.lines === "number" ? tab.lines : tab.text.split(/\n/).length),
     [tab.lines, tab.text],
   );
+  const hasFindFileList =
+    findOpen && findScope === "all" && findQuery.trim().length > 0 && !findSearching;
 
   return (
     <div className="document-reader reader-file-pane">
@@ -44,8 +54,16 @@ function ReaderFilePane({ tab }: { tab: ReaderFileTab }) {
           )}
         </div>
       </div>
-      <div className="document-reader-body reader-file-body">
+      <div
+        className={`document-reader-body reader-file-body${findOpen ? " has-find-bar has-find-replace" : ""}${hasFindFileList ? " has-find-file-list" : ""}`}
+      >
         <ReaderEditor tab={tab} />
+        <div className="reader-find-overlay">
+          <ReaderFindBar
+            disabled={hasPendingDiff}
+            disabledReason={hasPendingDiff ? t("readerFind.diffBlocked") : undefined}
+          />
+        </div>
       </div>
     </div>
   );
@@ -60,10 +78,15 @@ export function ReaderWorkspace() {
 
   const activeTab = tabs.find((tb) => tb.id === activeTabId) ?? null;
 
+  useReaderFindShortcuts(tabs.length > 0);
+
   if (tabs.length === 0) {
     return (
       <div className="document-reader is-empty reader-workspace">
-        <p className="document-reader-empty">{t("rightPanel.readerEmpty")}</p>
+        <div className="reader-main-area">
+          <p className="document-reader-empty">{t("rightPanel.readerEmpty")}</p>
+          <ReaderFileDrawer />
+        </div>
       </div>
     );
   }
@@ -103,13 +126,16 @@ export function ReaderWorkspace() {
           );
         })}
       </div>
-      {activeTab ? (
-        <ReaderFilePane tab={activeTab} />
-      ) : (
-        <div className="document-reader is-empty">
-          <p className="document-reader-empty">{t("rightPanel.readerEmpty")}</p>
-        </div>
-      )}
+      <div className="reader-main-area">
+        {activeTab ? (
+          <ReaderFilePane tab={activeTab} />
+        ) : (
+          <div className="document-reader is-empty reader-file-pane">
+            <p className="document-reader-empty">{t("rightPanel.readerEmpty")}</p>
+          </div>
+        )}
+        <ReaderFileDrawer />
+      </div>
     </div>
   );
 }

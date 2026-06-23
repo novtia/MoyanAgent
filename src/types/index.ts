@@ -229,6 +229,12 @@ export interface Project {
   updated_at: number;
 }
 
+export interface ProjectDirEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+}
+
 export interface SessionSearchResult extends SessionSummary {
   match_message_id: string | null;
   match_role: "user" | "assistant" | "error" | string | null;

@@ -13,9 +13,13 @@ import { useSession } from "../../store/session";
 import {
   buildLineParagraphLabels,
   formatParagraphNumber,
+  normalizeReaderPath,
   useReader,
   type ReaderFileTab,
 } from "../../store/reader";
+import { useReaderFind } from "../../store/readerFind";
+import { scrollTextareaToIndex, findInText, resolveFindScrollIndex } from "../../utils/readerFind";
+import { ReaderFindBackdrop } from "./ReaderFindHighlight";
 import { api } from "../../api/tauri";
 import {
   buildEditorDisplaySegments,
@@ -241,33 +245,166 @@ function PlainReader({
 
   const heights = useLineHeights(lines, contentWidth, textareaRef, tab.text);
 
+  const findOpen = useReaderFind((s) => s.open);
+  const findQuery = useReaderFind((s) => s.query);
+  const matchCase = useReaderFind((s) => s.matchCase);
+  const matchIndex = useReaderFind((s) => s.matchIndex);
+  const findMatches = useReaderFind((s) => s.matches);
+  const backdropInnerRef = useRef<HTMLDivElement>(null);
+
+  const { ranges: findRanges, activeIndex: findActiveIndex } = useMemo(() => {
+    if (!findOpen || !findQuery.trim() || tab.pendingDiffs.length > 0) {
+      return { ranges: [], activeIndex: -1 };
+    }
+    const ranges = findInText(tab.text, findQuery, matchCase);
+    if (matchIndex < 0) {
+      return { ranges, activeIndex: -1 };
+    }
+    const activeMatch = findMatches[matchIndex] ?? null;
+    if (
+      !activeMatch ||
+      normalizeReaderPath(activeMatch.path) !== normalizeReaderPath(tab.path)
+    ) {
+      return { ranges, activeIndex: -1 };
+    }
+    const activeIndex = ranges.findIndex(
+      (r) => r.start === activeMatch.start && r.end === activeMatch.end,
+    );
+    if (activeIndex >= 0) {
+      return { ranges, activeIndex };
+    }
+    const fileMatches = findMatches.filter(
+      (m) => normalizeReaderPath(m.path) === normalizeReaderPath(tab.path),
+    );
+    const ord = fileMatches.findIndex(
+      (m) => m.start === activeMatch.start && m.end === activeMatch.end,
+    );
+    return { ranges, activeIndex: ord >= 0 ? ord : -1 };
+  }, [
+    findOpen,
+    findQuery,
+    matchCase,
+    tab.text,
+    tab.path,
+    tab.pendingDiffs.length,
+    findMatches,
+    matchIndex,
+  ]);
+
+  const showFindHighlight =
+    findOpen && findQuery.trim().length > 0 && findRanges.length > 0;
+
+  const syncFindBackdrop = useCallback(() => {
+    const ta = textareaRef.current;
+    const inner = backdropInnerRef.current;
+    if (!ta || !inner) return;
+    const w = textareaContentWidth(ta);
+    if (w > 0) {
+      inner.style.width = `${w}px`;
+    }
+    inner.style.minHeight = `${ta.scrollHeight}px`;
+    inner.style.transform = `translate(${-ta.scrollLeft}px, ${-ta.scrollTop}px)`;
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!showFindHighlight) return;
+    syncFindBackdrop();
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const ro = new ResizeObserver(() => syncFindBackdrop());
+    ro.observe(ta);
+    return () => ro.disconnect();
+  }, [showFindHighlight, tab.text, findRanges, contentWidth, syncFindBackdrop]);
+
+  const activeFindMatch =
+    findOpen && matchIndex >= 0 ? findMatches[matchIndex] ?? null : null;
+
+  useLayoutEffect(() => {
+    if (!activeFindMatch || tab.pendingDiffs.length > 0) return;
+    if (
+      normalizeReaderPath(activeFindMatch.path) !== normalizeReaderPath(tab.path)
+    ) {
+      return;
+    }
+
+    const scrollToActiveMatch = () => {
+      const el = textareaRef.current;
+      if (!el) return false;
+
+      const fileMatches = findMatches.filter(
+        (m) => normalizeReaderPath(m.path) === normalizeReaderPath(tab.path),
+      );
+      const scrollIndex = resolveFindScrollIndex(
+        tab.text,
+        findQuery,
+        matchCase,
+        activeFindMatch,
+        fileMatches,
+      );
+      if (scrollIndex == null) return false;
+
+      scrollTextareaToIndex(el, scrollIndex);
+      if (gutterRef.current) {
+        gutterRef.current.scrollTop = el.scrollTop;
+      }
+      syncFindBackdrop();
+      return true;
+    };
+
+    if (scrollToActiveMatch()) return;
+    const raf = requestAnimationFrame(() => {
+      scrollToActiveMatch();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [
+    activeFindMatch,
+    tab.path,
+    tab.text,
+    tab.pendingDiffs.length,
+    findQuery,
+    matchCase,
+    findMatches,
+    syncFindBackdrop,
+  ]);
+
   const syncScroll = useCallback(() => {
     if (gutterRef.current && textareaRef.current) {
       gutterRef.current.scrollTop = textareaRef.current.scrollTop;
     }
-  }, []);
+    syncFindBackdrop();
+  }, [syncFindBackdrop]);
 
   return (
-    <div className="reader-editor-wrap reader-editor-wrap--plain">
+    <div className={`reader-editor-wrap reader-editor-wrap--plain${showFindHighlight ? " has-find-highlight" : ""}`}>
       <div className="reader-editor-plain">
         <div ref={gutterRef} className="reader-editor-gutter">
           <GutterStack labels={labels} heights={heights} />
         </div>
-        <textarea
-          ref={textareaRef}
-          className="reader-editor"
-          value={tab.text}
-          onChange={(e) => applyText(e.target.value)}
-          onKeyDown={(e) =>
-            onIndentKeyDown(e, tab.text, (next, selStart, selEnd) => {
-              applyText(next);
-              queueSelection(selStart, selEnd);
-            })
-          }
-          onScroll={syncScroll}
-          spellCheck={false}
-          aria-label={tab.path}
-        />
+        <div className="reader-editor-input-stack">
+          {showFindHighlight && (
+            <ReaderFindBackdrop
+              text={tab.text}
+              ranges={findRanges}
+              activeIndex={findActiveIndex}
+              innerRef={backdropInnerRef}
+            />
+          )}
+          <textarea
+            ref={textareaRef}
+            className={`reader-editor${showFindHighlight ? " reader-editor--find-overlay" : ""}`}
+            value={tab.text}
+            onChange={(e) => applyText(e.target.value)}
+            onKeyDown={(e) =>
+              onIndentKeyDown(e, tab.text, (next, selStart, selEnd) => {
+                applyText(next);
+                queueSelection(selStart, selEnd);
+              })
+            }
+            onScroll={syncScroll}
+            spellCheck={false}
+            aria-label={tab.path}
+          />
+        </div>
       </div>
     </div>
   );

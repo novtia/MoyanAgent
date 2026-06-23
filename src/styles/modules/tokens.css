@@ -7,6 +7,7 @@
   --bg-sunk: #f1f3f6;
   --bg-side: #fafafa;
   --bg-hover: #efefef;
+  --surface: var(--bg);
 
   --line: #ececec;
   --line-strong: #d8d8d8;
@@ -80,6 +81,7 @@
   --bg-sunk: #0b0c0e;
   --bg-side: #141517;
   --bg-hover: #23262a;
+  --surface: var(--bg);
 
   --line: #292c31;
   --line-strong: #3a3f46;

@@ -432,6 +432,10 @@ impl QueryEngine for ProviderQueryEngine {
                 // Persist this round into tool_chain so the next loop
                 // iteration sends the full in-turn tool history.
                 commit_tool_round(&mut chat);
+                crate::ai::agent::memory::tool_chain::trim_tool_chain(
+                    &mut chat.tool_chain,
+                    crate::ai::agent::memory::tool_chain::DEFAULT_MAX_NON_TODO_TOOL_ROUNDS,
+                );
 
                 // Drain any nested-memory triggers that the tool calls
                 // recorded (e.g. via `FileReadTool`). Matching memory

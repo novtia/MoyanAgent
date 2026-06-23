@@ -24,6 +24,8 @@ use crate::data::{custom_agents, db, llm_catalog, paths, project, session, setti
 use crate::error::{AppError, AppResult};
 use crate::media::{editor, images};
 
+mod project_fs;
+
 pub struct AppState {
     pub pool: DbPool,
     /// Per-session abort controllers for in-flight `generate_image` runs.
@@ -211,7 +213,7 @@ fn append_role_state_history_tail(
 /// Returns `Some(path)` when the session belongs to a project that has a
 /// non-empty `path` set; `None` otherwise (plain chat, or project without
 /// a filesystem path).
-fn session_project_cwd(conn: &db::DbConn, session_id: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn session_project_cwd(conn: &db::DbConn, session_id: &str) -> Option<std::path::PathBuf> {
     let sess = session::get(conn, session_id).ok()?;
     let project_id = sess.project_id?;
     let proj = project::get(conn, &project_id).ok()?;
@@ -240,7 +242,7 @@ fn path_under_root(path: &std::path::Path, root: &std::path::Path) -> bool {
     path.starts_with(root)
 }
 
-fn validate_reader_write_path(
+pub(crate) fn validate_reader_write_path(
     file_path: &std::path::Path,
     session_cwd: Option<&std::path::Path>,
 ) -> AppResult<PathBuf> {
@@ -3265,6 +3267,11 @@ pub fn run() {
             import_archive,
             write_project_file,
             read_project_file,
+            project_fs::list_project_dir,
+            project_fs::create_project_dir,
+            project_fs::create_project_file,
+            project_fs::rename_project_path,
+            project_fs::delete_project_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
