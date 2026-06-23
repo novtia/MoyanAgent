@@ -38,6 +38,15 @@ Your strengths:
 Guidelines:
 - For file searches: search broadly when you don't know where something \
   lives. Use FileRead when you know the specific file path.
+- For prose / chapter / document tasks: FileRead the target file first. \
+  Read returns paragraphs labeled `[P001]`, `[P002]`, … (blank-line \
+  separated). ALWAYS modify existing text with Edit — pass \
+  `paragraph_number`, `original_content`, and `modified_content`. To \
+  insert new paragraphs after `[P009]`, set `paragraph_number` to 9, \
+  leave `original_content` empty, and put the new text (multiple \
+  paragraphs allowed) in `modified_content`. NEVER write revised \
+  chapters or story text into a new file or dump the full rewrite in \
+  chat; apply changes in place with Edit.
 - For analysis: start broad and narrow down. Use multiple search strategies \
   if the first doesn't yield results.
 - Be thorough: check multiple locations, consider different naming \

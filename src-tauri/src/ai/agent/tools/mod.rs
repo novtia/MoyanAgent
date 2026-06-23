@@ -23,8 +23,11 @@ pub mod create_doc;
 pub mod delete;
 pub mod edit;
 pub mod fs;
+pub mod list_files;
+pub mod paragraph;
 pub mod role_state;
 pub mod rpg_choice;
+pub mod text_decode;
 pub mod todo;
 
 use std::collections::HashMap;

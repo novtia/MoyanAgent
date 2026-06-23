@@ -168,8 +168,8 @@ impl Tool for BashTool {
                 }
             };
 
-            let stdout = truncate_lossy(&stdout_buf);
-            let stderr = truncate_lossy(&stderr_buf);
+            let stdout = truncate_console(&stdout_buf);
+            let stderr = truncate_console(&stderr_buf);
 
             let mut content = json!({
                 "command": command,
@@ -197,9 +197,15 @@ impl Tool for BashTool {
 
 #[cfg(windows)]
 fn build_command(command: &str) -> Command {
-    let mut cmd = Command::new("cmd");
-    cmd.arg("/C").arg(command);
-    cmd
+    use std::os::windows::process::CommandExt;
+
+    // Don't pop up a console window when the GUI (Tauri) app spawns the child.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let mut std_cmd = std::process::Command::new("cmd");
+    std_cmd.arg("/C").arg(command);
+    std_cmd.creation_flags(CREATE_NO_WINDOW);
+    Command::from(std_cmd)
 }
 
 #[cfg(not(windows))]
@@ -209,14 +215,71 @@ fn build_command(command: &str) -> Command {
     cmd
 }
 
-fn truncate_lossy(bytes: &[u8]) -> (String, bool) {
-    if bytes.len() <= MAX_OUTPUT_BYTES {
-        return (String::from_utf8_lossy(bytes).into_owned(), false);
+fn truncate_console(bytes: &[u8]) -> (String, bool) {
+    let (slice, truncated) = if bytes.len() <= MAX_OUTPUT_BYTES {
+        (bytes, false)
+    } else {
+        (&bytes[..MAX_OUTPUT_BYTES], true)
+    };
+    let mut s = decode_console(slice);
+    if truncated {
+        s.push_str("\n\n<truncated>");
     }
-    let head = &bytes[..MAX_OUTPUT_BYTES];
-    let mut s = String::from_utf8_lossy(head).into_owned();
-    s.push_str("\n\n<truncated>");
-    (s, true)
+    (s, truncated)
+}
+
+/// Decode raw child-process output. On Windows, console programs (e.g. `dir`)
+/// emit bytes in the OEM code page (GBK/936 on a Chinese system), so decode
+/// directly with it — non-ASCII file names come through correctly instead of
+/// as mojibake.
+#[cfg(windows)]
+fn decode_console(bytes: &[u8]) -> String {
+    decode_oem(bytes)
+}
+
+#[cfg(not(windows))]
+fn decode_console(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// Convert bytes in the system OEM code page to a `String` via the Win32
+/// `MultiByteToWideChar` API (`CP_OEMCP`). Falls back to a lossy UTF-8 decode
+/// if the conversion fails.
+#[cfg(windows)]
+fn decode_oem(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    // CP_OEMCP = 1: use the system OEM code page (the default for console output).
+    const CP_OEMCP: u32 = 1;
+
+    extern "system" {
+        fn MultiByteToWideChar(
+            code_page: u32,
+            dw_flags: u32,
+            lp_multi_byte_str: *const u8,
+            cb_multi_byte: i32,
+            lp_wide_char_str: *mut u16,
+            cch_wide_char: i32,
+        ) -> i32;
+    }
+
+    let len = bytes.len() as i32;
+    unsafe {
+        let needed =
+            MultiByteToWideChar(CP_OEMCP, 0, bytes.as_ptr(), len, std::ptr::null_mut(), 0);
+        if needed <= 0 {
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+        let mut buf = vec![0u16; needed as usize];
+        let written =
+            MultiByteToWideChar(CP_OEMCP, 0, bytes.as_ptr(), len, buf.as_mut_ptr(), needed);
+        if written <= 0 {
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+        String::from_utf16_lossy(&buf[..written as usize])
+    }
 }
 
 /// Platform-aware error when `cwd` fails `is_absolute()`.

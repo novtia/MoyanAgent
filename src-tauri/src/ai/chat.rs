@@ -136,6 +136,17 @@ pub struct ToolResultMessage {
     pub is_error: bool,
 }
 
+/// One completed tool-call round within the current user prompt.
+///
+/// The MainAgent query loop appends here after each tool round so the
+/// next provider call sees the full in-turn history, not just the latest
+/// `pending_assistant_turn` / `tool_results` pair.
+#[derive(Debug, Clone, Default)]
+pub struct ToolChainRound {
+    pub assistant: PendingAssistantTurn,
+    pub results: Vec<ToolResultMessage>,
+}
+
 /// The immediately preceding assistant turn that emitted tool calls.
 ///
 /// Providers that require the full call/response chain in the message
@@ -143,7 +154,7 @@ pub struct ToolResultMessage {
 /// existing `history` and any `tool_results` so the conversation reads:
 ///
 /// ```text
-/// ... history ... → user prompt → assistant{text + tool_calls} → tool_results
+/// ... history ... → user prompt → [tool_chain...] → assistant{text + tool_calls} → tool_results
 /// ```
 ///
 /// `None` ⇒ this is the first turn (or a turn after no tool_use), so no
@@ -169,6 +180,10 @@ pub struct ChatRequest {
     /// Tools the model is allowed to call this turn. Empty ⇒ no tool
     /// schema is sent; provider behaviour falls back to plain chat.
     pub tools: Vec<ToolDefinition>,
+    /// Completed tool rounds for the current user prompt (MainAgent
+    /// internal loop). Serialized after `prompt`, before the in-flight
+    /// `pending_assistant_turn` / `tool_results` pair.
+    pub tool_chain: Vec<ToolChainRound>,
     /// Replies to `tool_use` blocks emitted on the previous turn. Each
     /// entry is inserted into the provider message stream in the order
     /// listed; ordering matches the parent turn's tool_use ids.

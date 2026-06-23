@@ -120,19 +120,7 @@ fn build_history(
             Some(t) => m.created_at < t,
             None => true,
         })
-        .filter(|m| {
-            // Skip empty turns (no text and no usable images) ?they don't add context.
-            let has_text = m
-                .text
-                .as_deref()
-                .map(|s| !s.trim().is_empty())
-                .unwrap_or(false);
-            let has_img = m
-                .images
-                .iter()
-                .any(|i| matches!(i.role.as_str(), "input" | "output" | "edited"));
-            has_text || has_img
-        })
+        .filter(|m| message_qualifies_for_history(m))
         .collect();
 
     let len = candidates.len();
@@ -158,16 +146,10 @@ fn build_history(
                 mime: img.mime.clone(),
             });
         }
-        let thinking_content = m
-            .params
-            .as_ref()
-            .and_then(|p| p.get("thinking_content"))
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| s.to_string());
+        let thinking_content = message_thinking_for_history(m);
         out.push(chat::HistoryTurn {
             role: m.role.clone(),
-            text: m.text.clone(),
+            text: history_text_for_message(m),
             images: payload,
             thinking_content,
         });
@@ -740,6 +722,97 @@ fn concat_block_text(blocks: &[serde_json::Value], block_type: &str) -> String {
         .filter_map(|b| b.get("content").and_then(|c| c.as_str()))
         .collect::<Vec<_>>()
         .join("")
+}
+
+fn message_blocks(m: &session::Message) -> Option<&Vec<serde_json::Value>> {
+    m.params
+        .as_ref()
+        .and_then(|p| p.get("blocks"))
+        .and_then(|v| v.as_array())
+}
+
+/// Effective assistant/user text for provider history — merges DB `text`
+/// with streamed `text` blocks and a compact tool-call transcript.
+fn history_text_for_message(m: &session::Message) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(t) = m.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        parts.push(t.to_string());
+    }
+    if let Some(blocks) = message_blocks(m) {
+        let block_text = concat_block_text(blocks, "text").trim().to_string();
+        if !block_text.is_empty() && !parts.iter().any(|p| p.contains(&block_text)) {
+            parts.push(block_text);
+        }
+        let tool_summary = tool_blocks_history_summary(blocks);
+        if !tool_summary.is_empty() {
+            parts.push(tool_summary);
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
+}
+
+fn message_thinking_for_history(m: &session::Message) -> Option<String> {
+    let mut thinking = m
+        .params
+        .as_ref()
+        .and_then(|p| p.get("thinking_content"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    if let Some(blocks) = message_blocks(m) {
+        let block_thinking = concat_block_text(blocks, "thinking").trim().to_string();
+        if block_thinking.len() > thinking.len() {
+            thinking = block_thinking;
+        }
+    }
+    if thinking.is_empty() {
+        None
+    } else {
+        Some(thinking)
+    }
+}
+
+fn message_qualifies_for_history(m: &session::Message) -> bool {
+    let has_text = history_text_for_message(m).is_some();
+    let has_img = m
+        .images
+        .iter()
+        .any(|i| matches!(i.role.as_str(), "input" | "output" | "edited"));
+    if m.role == "assistant" {
+        return has_text || has_img || message_thinking_for_history(m).is_some();
+    }
+    has_text || has_img
+}
+
+/// One-line summaries of tool/agent blocks so follow-up turns know what
+/// already ran even though provider history is plain text turns.
+fn tool_blocks_history_summary(blocks: &[serde_json::Value]) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for b in blocks {
+        match b.get("type").and_then(|v| v.as_str()) {
+            Some("tool_use") => {
+                let tool = b.get("tool").and_then(|v| v.as_str()).unwrap_or("?");
+                let input = b
+                    .get("input")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}));
+                lines.push(format!("[已调用工具 {tool}: {input}]"));
+            }
+            Some("agent_stage") => {
+                if let Some(name) = b.get("name").and_then(|v| v.as_str()) {
+                    lines.push(format!("[阶段: {name}]"));
+                }
+            }
+            _ => {}
+        }
+    }
+    lines.join("\n")
 }
 
 /// Persist streamed assistant output before the session is reloaded.
@@ -1981,6 +2054,34 @@ fn finalize_generate_assistant_message(
     file_snapshots: &FileSnapshotStore,
 ) -> AppResult<GenerateResult> {
     resp.images = chat::dedupe_image_results(resp.images);
+    let block_text = concat_block_text(&blocks, "text");
+    let block_thinking = concat_block_text(&blocks, "thinking");
+    if resp
+        .text
+        .as_ref()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+        && !block_text.trim().is_empty()
+    {
+        resp.text = Some(block_text.trim().to_string());
+    }
+    if resp
+        .thinking_content
+        .as_ref()
+        .map(|s| s.trim().is_empty())
+        .unwrap_or(true)
+        && !block_thinking.trim().is_empty()
+    {
+        resp.thinking_content = Some(block_thinking.trim().to_string());
+    } else if block_thinking.len()
+        > resp
+            .thinking_content
+            .as_ref()
+            .map(|s| s.len())
+            .unwrap_or(0)
+    {
+        resp.thinking_content = Some(block_thinking.trim().to_string());
+    }
     let mut assistant_params =
         params.to_assistant_message_params(&resp.usage, resp.thinking_content.as_deref());
     if !blocks.is_empty() {
@@ -2556,6 +2657,7 @@ async fn generate_title_with_quick_model(
             settings::ModelParamSettings::default(),
         ),
         tools: Vec::new(),
+        tool_chain: Vec::new(),
         tool_results: Vec::new(),
         pending_assistant_turn: None,
     };
@@ -2848,6 +2950,7 @@ pub fn run() {
             let tools: Arc<ToolPool> = Arc::new(ToolPool::new());
             let file_snapshots = Arc::new(FileSnapshotStore::new());
             tools.register(FileReadTool::new());
+            tools.register(crate::ai::agent::tools::list_files::ListFilesTool::new());
             tools.register(crate::ai::agent::tools::edit::FileWriteTool::new(
                 file_snapshots.clone(),
             ));

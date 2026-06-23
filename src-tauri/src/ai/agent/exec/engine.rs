@@ -402,6 +402,10 @@ impl QueryEngine for ProviderQueryEngine {
                     tool_call_count += 1;
                 }
 
+                // Persist this round into tool_chain so the next loop
+                // iteration sends the full in-turn tool history.
+                commit_tool_round(&mut chat);
+
                 // Drain any nested-memory triggers that the tool calls
                 // recorded (e.g. via `FileReadTool`). Matching memory
                 // files are converted to hidden user-meta history turns
@@ -512,6 +516,20 @@ fn accumulate_usage(
         (None, Some(c)) => Some(c),
         (None, None) => None,
     };
+}
+
+/// Move the in-flight assistant/tool-result pair into `tool_chain`.
+fn commit_tool_round(chat: &mut ChatRequest) {
+    let Some(pending) = chat.pending_assistant_turn.take() else {
+        return;
+    };
+    if pending.tool_calls.is_empty() && chat.tool_results.is_empty() {
+        return;
+    }
+    chat.tool_chain.push(crate::ai::chat::ToolChainRound {
+        assistant: pending,
+        results: std::mem::take(&mut chat.tool_results),
+    });
 }
 
 /// Prepend attachments as hidden user-meta history turns so the model

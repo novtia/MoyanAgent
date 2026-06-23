@@ -71,6 +71,7 @@ pub async fn compact(
     let mut summary_req = chat.clone();
     summary_req.history = older;
     summary_req.tools.clear();
+    summary_req.tool_chain.clear();
     summary_req.tool_results.clear();
     summary_req.pending_assistant_turn = None;
     summary_req.attachments.clear();

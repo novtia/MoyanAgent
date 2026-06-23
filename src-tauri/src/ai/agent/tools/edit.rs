@@ -15,6 +15,10 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
+use crate::ai::agent::tools::paragraph::{
+    insert_paragraphs_after, join_paragraphs, replace_paragraph_with, split_paragraphs,
+    strip_paragraph_label,
+};
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
@@ -119,19 +123,35 @@ impl FileEditTool {
             snapshots,
             spec: ToolSpec {
                 name: EDIT_TOOL.to_string(),
-                description: "Replace `old_string` with `new_string` inside a file. \
-                    Requires that the file was read in this session. \
-                    Fails if `old_string` is not found or is ambiguous (unless `replace_all`)."
+                description: "Edit a numbered paragraph in a file (Read labels `[P001]`, …). \
+                    Three modes: (1) Insert after P00N — set `paragraph_number` to N, leave \
+                    `original_content` empty, put new text in `modified_content` (may contain \
+                    multiple blank-line-separated paragraphs). (2) Replace a fragment inside P00N \
+                    — set `original_content` to the exact snippet. (3) Fill an empty P00N — \
+                    `original_content` empty and that paragraph is empty."
                     .to_string(),
                 schema: json!({
                     "type": "object",
                     "properties": {
-                        "path":        { "type": "string" },
-                        "old_string":  { "type": "string" },
-                        "new_string":  { "type": "string" },
-                        "replace_all": { "type": "boolean", "default": false }
+                        "path": {
+                            "type": "string",
+                            "description": "Absolute path to the file to edit."
+                        },
+                        "paragraph_number": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Target paragraph from Read ([P009] → 9). Empty original_content + non-empty paragraph → insert new paragraphs after this one."
+                        },
+                        "original_content": {
+                            "type": "string",
+                            "description": "Exact fragment inside the paragraph to replace. Empty → insert-after (if paragraph non-empty) or fill (if paragraph empty)."
+                        },
+                        "modified_content": {
+                            "type": "string",
+                            "description": "New text: replacement fragment, full-paragraph replacement, or multi-paragraph insert body (blank-line separated)."
+                        }
                     },
-                    "required": ["path", "old_string", "new_string"]
+                    "required": ["path", "paragraph_number", "original_content", "modified_content"]
                 }),
                 read_only: false,
                 concurrency_safe: false,
@@ -147,15 +167,31 @@ impl Tool for FileEditTool {
 
     fn validate(&self, input: &Value) -> AppResult<()> {
         require_nonempty_string(input, "path", EDIT_TOOL)?;
-        require_nonempty_string(input, "old_string", EDIT_TOOL)?;
-        require_string(input, "new_string", EDIT_TOOL)?;
+        let para = input
+            .get("paragraph_number")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| {
+                AppError::Invalid("Edit: `paragraph_number` must be a positive integer".into())
+            })?;
+        if para == 0 {
+            return Err(AppError::Invalid(
+                "Edit: `paragraph_number` must be >= 1".into(),
+            ));
+        }
+        require_string(input, "original_content", EDIT_TOOL)?;
+        require_string(input, "modified_content", EDIT_TOOL)?;
         if let (Some(o), Some(n)) = (
-            input.get("old_string").and_then(Value::as_str),
-            input.get("new_string").and_then(Value::as_str),
+            input.get("original_content").and_then(Value::as_str),
+            input.get("modified_content").and_then(Value::as_str),
         ) {
             if o == n {
                 return Err(AppError::Invalid(
-                    "Edit: `old_string` and `new_string` are identical".into(),
+                    "Edit: `original_content` and `modified_content` are identical".into(),
+                ));
+            }
+            if o.is_empty() && n.trim().is_empty() {
+                return Err(AppError::Invalid(
+                    "Edit: `modified_content` must be non-empty when inserting or filling".into(),
                 ));
             }
         }
@@ -165,21 +201,25 @@ impl Tool for FileEditTool {
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
             let path = path_arg(&invocation.input, EDIT_TOOL)?;
-            let old = invocation
+            let paragraph_number = invocation
                 .input
-                .get("old_string")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let new = invocation
-                .input
-                .get("new_string")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let replace_all = invocation
-                .input
-                .get("replace_all")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+                .get("paragraph_number")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+            let original = strip_paragraph_label(
+                invocation
+                    .input
+                    .get("original_content")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            );
+            let modified = strip_paragraph_label(
+                invocation
+                    .input
+                    .get("modified_content")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            );
 
             if !has_read_receipt(&invocation, &path) {
                 return Ok(ToolResult::error(format!(
@@ -188,27 +228,50 @@ impl Tool for FileEditTool {
                 )));
             }
 
-            let original = std::fs::read_to_string(&path)
+            let file_content = std::fs::read_to_string(&path)
                 .map_err(|e| AppError::Other(format!("Edit: read {:?}: {e}", path)))?;
-            let occurrences = original.matches(old).count();
-            if occurrences == 0 {
+            let mut paragraphs = split_paragraphs(&file_content);
+            if paragraph_number == 0 || paragraph_number > paragraphs.len() {
                 return Ok(ToolResult::error(format!(
-                    "Edit: `old_string` not found in {}",
-                    path.display()
+                    "Edit: `paragraph_number` {paragraph_number} out of range (file has {} paragraphs)",
+                    paragraphs.len()
                 )));
             }
-            if occurrences > 1 && !replace_all {
-                return Ok(ToolResult::error(format!(
-                    "Edit: `old_string` appears {occurrences} times in {} — pass `replace_all: true` or extend the snippet to be unique",
-                    path.display()
-                )));
+            let idx = paragraph_number - 1;
+            let para = paragraphs[idx].as_str();
+            let mut inserted = 0u32;
+            let replaced = 1u32;
+
+            if original.is_empty() {
+                if para.trim().is_empty() {
+                    paragraphs[idx] = modified.to_string();
+                } else {
+                    inserted = insert_paragraphs_after(&mut paragraphs, idx, modified) as u32;
+                    if inserted == 0 {
+                        return Ok(ToolResult::error(
+                            "Edit: `modified_content` must contain text to insert",
+                        ));
+                    }
+                }
+            } else if original == para || original == para.trim() {
+                replace_paragraph_with(&mut paragraphs, idx, modified);
+            } else {
+                let occurrences = para.matches(original).count();
+                if occurrences == 0 {
+                    return Ok(ToolResult::error(format!(
+                        "Edit: `original_content` not found in paragraph {paragraph_number} of {}",
+                        path.display()
+                    )));
+                }
+                if occurrences > 1 {
+                    return Ok(ToolResult::error(format!(
+                        "Edit: `original_content` appears {occurrences} times in paragraph {paragraph_number} — extend the fragment"
+                    )));
+                }
+                paragraphs[idx] = para.replacen(original, modified, 1);
             }
 
-            let updated = if replace_all {
-                original.replace(old, new)
-            } else {
-                original.replacen(old, new, 1)
-            };
+            let updated = join_paragraphs(&paragraphs);
 
             // Snapshot the pre-image before mutating for rollback support.
             self.snapshots.record_before(
@@ -224,7 +287,10 @@ impl Tool for FileEditTool {
 
             Ok(ToolResult::ok(json!({
                 "path": path.to_string_lossy(),
-                "replaced": if replace_all { occurrences } else { 1 },
+                "paragraph_number": paragraph_number,
+                "inserted": inserted,
+                "replaced": if inserted > 0 { 0 } else { replaced },
+                "paragraphs_total": paragraphs.len(),
             })))
         })
     }

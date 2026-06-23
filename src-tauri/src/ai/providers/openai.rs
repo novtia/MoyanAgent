@@ -5,7 +5,7 @@ use serde_json::{json, Map, Value};
 
 use crate::ai::chat::{
     emit_thinking_deltas, AttachmentBytes, ChatRequest, GenerateResponse, HistoryTurn, ImageResult,
-    StreamDelta, TextDeltaCallback,
+    PendingAssistantTurn, StreamDelta, TextDeltaCallback, ToolResultMessage,
 };
 use crate::ai::providers::{ChatProvider, ProviderFuture, OPENAI_RESPONSES_SDK, OPENAI_SDK};
 use crate::ai::{tokens, tokens::TokenUsage};
@@ -1175,62 +1175,14 @@ fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) -> Value {
     }
     messages.push(json!({ "role": "user", "content": user_content }));
 
-    // Echo back the assistant turn that emitted the tool calls so
-    // OpenAI's call/response symmetry check passes.
+    for round in &request.tool_chain {
+        append_openai_assistant_tool_turn(&mut messages, &round.assistant);
+        append_openai_tool_results(&mut messages, &round.results);
+    }
     if let Some(pending) = &request.pending_assistant_turn {
-        let text = pending.text.as_deref().unwrap_or("");
-        let tool_calls: Vec<Value> = pending
-            .tool_calls
-            .iter()
-            .map(|c| {
-                json!({
-                    "id": c.id,
-                    "type": "function",
-                    "function": {
-                        "name": c.name,
-                        "arguments": serde_json::to_string(&c.arguments).unwrap_or_else(|_| "{}".into()),
-                    }
-                })
-            })
-            .collect();
-        let mut msg = json!({ "role": "assistant" });
-        let m = msg.as_object_mut().unwrap();
-        if !text.is_empty() {
-            m.insert("content".into(), Value::String(text.to_string()));
-        } else {
-            m.insert("content".into(), Value::Null);
-        }
-        if !tool_calls.is_empty() {
-            m.insert("tool_calls".into(), Value::Array(tool_calls));
-        }
-        // Always echo reasoning_content when present: DeepSeek thinking mode is
-        // enabled by default and requires it to be passed back whenever tool
-        // calls were made, regardless of whether thinking was explicitly
-        // requested by the client.
-        if let Some(t) = pending
-            .thinking_content
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            m.insert("reasoning_content".into(), json!(t));
-        }
-        messages.push(msg);
+        append_openai_assistant_tool_turn(&mut messages, pending);
     }
-
-    // Append any tool_result replies. OpenAI expects them after the
-    // assistant message that emitted the corresponding tool_calls.
-    for tr in &request.tool_results {
-        let content = match &tr.content {
-            Value::String(s) => Value::String(s.clone()),
-            other => Value::String(other.to_string()),
-        };
-        messages.push(json!({
-            "role": "tool",
-            "tool_call_id": tr.tool_call_id,
-            "content": content,
-        }));
-    }
+    append_openai_tool_results(&mut messages, &request.tool_results);
 
     let mut body = json!({
         "model": request.model,
@@ -1271,6 +1223,59 @@ fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) -> Value {
     }
 
     body
+}
+
+fn append_openai_assistant_tool_turn(messages: &mut Vec<Value>, pending: &PendingAssistantTurn) {
+    let text = pending.text.as_deref().unwrap_or("");
+    let tool_calls: Vec<Value> = pending
+        .tool_calls
+        .iter()
+        .map(|c| {
+            json!({
+                "id": c.id,
+                "type": "function",
+                "function": {
+                    "name": c.name,
+                    "arguments": serde_json::to_string(&c.arguments).unwrap_or_else(|_| "{}".into()),
+                }
+            })
+        })
+        .collect();
+    let mut msg = json!({ "role": "assistant" });
+    let m = msg.as_object_mut().unwrap();
+    if !text.is_empty() {
+        m.insert("content".into(), Value::String(text.to_string()));
+    } else {
+        m.insert("content".into(), Value::Null);
+    }
+    if !tool_calls.is_empty() {
+        m.insert("tool_calls".into(), Value::Array(tool_calls));
+    }
+    if let Some(t) = pending
+        .thinking_content
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        m.insert("reasoning_content".into(), json!(t));
+    }
+    if !text.is_empty() || !pending.tool_calls.is_empty() || pending.thinking_content.is_some() {
+        messages.push(msg);
+    }
+}
+
+fn append_openai_tool_results(messages: &mut Vec<Value>, tool_results: &[ToolResultMessage]) {
+    for tr in tool_results {
+        let content = match &tr.content {
+            Value::String(s) => Value::String(s.clone()),
+            other => Value::String(other.to_string()),
+        };
+        messages.push(json!({
+            "role": "tool",
+            "tool_call_id": tr.tool_call_id,
+            "content": content,
+        }));
+    }
 }
 
 fn chat_content(

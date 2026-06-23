@@ -12,23 +12,21 @@
 //!   [`ToolUseContext::read_file_state`] so subsequent reads of the same
 //!   path can be de-duplicated by upstream callers.
 //!
-//! The tool is intentionally minimal — no encoding detection, no image
-//! handling, no `view_range`/`offset` controls. Real callers usually
-//! prefer the host's native file reader; this implementation exists
-//! primarily so the agent loop has a working nested-memory trigger.
+//! The tool handles common on-disk encodings (UTF-8/UTF-16/GBK) via
+//! [`super::text_decode`]. Real callers usually prefer the host's native
+//! file reader; this implementation exists primarily so the agent loop
+//! has a working nested-memory trigger.
 
 use std::path::PathBuf;
 
 use serde_json::Value;
 
+use crate::ai::agent::tools::paragraph::{number_paragraphs, paragraph_count};
+use crate::ai::agent::tools::text_decode::decode_file_bytes;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
 const TOOL_NAME: &str = "Read";
-
-/// Hard cap on bytes returned to the model. Larger files are truncated
-/// and a `<truncated>` marker is appended.
-const MAX_READ_BYTES: usize = 64 * 1024;
 
 #[derive(Clone)]
 pub struct FileReadTool {
@@ -46,8 +44,11 @@ impl FileReadTool {
         Self {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
-                description: "Read a UTF-8 text file from the local filesystem. \
-                    Triggers nested-memory injection for the read path."
+                description: "Read a text file from the local filesystem. \
+                    Returns the full file content (never truncated) with each paragraph \
+                    prefixed by a label `[P001]`, `[P002]`, … (blank-line separated; \
+                    empty paragraphs are numbered too). Use these labels with Edit's \
+                    `paragraph_number`. Supports UTF-8, UTF-16, and on Windows GBK/ANSI."
                     .to_string(),
                 schema: serde_json::json!({
                     "type": "object",
@@ -105,16 +106,11 @@ impl Tool for FileReadTool {
 
             let bytes = std::fs::read(&canonical)
                 .map_err(|e| AppError::Other(format!("Read: open {:?}: {e}", canonical)))?;
-            // Decode the full file once for accurate word-count stats, then
-            // cap the text actually returned to the model.
-            let full_text = String::from_utf8_lossy(&bytes).into_owned();
-            let (text, truncated) = cap_text(&full_text);
-
-            // Word-count stats computed over the WHOLE file (not the capped
-            // text): `chars` is the non-whitespace character count (counts CJK
-            // characters; excludes spaces/tabs/newlines), `lines` the line count.
-            let chars = full_text.chars().filter(|c| !c.is_whitespace()).count();
-            let lines = full_text.lines().count();
+            let text = decode_file_bytes(&bytes);
+            let numbered = number_paragraphs(&text);
+            let chars = text.chars().filter(|c| !c.is_whitespace()).count();
+            let lines = text.lines().count();
+            let paragraphs = paragraph_count(&text);
 
             // Record both for nested-memory injection and for the read
             // de-dup set on the active context.
@@ -125,36 +121,14 @@ impl Tool for FileReadTool {
                 s.insert(canonical.clone());
             }
 
-            let mut content = serde_json::json!({
+            Ok(ToolResult::ok(serde_json::json!({
                 "path": canonical.to_string_lossy(),
                 "bytes": bytes.len(),
                 "chars": chars,
                 "lines": lines,
-                "text": text,
-            });
-            if truncated {
-                content
-                    .as_object_mut()
-                    .unwrap()
-                    .insert("truncated".into(), Value::Bool(true));
-            }
-            Ok(ToolResult::ok(content))
+                "paragraphs": paragraphs,
+                "text": numbered,
+            })))
         })
     }
-}
-
-/// Cap the decoded text to `MAX_READ_BYTES` bytes for the model. Truncation
-/// happens on a UTF-8 char boundary so we never split a multi-byte character.
-fn cap_text(full: &str) -> (String, bool) {
-    if full.len() <= MAX_READ_BYTES {
-        return (full.to_string(), false);
-    }
-    // Walk back to the nearest char boundary at or below the cap.
-    let mut end = MAX_READ_BYTES;
-    while end > 0 && !full.is_char_boundary(end) {
-        end -= 1;
-    }
-    let mut s = full[..end].to_string();
-    s.push_str("\n\n<truncated>");
-    (s, true)
 }

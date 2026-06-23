@@ -1,7 +1,10 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde_json::{json, Map, Value};
 
-use crate::ai::chat::{AttachmentBytes, ChatRequest, GenerateResponse, HistoryTurn};
+use crate::ai::chat::{
+    AttachmentBytes, ChatRequest, GenerateResponse, HistoryTurn, PendingAssistantTurn,
+    ToolResultMessage,
+};
 use crate::ai::providers::{ChatProvider, ProviderFuture, CLAUDE_SDK};
 use crate::ai::tokens::TokenUsage;
 use crate::error::{AppError, AppResult};
@@ -79,47 +82,15 @@ fn build_body(request: &ChatRequest) -> Value {
         &request.attachments,
     ));
 
-    // Thread the prior assistant tool_use turn + its tool_result
-    // replies through the message stream. Anthropic strictly requires
-    // call/response symmetry.
+    for round in &request.tool_chain {
+        append_claude_assistant_tool_turn(&mut messages, &round.assistant);
+        append_claude_tool_results(&mut messages, &round.results);
+    }
     if let Some(pending) = &request.pending_assistant_turn {
-        let mut content: Vec<Value> = Vec::new();
-        if let Some(text) = pending.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            content.push(json!({ "type": "text", "text": text }));
-        }
-        for tc in &pending.tool_calls {
-            content.push(json!({
-                "type": "tool_use",
-                "id": tc.id,
-                "name": tc.name,
-                "input": tc.arguments,
-            }));
-        }
-        if !content.is_empty() {
-            messages.push(json!({ "role": "assistant", "content": content }));
-        }
+        append_claude_assistant_tool_turn(&mut messages, pending);
     }
     if !request.tool_results.is_empty() {
-        let blocks: Vec<Value> = request
-            .tool_results
-            .iter()
-            .map(|tr| {
-                let content = match &tr.content {
-                    Value::String(s) => Value::String(s.clone()),
-                    other => Value::String(other.to_string()),
-                };
-                let mut b = json!({
-                    "type": "tool_result",
-                    "tool_use_id": tr.tool_call_id,
-                    "content": content,
-                });
-                if tr.is_error {
-                    b.as_object_mut().unwrap().insert("is_error".into(), Value::Bool(true));
-                }
-                b
-            })
-            .collect();
-        messages.push(json!({ "role": "user", "content": blocks }));
+        append_claude_tool_results(&mut messages, &request.tool_results);
     }
 
     let mut body = json!({
@@ -148,6 +119,51 @@ fn build_body(request: &ChatRequest) -> Value {
     }
     apply_params(map, request);
     body
+}
+
+fn append_claude_assistant_tool_turn(messages: &mut Vec<Value>, pending: &PendingAssistantTurn) {
+    let mut content: Vec<Value> = Vec::new();
+    if let Some(text) = pending.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        content.push(json!({ "type": "text", "text": text }));
+    }
+    for tc in &pending.tool_calls {
+        content.push(json!({
+            "type": "tool_use",
+            "id": tc.id,
+            "name": tc.name,
+            "input": tc.arguments,
+        }));
+    }
+    if !content.is_empty() {
+        messages.push(json!({ "role": "assistant", "content": content }));
+    }
+}
+
+fn append_claude_tool_results(messages: &mut Vec<Value>, tool_results: &[ToolResultMessage]) {
+    if tool_results.is_empty() {
+        return;
+    }
+    let blocks: Vec<Value> = tool_results
+        .iter()
+        .map(|tr| {
+            let content = match &tr.content {
+                Value::String(s) => Value::String(s.clone()),
+                other => Value::String(other.to_string()),
+            };
+            let mut b = json!({
+                "type": "tool_result",
+                "tool_use_id": tr.tool_call_id,
+                "content": content,
+            });
+            if tr.is_error {
+                b.as_object_mut()
+                    .unwrap()
+                    .insert("is_error".into(), Value::Bool(true));
+            }
+            b
+        })
+        .collect();
+    messages.push(json!({ "role": "user", "content": blocks }));
 }
 
 fn history_turn_to_message(turn: &HistoryTurn) -> Option<Value> {

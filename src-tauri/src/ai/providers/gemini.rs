@@ -1,7 +1,10 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde_json::{json, Map, Value};
 
-use crate::ai::chat::{AttachmentBytes, ChatRequest, GenerateResponse, HistoryTurn, ImageResult};
+use crate::ai::chat::{
+    AttachmentBytes, ChatRequest, GenerateResponse, HistoryTurn, ImageResult, PendingAssistantTurn,
+    ToolResultMessage,
+};
 use crate::ai::providers::{ChatProvider, ProviderFuture, GEMINI_SDK};
 use crate::ai::tokens::TokenUsage;
 use crate::error::{AppError, AppResult};
@@ -92,45 +95,13 @@ fn build_body(request: &ChatRequest) -> Value {
         &request.attachments,
     ));
 
-    // Thread the prior model functionCall + functionResponse pair so
-    // Gemini sees a complete call/response chain.
-    if let Some(pending) = &request.pending_assistant_turn {
-        let mut parts: Vec<Value> = Vec::new();
-        if let Some(text) = pending.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            parts.push(json!({ "text": text }));
-        }
-        for tc in &pending.tool_calls {
-            parts.push(json!({
-                "functionCall": { "name": tc.name, "args": tc.arguments }
-            }));
-        }
-        if !parts.is_empty() {
-            contents.push(json!({ "role": "model", "parts": parts }));
-        }
+    for round in &request.tool_chain {
+        append_gemini_assistant_tool_turn(&mut contents, &round.assistant);
+        append_gemini_tool_results(&mut contents, &round.assistant, &round.results);
     }
-    if !request.tool_results.is_empty() {
-        let parts: Vec<Value> = request
-            .tool_results
-            .iter()
-            .map(|tr| {
-                // Gemini wants the tool name (not the id) on functionResponse.
-                // The id-→name mapping lives in the just-emitted pending turn.
-                let name = request
-                    .pending_assistant_turn
-                    .as_ref()
-                    .and_then(|p| p.tool_calls.iter().find(|c| c.id == tr.tool_call_id))
-                    .map(|c| c.name.clone())
-                    .unwrap_or_else(|| tr.tool_call_id.clone());
-                let response = match &tr.content {
-                    Value::Object(_) | Value::Array(_) => tr.content.clone(),
-                    other => json!({ "result": other }),
-                };
-                json!({
-                    "functionResponse": { "name": name, "response": response }
-                })
-            })
-            .collect();
-        contents.push(json!({ "role": "user", "parts": parts }));
+    if let Some(pending) = &request.pending_assistant_turn {
+        append_gemini_assistant_tool_turn(&mut contents, pending);
+        append_gemini_tool_results(&mut contents, pending, &request.tool_results);
     }
 
     let mut body = json!({ "contents": contents });
@@ -167,6 +138,50 @@ fn build_body(request: &ChatRequest) -> Value {
         map.insert("generationConfig".into(), Value::Object(generation_config));
     }
     body
+}
+
+fn append_gemini_assistant_tool_turn(contents: &mut Vec<Value>, pending: &PendingAssistantTurn) {
+    let mut parts: Vec<Value> = Vec::new();
+    if let Some(text) = pending.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        parts.push(json!({ "text": text }));
+    }
+    for tc in &pending.tool_calls {
+        parts.push(json!({
+            "functionCall": { "name": tc.name, "args": tc.arguments }
+        }));
+    }
+    if !parts.is_empty() {
+        contents.push(json!({ "role": "model", "parts": parts }));
+    }
+}
+
+fn append_gemini_tool_results(
+    contents: &mut Vec<Value>,
+    assistant: &PendingAssistantTurn,
+    tool_results: &[ToolResultMessage],
+) {
+    if tool_results.is_empty() {
+        return;
+    }
+    let parts: Vec<Value> = tool_results
+        .iter()
+        .map(|tr| {
+            let name = assistant
+                .tool_calls
+                .iter()
+                .find(|c| c.id == tr.tool_call_id)
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| tr.tool_call_id.clone());
+            let response = match &tr.content {
+                Value::Object(_) | Value::Array(_) => tr.content.clone(),
+                other => json!({ "result": other }),
+            };
+            json!({
+                "functionResponse": { "name": name, "response": response }
+            })
+        })
+        .collect();
+    contents.push(json!({ "role": "user", "parts": parts }));
 }
 
 fn history_turn_to_content(turn: &HistoryTurn) -> Option<Value> {
