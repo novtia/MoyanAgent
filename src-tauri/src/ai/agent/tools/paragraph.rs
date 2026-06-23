@@ -1,13 +1,12 @@
 //! Paragraph splitting / numbering for prose files.
 //!
-//! Paragraphs are separated by a blank line (`\n\n`). Empty paragraphs
-//! (consecutive blank lines) each receive their own index.
+//! One line = one paragraph (`\n` separated). Empty lines are empty paragraphs.
 
-pub const PARAGRAPH_SEP: &str = "\n\n";
+pub const PARAGRAPH_SEP: &str = "\n";
 
-/// Split file text into paragraphs (blank-line separated).
+/// Split file text into paragraphs (one line each).
 pub fn split_paragraphs(text: &str) -> Vec<String> {
-    text.split(PARAGRAPH_SEP).map(str::to_string).collect()
+    text.split('\n').map(str::to_string).collect()
 }
 
 pub fn join_paragraphs(paragraphs: &[String]) -> String {
@@ -18,7 +17,7 @@ pub fn paragraph_count(text: &str) -> usize {
     split_paragraphs(text).len()
 }
 
-/// Prefix each paragraph with `[P001]`, `[P002]`, … for agent Read output.
+/// Prefix each line with `[P001]`, `[P002]`, … for agent Read output.
 pub fn number_paragraphs(text: &str) -> String {
     split_paragraphs(text)
         .into_iter()
@@ -28,7 +27,7 @@ pub fn number_paragraphs(text: &str) -> String {
         .join(PARAGRAPH_SEP)
 }
 
-/// Split agent-supplied insert/replace text into paragraphs, stripping
+/// Split agent-supplied insert/replace text into lines, stripping
 /// any `[Pnnn]` labels copied from Read output.
 pub fn split_agent_paragraphs(text: &str) -> Vec<String> {
     split_paragraphs(text)
@@ -37,7 +36,7 @@ pub fn split_agent_paragraphs(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Insert one or more paragraphs immediately after `after_index`.
+/// Insert one or more lines immediately after `after_index`.
 pub fn insert_paragraphs_after(
     paragraphs: &mut Vec<String>,
     after_index: usize,
@@ -54,7 +53,7 @@ pub fn insert_paragraphs_after(
     new_paras.len()
 }
 
-/// Replace paragraph at `index` with one or more paragraphs from `content`.
+/// Replace paragraph at `index` with one or more lines from `content`.
 pub fn replace_paragraph_with(paragraphs: &mut Vec<String>, index: usize, content: &str) {
     let new_paras = split_agent_paragraphs(content);
     if new_paras.is_empty() {
@@ -91,13 +90,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_paragraphs_get_numbers() {
-        let text = "a\n\n\n\nb";
+    fn one_line_one_paragraph() {
+        let text = "a\nb\nc";
+        let numbered = number_paragraphs(text);
+        assert!(numbered.contains("[P001] a"));
+        assert!(numbered.contains("[P002] b"));
+        assert!(numbered.contains("[P003] c"));
+        assert_eq!(paragraph_count(text), 3);
+    }
+
+    #[test]
+    fn empty_line_is_its_own_paragraph() {
+        let text = "a\n\nb";
+        assert_eq!(paragraph_count(text), 3);
         let numbered = number_paragraphs(text);
         assert!(numbered.contains("[P001] a"));
         assert!(numbered.contains("[P002] "));
         assert!(numbered.contains("[P003] b"));
-        assert_eq!(paragraph_count(text), 3);
     }
 
     #[test]
@@ -107,11 +116,7 @@ mod tests {
             "呜呜呜呜".into(),
             "哦哦哦".into(),
         ];
-        let n = insert_paragraphs_after(
-            &mut paras,
-            1,
-            "哈咦咦咦咦\n\n嚯嚯嚯\n\n歪歪",
-        );
+        let n = insert_paragraphs_after(&mut paras, 1, "哈咦咦咦咦\n嚯嚯嚯\n歪歪");
         assert_eq!(n, 3);
         assert_eq!(
             paras,

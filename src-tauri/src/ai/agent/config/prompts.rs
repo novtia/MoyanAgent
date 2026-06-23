@@ -39,12 +39,12 @@ Guidelines:
 - For file searches: search broadly when you don't know where something \
   lives. Use FileRead when you know the specific file path.
 - For prose / chapter / document tasks: FileRead the target file first. \
-  Read returns paragraphs labeled `[P001]`, `[P002]`, … (blank-line \
-  separated). ALWAYS modify existing text with Edit — pass \
+  Read returns each line labeled `[P001]`, `[P002]`, … (one line = one \
+  paragraph). ALWAYS modify existing text with Edit — pass \
   `paragraph_number`, `original_content`, and `modified_content`. To \
-  insert new paragraphs after `[P009]`, set `paragraph_number` to 9, \
-  leave `original_content` empty, and put the new text (multiple \
-  paragraphs allowed) in `modified_content`. NEVER write revised \
+  insert new lines after `[P009]`, set `paragraph_number` to 9, \
+  leave `original_content` empty, and put the new text (one or more \
+  lines) in `modified_content`. NEVER write revised \
   chapters or story text into a new file or dump the full rewrite in \
   chat; apply changes in place with Edit.
 - For analysis: start broad and narrow down. Use multiple search strategies \
@@ -54,7 +54,10 @@ Guidelines:
 - NEVER create files unless they're absolutely necessary for achieving your \
   goal. ALWAYS prefer editing an existing file to creating a new one.
 - NEVER proactively create documentation files (*.md) or README files. Only \
-  create documentation files if explicitly requested.";
+  create documentation files if explicitly requested.
+- If you created a TodoList: do NOT stop until every item is `done` or \
+  `cancelled`. While items are `pending` or `in_progress`, keep calling \
+  tools — never finish with only a text summary.";
 
 pub const GENERAL_PURPOSE_WHEN_TO_USE: &str = "\
 General-purpose agent for researching complex questions, searching for code, \

@@ -1010,18 +1010,24 @@ function replayTodoBlocks(blocks: TodoBlock[]): {
       items = [...items, ...parseRawItems(out.added as unknown[])];
     } else if (action === "update" && out.updated) {
       const u = out.updated as Record<string, unknown>;
-      items = items.map((it) =>
-        it.id === (u.id as number)
-          ? {
-              id: it.id,
-              content: typeof u.content === "string" ? u.content : it.content,
-              status:
-                typeof u.status === "string"
-                  ? (u.status as TodoItem["status"])
-                  : it.status,
-            }
-          : it,
-      );
+      items = items.map((it) => {
+        if (it.id !== (u.id as number)) return it;
+        const nextStatus =
+          typeof u.status === "string"
+            ? (u.status as TodoItem["status"])
+            : it.status;
+        const titleFrozen = nextStatus === "done" || nextStatus === "cancelled";
+        return {
+          id: it.id,
+          content:
+            titleFrozen
+              ? it.content
+              : typeof u.content === "string"
+                ? u.content
+                : it.content,
+          status: nextStatus,
+        };
+      });
     } else if (action === "remove" && typeof out.removed_id === "number") {
       items = items.filter((it) => it.id !== out.removed_id);
     } else if (action === "clear") {

@@ -5,7 +5,7 @@ import { collectSessionGalleryImages } from "../../sessionGallery";
 import { GalleryContent } from "./SessionGallery";
 import { AgentFlowPanel } from "./AgentFlowPanel";
 import { RoleStatePanel } from "./RoleStatePanel";
-import { DocumentReader } from "./DocumentReader";
+import { ReaderWorkspace } from "./ReaderWorkspace";
 import { useReader } from "../../store/reader";
 import type { ImageRefAbs } from "../../types";
 
@@ -307,7 +307,7 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
           ) : activeTab.kind === "role-state" ? (
             <RoleStatePanel open={open} />
           ) : activeTab.kind === "reader" ? (
-            <DocumentReader />
+            <ReaderWorkspace />
           ) : (
             <AgentFlowPanel open={open} />
           )}

@@ -217,6 +217,78 @@ fn session_project_cwd(conn: &db::DbConn, session_id: &str) -> Option<std::path:
     Some(std::path::PathBuf::from(path_str))
 }
 
+const MOYAN_FALLBACK_DIR: &str = "moyanagent";
+
+/// Allowed roots for user-initiated writes from the reader panel.
+fn reader_write_roots(session_cwd: Option<&std::path::Path>) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(cwd) = session_cwd {
+        if cwd.is_absolute() {
+            roots.push(cwd.to_path_buf());
+        }
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+    {
+        roots.push(home.join("Documents").join(MOYAN_FALLBACK_DIR));
+    }
+    roots
+}
+
+fn path_under_root(path: &std::path::Path, root: &std::path::Path) -> bool {
+    path.starts_with(root)
+}
+
+fn validate_reader_write_path(
+    file_path: &std::path::Path,
+    session_cwd: Option<&std::path::Path>,
+) -> AppResult<PathBuf> {
+    let canonical = std::fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
+    let roots = reader_write_roots(session_cwd);
+    if roots.is_empty() {
+        return Err(AppError::Invalid(
+            "write_project_file: no allowed write directory for this session".into(),
+        ));
+    }
+    for root in &roots {
+        let root_canon = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+        if path_under_root(&canonical, &root_canon) {
+            return Ok(canonical);
+        }
+    }
+    Err(AppError::Invalid(format!(
+        "write_project_file: path {:?} is outside the project or allowed documents folder",
+        file_path.display()
+    )))
+}
+
+#[tauri::command]
+fn write_project_file(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+    path: String,
+    content: String,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    let file_path = PathBuf::from(&path);
+    let cwd = session_project_cwd(&conn, &session_id);
+    let resolved = validate_reader_write_path(&file_path, cwd.as_deref())?;
+
+    if let Some(parent) = resolved.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                AppError::Other(format!("write_project_file: mkdir {:?}: {e}", parent))
+            })?;
+        }
+    }
+
+    std::fs::write(&resolved, content.as_bytes()).map_err(|e| {
+        AppError::Other(format!("write_project_file: write {:?}: {e}", resolved))
+    })?;
+    Ok(())
+}
+
 /// Effective generation parameters for a session.
 ///
 /// If the session belongs to a project, the project's shared parameters are
@@ -2964,7 +3036,7 @@ pub fn run() {
                 file_snapshots.clone(),
             ));
             tools.register(crate::ai::agent::tools::bash::BashTool::new());
-            tools.register(crate::ai::agent::tools::todo::TodoListTool::new());
+            tools.register_todo_list(crate::ai::agent::tools::todo::TodoListTool::new());
             let role_states = Arc::new(RoleStateStore::new());
             tools.register(RoleStateTool::new(role_states.clone()));
             tools.register(crate::ai::agent::tools::rpg_choice::RpgChoiceTool::new());
@@ -3069,6 +3141,7 @@ pub fn run() {
             export_projects_archive,
             export_session_archive,
             import_archive,
+            write_project_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

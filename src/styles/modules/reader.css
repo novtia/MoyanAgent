@@ -5,6 +5,8 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
 }
 
 .document-reader.is-empty {
@@ -59,22 +61,681 @@
   padding: 16px;
 }
 
+.document-reader-body.reader-file-body {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  width: 100%;
+}
+
+/* ───── reader workspace (multi-file tabs) ───── */
+.reader-workspace {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  font-family: var(--chat-font-family, inherit);
+  font-size: var(--chat-font-size, 14px);
+  line-height: var(--chat-line-height, 1.6);
+  color: var(--chat-font-color, var(--ink));
+}
+
+.reader-file-tabbar {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-soft);
+  scrollbar-width: thin;
+}
+
+.reader-file-tab {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  max-width: 160px;
+  border-right: 1px solid var(--line);
+}
+
+.reader-file-tab.is-active {
+  background: var(--bg);
+}
+
+.reader-file-tab-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-soft);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reader-file-tab.is-active .reader-file-tab-label {
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--blue-600);
+}
+
+.reader-file-tab-close {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.reader-file-tab-close:hover {
+  opacity: 1;
+  color: var(--ink);
+}
+
+.reader-file-tab-close svg {
+  width: 12px;
+  height: 12px;
+}
+
+.reader-file-tab-dot,
+.reader-tab-dirty {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--blue-500);
+  flex-shrink: 0;
+}
+
+.reader-tab-error,
+.reader-file-tab-diff {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.reader-tab-error {
+  background: var(--rose-500);
+}
+
+.reader-file-tab-diff {
+  background: #f59e0b;
+}
+
+.reader-file-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+/* Editable source view — typography follows chat font settings via .reader-workspace */
+.reader-editor-gutter,
+.reader-editor-gutter-item,
+.reader-editor,
+.reader-editor-field,
+.reader-editor-segment,
+.reader-editor-line,
+.reader-editor-line-text,
+.reader-editor-backdrop,
+.reader-editor-content--diff,
+.reader-diff-code,
+.reader-text,
+.markdown-body {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+.reader-editor-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.reader-editor-plain {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.reader-editor-gutter {
+  flex: 0 0 28px;
+  width: 28px;
+  min-width: 28px;
+  overflow: hidden;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.reader-editor-wrap--plain .reader-editor-gutter {
+  padding: 16px 2px 16px 6px;
+}
+
+.reader-editor-gutter-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  min-height: 1lh;
+  padding-right: 2px;
+  color: var(--ink-mute);
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+
+.reader-editor-block {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+}
+
+.reader-editor-block.is-insert-block {
+  background: color-mix(in srgb, #3fb950 14%, transparent);
+}
+
+.reader-editor-block.is-signed .reader-editor-line-sign {
+  flex: 0 0 1.25em;
+  margin-top: 0;
+}
+
+.reader-editor-block .reader-editor-gutter {
+  padding: 0 2px 0 6px;
+}
+
+.reader-editor-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  box-sizing: border-box;
+  border-radius: 0;
+  box-shadow: none;
+  appearance: none;
+}
+
+.reader-editor-row {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+}
+
+.reader-editor-para-cell,
+.reader-editor-para-gutter,
+.reader-editor-para-line {
+  display: none;
+}
+
+.reader-editor {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 16px;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: auto;
+  background: transparent;
+  box-sizing: border-box;
+  border-radius: 0;
+  box-shadow: none;
+  appearance: none;
+}
+
+/* Override global forms.css textarea border / focus ring inside reader */
+.reader-editor-wrap textarea {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  appearance: none;
+}
+
+.reader-editor-wrap textarea:hover,
+.reader-editor-wrap textarea:focus,
+.reader-editor-wrap textarea:focus-visible {
+  background: transparent;
+  border: none;
+  outline: none;
+  box-shadow: none;
+}
+
+.reader-editor-main {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.reader-editor-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow: auto;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.reader-editor-segment {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  box-sizing: border-box;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.reader-editor-hunk {
+  position: relative;
+  width: 100%;
+}
+
+.reader-editor-line {
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.reader-editor-line.is-delete {
+  background: color-mix(in srgb, #f85149 16%, transparent);
+  user-select: text;
+}
+
+.reader-editor-gutter--inline {
+  flex: 0 0 28px;
+  padding: 0 2px 0 6px;
+}
+
+.reader-editor-line.is-insert {
+  background: color-mix(in srgb, #3fb950 14%, transparent);
+}
+
+.reader-editor-line-sign {
+  flex: 0 0 1.25em;
+  text-align: center;
+  user-select: none;
+  opacity: 0.55;
+  padding: 0 4px;
+}
+
+.reader-editor-line.is-delete .reader-editor-line-sign {
+  color: #f85149;
+  opacity: 1;
+}
+
+.reader-editor-line.is-insert .reader-editor-line-sign {
+  color: #3fb950;
+  opacity: 1;
+}
+
+.reader-editor-line-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+}
+
+.reader-editor-line-input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  border-radius: 0;
+  box-shadow: none;
+  box-sizing: border-box;
+}
+
+.reader-editor-field.is-insert-field {
+  background: transparent;
+}
+
+.reader-editor-line-input:focus,
+.reader-editor-line-input:focus-visible {
+  outline: none;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+.reader-editor-backdrop {
+  position: absolute;
+  inset: 0;
+  padding: 16px 16px 16px 8px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  box-sizing: border-box;
+}
+
+.reader-editor-backdrop-line {
+  min-height: 1.7em;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.reader-editor-backdrop-line.is-diff {
+  background: color-mix(in srgb, #3fb950 14%, transparent);
+}
+
+.reader-editor-backdrop-text {
+  color: var(--ink);
+}
+
+.reader-editor-backdrop-text--changed {
+  color: var(--ink);
+}
+
+.reader-editor.is-diff-overlay {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  caret-color: var(--ink);
+  -webkit-text-fill-color: transparent;
+}
+
+.reader-editor-wrap.has-inline-diff {
+  flex-direction: column;
+}
+
+.reader-editor-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.reader-editor-content--diff {
+  padding: 16px;
+  background: transparent;
+}
+
+.reader-editor-content--diff .reader-diff-line {
+  min-height: 1lh;
+}
+
+.reader-editor:focus {
+  outline: none;
+}
+
+/* Diff char highlights (backdrop layer under textarea) */
+.reader-editor-backdrop .reader-diff-char.is-added {
+  background: color-mix(in srgb, #3fb950 40%, transparent);
+  border-radius: 2px;
+}
+
+/* Floating confirm bar (position via inline top/right) */
+.reader-diff-hunk-shell {
+  position: relative;
+  overflow: visible;
+  z-index: 0;
+}
+
+.reader-diff-hunk-shell:has(.reader-diff-actionbar) {
+  z-index: 2;
+}
+
+.reader-diff-hunk {
+  position: relative;
+}
+
+.reader-diff-hunk-shell:hover .reader-diff-hunk {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue-500) 28%, var(--line));
+}
+
+.reader-diff-code {
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  tab-size: 2;
+}
+
+.reader-diff-code code {
+  display: block;
+  overflow: visible;
+}
+
+.reader-diff-line {
+  display: flex;
+  align-items: stretch;
+  min-height: 1lh;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+
+.reader-diff-para {
+  flex: 0 0 28px;
+  width: 28px;
+  min-width: 28px;
+  text-align: right;
+  user-select: none;
+  color: var(--ink-mute);
+  opacity: 0.55;
+  padding: 0 4px 0 6px;
+  font-size: 0.92em;
+  font-variant-numeric: tabular-nums;
+}
+
+.reader-diff-gutter {
+  flex: 0 0 1.25em;
+  min-width: 1.25em;
+  text-align: center;
+  user-select: none;
+  color: var(--ink-mute);
+  opacity: 0.55;
+  padding: 0 4px;
+}
+
+.reader-diff-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 10px 0 0;
+}
+
+.reader-diff-line.is-context .reader-diff-text {
+  color: var(--ink-soft);
+}
+
+.reader-diff-line.is-delete {
+  background: color-mix(in srgb, #f85149 18%, transparent);
+}
+
+.reader-diff-line.is-delete .reader-diff-gutter {
+  color: #f85149;
+  opacity: 1;
+}
+
+.reader-diff-line.is-insert {
+  background: color-mix(in srgb, #3fb950 18%, transparent);
+}
+
+.reader-diff-line.is-insert .reader-diff-gutter {
+  color: #3fb950;
+  opacity: 1;
+}
+
+.reader-diff-char.is-removed {
+  background: color-mix(in srgb, #f85149 45%, transparent);
+  border-radius: 2px;
+}
+
+.reader-diff-char.is-added {
+  background: color-mix(in srgb, #3fb950 45%, transparent);
+  border-radius: 2px;
+}
+
+.reader-diff-empty {
+  color: var(--ink-mute);
+  font-size: 13px;
+  padding: 16px;
+}
+
+/* Floating confirm bar (position via inline top/right) */
+.reader-diff-actionbar {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow-card);
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+.reader-diff-actionbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 2px 0 3px;
+  border-right: 1px solid var(--line);
+  margin-right: 2px;
+}
+
+.reader-diff-actionbar-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-mute);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.reader-diff-actionbar-arrow:hover:not(:disabled) {
+  background: var(--bg-soft);
+  color: var(--ink);
+}
+
+.reader-diff-actionbar-arrow:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.reader-diff-actionbar-count {
+  min-width: 2.6em;
+  padding: 0 3px;
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-mute);
+  text-align: center;
+  user-select: none;
+}
+
+.reader-diff-actionbar-btn {
+  height: 24px;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.reader-diff-actionbar-btn.undo {
+  color: var(--ink-soft);
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+
+.reader-diff-actionbar-btn.undo:hover {
+  background: var(--bg-soft);
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.reader-diff-actionbar-btn.keep {
+  color: #fff;
+  background: var(--blue-600);
+  border: 1px solid var(--blue-600);
+  font-weight: 600;
+}
+
+.reader-diff-actionbar-btn.keep:hover {
+  background: var(--blue-700);
+  border-color: var(--blue-700);
+}
+
 /* Plain text view */
 .reader-text {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-  font-size: 12.5px;
-  line-height: 1.7;
-  color: var(--ink);
 }
 
 /* ───── markdown rendering ───── */
 .markdown-body {
-  font-size: 14px;
-  line-height: 1.75;
-  color: var(--ink);
   word-break: break-word;
 }
 
@@ -153,7 +814,7 @@
 }
 
 .markdown-body code {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: inherit;
   font-size: 0.88em;
   background: var(--bg-sunk);
   padding: 0.15em 0.4em;
@@ -172,8 +833,8 @@
 .markdown-body pre code {
   background: transparent;
   padding: 0;
-  font-size: 12.5px;
-  line-height: 1.6;
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .markdown-body hr {

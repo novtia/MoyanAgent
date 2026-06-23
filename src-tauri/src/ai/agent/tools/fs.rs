@@ -45,9 +45,9 @@ impl FileReadTool {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
                 description: "Read a text file from the local filesystem. \
-                    Returns the full file content (never truncated) with each paragraph \
-                    prefixed by a label `[P001]`, `[P002]`, … (blank-line separated; \
-                    empty paragraphs are numbered too). Use these labels with Edit's \
+                    Returns the full file content (never truncated) with each line \
+                    prefixed by a label `[P001]`, `[P002]`, … (one line = one paragraph; \
+                    empty lines are numbered too). Use these labels with Edit's \
                     `paragraph_number`. Supports UTF-8, UTF-16, and on Windows GBK/ANSI."
                     .to_string(),
                 schema: serde_json::json!({

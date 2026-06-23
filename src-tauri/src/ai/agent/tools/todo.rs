@@ -27,7 +27,7 @@ use serde_json::{json, Value};
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
-const TOOL_NAME: &str = "TodoList";
+pub const TOOL_NAME: &str = "TodoList";
 
 /// Valid status values understood by the tool.
 const VALID_STATUSES: &[&str] = &["pending", "in_progress", "done", "cancelled"];
@@ -103,6 +103,32 @@ impl Default for TodoListTool {
 }
 
 impl TodoListTool {
+    /// Returns a nudge message when pending / in-progress items remain.
+    /// Used by the query engine to continue the loop instead of stopping early.
+    pub fn incomplete_nudge_message(&self) -> Option<String> {
+        let store = self.store.lock().ok()?;
+        let incomplete: Vec<_> = store
+            .items
+            .iter()
+            .filter(|t| t.status == "pending" || t.status == "in_progress")
+            .collect();
+        if incomplete.is_empty() {
+            return None;
+        }
+        let lines: Vec<String> = incomplete
+            .iter()
+            .map(|t| format!("- [#{}] ({}) {}", t.id, t.status, t.content))
+            .collect();
+        Some(format!(
+            "[SYSTEM] Your task list is NOT complete. {} item(s) remain:\n{}\n\
+             Continue working NOW: use tools to finish each remaining task and \
+             call TodoList `update` to mark each one done. Do NOT stop with a \
+             summary or final reply until every item is `done` or `cancelled`.",
+            incomplete.len(),
+            lines.join("\n")
+        ))
+    }
+
     pub fn new() -> Self {
         Self {
             store: Arc::new(Mutex::new(TodoStore::default())),
@@ -134,8 +160,13 @@ splitting one action into meaningless micro-tasks.\n\n\
 1. PLAN once: call `add` with ALL tasks as an array at the very start.\n\
    Do NOT add more tasks later.\n\
 2. EXECUTE: before starting each task, call `update` → in_progress. \
-   When done, call `update` → done (include a brief result note in content if useful). \
+   When done, call `update` with `status: done` ONLY — do NOT change `content`. \
+   The task title is fixed at creation time.\n\
    Never add, remove, or clear items just because you started or finished a step.\n\n\
+━━━ DO NOT STOP EARLY ━━━\n\
+If ANY item is still `pending` or `in_progress`, you MUST keep calling tools. \
+Never end your turn with only a text summary while tasks remain — the runtime \
+will reject premature completion and ask you to continue.\n\n\
 Actions:\n\
 • add    – ONE-TIME initialisation only.\n\
 • update – Change status or content of an existing item (id required).\n\
@@ -282,10 +313,20 @@ impl Tool for TodoListTool {
                     let item = store.get_mut(id).ok_or_else(|| {
                         AppError::Invalid(format!("TodoList update: item id={id} not found"))
                     })?;
-                    if let Some(c) = invocation.input.get("content").and_then(Value::as_str) {
-                        let trimmed = c.trim().to_string();
-                        if !trimmed.is_empty() {
-                            item.content = trimmed;
+                    let next_status = invocation
+                        .input
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or(item.status.as_str());
+                    // Task titles are fixed once created; completing must not
+                    // rewrite the title (e.g. to "已完成").
+                    let title_frozen = next_status == "done" || next_status == "cancelled";
+                    if !title_frozen {
+                        if let Some(c) = invocation.input.get("content").and_then(Value::as_str) {
+                            let trimmed = c.trim().to_string();
+                            if !trimmed.is_empty() {
+                                item.content = trimmed;
+                            }
                         }
                     }
                     if let Some(s) = invocation.input.get("status").and_then(Value::as_str) {
@@ -328,5 +369,57 @@ impl Tool for TodoListTool {
                 ))),
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn incomplete_nudge_when_items_open() {
+        let tool = TodoListTool::new();
+        {
+            let mut store = tool.store.lock().unwrap();
+            store.add("task a".into());
+            store.add("task b".into());
+            store.items[0].status = "done".into();
+        }
+        let msg = tool.incomplete_nudge_message().expect("nudge");
+        assert!(msg.contains("NOT complete"));
+        assert!(msg.contains("task b"));
+    }
+
+    #[test]
+    fn no_nudge_when_all_done() {
+        let tool = TodoListTool::new();
+        {
+            let mut store = tool.store.lock().unwrap();
+            let id = store.add("task".into()).id;
+            store.get_mut(id).unwrap().status = "done".into();
+        }
+        assert!(tool.incomplete_nudge_message().is_none());
+    }
+
+    #[test]
+    fn done_update_preserves_title() {
+        let tool = TodoListTool::new();
+        let id = {
+            let mut store = tool.store.lock().unwrap();
+            store.add("重写 P013".into()).id
+        };
+        {
+            let mut store = tool.store.lock().unwrap();
+            let item = store.get_mut(id).unwrap();
+            let next_status = "done";
+            let title_frozen = next_status == "done" || next_status == "cancelled";
+            let new_content = "已完成";
+            if !title_frozen {
+                item.content = new_content.into();
+            }
+            item.status = next_status.into();
+            assert_eq!(item.content, "重写 P013");
+            assert_eq!(item.status, "done");
+        }
     }
 }

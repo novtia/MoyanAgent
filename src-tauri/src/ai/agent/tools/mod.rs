@@ -125,6 +125,8 @@ pub struct ToolPool {
     /// Tools that are denied for *every* sub-agent (e.g. `AgentTool`,
     /// `TaskOutput`, plan-mode primitives).
     global_deny: Mutex<Vec<String>>,
+    /// Direct handle for todo-state inspection by the query engine.
+    todo_list: Mutex<Option<Arc<todo::TodoListTool>>>,
 }
 
 impl ToolPool {
@@ -136,6 +138,18 @@ impl ToolPool {
         let name = tool.spec().name.clone();
         if let Ok(mut g) = self.tools.lock() {
             g.insert(name, Arc::new(tool));
+        }
+    }
+
+    /// Register a [`todo::TodoListTool`] and wire it for engine-level
+    /// incomplete-task detection.
+    pub fn register_todo_list(&self, tool: todo::TodoListTool) {
+        let arc = Arc::new(tool);
+        if let Ok(mut g) = self.tools.lock() {
+            g.insert(todo::TOOL_NAME.to_string(), arc.clone());
+        }
+        if let Ok(mut t) = self.todo_list.lock() {
+            *t = Some(arc);
         }
     }
 
@@ -197,6 +211,13 @@ impl ToolPool {
     /// Permission + validation + execute pipeline. The hooks stages from the
     /// TS executor (`PreToolUse`, `PostToolUse`) are intentionally elided
     /// here; the runner inserts them around this call.
+    /// When the TodoList tool has unfinished items, return a nudge the
+    /// query engine can inject so the model keeps working.
+    pub fn incomplete_todo_nudge(&self) -> Option<String> {
+        let guard = self.todo_list.lock().ok()?;
+        guard.as_ref()?.incomplete_nudge_message()
+    }
+
     pub async fn execute(
         &self,
         name: &str,

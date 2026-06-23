@@ -4,6 +4,50 @@
 //! GBK/CP936 without a BOM — not UTF-8. [`decode_file_bytes`] picks the
 //! encoding without requiring callers to know the on-disk format.
 
+/// Normalize a tool argument string after JSON parsing.
+///
+/// Models often over-escape quotes inside tool-call JSON (`\\"` in the wire
+/// JSON becomes a literal backslash + quote in the parsed string). Prose
+/// fields like `modified_content` should not land on disk with `\"`.
+pub fn normalize_tool_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '\\' {
+            match it.peek().copied() {
+                Some('"') => {
+                    it.next();
+                    out.push('"');
+                }
+                Some('\\') => {
+                    it.next();
+                    out.push('\\');
+                }
+                Some('n') => {
+                    it.next();
+                    out.push('\n');
+                }
+                Some('t') => {
+                    it.next();
+                    out.push('\t');
+                }
+                Some('r') => {
+                    it.next();
+                    out.push('\r');
+                }
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Decode file bytes for the `Read` tool and similar text consumers.
 pub fn decode_file_bytes(bytes: &[u8]) -> String {
     if bytes.is_empty() {
@@ -127,5 +171,22 @@ fn decode_gbk(bytes: &[u8]) -> String {
             return String::from_utf8_lossy(bytes).into_owned();
         }
         String::from_utf16_lossy(&buf[..written as usize])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_unescapes_literal_backslash_quote() {
+        let input = "问题\\\"你现在还觉得";
+        assert_eq!(normalize_tool_string(input), "问题\"你现在还觉得");
+    }
+
+    #[test]
+    fn normalize_leaves_plain_text_unchanged() {
+        let input = "从牙缝里挤出最后一个问题\"你现在还觉得萧炎那个废物配得上你吗，嗯。\"";
+        assert_eq!(normalize_tool_string(input), input);
     }
 }

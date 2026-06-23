@@ -16,7 +16,7 @@ import {
   composerModeFromAgentType,
 } from "../config/chatMode";
 import { useRoleState, type RoleStateOp } from "./roleState";
-import { useReader, readerDocFromToolOutput } from "./reader";
+import { useReader, readerDocFromToolOutput, stripParagraphLabels } from "./reader";
 import { useSettings } from "./settings";
 
 interface ComposerState {
@@ -400,6 +400,7 @@ export const useSession = create<SessionStore>((set, get) => {
       },
     });
     void useRoleState.getState().loadLatest(id);
+    useReader.getState().bindSession(id);
   },
 
   rename: async (id, title) => {
@@ -1067,6 +1068,63 @@ function appendDelta(
  * block in place so the on-screen card transitions from pending → done
  * without changing the surrounding order.
  */
+/**
+ * Sync reader panel state when an agent file tool completes.
+ */
+function handleReaderToolComplete(
+  tool: string,
+  input: unknown,
+  output: unknown,
+  isError: boolean | undefined,
+) {
+  if (isError) return;
+  const o = (output && typeof output === "object" ? output : {}) as Record<string, unknown>;
+  const path = typeof o.path === "string" ? o.path : "";
+
+  if (tool === "CreateDoc") {
+    const doc = readerDocFromToolOutput(output);
+    if (doc) useReader.getState().openDoc(doc);
+    return;
+  }
+
+  if (!path) return;
+  const reader = useReader.getState();
+  const existing = reader.getTabByPath(path);
+
+  if (tool === "Edit") {
+    if (!existing) return;
+    const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+    const original =
+      typeof inp.original_content === "string" ? inp.original_content : "";
+    const modified =
+      typeof inp.modified_content === "string" ? inp.modified_content : "";
+    const textBefore =
+      typeof o.text_before === "string" ? stripParagraphLabels(o.text_before) : existing.text;
+    const textAfter =
+      typeof o.text === "string" ? stripParagraphLabels(o.text) : existing.text;
+    reader.appendPendingDiff(path, {
+      before: original,
+      after: modified,
+      paragraphNumber:
+        typeof inp.paragraph_number === "number" ? inp.paragraph_number : undefined,
+      textBefore,
+      textAfter,
+    });
+    return;
+  }
+
+  if (tool === "Write") {
+    if (!existing) return;
+    const text =
+      typeof o.text === "string"
+        ? stripParagraphLabels(o.text)
+        : typeof (input as Record<string, unknown>)?.content === "string"
+          ? stripParagraphLabels((input as Record<string, unknown>).content as string)
+          : null;
+    if (text != null) reader.updateTabText(path, text, { dirty: false });
+  }
+}
+
 function applyToolEvent(blocks: AssistantBlock[], event: ToolEventPayload) {
   if (event.type === "tool_use") {
     blocks.push({
@@ -1087,11 +1145,8 @@ function applyToolEvent(blocks: AssistantBlock[], event: ToolEventPayload) {
         output: event.output,
         is_error: event.is_error || undefined,
       };
-      // Auto-open the reader for successful file reads so the document shows
-      // in the right panel as soon as the tool completes.
-      if (b.tool === "Read" && !event.is_error) {
-        const doc = readerDocFromToolOutput(event.output);
-        if (doc) useReader.getState().openDoc(doc);
+      if (!event.is_error) {
+        handleReaderToolComplete(b.tool, b.input, event.output, event.is_error);
       }
       return;
     }

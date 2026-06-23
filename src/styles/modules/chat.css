@@ -520,9 +520,12 @@
 }
 .right-panel-body > .chat-gallery-grid,
 .right-panel-body > .agent-flow,
-.right-panel-body > .afc {
+.right-panel-body > .afc,
+.right-panel-body > .reader-workspace {
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
 }
 
 /* ───── right panel: type picker (empty state) ───── */

@@ -264,6 +264,9 @@ export const api = {
   // role state board
   getRoleStates: (sessionId: string) =>
     invoke<Role[]>("get_role_states", { sessionId }),
+
+  writeProjectFile: (sessionId: string, path: string, content: string) =>
+    invoke<void>("write_project_file", { sessionId, path, content }),
 };
 
 export function srcOf(absPath: string | null | undefined): string {

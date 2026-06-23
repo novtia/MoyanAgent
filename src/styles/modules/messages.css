@@ -729,6 +729,7 @@
 .todo-item.done .todo-item-content {
   color: var(--ink-mute);
   text-decoration: line-through;
+  text-decoration-color: var(--ink-mute);
   text-decoration-thickness: 1px;
 }
 .todo-item.cancelled .todo-item-content {

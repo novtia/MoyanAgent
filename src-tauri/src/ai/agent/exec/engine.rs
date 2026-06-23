@@ -132,7 +132,7 @@ impl Default for ProviderQueryEngine {
         Self {
             provider: Arc::new(ProviderEngine::new()),
             resolver: Arc::new(AllowAllResolver),
-            default_max_turns: 8,
+            default_max_turns: 25,
             compaction: Some(Default::default()),
         }
     }
@@ -143,7 +143,7 @@ impl ProviderQueryEngine {
         Self {
             provider,
             resolver,
-            default_max_turns: 8,
+            default_max_turns: 25,
             compaction: Some(Default::default()),
         }
     }
@@ -200,7 +200,29 @@ impl QueryEngine for ProviderQueryEngine {
             let mut final_thinking: Option<String> = None;
             let mut final_images = Vec::new();
 
-            for _turn in 0..max_turns {
+            // When the model tries to stop with unfinished TodoList items,
+            // inject a nudge and grant bonus turns so multi-step work completes.
+            const MAX_TODO_NUDGES: u32 = 8;
+            const BONUS_TURNS_PER_NUDGE: u32 = 3;
+            let mut turn_count: u32 = 0;
+            let mut max_allowed = max_turns;
+            let mut todo_nudges: u32 = 0;
+
+            loop {
+                if turn_count >= max_allowed {
+                    if let Some(nudge) = tools.incomplete_todo_nudge() {
+                        if todo_nudges < MAX_TODO_NUDGES {
+                            todo_nudges += 1;
+                            max_allowed = max_allowed.saturating_add(BONUS_TURNS_PER_NUDGE);
+                            inject_todo_continuation(&mut chat, &nudge);
+                            final_text = None;
+                            final_thinking = None;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+
                 if context.abort.aborted() {
                     return Ok(QueryResult {
                         final_text,
@@ -211,6 +233,8 @@ impl QueryEngine for ProviderQueryEngine {
                         images: final_images,
                     });
                 }
+
+                turn_count += 1;
 
                 // Stream every turn — including tool-call turns and the
                 // final-answer turn. Provider streaming paths now
@@ -311,6 +335,17 @@ impl QueryEngine for ProviderQueryEngine {
                 }
 
                 if tool_uses.is_empty() {
+                    if let Some(nudge) = tools.incomplete_todo_nudge() {
+                        if todo_nudges < MAX_TODO_NUDGES {
+                            todo_nudges += 1;
+                            max_allowed = max_allowed.saturating_add(BONUS_TURNS_PER_NUDGE);
+                            inject_todo_continuation(&mut chat, &nudge);
+                            // Discard the premature summary — work continues.
+                            final_text = None;
+                            final_thinking = None;
+                            continue;
+                        }
+                    }
                     // Model produced no tool_use blocks → loop terminates.
                     return Ok(QueryResult {
                         final_text,
@@ -529,6 +564,16 @@ fn commit_tool_round(chat: &mut ChatRequest) {
     chat.tool_chain.push(crate::ai::chat::ToolChainRound {
         assistant: pending,
         results: std::mem::take(&mut chat.tool_results),
+    });
+}
+
+/// Append a system nudge when the model tried to stop with open todos.
+fn inject_todo_continuation(chat: &mut ChatRequest, message: &str) {
+    chat.history.push(crate::ai::chat::HistoryTurn {
+        role: "user".into(),
+        text: Some(message.to_string()),
+        images: Vec::new(),
+        thinking_content: None,
     });
 }
 

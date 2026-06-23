@@ -15,6 +15,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
+use crate::ai::agent::tools::text_decode::normalize_tool_string;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
@@ -95,19 +96,22 @@ impl Tool for CreateDocTool {
 
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
-            let title = invocation
-                .input
-                .get("title")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            let content = invocation
-                .input
-                .get("content")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
+            let title = normalize_tool_string(
+                invocation
+                    .input
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )
+            .trim()
+            .to_string();
+            let content = normalize_tool_string(
+                invocation
+                    .input
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            );
             let doc_type = invocation
                 .input
                 .get("doc_type")

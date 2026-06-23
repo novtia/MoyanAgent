@@ -105,7 +105,7 @@ function readStored(): ChatFontSettings {
   }
 }
 
-/** Push the settings into CSS variables consumed by chat message styles. */
+/** Push the settings into CSS variables consumed by chat messages and the reader panel. */
 export function applyChatFont(settings: ChatFontSettings) {
   const root = document.documentElement;
   root.style.setProperty("--chat-font-family", settings.fontFamily);

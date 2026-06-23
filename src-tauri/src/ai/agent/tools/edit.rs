@@ -19,6 +19,7 @@ use crate::ai::agent::tools::paragraph::{
     insert_paragraphs_after, join_paragraphs, replace_paragraph_with, split_paragraphs,
     strip_paragraph_label,
 };
+use crate::ai::agent::tools::text_decode::normalize_tool_string;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
@@ -69,11 +70,13 @@ impl Tool for FileWriteTool {
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
             let path = path_arg(&invocation.input, WRITE_TOOL)?;
-            let content = invocation
-                .input
-                .get("content")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
+            let content = normalize_tool_string(
+                invocation
+                    .input
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            );
 
             let exists = path.exists();
             if exists && !has_read_receipt(&invocation, &path) {
@@ -102,10 +105,20 @@ impl Tool for FileWriteTool {
 
             record_read_receipt(&invocation, &path);
 
+            let chars = content.chars().filter(|c| !c.is_whitespace()).count();
+            let lines = if content.is_empty() {
+                0
+            } else {
+                content.lines().count()
+            };
+
             Ok(ToolResult::ok(json!({
                 "path": path.to_string_lossy(),
                 "bytes": content.len(),
                 "created": !exists,
+                "text": content,
+                "chars": chars,
+                "lines": lines,
             })))
         })
     }
@@ -123,10 +136,10 @@ impl FileEditTool {
             snapshots,
             spec: ToolSpec {
                 name: EDIT_TOOL.to_string(),
-                description: "Edit a numbered paragraph in a file (Read labels `[P001]`, …). \
+                description: "Edit a numbered paragraph in a file (Read labels `[P001]`, …; one line = one paragraph). \
                     Three modes: (1) Insert after P00N — set `paragraph_number` to N, leave \
-                    `original_content` empty, put new text in `modified_content` (may contain \
-                    multiple blank-line-separated paragraphs). (2) Replace a fragment inside P00N \
+                    `original_content` empty, put new text in `modified_content` (one or more \
+                    lines). (2) Replace a fragment inside P00N \
                     — set `original_content` to the exact snippet. (3) Fill an empty P00N — \
                     `original_content` empty and that paragraph is empty."
                     .to_string(),
@@ -148,7 +161,7 @@ impl FileEditTool {
                         },
                         "modified_content": {
                             "type": "string",
-                            "description": "New text: replacement fragment, full-paragraph replacement, or multi-paragraph insert body (blank-line separated)."
+                            "description": "New text: replacement fragment, full-paragraph replacement, or one or more lines to insert."
                         }
                     },
                     "required": ["path", "paragraph_number", "original_content", "modified_content"]
@@ -206,20 +219,20 @@ impl Tool for FileEditTool {
                 .get("paragraph_number")
                 .and_then(Value::as_u64)
                 .unwrap_or(0) as usize;
-            let original = strip_paragraph_label(
+            let original = normalize_tool_string(strip_paragraph_label(
                 invocation
                     .input
                     .get("original_content")
                     .and_then(Value::as_str)
                     .unwrap_or_default(),
-            );
-            let modified = strip_paragraph_label(
+            ));
+            let modified = normalize_tool_string(strip_paragraph_label(
                 invocation
                     .input
                     .get("modified_content")
                     .and_then(Value::as_str)
                     .unwrap_or_default(),
-            );
+            ));
 
             if !has_read_receipt(&invocation, &path) {
                 return Ok(ToolResult::error(format!(
@@ -246,7 +259,7 @@ impl Tool for FileEditTool {
                 if para.trim().is_empty() {
                     paragraphs[idx] = modified.to_string();
                 } else {
-                    inserted = insert_paragraphs_after(&mut paragraphs, idx, modified) as u32;
+                    inserted = insert_paragraphs_after(&mut paragraphs, idx, &modified) as u32;
                     if inserted == 0 {
                         return Ok(ToolResult::error(
                             "Edit: `modified_content` must contain text to insert",
@@ -254,9 +267,9 @@ impl Tool for FileEditTool {
                     }
                 }
             } else if original == para || original == para.trim() {
-                replace_paragraph_with(&mut paragraphs, idx, modified);
+                replace_paragraph_with(&mut paragraphs, idx, &modified);
             } else {
-                let occurrences = para.matches(original).count();
+                let occurrences = para.matches(original.as_str()).count();
                 if occurrences == 0 {
                     return Ok(ToolResult::error(format!(
                         "Edit: `original_content` not found in paragraph {paragraph_number} of {}",
@@ -268,10 +281,11 @@ impl Tool for FileEditTool {
                         "Edit: `original_content` appears {occurrences} times in paragraph {paragraph_number} — extend the fragment"
                     )));
                 }
-                paragraphs[idx] = para.replacen(original, modified, 1);
+                paragraphs[idx] = para.replacen(original.as_str(), &modified, 1);
             }
 
             let updated = join_paragraphs(&paragraphs);
+            let text_before = file_content.clone();
 
             // Snapshot the pre-image before mutating for rollback support.
             self.snapshots.record_before(
@@ -285,12 +299,23 @@ impl Tool for FileEditTool {
 
             record_read_receipt(&invocation, &path);
 
+            let chars = updated.chars().filter(|c| !c.is_whitespace()).count();
+            let lines = if updated.is_empty() {
+                0
+            } else {
+                updated.lines().count()
+            };
+
             Ok(ToolResult::ok(json!({
                 "path": path.to_string_lossy(),
                 "paragraph_number": paragraph_number,
                 "inserted": inserted,
                 "replaced": if inserted > 0 { 0 } else { replaced },
                 "paragraphs_total": paragraphs.len(),
+                "text": updated,
+                "text_before": text_before,
+                "chars": chars,
+                "lines": lines,
             })))
         })
     }
