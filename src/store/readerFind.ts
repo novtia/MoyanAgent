@@ -14,6 +14,27 @@ import { useSession } from "./session";
 
 export type ReaderFindScope = "file" | "all";
 
+/** Chrome inset (px) reserved above the editor for the find bar + file list. */
+export const READER_CHROME_INSET = {
+  closed: 0,
+  bar: 92,
+  barWithList: 236,
+} as const;
+
+/** Derive the chrome-top inset from discrete find-bar state.
+ *  Returns one of READER_CHROME_INSET based on open / scope / query / searching. */
+export function selectReaderChromeInset(s: {
+  open: boolean;
+  scope: ReaderFindScope;
+  query: string;
+  searching: boolean;
+}): number {
+  if (!s.open) return READER_CHROME_INSET.closed;
+  const showFileList =
+    s.scope === "all" && s.query.trim().length > 0 && !s.searching;
+  return showFileList ? READER_CHROME_INSET.barWithList : READER_CHROME_INSET.bar;
+}
+
 export interface ReaderFindMatch {
   tabId: string | null;
   path: string;

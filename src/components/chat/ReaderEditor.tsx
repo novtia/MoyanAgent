@@ -1,25 +1,20 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type KeyboardEvent,
-  type RefObject,
 } from "react";
 import { useSession } from "../../store/session";
 import {
   buildLineParagraphLabels,
-  formatParagraphNumber,
   normalizeReaderPath,
   useReader,
   type ReaderFileTab,
 } from "../../store/reader";
 import { useReaderFind } from "../../store/readerFind";
-import { scrollTextareaToIndex, findInText, resolveFindScrollIndex } from "../../utils/readerFind";
-import { ReaderFindBackdrop } from "./ReaderFindHighlight";
+import { findInText, resolveFindScrollIndex } from "../../utils/readerFind";
+import { ReaderCodeMirror } from "./ReaderCodeMirror";
 import { api } from "../../api/tauri";
 import {
   buildEditorDisplaySegments,
@@ -28,190 +23,14 @@ import {
   sliceTabLines,
   type EditorDisplaySegment,
 } from "../../utils/inlineDiff";
-import {
-  measureWrappedLineHeights,
-  textareaContentWidth,
-} from "../../utils/readerGutter";
-import { handleReaderIndentKeyDown } from "../../utils/readerIndent";
 import { ReaderDiffActionBar } from "./ReaderDiffActionBar";
 
 const SAVE_DEBOUNCE_MS = 600;
-
-function usePendingSelection(
-  ref: RefObject<HTMLTextAreaElement | null>,
-  contentKey: string,
-) {
-  const pending = useRef<[number, number] | null>(null);
-
-  const queueSelection = useCallback((start: number, end: number) => {
-    pending.current = [start, end];
-  }, []);
-
-  useLayoutEffect(() => {
-    const pendingSel = pending.current;
-    if (!pendingSel || !ref.current) return;
-    pending.current = null;
-    ref.current.setSelectionRange(pendingSel[0], pendingSel[1]);
-  }, [contentKey, ref]);
-
-  return queueSelection;
-}
-
-function onIndentKeyDown(
-  e: KeyboardEvent<HTMLTextAreaElement>,
-  text: string,
-  apply: (next: string, selStart: number, selEnd: number) => void,
-) {
-  const result = handleReaderIndentKeyDown(e, text);
-  if (!result) return;
-  e.preventDefault();
-  apply(result.text, result.selectionStart, result.selectionEnd);
-}
+/** Delay before hiding diff action bar after pointer leaves the hunk. */
+const DIFF_BAR_HIDE_MS = 480;
 
 interface ReaderEditorProps {
   tab: ReaderFileTab;
-}
-
-function GutterStack({
-  labels,
-  heights,
-}: {
-  labels: (number | null)[];
-  heights: number[];
-}) {
-  return (
-    <>
-      {labels.map((label, i) => (
-        <div
-          key={i}
-          className="reader-editor-gutter-item"
-          style={{ height: heights[i] > 0 ? heights[i] : undefined }}
-        >
-          {label != null ? (
-            <span className="reader-editor-gutter-num">{formatParagraphNumber(label)}</span>
-          ) : null}
-        </div>
-      ))}
-    </>
-  );
-}
-
-function useLineHeights(
-  lines: string[],
-  contentWidth: number,
-  styleRef: RefObject<HTMLElement | null>,
-  contentKey: string,
-): number[] {
-  const [heights, setHeights] = useState<number[]>(() => lines.map(() => 0));
-
-  useLayoutEffect(() => {
-    const el = styleRef.current;
-    if (!el || contentWidth <= 0) {
-      setHeights((prev) => {
-        const zeros = lines.map(() => 0);
-        if (prev.length === zeros.length && prev.every((h) => h === 0)) return prev;
-        return zeros;
-      });
-      return;
-    }
-    const measured = measureWrappedLineHeights(lines, contentWidth, el);
-    setHeights((prev) => {
-      if (prev.length === measured.length && prev.every((h, i) => h === measured[i])) {
-        return prev;
-      }
-      return measured;
-    });
-  }, [contentKey, contentWidth, styleRef]);
-
-  return heights;
-}
-
-function SegmentBlock({
-  labels,
-  lines,
-  value,
-  onChange,
-  className,
-  readOnly,
-  style,
-  ariaLabel,
-  sign,
-}: {
-  labels: (number | null)[];
-  lines: string[];
-  value: string;
-  onChange?: (value: string) => void;
-  className?: string;
-  readOnly?: boolean;
-  style?: CSSProperties;
-  ariaLabel?: string;
-  sign?: string;
-}) {
-  const fieldRef = useRef<HTMLTextAreaElement>(null);
-  const gutterRef = useRef<HTMLDivElement>(null);
-  const queueSelection = usePendingSelection(fieldRef, value);
-  const [contentWidth, setContentWidth] = useState(0);
-
-  useLayoutEffect(() => {
-    const el = fieldRef.current;
-    if (!el) return;
-    const update = () => {
-      const next = textareaContentWidth(el);
-      setContentWidth((prev) => (prev === next ? prev : next));
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    const wrap = el.closest(".reader-editor-wrap");
-    if (wrap) ro.observe(wrap);
-    return () => ro.disconnect();
-  }, [value]);
-
-  const heights = useLineHeights(lines, contentWidth, fieldRef, value);
-
-  const syncScroll = useCallback(() => {
-    if (gutterRef.current && fieldRef.current) {
-      gutterRef.current.scrollTop = fieldRef.current.scrollTop;
-    }
-  }, []);
-
-  const totalHeight = heights.reduce((sum, h) => sum + (h > 0 ? h : 0), 0);
-
-  return (
-    <div
-      className={`reader-editor-block${sign ? " is-signed" : ""}${className?.includes("is-insert-field") ? " is-insert-block" : ""}`}
-      style={style}
-    >
-      <div ref={gutterRef} className="reader-editor-gutter">
-        <GutterStack labels={labels} heights={heights} />
-      </div>
-      {sign ? (
-        <span className="reader-editor-line-sign" aria-hidden>
-          {sign}
-        </span>
-      ) : null}
-      <textarea
-        ref={fieldRef}
-        className={className ?? "reader-editor-field"}
-        value={value}
-        readOnly={readOnly}
-        onChange={onChange ? (e) => onChange(e.target.value) : undefined}
-        onKeyDown={
-          onChange
-            ? (e) =>
-                onIndentKeyDown(e, value, (next, selStart, selEnd) => {
-                  onChange(next);
-                  queueSelection(selStart, selEnd);
-                })
-            : undefined
-        }
-        onScroll={syncScroll}
-        spellCheck={false}
-        aria-label={ariaLabel}
-        style={totalHeight > 0 ? { height: totalHeight } : undefined}
-      />
-    </div>
-  );
 }
 
 function PlainReader({
@@ -221,36 +40,11 @@ function PlainReader({
   tab: ReaderFileTab;
   applyText: (text: string) => void;
 }) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const gutterRef = useRef<HTMLDivElement>(null);
-  const queueSelection = usePendingSelection(textareaRef, tab.text);
-  const lines = useMemo(() => tab.text.split("\n"), [tab.text]);
-  const labels = useMemo(() => buildLineParagraphLabels(tab.text), [tab.text]);
-  const [contentWidth, setContentWidth] = useState(0);
-
-  useLayoutEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const update = () => {
-      const next = textareaContentWidth(el);
-      setContentWidth((prev) => (prev === next ? prev : next));
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    const wrap = el.closest(".reader-editor-wrap");
-    if (wrap) ro.observe(wrap);
-    return () => ro.disconnect();
-  }, [tab.text]);
-
-  const heights = useLineHeights(lines, contentWidth, textareaRef, tab.text);
-
   const findOpen = useReaderFind((s) => s.open);
   const findQuery = useReaderFind((s) => s.query);
   const matchCase = useReaderFind((s) => s.matchCase);
   const matchIndex = useReaderFind((s) => s.matchIndex);
   const findMatches = useReaderFind((s) => s.matches);
-  const backdropInnerRef = useRef<HTMLDivElement>(null);
 
   const { ranges: findRanges, activeIndex: findActiveIndex } = useMemo(() => {
     if (!findOpen || !findQuery.trim() || tab.pendingDiffs.length > 0) {
@@ -294,118 +88,47 @@ function PlainReader({
   const showFindHighlight =
     findOpen && findQuery.trim().length > 0 && findRanges.length > 0;
 
-  const syncFindBackdrop = useCallback(() => {
-    const ta = textareaRef.current;
-    const inner = backdropInnerRef.current;
-    if (!ta || !inner) return;
-    const w = textareaContentWidth(ta);
-    if (w > 0) {
-      inner.style.width = `${w}px`;
-    }
-    inner.style.minHeight = `${ta.scrollHeight}px`;
-    inner.style.transform = `translate(${-ta.scrollLeft}px, ${-ta.scrollTop}px)`;
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!showFindHighlight) return;
-    syncFindBackdrop();
-    const ta = textareaRef.current;
-    if (!ta) return;
-    const ro = new ResizeObserver(() => syncFindBackdrop());
-    ro.observe(ta);
-    return () => ro.disconnect();
-  }, [showFindHighlight, tab.text, findRanges, contentWidth, syncFindBackdrop]);
-
-  const activeFindMatch =
-    findOpen && matchIndex >= 0 ? findMatches[matchIndex] ?? null : null;
-
-  useLayoutEffect(() => {
-    if (!activeFindMatch || tab.pendingDiffs.length > 0) return;
+  const scrollToIndex = useMemo(() => {
+    if (!findOpen || matchIndex < 0 || tab.pendingDiffs.length > 0) return null;
+    const activeMatch = findMatches[matchIndex] ?? null;
     if (
-      normalizeReaderPath(activeFindMatch.path) !== normalizeReaderPath(tab.path)
+      !activeMatch ||
+      normalizeReaderPath(activeMatch.path) !== normalizeReaderPath(tab.path)
     ) {
-      return;
+      return null;
     }
-
-    const scrollToActiveMatch = () => {
-      const el = textareaRef.current;
-      if (!el) return false;
-
-      const fileMatches = findMatches.filter(
-        (m) => normalizeReaderPath(m.path) === normalizeReaderPath(tab.path),
-      );
-      const scrollIndex = resolveFindScrollIndex(
-        tab.text,
-        findQuery,
-        matchCase,
-        activeFindMatch,
-        fileMatches,
-      );
-      if (scrollIndex == null) return false;
-
-      scrollTextareaToIndex(el, scrollIndex);
-      if (gutterRef.current) {
-        gutterRef.current.scrollTop = el.scrollTop;
-      }
-      syncFindBackdrop();
-      return true;
-    };
-
-    if (scrollToActiveMatch()) return;
-    const raf = requestAnimationFrame(() => {
-      scrollToActiveMatch();
-    });
-    return () => cancelAnimationFrame(raf);
+    const fileMatches = findMatches.filter(
+      (m) => normalizeReaderPath(m.path) === normalizeReaderPath(tab.path),
+    );
+    return resolveFindScrollIndex(
+      tab.text,
+      findQuery,
+      matchCase,
+      activeMatch,
+      fileMatches,
+    );
   }, [
-    activeFindMatch,
+    findOpen,
+    matchIndex,
     tab.path,
     tab.text,
     tab.pendingDiffs.length,
     findQuery,
     matchCase,
     findMatches,
-    syncFindBackdrop,
   ]);
 
-  const syncScroll = useCallback(() => {
-    if (gutterRef.current && textareaRef.current) {
-      gutterRef.current.scrollTop = textareaRef.current.scrollTop;
-    }
-    syncFindBackdrop();
-  }, [syncFindBackdrop]);
-
   return (
-    <div className={`reader-editor-wrap reader-editor-wrap--plain${showFindHighlight ? " has-find-highlight" : ""}`}>
-      <div className="reader-editor-plain">
-        <div ref={gutterRef} className="reader-editor-gutter">
-          <GutterStack labels={labels} heights={heights} />
-        </div>
-        <div className="reader-editor-input-stack">
-          {showFindHighlight && (
-            <ReaderFindBackdrop
-              text={tab.text}
-              ranges={findRanges}
-              activeIndex={findActiveIndex}
-              innerRef={backdropInnerRef}
-            />
-          )}
-          <textarea
-            ref={textareaRef}
-            className={`reader-editor${showFindHighlight ? " reader-editor--find-overlay" : ""}`}
-            value={tab.text}
-            onChange={(e) => applyText(e.target.value)}
-            onKeyDown={(e) =>
-              onIndentKeyDown(e, tab.text, (next, selStart, selEnd) => {
-                applyText(next);
-                queueSelection(selStart, selEnd);
-              })
-            }
-            onScroll={syncScroll}
-            spellCheck={false}
-            aria-label={tab.path}
-          />
-        </div>
-      </div>
+    <div className="reader-editor-wrap reader-editor-wrap--plain reader-editor-wrap--codemirror">
+      <ReaderCodeMirror
+        value={tab.text}
+        onChange={applyText}
+        ariaLabel={tab.path}
+        findRanges={showFindHighlight ? findRanges : []}
+        findActiveIndex={showFindHighlight ? findActiveIndex : -1}
+        scrollToIndex={scrollToIndex}
+        scrollTrigger={matchIndex}
+      />
     </div>
   );
 }
@@ -418,14 +141,12 @@ export function ReaderEditor({ tab }: ReaderEditorProps) {
   const latestTextRef = useRef(tab.text);
   const dirtyRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const mainRef = useRef<HTMLDivElement>(null);
   const hunkRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
   const hideBarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hasPendingDiff = tab.pendingDiffs.length > 0;
   const paraLabels = useMemo(() => buildLineParagraphLabels(tab.text), [tab.text]);
-  const fileLines = useMemo(() => tab.text.split("\n"), [tab.text]);
 
   const diffBlocks = useMemo(
     () =>
@@ -450,14 +171,13 @@ export function ReaderEditor({ tab }: ReaderEditorProps) {
     [tab.text, diffBlocks, hasPendingDiff],
   );
 
-  const hoveredRange = useMemo(
-    () => lineRanges.find((r) => r.blockId === hoveredBlockId) ?? null,
-    [lineRanges, hoveredBlockId],
+  const hoveredHunkIndex = useMemo(
+    () =>
+      hoveredBlockId
+        ? lineRanges.findIndex((r) => r.blockId === hoveredBlockId)
+        : -1,
+    [hoveredBlockId, lineRanges],
   );
-
-  const hoveredHunkIndex = hoveredRange
-    ? lineRanges.findIndex((r) => r.blockId === hoveredRange.blockId)
-    : -1;
 
   useEffect(() => {
     latestTextRef.current = tab.text;
@@ -530,7 +250,7 @@ export function ReaderEditor({ tab }: ReaderEditorProps) {
 
   const scheduleHideBar = useCallback(() => {
     if (hideBarTimerRef.current) clearTimeout(hideBarTimerRef.current);
-    hideBarTimerRef.current = setTimeout(() => setHoveredBlockId(null), 220);
+    hideBarTimerRef.current = setTimeout(() => setHoveredBlockId(null), DIFF_BAR_HIDE_MS);
   }, []);
 
   const navigateHunk = useCallback(
@@ -545,20 +265,17 @@ export function ReaderEditor({ tab }: ReaderEditorProps) {
   );
 
   const renderContextBlock = (seg: Extract<EditorDisplaySegment, { kind: "context" }>) => {
-    const segmentLines: string[] = [];
     const segmentLabels: (number | null)[] = [];
     for (let i = seg.tabStart; i <= seg.tabEnd; i += 1) {
-      segmentLines.push(fileLines[i] ?? "");
       segmentLabels.push(paraLabels[i] ?? null);
     }
     return (
-      <SegmentBlock
+      <ReaderCodeMirror
         key={`ctx-${seg.tabStart}-${seg.tabEnd}`}
-        labels={segmentLabels}
-        lines={segmentLines}
+        layout="segment"
+        lineLabels={segmentLabels}
         value={sliceTabLines(tab.text, seg.tabStart, seg.tabEnd)}
         onChange={(value) => onSegmentChange(seg.tabStart, seg.tabEnd, value)}
-        className="reader-editor-field reader-editor-segment"
         ariaLabel={tab.path}
       />
     );
@@ -573,6 +290,9 @@ export function ReaderEditor({ tab }: ReaderEditorProps) {
         ? seg.paragraphNumber + 1 + i
         : seg.paragraphNumber + i;
     });
+    const range = lineRanges.find((r) => r.blockId === seg.blockId);
+    const hunkIndex = range ? lineRanges.findIndex((r) => r.blockId === seg.blockId) : -1;
+    const showBar = hoveredBlockId === seg.blockId && range != null && hunkIndex >= 0;
 
     return (
       <div
@@ -586,21 +306,39 @@ export function ReaderEditor({ tab }: ReaderEditorProps) {
         onMouseLeave={scheduleHideBar}
       >
         {deleteLines.map((line, i) => (
-          <DeleteLineRow
-            key={`del-${i}`}
-            label={paraLabels[seg.tabStart + i] ?? null}
-            line={line}
+          <ReaderCodeMirror
+            key={`del-${seg.blockId}-${i}`}
+            layout="segment"
+            diffVariant="delete"
+            diffSign="−"
+            lineLabels={[paraLabels[seg.tabStart + i] ?? null]}
+            value={line}
+            readOnly
+            ariaLabel="removed line"
           />
         ))}
         {insertLines.length > 0 && (
-          <SegmentBlock
-            labels={insertLabels}
-            lines={insertLines}
+          <ReaderCodeMirror
+            key={`ins-${seg.blockId}`}
+            layout="segment"
+            diffVariant="insert"
+            diffSign="+"
+            diffSignFirstLineOnly
+            lineLabels={insertLabels}
             value={seg.after}
             onChange={(value) => onSegmentChange(seg.tabStart, seg.tabEnd, value)}
-            className="reader-editor-field is-insert-field"
-            sign="+"
             ariaLabel={tab.path}
+          />
+        )}
+        {showBar && (
+          <ReaderDiffActionBar
+            tab={tab}
+            range={range}
+            hunkIndex={hunkIndex}
+            hunkTotal={lineRanges.length}
+            onNavigate={navigateHunk}
+            onMouseEnter={() => showBarForBlock(seg.blockId)}
+            onMouseLeave={scheduleHideBar}
           />
         )}
       </div>
@@ -611,11 +349,9 @@ export function ReaderEditor({ tab }: ReaderEditorProps) {
     return <PlainReader tab={tab} applyText={applyText} />;
   }
 
-  const anchorEl = hoveredBlockId ? hunkRefs.current.get(hoveredBlockId) ?? null : null;
-
   return (
-    <div className="reader-editor-wrap reader-editor-wrap--diff">
-      <div ref={mainRef} className="reader-editor-main" onMouseLeave={scheduleHideBar}>
+    <div className="reader-editor-wrap reader-editor-wrap--diff reader-editor-wrap--codemirror">
+      <div className="reader-editor-main" onMouseLeave={scheduleHideBar}>
         <div ref={scrollRef} className="reader-editor-scroll">
           {displaySegments.flatMap((seg) =>
             seg.kind === "context"
@@ -623,64 +359,7 @@ export function ReaderEditor({ tab }: ReaderEditorProps) {
               : [renderHunk(seg)],
           )}
         </div>
-        {hoveredRange && hoveredHunkIndex >= 0 && (
-          <ReaderDiffActionBar
-            tab={tab}
-            range={hoveredRange}
-            hunkIndex={hoveredHunkIndex}
-            hunkTotal={lineRanges.length}
-            anchorEl={anchorEl}
-            mainRef={mainRef}
-            onNavigate={navigateHunk}
-            onMouseEnter={() => showBarForBlock(hoveredRange.blockId)}
-            onMouseLeave={scheduleHideBar}
-          />
-        )}
       </div>
-    </div>
-  );
-}
-
-/** Read-only deleted line with gutter + diff styling. */
-function DeleteLineRow({ label, line }: { label: number | null; line: string }) {
-  const textRef = useRef<HTMLSpanElement>(null);
-  const [contentWidth, setContentWidth] = useState(0);
-
-  useLayoutEffect(() => {
-    const el = textRef.current;
-    if (!el) return;
-    const update = () => {
-      const next = el.clientWidth;
-      setContentWidth((prev) => (prev === next ? prev : next));
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    const wrap = el.closest(".reader-editor-wrap");
-    if (wrap) ro.observe(wrap);
-    return () => ro.disconnect();
-  }, [line]);
-
-  const heights = useLineHeights([line], contentWidth, textRef, line);
-
-  return (
-    <div className="reader-editor-row reader-editor-line is-delete">
-      <div className="reader-editor-gutter reader-editor-gutter--inline">
-        <div
-          className="reader-editor-gutter-item"
-          style={{ height: heights[0] > 0 ? heights[0] : undefined }}
-        >
-          {label != null ? (
-            <span className="reader-editor-gutter-num">{formatParagraphNumber(label)}</span>
-          ) : null}
-        </div>
-      </div>
-      <span className="reader-editor-line-sign" aria-hidden>
-        −
-      </span>
-      <span ref={textRef} className="reader-editor-line-text">
-        {line || "\u00a0"}
-      </span>
     </div>
   );
 }

@@ -1,4 +1,9 @@
-import { textareaContentWidth } from "./readerGutter";
+import {
+  measureTextareaCharOffsetTop,
+  textareaContentWidth,
+} from "./readerMirror";
+
+export { measureTextareaCharOffsetTop, textareaContentWidth };
 
 /** Collect UTF-8 text file paths under a project root (BFS, capped). */
 export const PROJECT_SEARCH_FILE_CAP = 500;
@@ -73,49 +78,6 @@ export function replaceRange(
   return text.slice(0, start) + replacement + text.slice(end);
 }
 
-function applyMirrorTypography(el: HTMLTextAreaElement, mirror: HTMLDivElement, width: number) {
-  const cs = getComputedStyle(el);
-  mirror.style.position = "absolute";
-  mirror.style.visibility = "hidden";
-  mirror.style.pointerEvents = "none";
-  mirror.style.left = "-9999px";
-  mirror.style.top = "0";
-  mirror.style.width = `${width}px`;
-  mirror.style.fontFamily = cs.fontFamily;
-  mirror.style.fontSize = cs.fontSize;
-  mirror.style.fontWeight = cs.fontWeight;
-  mirror.style.lineHeight = cs.lineHeight;
-  mirror.style.letterSpacing = cs.letterSpacing;
-  mirror.style.whiteSpace = "pre-wrap";
-  mirror.style.wordBreak = "break-word";
-  mirror.style.overflowWrap = "break-word";
-  mirror.style.boxSizing = "border-box";
-}
-
-/** Pixel offset of a character index inside textarea content (handles wrapping). */
-export function measureTextareaCharOffsetTop(
-  el: HTMLTextAreaElement,
-  index: number,
-): number {
-  const contentWidth = textareaContentWidth(el);
-  if (contentWidth <= 0) return 0;
-
-  const clamped = Math.max(0, Math.min(index, el.value.length));
-  const mirror = document.createElement("div");
-  applyMirrorTypography(el, mirror, contentWidth);
-
-  const before = el.value.slice(0, clamped);
-  const after = el.value.slice(clamped);
-  const marker = document.createElement("span");
-  marker.textContent = "\u200b";
-  mirror.append(document.createTextNode(before), marker, document.createTextNode(after));
-
-  document.body.appendChild(mirror);
-  const top = marker.offsetTop;
-  document.body.removeChild(mirror);
-  return top;
-}
-
 /** Resolve a scroll target for a global find match against the live tab text. */
 export function resolveFindScrollIndex(
   tabText: string,
@@ -140,7 +102,24 @@ export function resolveFindScrollIndex(
   return localRanges[0]?.start ?? null;
 }
 
-/** Scroll textarea so the given character index is visible. */
+/** Scroll the reader surface (outer scroll container) so the given character
+ *  index is visible. `textareaEl` provides the value + typography; the actual
+ *  scroll is applied to `scrollEl`. `padY` is the row-level top padding so the
+ *  caret coordinate (which is content-relative) maps to the scroll coordinate. */
+export function scrollReaderSurfaceToIndex(
+  scrollEl: HTMLElement,
+  textareaEl: HTMLTextAreaElement,
+  index: number,
+  padY: number,
+) {
+  const clamped = Math.max(0, Math.min(index, textareaEl.value.length));
+  const charTop = measureTextareaCharOffsetTop(textareaEl, clamped);
+  const target = charTop + padY - Math.max(scrollEl.clientHeight / 3, 48);
+  const maxScroll = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+  scrollEl.scrollTop = Math.max(0, Math.min(target, maxScroll));
+}
+
+/** @deprecated use scrollReaderSurfaceToIndex (single-scroll-container layout) */
 export function scrollTextareaToIndex(el: HTMLTextAreaElement, index: number) {
   const clamped = Math.max(0, Math.min(index, el.value.length));
   const charTop = measureTextareaCharOffsetTop(el, clamped);

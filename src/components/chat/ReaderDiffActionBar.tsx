@@ -1,4 +1,3 @@
-import { useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
 import { useReader, type ReaderFileTab } from "../../store/reader";
@@ -10,8 +9,6 @@ interface ReaderDiffActionBarProps {
   range: PendingDiffLineRange;
   hunkIndex: number;
   hunkTotal: number;
-  anchorEl: HTMLDivElement | null;
-  mainRef: React.RefObject<HTMLDivElement | null>;
   onNavigate: (direction: -1 | 1) => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
@@ -22,8 +19,6 @@ export function ReaderDiffActionBar({
   range,
   hunkIndex,
   hunkTotal,
-  anchorEl,
-  mainRef,
   onNavigate,
   onMouseEnter,
   onMouseLeave,
@@ -31,20 +26,6 @@ export function ReaderDiffActionBar({
   const { t } = useTranslation();
   const sessionId = useSession((s) => s.activeId);
   const confirmDiffBlock = useReader((s) => s.confirmDiffBlock);
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const keepVisible = useCallback(() => {
-    if (hideTimerRef.current) {
-      clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = null;
-    }
-    onMouseEnter();
-  }, [onMouseEnter]);
-
-  const scheduleHide = useCallback(() => {
-    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-    hideTimerRef.current = setTimeout(onMouseLeave, 220);
-  }, [onMouseLeave]);
 
   const onConfirm = async (accept: boolean) => {
     onMouseLeave();
@@ -58,21 +39,11 @@ export function ReaderDiffActionBar({
     }
   };
 
-  if (!anchorEl || !mainRef.current) return null;
-
-  const mainEl = mainRef.current;
-
-  const anchorRect = anchorEl.getBoundingClientRect();
-  const mainRect = mainEl.getBoundingClientRect();
-  const top = anchorRect.bottom - mainRect.top + 6;
-  const right = mainRect.right - anchorRect.right;
-
   return (
     <div
       className="reader-diff-actionbar"
-      style={{ top, right }}
-      onMouseEnter={keepVisible}
-      onMouseLeave={scheduleHide}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       <div className="reader-diff-actionbar-nav">
         <button

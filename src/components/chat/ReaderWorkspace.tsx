@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import {
   useReader,
@@ -6,7 +6,7 @@ import {
   readerFileName,
   type ReaderFileTab,
 } from "../../store/reader";
-import { useReaderFind } from "../../store/readerFind";
+import { useReaderFind, selectReaderChromeInset } from "../../store/readerFind";
 import { ReaderEditor } from "./ReaderEditor";
 import { ReaderFileDrawer } from "./ReaderFileDrawer";
 import { ReaderFindBar, useReaderFindShortcuts } from "./ReaderFindBar";
@@ -35,8 +35,12 @@ function ReaderFilePane({ tab }: { tab: ReaderFileTab }) {
     () => (typeof tab.lines === "number" ? tab.lines : tab.text.split(/\n/).length),
     [tab.lines, tab.text],
   );
-  const hasFindFileList =
-    findOpen && findScope === "all" && findQuery.trim().length > 0 && !findSearching;
+  const chromeInset = selectReaderChromeInset({
+    open: findOpen,
+    scope: findScope,
+    query: findQuery,
+    searching: findSearching,
+  });
 
   return (
     <div className="document-reader reader-file-pane">
@@ -55,7 +59,8 @@ function ReaderFilePane({ tab }: { tab: ReaderFileTab }) {
         </div>
       </div>
       <div
-        className={`document-reader-body reader-file-body${findOpen ? " has-find-bar has-find-replace" : ""}${hasFindFileList ? " has-find-file-list" : ""}`}
+        className="document-reader-body reader-file-body"
+        style={{ "--reader-chrome-top": `${chromeInset}px` } as CSSProperties}
       >
         <ReaderEditor tab={tab} />
         <div className="reader-find-overlay">

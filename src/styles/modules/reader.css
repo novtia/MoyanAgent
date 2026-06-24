@@ -63,19 +63,12 @@
 
 .document-reader-body.reader-file-body {
   padding: 0;
+  padding-top: var(--reader-chrome-top, 0px);
   display: flex;
   flex-direction: column;
   min-width: 0;
   width: 100%;
   position: relative;
-}
-
-.document-reader-body.reader-file-body.has-find-bar {
-  padding-top: 92px;
-}
-
-.document-reader-body.reader-file-body.has-find-file-list {
-  padding-top: 236px;
 }
 
 /* ───── reader workspace (multi-file tabs) ───── */
@@ -88,7 +81,6 @@
   width: 100%;
   font-family: var(--chat-font-family, inherit);
   font-size: var(--chat-font-size, 14px);
-  line-height: var(--chat-line-height, 1.6);
   color: var(--chat-font-color, var(--ink));
 }
 
@@ -216,6 +208,72 @@
   color: inherit;
 }
 
+.reader-editor-wrap--codemirror {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.reader-codemirror {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+.reader-codemirror .cm-editor {
+  height: 100%;
+  outline: none;
+}
+
+.reader-codemirror .cm-editor.cm-focused {
+  outline: none;
+}
+
+.reader-codemirror--segment {
+  width: 100%;
+  min-width: 0;
+}
+
+.reader-codemirror--segment .cm-editor {
+  height: auto;
+}
+
+.reader-codemirror--segment .cm-scroller {
+  overflow: visible !important;
+}
+
+.reader-codemirror--delete .cm-editor {
+  background: color-mix(in srgb, #f85149 16%, transparent);
+}
+
+.reader-codemirror--delete .reader-cm-diff-sign {
+  color: #f85149;
+  opacity: 1;
+}
+
+.reader-codemirror--insert .cm-editor {
+  background: color-mix(in srgb, #3fb950 14%, transparent);
+}
+
+.reader-codemirror--insert .reader-cm-diff-sign {
+  color: #3fb950;
+  opacity: 1;
+}
+
+/* Line numbers share content font metrics; stay top-aligned when line wraps. */
+.reader-codemirror .cm-lineNumbers .cm-gutterElement {
+  overflow: visible;
+}
+
+.reader-codemirror .reader-cm-diff-sign-gutter .cm-gutterElement {
+  align-items: flex-start;
+}
+
+.reader-editor-wrap--diff .reader-codemirror--segment + .reader-codemirror--segment {
+  margin-top: 0;
+}
+
 .reader-editor-wrap {
   display: flex;
   flex-direction: column;
@@ -226,8 +284,9 @@
   overflow: hidden;
 }
 
-.reader-editor-plain {
+.reader-editor-viewport {
   display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
@@ -250,7 +309,6 @@
 .reader-editor-find-backdrop {
   position: absolute;
   inset: 0;
-  padding: 16px;
   overflow: hidden;
   pointer-events: none;
   z-index: 0;
@@ -313,7 +371,7 @@
 }
 
 .reader-editor-wrap--plain .reader-editor-gutter {
-  padding: 16px 2px 16px 6px;
+  padding: 0 2px 0 6px;
 }
 
 .reader-editor-gutter-item {
@@ -330,6 +388,29 @@
   font-weight: 400;
   font-variant-numeric: tabular-nums;
   overflow: hidden;
+}
+
+/* Absolute-positioned gutter numbers pinned to each logical line start Y. */
+.reader-editor-gutter-stack {
+  position: relative;
+  width: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.reader-editor-gutter-num--abs {
+  position: absolute;
+  right: 2px;
+  display: block;
+  font: inherit;
+  font-size: 11px;
+  line-height: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  padding-top: calc((var(--chat-font-size, 14px) * var(--chat-line-height, 1.6) - 11px) * 0.25);
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
 }
 
 .reader-editor-gutter-num {
@@ -395,11 +476,11 @@
   width: 100%;
   min-height: 0;
   margin: 0;
-  padding: 16px;
+  padding: 0;
   border: none;
   outline: none;
   resize: none;
-  overflow: auto;
+  overflow: hidden;
   background: transparent;
   box-sizing: border-box;
   border-radius: 0;
@@ -725,9 +806,11 @@
   padding: 16px;
 }
 
-/* Floating confirm bar (position via inline top/right) */
+/* Floating confirm bar anchored below its hunk */
 .reader-diff-actionbar {
   position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
   z-index: 10;
   display: flex;
   align-items: center;
@@ -739,6 +822,16 @@
   box-shadow: var(--shadow-card);
   pointer-events: auto;
   white-space: nowrap;
+}
+
+/* Invisible bridge so pointer can travel from hunk content to the bar. */
+.reader-diff-actionbar::before {
+  content: "";
+  position: absolute;
+  left: -12px;
+  right: -12px;
+  bottom: 100%;
+  height: 14px;
 }
 
 .reader-diff-actionbar-nav {
