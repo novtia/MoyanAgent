@@ -1234,39 +1234,59 @@
   background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
+.reader-files-crumb-wrap {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .reader-files-crumb-sep {
   color: var(--ink-mute);
   opacity: 0.6;
+  display: flex;
+  align-items: center;
 }
 
-.reader-files-refresh-btn {
+.reader-files-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reader-files-toolbar-btn {
   flex: 0 0 auto;
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink-mute);
-  font-size: 11px;
-  padding: 3px 8px;
+  padding: 4px;
   border-radius: 6px;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.reader-files-refresh-btn:hover {
+.reader-files-toolbar-btn:hover {
   color: var(--ink);
   border-color: color-mix(in srgb, var(--ink) 20%, var(--line));
 }
 
-.reader-files-grid {
+.reader-files-view {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  padding: 2px;
+}
+
+/* Grid View */
+.reader-files-view.is-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
   gap: 10px 8px;
   align-content: start;
-  padding: 2px;
 }
 
-.reader-files-grid-item {
+.reader-files-view.is-grid .reader-files-item {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1280,16 +1300,16 @@
   text-align: center;
 }
 
-.reader-files-grid-item:hover {
+.reader-files-view.is-grid .reader-files-item:hover {
   background: color-mix(in srgb, var(--ink) 4%, transparent);
 }
 
-.reader-files-grid-item.is-selected {
+.reader-files-view.is-grid .reader-files-item.is-selected {
   border-color: var(--ink);
   background: color-mix(in srgb, var(--ink) 3%, var(--surface));
 }
 
-.reader-files-grid-icon {
+.reader-files-view.is-grid .reader-files-item-icon {
   width: 48px;
   height: 48px;
   display: flex;
@@ -1298,12 +1318,12 @@
   color: var(--ink-mute);
 }
 
-.reader-files-icon-svg {
+.reader-files-view.is-grid .reader-files-icon-svg {
   width: 44px;
   height: 44px;
 }
 
-.reader-files-grid-name {
+.reader-files-view.is-grid .reader-files-item-name {
   font-size: 11px;
   line-height: 1.35;
   color: var(--ink);
@@ -1313,6 +1333,93 @@
   overflow: hidden;
   word-break: break-all;
   width: 100%;
+}
+
+/* List View */
+.reader-files-view.is-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.reader-files-view.is-list .reader-files-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  min-width: 0;
+  text-align: left;
+}
+
+.reader-files-view.is-list .reader-files-item:hover {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+.reader-files-view.is-list .reader-files-item.is-selected {
+  border-color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 3%, var(--surface));
+}
+
+.reader-files-view.is-list .reader-files-item-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-mute);
+  flex-shrink: 0;
+}
+
+.reader-files-view.is-list .reader-files-icon-svg {
+  width: 18px;
+  height: 18px;
+}
+
+.reader-files-view.is-list .reader-files-item-name {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 auto;
+}
+
+/* ───── drag & drop / multi-select / clipboard ───── */
+
+.reader-files-view:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+.reader-files-item {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.reader-files-item.is-cut {
+  opacity: 0.45;
+}
+
+.reader-files-item.is-drop-target {
+  border-color: var(--accent) !important;
+  background: color-mix(in srgb, var(--accent) 14%, transparent) !important;
+}
+
+.reader-files-view.is-drop-target {
+  outline: 2px dashed color-mix(in srgb, var(--accent) 50%, transparent);
+  outline-offset: -3px;
+  border-radius: 8px;
+}
+
+.reader-files-crumb.is-drop-target {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: 4px;
 }
 
 /* ───── reader find / replace bar ───── */

@@ -79,6 +79,10 @@ const MIGRATION_018: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/migrations/018_file_snapshot_encoding.sql"
 ));
+const MIGRATION_019: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/019_token_event_content.sql"
+));
 
 pub fn open_pool(db_path: &Path) -> AppResult<DbPool> {
     if let Some(parent) = db_path.parent() {
@@ -182,6 +186,10 @@ fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
     if cur < 18 {
         conn.execute_batch(MIGRATION_018)?;
         conn.execute("INSERT INTO schema_version(version) VALUES (18)", params![])?;
+    }
+    if cur < 19 {
+        conn.execute_batch(MIGRATION_019)?;
+        conn.execute("INSERT INTO schema_version(version) VALUES (19)", params![])?;
     }
     Ok(())
 }

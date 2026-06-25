@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use serde_json::{json, Map, Value};
 
 use crate::ai::agent::tools::ToolResult;
+use crate::ai::chat::{ChatRequest, GenerateResponse};
 use crate::ai::tokens::TokenUsage;
 use crate::data::db::DbPool;
 use crate::data::token_log::{
@@ -29,6 +30,12 @@ pub struct ApiCallLog {
     pub provider: String,
     pub turn_index: u32,
     pub usage: TokenUsage,
+    /// Full request payload sent to the provider this turn (system prompt,
+    /// user prompt, history, tool chain, tool results). Image bytes are
+    /// replaced with placeholders to keep the log textual.
+    pub request: Value,
+    /// Full response from the provider this turn (text, thinking, tool calls).
+    pub response: Value,
 }
 
 #[derive(Debug, Clone)]
@@ -72,12 +79,24 @@ impl TokenUsageLogger {
         event.prompt_tokens = entry.usage.prompt_tokens;
         event.completion_tokens = entry.usage.completion_tokens;
         event.total_tokens = entry.usage.total_tokens;
+        event.content_json = Some(
+            json!({
+                "request": entry.request,
+                "response": entry.response,
+            })
+            .to_string(),
+        );
         self.persist(event);
     }
 
     pub fn log_tool_call(&self, entry: ToolCallLog) {
         let (output_chars, output_bytes) = measure_content(&entry.result.content);
         let metadata = extract_tool_metadata(&entry.tool_name, &entry.input);
+        let content = json!({
+            "input": entry.input,
+            "output": entry.result.content,
+            "is_error": entry.result.is_error,
+        });
         let mut event = TokenUsageEvent::new(EVENT_TOOL_CALL);
         apply_context(&mut event, &entry.ctx);
         event.tool_name = Some(entry.tool_name);
@@ -85,6 +104,7 @@ impl TokenUsageLogger {
         event.output_bytes = Some(output_bytes);
         event.is_error = entry.result.is_error;
         event.metadata_json = metadata.map(|v| v.to_string());
+        event.content_json = Some(content.to_string());
         self.persist(event);
     }
 
@@ -262,6 +282,86 @@ fn extract_tool_metadata(tool_name: &str, input: &Value) -> Option<Value> {
         }
         _ => None,
     }
+}
+
+/// Serialise the outbound provider request into a textual JSON payload.
+/// Raw image bytes are collapsed into `<image N bytes, mime>` placeholders
+/// so the debug log stays human-readable and avoids huge base64 blobs.
+pub fn request_content(chat: &ChatRequest) -> Value {
+    json!({
+        "model": chat.model,
+        "provider": chat.provider.id,
+        "system_prompt": chat.system_prompt,
+        "prompt": chat.prompt,
+        "attachments": chat.attachments.iter().map(image_placeholder).collect::<Vec<_>>(),
+        "history": chat
+            .history
+            .iter()
+            .map(|h| {
+                json!({
+                    "role": h.role,
+                    "text": h.text,
+                    "thinking_content": h.thinking_content,
+                    "images": h.images.iter().map(image_placeholder).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>(),
+        "tools": chat.tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>(),
+        "tool_chain": chat
+            .tool_chain
+            .iter()
+            .map(|round| {
+                json!({
+                    "assistant": pending_turn_json(&round.assistant),
+                    "results": round.results.iter().map(tool_result_json).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>(),
+        "pending_assistant_turn": chat.pending_assistant_turn.as_ref().map(pending_turn_json),
+        "tool_results": chat.tool_results.iter().map(tool_result_json).collect::<Vec<_>>(),
+    })
+}
+
+/// Serialise the provider response (text, reasoning, tool calls, images).
+pub fn response_content(resp: &GenerateResponse) -> Value {
+    json!({
+        "text": resp.text,
+        "thinking_content": resp.thinking_content,
+        "tool_calls": resp
+            .tool_calls
+            .iter()
+            .map(|c| json!({ "id": c.id, "name": c.name, "arguments": c.arguments }))
+            .collect::<Vec<_>>(),
+        "images": resp
+            .images
+            .iter()
+            .map(|i| format!("<image {} bytes, {}>", i.bytes.len(), i.mime))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn image_placeholder(att: &crate::ai::chat::AttachmentBytes) -> Value {
+    json!(format!("<image {} bytes, {}>", att.bytes.len(), att.mime))
+}
+
+fn tool_result_json(r: &crate::ai::chat::ToolResultMessage) -> Value {
+    json!({
+        "tool_call_id": r.tool_call_id,
+        "content": r.content,
+        "is_error": r.is_error,
+    })
+}
+
+fn pending_turn_json(turn: &crate::ai::chat::PendingAssistantTurn) -> Value {
+    json!({
+        "text": turn.text,
+        "thinking_content": turn.thinking_content,
+        "tool_calls": turn
+            .tool_calls
+            .iter()
+            .map(|c| json!({ "id": c.id, "name": c.name, "arguments": c.arguments }))
+            .collect::<Vec<_>>(),
+    })
 }
 
 #[cfg(test)]

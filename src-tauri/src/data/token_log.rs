@@ -32,6 +32,11 @@ pub struct TokenUsageEvent {
     pub output_bytes: Option<i64>,
     pub is_error: bool,
     pub metadata_json: Option<String>,
+    /// Full debug payload (tool input/output, request/response content).
+    /// `#[serde(default)]` keeps older JSONL lines (written before this
+    /// column existed) deserialisable during rollback rewrites.
+    #[serde(default)]
+    pub content_json: Option<String>,
 }
 
 impl TokenUsageEvent {
@@ -56,6 +61,7 @@ impl TokenUsageEvent {
             output_bytes: None,
             is_error: false,
             metadata_json: None,
+            content_json: None,
         }
     }
 }
@@ -66,8 +72,8 @@ pub fn insert_event(conn: &DbConn, event: &TokenUsageEvent) -> AppResult<()> {
             id, created_at, event_kind, session_id, correlation_id, message_id,
             agent_id, agent_type, model, provider, turn_index, tool_name,
             prompt_tokens, completion_tokens, total_tokens, output_chars,
-            output_bytes, is_error, metadata_json
-        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
+            output_bytes, is_error, metadata_json, content_json
+        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
         params![
             event.id,
             event.created_at,
@@ -88,6 +94,7 @@ pub fn insert_event(conn: &DbConn, event: &TokenUsageEvent) -> AppResult<()> {
             event.output_bytes,
             event.is_error as i64,
             event.metadata_json,
+            event.content_json,
         ],
     )?;
     Ok(())
@@ -146,6 +153,7 @@ fn map_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<TokenUsageEvent> {
         output_bytes: row.get(16)?,
         is_error: row.get::<_, i64>(17)? != 0,
         metadata_json: row.get(18)?,
+        content_json: row.get(19)?,
     })
 }
 
@@ -309,7 +317,7 @@ pub fn list_events(conn: &DbConn, filter: &TokenUsageListFilter) -> AppResult<Ve
         "SELECT id, created_at, event_kind, session_id, correlation_id, message_id,
                 agent_id, agent_type, model, provider, turn_index, tool_name,
                 prompt_tokens, completion_tokens, total_tokens, output_chars,
-                output_bytes, is_error, metadata_json
+                output_bytes, is_error, metadata_json, content_json
          FROM token_usage_events WHERE 1=1",
     );
     let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();

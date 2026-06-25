@@ -3286,6 +3286,7 @@ pub fn run() {
             project_fs::create_project_dir,
             project_fs::create_project_file,
             project_fs::rename_project_path,
+            project_fs::copy_project_path,
             project_fs::delete_project_path,
         ])
         .run(tauri::generate_context!())

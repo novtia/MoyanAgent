@@ -306,6 +306,9 @@ export const api = {
   renameProjectPath: (sessionId: string, from: string, to: string) =>
     invoke<void>("rename_project_path", { sessionId, from, to }),
 
+  copyProjectPath: (sessionId: string, from: string, to: string) =>
+    invoke<void>("copy_project_path", { sessionId, from, to }),
+
   deleteProjectPath: (sessionId: string, path: string) =>
     invoke<void>("delete_project_path", { sessionId, path }),
 

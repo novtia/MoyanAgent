@@ -297,6 +297,8 @@ impl QueryEngine for ProviderQueryEngine {
                         provider: chat.provider.id.clone(),
                         turn_index: turn_count,
                         usage: response.usage.clone(),
+                        request: crate::ai::token_log::request_content(&chat),
+                        response: crate::ai::token_log::response_content(&response),
                     });
                 }
                 final_images = response.images.clone();

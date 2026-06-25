@@ -147,19 +147,14 @@ impl FileEditTool {
             snapshots,
             spec: ToolSpec {
                 name: EDIT_TOOL.to_string(),
-                description: "Edit a numbered paragraph in a file (Read labels `[P001]`, …; one line = one paragraph). \
+                description: "Edit a numbered paragraph in a file (Read labels lines `[P001]`, …; one line = one paragraph, blank lines included). \
                     Read the file once up front; then Edit from memory — do NOT Read before each Edit. \
-                    Ranged Read only when Edit fails and you need the exact snippet. \
-                    Bulk insert (append or mid-file): ONE Edit call — never one paragraph per call. \
-                    Anchor on the paragraph at the insertion point (last paragraph to append; the \
-                    paragraph immediately before the gap for mid-file insert). Set `original_content` \
-                    to that paragraph verbatim and `modified_content` to the same text followed by \
-                    ALL new lines (\\n-separated) in a single call. \
-                    Small insert-after: set `paragraph_number` to N, leave `original_content` empty, \
-                    put one or more new lines in `modified_content`. \
-                    Fragment replace inside P00N: `original_content` = exact snippet, \
-                    `modified_content` = replacement. \
-                    Fill empty P00N: `original_content` empty and that paragraph is empty."
+                    Ranged Read only when an Edit fails and you need the exact snippet. \
+                    Two modes, auto-detected from `original_content`: \
+                    (1) REPLACE — `original_content` = the target paragraph verbatim, an exact unique snippet inside it, OR several consecutive paragraphs verbatim (\\n-separated) for a multi-line block; `modified_content` = the new text. `paragraph_number` is only a hint — if the block isn't there, the file is searched for a unique match, so you don't have to count perfectly. To grow a block (e.g. add a table row), put the whole existing block in `original_content` and the block + the new line(s) in `modified_content`. \
+                    (2) INSERT / FILL — leave `original_content` EMPTY: if paragraph N is a blank line the text fills it in place, otherwise the text is inserted right after paragraph N. \
+                    Bulk insert (append or mid-file) is ONE Edit call, never one paragraph per call: either point `paragraph_number` at a blank line with empty `original_content`, or anchor on the paragraph at the insertion point and set `modified_content` to that paragraph verbatim + \\n + ALL new lines (\\n-separated). \
+                    Blank lines are ordinary paragraphs — never spend an Edit just to add, remove, or collapse blank lines, and don't worry about blank lines around your insertion point."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -171,15 +166,15 @@ impl FileEditTool {
                         "paragraph_number": {
                             "type": "integer",
                             "minimum": 1,
-                            "description": "Target paragraph from Read ([P009] → 9). For bulk insert, the anchor paragraph (last para to append; para before the gap for mid-file)."
+                            "description": "Target paragraph from Read ([P009] → 9). For insert mode, the line to insert after (or the blank line to fill); for bulk append, the anchor/last paragraph."
                         },
                         "original_content": {
                             "type": "string",
-                            "description": "Bulk insert: anchor paragraph copied verbatim. Fragment replace: exact snippet inside the paragraph. Empty → small insert-after or fill empty paragraph."
+                            "description": "Replace mode: the target paragraph verbatim, an exact unique snippet inside it, or several consecutive paragraphs verbatim (\\n-separated) for a multi-line block. Leave EMPTY for insert/fill mode (fills paragraph N if it is a blank line, else inserts the text right after N)."
                         },
                         "modified_content": {
                             "type": "string",
-                            "description": "Bulk insert: anchor paragraph verbatim + \\n + ALL new lines in one call. Fragment replace: replacement text. Small insert-after: one or more new lines only."
+                            "description": "Replace mode: the replacement text. Insert/fill mode: the new line(s), \\n-separated for multiple. Bulk append via anchor: the anchor paragraph verbatim + \\n + all new lines."
                         }
                     },
                     "required": ["path", "paragraph_number", "original_content", "modified_content"]
@@ -269,13 +264,19 @@ impl Tool for FileEditTool {
                 )));
             }
             let idx = paragraph_number - 1;
-            let para = paragraphs[idx].as_str();
             let mut inserted = 0u32;
-            let replaced = 1u32;
+            let mut replaced = 0u32;
 
             if original.is_empty() {
+                // Empty `original_content` → insert/fill mode. A blank target
+                // line is filled in place; any other line gets the new text
+                // inserted right after it. Blank lines are ordinary paragraphs;
+                // the model never has to reason about them.
+                let para = paragraphs[idx].as_str();
                 if para.trim().is_empty() {
-                    paragraphs[idx] = modified.to_string();
+                    let before = paragraphs.len();
+                    replace_paragraph_with(&mut paragraphs, idx, &modified);
+                    inserted = paragraphs.len().saturating_sub(before) as u32;
                 } else {
                     inserted = insert_paragraphs_after(&mut paragraphs, idx, &modified) as u32;
                     if inserted == 0 {
@@ -284,22 +285,75 @@ impl Tool for FileEditTool {
                         ));
                     }
                 }
-            } else if original == para || original == para.trim() {
-                replace_paragraph_with(&mut paragraphs, idx, &modified);
             } else {
-                let occurrences = para.matches(original.as_str()).count();
-                if occurrences == 0 {
-                    return Ok(ToolResult::error(format!(
-                        "Edit: `original_content` not found in paragraph {paragraph_number} of {}",
-                        path.display()
-                    )));
+                // Match `original_content` as a block of one or more consecutive
+                // paragraphs. `paragraph_number` is only a hint: if the block does
+                // not sit there, scan the whole file for a unique match so the
+                // model never has to count paragraphs perfectly.
+                let orig_lines: Vec<&str> = original.split('\n').collect();
+                let n = orig_lines.len();
+                let block_eq = |start: usize| -> bool {
+                    start + n <= paragraphs.len()
+                        && orig_lines
+                            .iter()
+                            .enumerate()
+                            .all(|(k, line)| paragraphs[start + k].trim() == line.trim())
+                };
+
+                let start = if block_eq(idx) {
+                    Some(idx)
+                } else {
+                    let mut hits = (0..paragraphs.len()).filter(|&s| block_eq(s));
+                    match (hits.next(), hits.next()) {
+                        (Some(s), None) => Some(s),
+                        (Some(_), Some(_)) => {
+                            return Ok(ToolResult::error(format!(
+                                "Edit: `original_content` matches multiple places in {} — extend the fragment to make it unique",
+                                path.display()
+                            )));
+                        }
+                        _ => None,
+                    }
+                };
+
+                match start {
+                    Some(s) => {
+                        let mod_lines: Vec<String> = if modified.is_empty() {
+                            Vec::new()
+                        } else {
+                            modified.split('\n').map(str::to_string).collect()
+                        };
+                        let new_count = mod_lines.len();
+                        paragraphs.splice(s..s + n, mod_lines);
+                        replaced = n as u32;
+                        inserted = new_count.saturating_sub(n) as u32;
+                    }
+                    None if n == 1 => {
+                        // Single-line fragment: allow substring replacement inside
+                        // the anchored paragraph.
+                        let para = paragraphs[idx].as_str();
+                        let occurrences = para.matches(original.as_str()).count();
+                        if occurrences == 0 {
+                            return Ok(ToolResult::error(format!(
+                                "Edit: `original_content` not found in paragraph {paragraph_number} of {}",
+                                path.display()
+                            )));
+                        }
+                        if occurrences > 1 {
+                            return Ok(ToolResult::error(format!(
+                                "Edit: `original_content` appears {occurrences} times in paragraph {paragraph_number} — extend the fragment"
+                            )));
+                        }
+                        paragraphs[idx] = para.replacen(original.as_str(), &modified, 1);
+                        replaced = 1;
+                    }
+                    None => {
+                        return Ok(ToolResult::error(format!(
+                            "Edit: `original_content` block ({n} lines) not found near paragraph {paragraph_number} of {} — check the lines match the file exactly",
+                            path.display()
+                        )));
+                    }
                 }
-                if occurrences > 1 {
-                    return Ok(ToolResult::error(format!(
-                        "Edit: `original_content` appears {occurrences} times in paragraph {paragraph_number} — extend the fragment"
-                    )));
-                }
-                paragraphs[idx] = para.replacen(original.as_str(), &modified, 1);
             }
 
             let updated = join_paragraphs(&paragraphs);
@@ -320,7 +374,7 @@ impl Tool for FileEditTool {
                 "path": path.to_string_lossy(),
                 "paragraph_number": paragraph_number,
                 "inserted": inserted,
-                "replaced": if inserted > 0 { 0 } else { replaced },
+                "replaced": replaced,
                 "paragraphs_total": paragraphs.len(),
             })))
         })

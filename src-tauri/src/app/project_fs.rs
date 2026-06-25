@@ -95,6 +95,37 @@ fn remove_path_recursive(path: &Path) -> AppResult<()> {
     Ok(())
 }
 
+fn copy_path_recursive(from: &Path, to: &Path) -> AppResult<()> {
+    if from.is_dir() {
+        fs::create_dir_all(to).map_err(|e| {
+            AppError::Other(format!("copy_project_path: mkdir {:?}: {e}", to))
+        })?;
+        for entry in fs::read_dir(from).map_err(|e| {
+            AppError::Other(format!("copy_project_path: read_dir {:?}: {e}", from))
+        })? {
+            let entry =
+                entry.map_err(|e| AppError::Other(format!("copy_project_path: entry: {e}")))?;
+            let child_to = to.join(entry.file_name());
+            copy_path_recursive(&entry.path(), &child_to)?;
+        }
+    } else {
+        if let Some(parent) = to.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).map_err(|e| {
+                    AppError::Other(format!("copy_project_path: mkdir {:?}: {e}", parent))
+                })?;
+            }
+        }
+        fs::copy(from, to).map_err(|e| {
+            AppError::Other(format!(
+                "copy_project_path: copy {:?} -> {:?}: {e}",
+                from, to
+            ))
+        })?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn list_project_dir(
     state: State<'_, std::sync::Arc<AppState>>,
@@ -189,6 +220,31 @@ pub fn rename_project_path(
         ))
     })?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn copy_project_path(
+    state: State<'_, std::sync::Arc<AppState>>,
+    session_id: String,
+    from: String,
+    to: String,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    let from_path = resolve_validated_path(&conn, &session_id, &from)?;
+    let to_path = resolve_validated_path(&conn, &session_id, &to)?;
+    if !from_path.exists() {
+        return Err(AppError::Invalid(format!(
+            "copy_project_path: source does not exist: {}",
+            from_path.display()
+        )));
+    }
+    if to_path.exists() {
+        return Err(AppError::Invalid(format!(
+            "copy_project_path: destination already exists: {}",
+            to_path.display()
+        )));
+    }
+    copy_path_recursive(&from_path, &to_path)
 }
 
 #[tauri::command]

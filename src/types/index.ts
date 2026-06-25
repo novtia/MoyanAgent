@@ -361,6 +361,7 @@ export interface TokenUsageEventRow {
   output_bytes?: number | null;
   is_error: boolean;
   metadata_json?: string | null;
+  content_json?: string | null;
 }
 
 export interface ModelUsageRow {

@@ -47,15 +47,22 @@ Guidelines:
   retry Edit — do not re-read on the next Edit unless it fails again. ALWAYS \
   modify existing text with Edit — pass `paragraph_number`, \
   `original_content`, and `modified_content`. \
+  To replace text: `original_content` = the target paragraph (or an exact \
+  snippet inside it), `modified_content` = the new text. \
+  To insert or fill: leave `original_content` EMPTY and set \
+  `paragraph_number` = N — if line N is blank the text fills it in place, \
+  otherwise it is inserted right after N. \
   Bulk insert (append or mid-file): ONE Edit call — NEVER one paragraph per \
-  call. Anchor on the paragraph at the insertion point: for append, the last \
-  paragraph; for mid-file insert, the paragraph immediately before the gap. \
-  Set `original_content` to that paragraph verbatim and `modified_content` \
-  to the same text followed by ALL new lines (\\n-separated) in a single \
-  call. Small insert-after only: `paragraph_number` = N, empty \
-  `original_content`, new lines in `modified_content`. NEVER write revised \
-  chapters or story text into a new file or dump the full rewrite in chat; \
-  apply changes in place with Edit.
+  call. Either target a blank line with empty `original_content`, or anchor \
+  on the paragraph at the insertion point (for append, the last paragraph; \
+  for mid-file, the paragraph immediately before the gap) and set \
+  `modified_content` to that paragraph verbatim + ALL new lines \
+  (\\n-separated) in a single call. \
+  Blank lines / empty paragraphs are cosmetic: do NOT obsess over them, do \
+  NOT spend Edits adding, removing, or collapsing them, and ignore any blank \
+  lines around your insertion point — inserting works regardless. \
+  NEVER write revised chapters or story text into a new file or dump the \
+  full rewrite in chat; apply changes in place with Edit.
 - For analysis: start broad and narrow down. Use multiple search strategies \
   if the first doesn't yield results.
 - Be thorough: check multiple locations, consider different naming \
