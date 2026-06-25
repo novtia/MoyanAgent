@@ -129,6 +129,8 @@ const zhCN = {
     diffHunkCount: "{{current}} / {{total}}",
     diffPrevHunk: "上一处修改",
     diffNextHunk: "下一处修改",
+    diffAcceptAll: "全部确认",
+    diffRejectAll: "全部拒绝",
   },
   readerFind: {
     title: "查找与替换",
@@ -388,6 +390,9 @@ const zhCN = {
     createDocUntitled: "未命名文档",
     createDocCharsUnit: "字",
     createDocLinesUnit: "行",
+    streamDocEditing: "正在修改文档…",
+    streamDocEdited: "已修改文档",
+    streamDocEditUntitled: "未命名文件",
     deleteDocDeleted: "已删除文件",
     deleteDocDeleting: "正在删除文件…",
     deleteDocFailed: "文件删除失败",

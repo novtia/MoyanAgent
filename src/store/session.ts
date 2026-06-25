@@ -70,6 +70,16 @@ interface GenerationStreamPayload {
   delta?: string;
   /** Agent flow chain stage boundary marker. */
   stage?: { agent_type: string; name?: string; index?: number };
+  /**
+   * Live tool-call argument fragment (OpenAI-compatible streaming). `arguments`
+   * is the slice received in this chunk, not the accumulated string. Keyed by
+   * `id`, which matches the terminal `gen://tool` ToolUse event id.
+   */
+  tool_call_delta?: {
+    id: string;
+    name: string;
+    arguments: string;
+  } | null;
 }
 
 interface ToolUseEventPayload {
@@ -1071,6 +1081,148 @@ function appendDelta(
   blocks.push({ type: kind, content: delta });
 }
 
+// ─── Streaming tool-call input ────────────────────────────────────────────────
+// Tools whose input arguments we render live as they stream in. Other tools are
+// only materialised by the terminal `gen://tool` event (unchanged behaviour).
+const STREAMING_INPUT_TOOLS = new Set(["CreateDoc", "Edit"]);
+
+/** Accumulated raw `arguments` JSON string per streaming tool call. */
+const toolCallArgBuffers = new Map<string, string>();
+
+function toolCallArgKey(sessionId: string, id: string): string {
+  return `${sessionId}:${id}`;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Extract a string-valued field from a possibly-incomplete JSON object string.
+ * Returns the (partial) decoded value when the field is present, even if the
+ * closing quote hasn't streamed in yet; `undefined` if the key isn't found.
+ */
+function extractJsonStringField(raw: string, key: string): string | undefined {
+  const opener = new RegExp(`"${escapeRegExp(key)}"\\s*:\\s*"`);
+  const m = opener.exec(raw);
+  if (!m) return undefined;
+  let i = m.index + m[0].length;
+  let out = "";
+  while (i < raw.length) {
+    const ch = raw[i];
+    if (ch === "\\") {
+      const next = raw[i + 1];
+      if (next === undefined) break; // dangling escape at buffer end
+      switch (next) {
+        case "n":
+          out += "\n";
+          break;
+        case "t":
+          out += "\t";
+          break;
+        case "r":
+          out += "\r";
+          break;
+        case "b":
+          out += "\b";
+          break;
+        case "f":
+          out += "\f";
+          break;
+        case "/":
+          out += "/";
+          break;
+        case '"':
+          out += '"';
+          break;
+        case "\\":
+          out += "\\";
+          break;
+        case "u": {
+          const hex = raw.slice(i + 2, i + 6);
+          if (hex.length < 4) return out; // incomplete \uXXXX at buffer end
+          const code = Number.parseInt(hex, 16);
+          if (!Number.isNaN(code)) out += String.fromCharCode(code);
+          i += 6;
+          continue;
+        }
+        default:
+          out += next;
+          break;
+      }
+      i += 2;
+      continue;
+    }
+    if (ch === '"') return out; // closing quote -> complete value
+    out += ch;
+    i += 1;
+  }
+  return out; // buffer ended before closing quote -> partial value
+}
+
+/** Build a partial tool input object from the buffered arguments string. */
+function buildStreamingToolInput(
+  tool: string,
+  raw: string,
+): Record<string, unknown> {
+  if (tool === "CreateDoc") {
+    return {
+      title: extractJsonStringField(raw, "title"),
+      doc_type: extractJsonStringField(raw, "doc_type"),
+      content: extractJsonStringField(raw, "content"),
+    };
+  }
+  if (tool === "Edit") {
+    return {
+      path: extractJsonStringField(raw, "path"),
+      original_content: extractJsonStringField(raw, "original_content"),
+      modified_content: extractJsonStringField(raw, "modified_content"),
+    };
+  }
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Apply a live tool-call argument fragment to the block list. Creates a pending
+ * `tool_use` block on first sight (keyed by id) and refreshes its partial input
+ * on every subsequent fragment. Only document tools are rendered live; others
+ * are ignored here and surface via the terminal `gen://tool` event.
+ */
+function applyStreamingToolCallDelta(
+  blocks: AssistantBlock[],
+  sessionId: string,
+  delta: { id: string; name: string; arguments: string },
+) {
+  const { id, name, arguments: fragment } = delta;
+  if (!id || !name || !STREAMING_INPUT_TOOLS.has(name)) return;
+
+  const key = toolCallArgKey(sessionId, id);
+  const raw = (toolCallArgBuffers.get(key) ?? "") + (fragment ?? "");
+  toolCallArgBuffers.set(key, raw);
+
+  const input = buildStreamingToolInput(name, raw);
+
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i];
+    if (b.type === "tool_use" && b.id === id) {
+      blocks[i] = { ...b, input, streaming: true };
+      return;
+    }
+  }
+  blocks.push({
+    type: "tool_use",
+    id,
+    tool: name,
+    input,
+    status: "pending",
+    streaming: true,
+  });
+}
+
 /**
  * Record a structured tool event into the block list. `tool_use` always
  * pushes a new pending block; `tool_result` mutates the matching `tool_use`
@@ -1157,8 +1309,28 @@ async function handleReaderToolComplete(
   }
 }
 
-function applyToolEvent(blocks: AssistantBlock[], event: ToolEventPayload) {
+function applyToolEvent(
+  blocks: AssistantBlock[],
+  event: ToolEventPayload,
+  sessionId?: string,
+) {
   if (event.type === "tool_use") {
+    // Reconcile with a block that was pre-created while its input streamed in:
+    // replace the partial input with the authoritative one and stop streaming.
+    if (sessionId) toolCallArgBuffers.delete(toolCallArgKey(sessionId, event.id));
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const b = blocks[i];
+      if (b.type === "tool_use" && b.id === event.id) {
+        blocks[i] = {
+          ...b,
+          tool: event.tool,
+          input: event.input,
+          status: "pending",
+          streaming: false,
+        };
+        return;
+      }
+    }
     blocks.push({
       type: "tool_use",
       id: event.id,
@@ -1281,7 +1453,12 @@ function ensureGenerationStreamListener() {
       const textDelta = payload.text_delta ?? payload.delta ?? "";
       const thinkingDelta = payload.thinking_delta ?? "";
       const stage = payload.stage;
-      if (!sessionId || (!textDelta && !thinkingDelta && !stage)) return;
+      const toolCallDelta = payload.tool_call_delta ?? null;
+      if (
+        !sessionId ||
+        (!textDelta && !thinkingDelta && !stage && !toolCallDelta)
+      )
+        return;
 
       const requestId = payload.request_message_id || sessionId;
       const prev = streamingBuffers.get(sessionId) ?? {
@@ -1300,6 +1477,8 @@ function ensureGenerationStreamListener() {
       }
       if (thinkingDelta) appendDelta(nextBlocks, "thinking", thinkingDelta);
       if (textDelta) appendDelta(nextBlocks, "text", textDelta);
+      if (toolCallDelta)
+        applyStreamingToolCallDelta(nextBlocks, sessionId, toolCallDelta);
       const next: StreamBuffer = { blocks: nextBlocks, requestId };
       streamingBuffers.set(sessionId, next);
       syncStreamingMessage(sessionId, next);
@@ -1322,7 +1501,7 @@ function ensureGenerationStreamListener() {
         requestId,
       };
       const nextBlocks = prev.blocks.map((b) => ({ ...b }));
-      applyToolEvent(nextBlocks, payload);
+      applyToolEvent(nextBlocks, payload, sessionId);
       // Incrementally drive the character state board off RoleState results.
       if (
         payload.type === "tool_result" &&

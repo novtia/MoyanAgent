@@ -63,6 +63,8 @@ interface ReaderStore {
     blockId: string,
     accept: boolean,
   ) => { block: ReaderPendingDiff; revertText: string | null } | null;
+  confirmAllDiffs: (path: string) => void;
+  rejectAllDiffs: (path: string) => { revertText: string } | null;
   getTabByPath: (path: string) => ReaderFileTab | undefined;
   clear: () => void;
 }
@@ -572,6 +574,53 @@ export const useReader = create<ReaderStore>((set, get) => ({
     });
     persistTabs(s.sessionId, get().tabs, s.activeTabId);
     return { block, revertText };
+  },
+
+  confirmAllDiffs: (path) => {
+    const s = get();
+    const idx = findTabIndex(s.tabs, path);
+    if (idx < 0) return;
+    const tab = s.tabs[idx];
+    if (tab.pendingDiffs.length === 0) return;
+    set({
+      tabs: s.tabs.map((t, i) =>
+        i === idx
+          ? {
+              ...t,
+              pendingDiffs: [],
+              dirty: false,
+              saveError: false,
+            }
+          : t,
+      ),
+    });
+    persistTabs(s.sessionId, get().tabs, s.activeTabId);
+  },
+
+  rejectAllDiffs: (path) => {
+    const s = get();
+    const idx = findTabIndex(s.tabs, path);
+    if (idx < 0) return null;
+    const tab = s.tabs[idx];
+    if (tab.pendingDiffs.length === 0) return null;
+    const revertText = tab.pendingDiffs[0].textBefore;
+    set({
+      tabs: s.tabs.map((t, i) =>
+        i === idx
+          ? {
+              ...t,
+              pendingDiffs: [],
+              text: revertText,
+              chars: countChars(revertText),
+              lines: revertText.split(/\n/).length,
+              dirty: false,
+              saveError: false,
+            }
+          : t,
+      ),
+    });
+    persistTabs(s.sessionId, get().tabs, s.activeTabId);
+    return { revertText };
   },
 
   getTabByPath: (path) => {

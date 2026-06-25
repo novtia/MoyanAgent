@@ -855,7 +855,7 @@ fn handle_openai_chat_sse_event(
         (on_text_delta)(StreamDelta::text(delta));
     }
     images.append(&mut new_images);
-    merge_tool_call_deltas(&v, tool_calls);
+    merge_tool_call_deltas(&v, tool_calls, on_text_delta);
     merge_usage(usage, tokens::extract_usage(&v));
     Ok(false)
 }
@@ -1033,7 +1033,16 @@ struct PendingStreamToolCall {
 /// Merge `choices[*].delta.tool_calls[*]` from one SSE event into the
 /// running accumulator. Tool calls are addressed by `index` (OpenAI
 /// guarantees stable indices across chunks for the same call).
-fn merge_tool_call_deltas(v: &Value, out: &mut Vec<PendingStreamToolCall>) {
+///
+/// Besides buffering for the final [`crate::ai::chat::ProviderToolCall`],
+/// each fragment is forwarded via `on_text_delta` as a
+/// [`StreamDelta::tool_call`] so the renderer can display the tool input
+/// (e.g. a document's `content`) as it streams in, before the turn ends.
+fn merge_tool_call_deltas(
+    v: &Value,
+    out: &mut Vec<PendingStreamToolCall>,
+    on_text_delta: &TextDeltaCallback,
+) {
     let Some(choices) = v.get("choices").and_then(Value::as_array) else {
         return;
     };
@@ -1054,20 +1063,35 @@ fn merge_tool_call_deltas(v: &Value, out: &mut Vec<PendingStreamToolCall>) {
                 out.resize_with(idx + 1, PendingStreamToolCall::default);
             }
             let slot = &mut out[idx];
+            let mut identity_changed = false;
             if let Some(id) = tc.get("id").and_then(Value::as_str) {
                 if !id.is_empty() {
                     slot.id = id.to_string();
+                    identity_changed = true;
                 }
             }
             if let Some(name) = tc.pointer("/function/name").and_then(Value::as_str) {
                 if !name.is_empty() {
                     slot.name = name.to_string();
+                    identity_changed = true;
                 }
             }
+            let mut fragment = String::new();
             if let Some(args) = tc.pointer("/function/arguments").and_then(Value::as_str) {
                 if !args.is_empty() {
                     slot.arguments.push_str(args);
+                    fragment.push_str(args);
                 }
+            }
+            // Forward the live fragment once we know the call id. An empty
+            // `fragment` with a fresh id/name still emits, so the UI can
+            // create the pending card before any argument bytes arrive.
+            if !slot.id.is_empty() && (identity_changed || !fragment.is_empty()) {
+                (on_text_delta)(StreamDelta::tool_call(
+                    slot.id.clone(),
+                    slot.name.clone(),
+                    fragment,
+                ));
             }
         }
     }

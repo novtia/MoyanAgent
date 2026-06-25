@@ -31,6 +31,8 @@ const DIFF_BAR_HIDE_MS = 480;
 
 interface ReaderEditorProps {
   tab: ReaderFileTab;
+  activeHunkIndex?: number;
+  onActiveHunkChange?: (index: number) => void;
 }
 
 function PlainReader({
@@ -133,7 +135,7 @@ function PlainReader({
   );
 }
 
-export function ReaderEditor({ tab }: ReaderEditorProps) {
+export function ReaderEditor({ tab, activeHunkIndex, onActiveHunkChange }: ReaderEditorProps) {
   const sessionId = useSession((s) => s.activeId);
   const updateTabText = useReader((s) => s.updateTabText);
   const setTabDirty = useReader((s) => s.setTabDirty);
@@ -240,13 +242,20 @@ export function ReaderEditor({ tab }: ReaderEditorProps) {
     [applyText, tab.text],
   );
 
-  const showBarForBlock = useCallback((blockId: string | null) => {
-    if (hideBarTimerRef.current) {
-      clearTimeout(hideBarTimerRef.current);
-      hideBarTimerRef.current = null;
-    }
-    setHoveredBlockId(blockId);
-  }, []);
+  const showBarForBlock = useCallback(
+    (blockId: string | null) => {
+      if (hideBarTimerRef.current) {
+        clearTimeout(hideBarTimerRef.current);
+        hideBarTimerRef.current = null;
+      }
+      setHoveredBlockId(blockId);
+      if (blockId && onActiveHunkChange) {
+        const idx = lineRanges.findIndex((r) => r.blockId === blockId);
+        if (idx >= 0) onActiveHunkChange(idx);
+      }
+    },
+    [lineRanges, onActiveHunkChange],
+  );
 
   const scheduleHideBar = useCallback(() => {
     if (hideBarTimerRef.current) clearTimeout(hideBarTimerRef.current);
@@ -255,14 +264,33 @@ export function ReaderEditor({ tab }: ReaderEditorProps) {
 
   const navigateHunk = useCallback(
     (direction: -1 | 1) => {
-      if (hoveredHunkIndex < 0) return;
-      const next = lineRanges[hoveredHunkIndex + direction];
+      const base =
+        hoveredHunkIndex >= 0
+          ? hoveredHunkIndex
+          : activeHunkIndex != null && activeHunkIndex >= 0
+            ? activeHunkIndex
+            : 0;
+      const nextIdx = base + direction;
+      const next = lineRanges[nextIdx];
       if (!next) return;
       showBarForBlock(next.blockId);
+      onActiveHunkChange?.(nextIdx);
       hunkRefs.current.get(next.blockId)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     },
-    [hoveredHunkIndex, lineRanges, showBarForBlock],
+    [hoveredHunkIndex, activeHunkIndex, lineRanges, showBarForBlock, onActiveHunkChange],
   );
+
+  useEffect(() => {
+    if (!hasPendingDiff || activeHunkIndex == null || activeHunkIndex < 0) return;
+    const range = lineRanges[activeHunkIndex];
+    if (!range) return;
+    if (hideBarTimerRef.current) {
+      clearTimeout(hideBarTimerRef.current);
+      hideBarTimerRef.current = null;
+    }
+    setHoveredBlockId(range.blockId);
+    hunkRefs.current.get(range.blockId)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [activeHunkIndex, hasPendingDiff, lineRanges]);
 
   const renderContextBlock = (seg: Extract<EditorDisplaySegment, { kind: "context" }>) => {
     const segmentLabels: (number | null)[] = [];

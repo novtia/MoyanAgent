@@ -23,6 +23,7 @@ pub mod create_doc;
 pub mod delete;
 pub mod edit;
 pub mod fs;
+pub mod grep;
 pub mod list_files;
 pub mod paragraph;
 pub mod role_state;

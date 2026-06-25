@@ -1083,6 +1083,17 @@ fn stream_text_callback(
                 append_thinking_delta_block(&mut g, t);
             }
         }
+        // Live tool-call argument fragments are renderer-only: the shared
+        // `blocks` buffer (used for persistence) is populated later by the
+        // engine's terminal `ToolUse` event via `record_tool_use_block`,
+        // so we deliberately don't write the partial input here.
+        let tool_call_delta = delta.tool_call.as_ref().map(|tc| {
+            serde_json::json!({
+                "id": tc.id,
+                "name": tc.name,
+                "arguments": tc.arguments,
+            })
+        });
         let _ = app.emit(
             "gen://stream",
             serde_json::json!({
@@ -1090,6 +1101,7 @@ fn stream_text_callback(
                 "request_message_id": &request_message_id,
                 "text_delta": delta.text,
                 "thinking_delta": delta.thinking,
+                "tool_call_delta": tool_call_delta,
             }),
         );
     })
@@ -3138,6 +3150,7 @@ pub fn run() {
             let file_snapshots = Arc::new(FileSnapshotStore::new());
             tools.register(FileReadTool::new());
             tools.register(crate::ai::agent::tools::list_files::ListFilesTool::new());
+            tools.register(crate::ai::agent::tools::grep::GrepTool::new());
             tools.register(crate::ai::agent::tools::edit::FileWriteTool::new(
                 file_snapshots.clone(),
             ));

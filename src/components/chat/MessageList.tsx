@@ -8,7 +8,13 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
-import { useReader, readerDocFromToolOutput } from "../../store/reader";
+import {
+  useReader,
+  readerDocFromToolOutput,
+  countChars,
+} from "../../store/reader";
+import { diffChars } from "diff";
+import { InlineDiffCode } from "../../utils/inlineDiff";
 import { srcOf, api } from "../../api/tauri";
 import { dialog } from "../ui";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
@@ -251,25 +257,6 @@ function ThinkingChevronIcon() {
   );
 }
 
-function OpenDocIcon() {
-  return (
-    <svg
-      className="tool-call-open-icon"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M14 3h7v7" />
-      <path d="M10 14 21 3" />
-      <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
-    </svg>
-  );
-}
-
 function ThinkingBlock({
   content,
   streaming,
@@ -442,8 +429,8 @@ function AssistantContent({
         }
         // CreateDoc renders as a dedicated document card; clicking it opens
         // the freshly created file in the reader panel.
-        if (block.tool === "CreateDoc") {
-          return <CreateDocCard key={`doc:${block.id}:${i}`} block={block} />;
+        if (block.tool === "CreateDoc" || block.tool === "Edit") {
+          return <StreamingDocCard key={`doc:${block.id}`} block={block} />;
         }
         // Delete renders as a dedicated "removed document" card, distinct from
         // the generic tool-call block.
@@ -592,122 +579,166 @@ function RpgChoiceCard({
   );
 }
 
-/** Dedicated card for the `CreateDoc` tool. Renders as a distinct "document"
- * tile (NOT the generic tool-call block): a typed file glyph, the document
- * title, and word-count stats. Clicking the whole tile opens the freshly
- * created file in the right-panel reader. */
-function CreateDocCard({
+/**
+ * Document tool card (`CreateDoc` / `Edit`) using the same shell as
+ * [`ToolCallBlock`]: status circle icon, single-line summary row, badge,
+ * chevron, and `tool-call-detail` body. Edit body renders inline diff.
+ */
+function StreamingDocCard({
   block,
 }: {
   block: Extract<AssistantBlock, { type: "tool_use" }>;
 }) {
   const { t } = useTranslation();
   const status = block.status;
+  const isEdit = block.tool === "Edit";
+  const streaming = block.streaming === true;
+  const [open, setOpen] = useState(status === "pending" || streaming);
+
   const input = (block.input ?? {}) as {
     title?: string;
     doc_type?: string;
     content?: string;
+    path?: string;
+    original_content?: string;
+    modified_content?: string;
   };
   const output = (block.output ?? {}) as {
     title?: string;
-    doc_type?: string;
-    chars?: number;
-    lines?: number;
-    created?: boolean;
     path?: string;
+    created?: boolean;
   };
+
+  const content = isEdit ? input.modified_content ?? "" : input.content ?? "";
+
+  const path = (output.path || input.path || "").toString();
+  const baseName = path ? path.split(/[\\/]/).pop() || path : "";
+  const summary = isEdit
+    ? baseName || t("message.streamDocEditUntitled")
+    : (output.title || input.title || "").trim() ||
+      t("message.createDocUntitled");
+
+  const { added, removed } = useMemo(() => {
+    if (isEdit) {
+      const original = input.original_content ?? "";
+      const modified = input.modified_content ?? "";
+      let a = 0;
+      let r = 0;
+      for (const part of diffChars(original, modified)) {
+        const n = countChars(part.value);
+        if (part.added) a += n;
+        else if (part.removed) r += n;
+      }
+      return { added: a, removed: r };
+    }
+    return { added: countChars(content), removed: 0 };
+  }, [isEdit, input.original_content, input.modified_content, content]);
 
   const readerDoc = useMemo(
-    () => (status === "success" ? readerDocFromToolOutput(block.output) : null),
-    [block.output, status],
+    () =>
+      !isEdit && status === "success"
+        ? readerDocFromToolOutput(block.output)
+        : null,
+    [isEdit, block.output, status],
   );
 
-  const title =
-    (output.title || input.title || "").trim() || t("message.createDocUntitled");
-  const docType = (output.doc_type || input.doc_type || "txt")
-    .toString()
-    .toLowerCase();
-  const chars = typeof output.chars === "number" ? output.chars : undefined;
-  const lines = typeof output.lines === "number" ? output.lines : undefined;
-  const canOpen = !!readerDoc;
+  const statusLabel =
+    status === "pending"
+      ? t("message.toolCallRunning")
+      : status === "error"
+        ? t("message.toolCallError")
+        : t("message.toolCallDone");
 
-  const openDoc = () => {
-    if (readerDoc) useReader.getState().openDoc(readerDoc);
-  };
+  const hasContent = isEdit
+    ? (input.original_content ?? "").length > 0 ||
+      (input.modified_content ?? "").length > 0
+    : content.length > 0;
+
+  useEffect(() => {
+    if (streaming) setOpen(true);
+  }, [streaming]);
 
   return (
     <div
-      className={`create-doc-card ${status} ${canOpen ? "is-openable" : ""}`}
-      role={canOpen ? "button" : undefined}
-      tabIndex={canOpen ? 0 : undefined}
-      title={canOpen ? t("message.openInReader") : undefined}
-      onClick={canOpen ? openDoc : undefined}
-      onKeyDown={
-        canOpen
-          ? (e) => {
+      className={`tool-call-block ${status} ${open ? "is-open" : ""} ${
+        streaming ? "is-streaming" : ""
+      }`}
+    >
+      <button
+        type="button"
+        className="tool-call-summary"
+        aria-expanded={open}
+        title={t("message.toolCallToggle")}
+        onClick={() => hasContent && setOpen((v) => !v)}
+        disabled={!hasContent}
+      >
+        <ToolCallIcon status={status} />
+        <span className="tool-call-name">{block.tool}</span>
+        {summary && <span className="tool-call-args">{summary}</span>}
+        <span className="tool-call-spacer" aria-hidden />
+        {(added > 0 || removed > 0) && (
+          <span className="tool-call-diff-chips" aria-hidden={added === 0 && removed === 0}>
+            {added > 0 && (
+              <span className="is-add">
+                +{added}
+                {t("message.createDocCharsUnit")}
+              </span>
+            )}
+            {removed > 0 && (
+              <span className="is-del">
+                -{removed}
+                {t("message.createDocCharsUnit")}
+              </span>
+            )}
+          </span>
+        )}
+        {readerDoc && (
+          <span
+            className="tool-call-read-btn"
+            role="button"
+            tabIndex={0}
+            title={t("message.openInReader")}
+            onClick={(e) => {
+              e.stopPropagation();
+              useReader.getState().openDoc(readerDoc);
+            }}
+            onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                openDoc();
+                e.stopPropagation();
+                useReader.getState().openDoc(readerDoc);
               }
-            }
-          : undefined
-      }
-    >
-      <div className={`create-doc-card-glyph ${docType === "md" ? "is-md" : "is-txt"}`}>
-        <DocGlyphIcon />
-        <span className="create-doc-card-ext">{docType}</span>
-      </div>
-
-      <div className="create-doc-card-body">
-        <div className="create-doc-card-kicker">
-          {status === "pending"
-            ? t("message.createDocWriting")
-            : status === "error"
-              ? t("message.createDocFailed")
-              : output.created === false
-                ? t("message.createDocUpdated")
-                : t("message.createDocCreated")}
-        </div>
-        <div className="create-doc-card-title">{title}</div>
-        {status === "success" && (chars !== undefined || lines !== undefined) && (
-          <div className="create-doc-card-stats">
-            {chars !== undefined && (
-              <span className="create-doc-card-stat">
-                <strong>{chars}</strong> {t("message.createDocCharsUnit")}
-              </span>
-            )}
-            {lines !== undefined && (
-              <span className="create-doc-card-stat">
-                <strong>{lines}</strong> {t("message.createDocLinesUnit")}
-              </span>
-            )}
-          </div>
+            }}
+          >
+            {t("message.openInReader")}
+          </span>
         )}
-      </div>
+        <span className={`tool-call-badge ${status}`}>{statusLabel}</span>
+        {hasContent && <ThinkingChevronIcon />}
+      </button>
 
-      {canOpen && (
-        <div className="create-doc-card-action">
-          <OpenDocIcon />
-          <span>{t("message.openInReader")}</span>
+      {open && hasContent && (
+        <div className="tool-call-detail">
+          {isEdit ? (
+            <div className="tool-call-detail-body tool-call-detail-body--diff">
+              <InlineDiffCode
+                oldText={input.original_content ?? ""}
+                newText={input.modified_content ?? ""}
+              />
+            </div>
+          ) : (
+            <pre className="tool-call-detail-body">
+              {content}
+              {streaming && <span className="stream-doc-cursor" aria-hidden />}
+            </pre>
+          )}
         </div>
       )}
-      {status === "pending" && <span className="create-doc-card-spinner" aria-hidden />}
     </div>
   );
 }
 
-function DocGlyphIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M6 2h7l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" />
-      <path d="M13 2v5h5" />
-    </svg>
-  );
-}
-
-/** Dedicated card for the `Delete` tool. Renders as a distinct "removed
- * document" tile (struck-through file name + trash glyph), separate from the
- * generic tool-call block. Non-interactive: the file is gone. */
+/** Dedicated row for the `Delete` tool — same shell as [`ToolCallBlock`]. */
 function DeleteDocCard({
   block,
 }: {
@@ -724,38 +755,25 @@ function DeleteDocCard({
     fullPath.split(/[\\/]/).filter(Boolean).pop() ||
     t("message.deleteDocUntitled");
 
-  return (
-    <div className={`delete-doc-card ${status}`}>
-      <div className="delete-doc-card-glyph">
-        <TrashGlyphIcon />
-      </div>
-      <div className="delete-doc-card-body">
-        <div className="delete-doc-card-kicker">
-          {status === "pending"
-            ? t("message.deleteDocDeleting")
-            : status === "error"
-              ? t("message.deleteDocFailed")
-              : t("message.deleteDocDeleted")}
-        </div>
-        <div className="delete-doc-card-title" title={fullPath || name}>
-          {name}
-        </div>
-      </div>
-      {status === "pending" && (
-        <span className="delete-doc-card-spinner" aria-hidden />
-      )}
-    </div>
-  );
-}
+  const statusLabel =
+    status === "pending"
+      ? t("message.toolCallRunning")
+      : status === "error"
+        ? t("message.toolCallError")
+        : t("message.toolCallDone");
 
-function TrashGlyphIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M3 6h18" />
-      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-      <path d="M10 11v6M14 11v6" />
-    </svg>
+    <div className={`tool-call-block ${status}`}>
+      <div className="tool-call-summary tool-call-summary--static">
+        <ToolCallIcon status={status} />
+        <span className="tool-call-name">Delete</span>
+        <span className="tool-call-args" title={fullPath || name}>
+          {name}
+        </span>
+        <span className="tool-call-spacer" aria-hidden />
+        <span className={`tool-call-badge ${status}`}>{statusLabel}</span>
+      </div>
+    </div>
   );
 }
 

@@ -332,6 +332,7 @@ fn usage(v: &Value) -> TokenUsage {
         prompt_tokens: usage.get("promptTokenCount").and_then(Value::as_i64),
         completion_tokens: usage.get("candidatesTokenCount").and_then(Value::as_i64),
         total_tokens: usage.get("totalTokenCount").and_then(Value::as_i64),
+        last_prompt_tokens: None,
     }
 }
 

@@ -7,6 +7,23 @@ use crate::ai::tokens::TokenUsage;
 pub struct StreamDelta {
     pub text: Option<String>,
     pub thinking: Option<String>,
+    /// Incremental tool-call argument fragment. Populated only by providers
+    /// that stream `tool_calls` deltas (OpenAI Chat Completions / OpenRouter).
+    /// Lets the UI render a tool card's input as it arrives, before the turn
+    /// completes and the final [`ProviderToolCall`] is assembled.
+    pub tool_call: Option<ToolCallDelta>,
+}
+
+/// A single streamed slice of a tool call's arguments.
+///
+/// `id` / `name` carry the call identity (known from the first delta);
+/// `arguments` is just the fragment received in this chunk, not the full
+/// accumulated string. The renderer accumulates fragments keyed by `id`.
+#[derive(Debug, Clone, Default)]
+pub struct ToolCallDelta {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
 }
 
 impl StreamDelta {
@@ -14,6 +31,7 @@ impl StreamDelta {
         Self {
             text: Some(text),
             thinking: None,
+            tool_call: None,
         }
     }
 
@@ -21,6 +39,19 @@ impl StreamDelta {
         Self {
             text: None,
             thinking: Some(thinking),
+            tool_call: None,
+        }
+    }
+
+    pub fn tool_call(id: String, name: String, arguments: String) -> Self {
+        Self {
+            text: None,
+            thinking: None,
+            tool_call: Some(ToolCallDelta {
+                id,
+                name,
+                arguments,
+            }),
         }
     }
 }

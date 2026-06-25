@@ -139,11 +139,16 @@ impl FileEditTool {
                 description: "Edit a numbered paragraph in a file (Read labels `[P001]`, …; one line = one paragraph). \
                     Read the file once up front; then Edit from memory — do NOT Read before each Edit. \
                     Ranged Read only when Edit fails and you need the exact snippet. \
-                    Three modes: (1) Insert after P00N — set `paragraph_number` to N, leave \
-                    `original_content` empty, put new text in `modified_content` (one or more \
-                    lines). (2) Replace a fragment inside P00N \
-                    — set `original_content` to the exact snippet. (3) Fill an empty P00N — \
-                    `original_content` empty and that paragraph is empty."
+                    Bulk insert (append or mid-file): ONE Edit call — never one paragraph per call. \
+                    Anchor on the paragraph at the insertion point (last paragraph to append; the \
+                    paragraph immediately before the gap for mid-file insert). Set `original_content` \
+                    to that paragraph verbatim and `modified_content` to the same text followed by \
+                    ALL new lines (\\n-separated) in a single call. \
+                    Small insert-after: set `paragraph_number` to N, leave `original_content` empty, \
+                    put one or more new lines in `modified_content`. \
+                    Fragment replace inside P00N: `original_content` = exact snippet, \
+                    `modified_content` = replacement. \
+                    Fill empty P00N: `original_content` empty and that paragraph is empty."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -155,15 +160,15 @@ impl FileEditTool {
                         "paragraph_number": {
                             "type": "integer",
                             "minimum": 1,
-                            "description": "Target paragraph from Read ([P009] → 9). Empty original_content + non-empty paragraph → insert new paragraphs after this one."
+                            "description": "Target paragraph from Read ([P009] → 9). For bulk insert, the anchor paragraph (last para to append; para before the gap for mid-file)."
                         },
                         "original_content": {
                             "type": "string",
-                            "description": "Exact fragment inside the paragraph to replace. Empty → insert-after (if paragraph non-empty) or fill (if paragraph empty)."
+                            "description": "Bulk insert: anchor paragraph copied verbatim. Fragment replace: exact snippet inside the paragraph. Empty → small insert-after or fill empty paragraph."
                         },
                         "modified_content": {
                             "type": "string",
-                            "description": "New text: replacement fragment, full-paragraph replacement, or one or more lines to insert."
+                            "description": "Bulk insert: anchor paragraph verbatim + \\n + ALL new lines in one call. Fragment replace: replacement text. Small insert-after: one or more new lines only."
                         }
                     },
                     "required": ["path", "paragraph_number", "original_content", "modified_content"]

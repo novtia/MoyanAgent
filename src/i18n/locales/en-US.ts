@@ -132,6 +132,8 @@ const enUS: Resource = {
     diffHunkCount: "{{current}} / {{total}}",
     diffPrevHunk: "Previous change",
     diffNextHunk: "Next change",
+    diffAcceptAll: "Accept all",
+    diffRejectAll: "Reject all",
   },
   readerFind: {
     title: "Find and replace",
@@ -397,6 +399,9 @@ const enUS: Resource = {
     createDocUntitled: "Untitled document",
     createDocCharsUnit: "chars",
     createDocLinesUnit: "lines",
+    streamDocEditing: "Editing document…",
+    streamDocEdited: "Document edited",
+    streamDocEditUntitled: "Untitled file",
     deleteDocDeleted: "File deleted",
     deleteDocDeleting: "Deleting file…",
     deleteDocFailed: "File deletion failed",

@@ -30,7 +30,16 @@
   gap: 6px;
 }
 
+.document-reader-head-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
 .document-reader-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--ink);
@@ -914,6 +923,19 @@
   border-color: var(--blue-700);
 }
 
+/* Diff controls in document title bar */
+.reader-diff-header-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
 /* Plain text view */
 .reader-text {
   margin: 0;
@@ -1079,234 +1101,6 @@
   height: 15px;
   flex: 0 0 auto;
   color: var(--blue-600);
-}
-
-/* ═══════════ CreateDoc: dedicated document tile (not a generic tool card) ═══════════ */
-.create-doc-card {
-  display: flex;
-  align-items: stretch;
-  gap: 14px;
-  margin: 8px 0;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--blue-50) 60%, var(--bg)) 0%, var(--bg) 70%);
-  box-shadow: var(--shadow-1);
-  position: relative;
-  transition: border-color 0.16s var(--ease-out), box-shadow 0.16s var(--ease-out), transform 0.16s var(--ease-out);
-}
-.create-doc-card.is-openable {
-  cursor: pointer;
-}
-.create-doc-card.is-openable:hover {
-  border-color: color-mix(in srgb, var(--blue-500) 55%, var(--line));
-  box-shadow: var(--shadow-card);
-  transform: translateY(-1px);
-}
-.create-doc-card.error {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--rose-50) 70%, var(--bg)) 0%, var(--bg) 70%);
-  border-color: color-mix(in srgb, var(--rose-500) 35%, var(--line));
-}
-
-/* Typed file glyph */
-.create-doc-card-glyph {
-  flex: 0 0 auto;
-  position: relative;
-  width: 44px;
-  height: 52px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--blue-600);
-}
-.create-doc-card-glyph svg {
-  width: 100%;
-  height: 100%;
-}
-.create-doc-card-glyph.is-md {
-  color: var(--blue-600);
-}
-.create-doc-card-glyph.is-txt {
-  color: var(--ink-soft);
-}
-.create-doc-card-ext {
-  position: absolute;
-  bottom: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 1px 5px;
-  border-radius: 4px;
-  color: #fff;
-  background: var(--blue-600);
-  line-height: 1.4;
-}
-.create-doc-card-glyph.is-txt .create-doc-card-ext {
-  background: var(--ink-soft);
-}
-
-/* Body */
-.create-doc-card-body {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 3px;
-}
-.create-doc-card-kicker {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--blue-700);
-}
-.create-doc-card.error .create-doc-card-kicker {
-  color: var(--rose-500);
-}
-.create-doc-card-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.create-doc-card-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 2px;
-}
-.create-doc-card-stat {
-  font-size: 12px;
-  color: var(--ink-mute);
-}
-.create-doc-card-stat strong {
-  color: var(--ink-2);
-  font-weight: 600;
-}
-
-/* Open affordance */
-.create-doc-card-action {
-  flex: 0 0 auto;
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--blue-600);
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid color-mix(in srgb, var(--blue-500) 30%, var(--line));
-  background: var(--bg);
-  white-space: nowrap;
-}
-.create-doc-card.is-openable:hover .create-doc-card-action {
-  background: var(--blue-50);
-  border-color: var(--blue-500);
-}
-.create-doc-card-action svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* Pending spinner */
-.create-doc-card-spinner {
-  position: absolute;
-  top: 12px;
-  right: 14px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid color-mix(in srgb, var(--blue-500) 30%, var(--line));
-  border-top-color: var(--blue-600);
-  animation: create-doc-spin 0.7s linear infinite;
-}
-@keyframes create-doc-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* ═══════════ Delete: dedicated "removed document" tile (not a generic tool card) ═══════════ */
-.delete-doc-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 8px 0;
-  padding: 11px 14px;
-  border: 1px solid color-mix(in srgb, var(--rose-500) 28%, var(--line));
-  border-left: 3px solid color-mix(in srgb, var(--rose-500) 60%, var(--line));
-  border-radius: var(--radius);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--rose-50) 55%, var(--bg)) 0%, var(--bg) 75%);
-  box-shadow: var(--shadow-1);
-  position: relative;
-}
-.delete-doc-card.error {
-  border-color: color-mix(in srgb, var(--rose-500) 45%, var(--line));
-  background: linear-gradient(180deg, color-mix(in srgb, var(--rose-50) 75%, var(--bg)) 0%, var(--bg) 70%);
-}
-
-.delete-doc-card-glyph {
-  flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9px;
-  color: var(--rose-500);
-  background: color-mix(in srgb, var(--rose-500) 12%, transparent);
-}
-.delete-doc-card-glyph svg {
-  width: 18px;
-  height: 18px;
-}
-
-.delete-doc-card-body {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-}
-.delete-doc-card-kicker {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--rose-500);
-}
-.delete-doc-card-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink-soft);
-  text-decoration: line-through;
-  text-decoration-color: color-mix(in srgb, var(--rose-500) 55%, transparent);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.delete-doc-card-spinner {
-  position: absolute;
-  top: 50%;
-  right: 14px;
-  transform: translateY(-50%);
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid color-mix(in srgb, var(--rose-500) 30%, var(--line));
-  border-top-color: var(--rose-500);
-  animation: create-doc-spin 0.7s linear infinite;
 }
 
 /* ───── reader file explorer drawer ───── */

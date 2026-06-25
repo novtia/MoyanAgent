@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties } from "react";
+import { useMemo, useState, useEffect, useCallback, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import {
   useReader,
@@ -10,6 +10,7 @@ import { useReaderFind, selectReaderChromeInset } from "../../store/readerFind";
 import { ReaderEditor } from "./ReaderEditor";
 import { ReaderFileDrawer } from "./ReaderFileDrawer";
 import { ReaderFindBar, useReaderFindShortcuts } from "./ReaderFindBar";
+import { ReaderDiffHeaderBar } from "./ReaderDiffHeaderBar";
 
 function CloseIcon() {
   return (
@@ -23,6 +24,7 @@ function ReaderFilePane({ tab }: { tab: ReaderFileTab }) {
   const { t } = useTranslation();
   const fileName = readerFileName(tab.path);
   const hasPendingDiff = tab.pendingDiffs.length > 0;
+  const [activeHunkIndex, setActiveHunkIndex] = useState(0);
   const findOpen = useReaderFind((s) => s.open);
   const findScope = useReaderFind((s) => s.scope);
   const findQuery = useReaderFind((s) => s.query);
@@ -42,13 +44,39 @@ function ReaderFilePane({ tab }: { tab: ReaderFileTab }) {
     searching: findSearching,
   });
 
+  useEffect(() => {
+    setActiveHunkIndex(0);
+  }, [tab.id, tab.pendingDiffs.length]);
+
+  const navigateHunk = useCallback(
+    (direction: -1 | 1) => {
+      setActiveHunkIndex((prev) => {
+        const total = tab.pendingDiffs.length;
+        if (total === 0) return 0;
+        return Math.max(0, Math.min(prev + direction, total - 1));
+      });
+    },
+    [tab.pendingDiffs.length],
+  );
+
   return (
     <div className="document-reader reader-file-pane">
       <div className="document-reader-head">
-        <div className="document-reader-title" title={tab.path}>
-          {fileName}
-          {tab.dirty && <span className="reader-tab-dirty" title={t("reader.unsaved")} />}
-          {tab.saveError && <span className="reader-tab-error" title={t("reader.saveFailed")} />}
+        <div className="document-reader-head-row">
+          <div className="document-reader-title" title={tab.path}>
+            {fileName}
+            {tab.dirty && <span className="reader-tab-dirty" title={t("reader.unsaved")} />}
+            {tab.saveError && <span className="reader-tab-error" title={t("reader.saveFailed")} />}
+          </div>
+          {hasPendingDiff && (
+            <ReaderDiffHeaderBar
+              tab={tab}
+              activeIndex={activeHunkIndex}
+              onNavigate={navigateHunk}
+              onAcceptAll={() => setActiveHunkIndex(0)}
+              onRejectAll={() => setActiveHunkIndex(0)}
+            />
+          )}
         </div>
         <div className="document-reader-stats">
           <span className="reader-stat">{t("rightPanel.readerChars", { count: chars })}</span>
@@ -62,7 +90,11 @@ function ReaderFilePane({ tab }: { tab: ReaderFileTab }) {
         className="document-reader-body reader-file-body"
         style={{ "--reader-chrome-top": `${chromeInset}px` } as CSSProperties}
       >
-        <ReaderEditor tab={tab} />
+        <ReaderEditor
+          tab={tab}
+          activeHunkIndex={hasPendingDiff ? activeHunkIndex : undefined}
+          onActiveHunkChange={setActiveHunkIndex}
+        />
         <div className="reader-find-overlay">
           <ReaderFindBar
             disabled={hasPendingDiff}

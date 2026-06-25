@@ -633,6 +633,49 @@
   border-color: #fecdd3;
 }
 
+/* Char-count diff chips (CreateDoc / Edit header, same row height as badge). */
+.tool-call-diff-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  line-height: 1;
+}
+.tool-call-diff-chips .is-add {
+  color: var(--green-600);
+}
+.tool-call-diff-chips .is-del {
+  color: var(--rose-500);
+}
+
+/* Non-interactive summary row (e.g. Delete with no detail panel). */
+.tool-call-summary--static {
+  cursor: default;
+}
+
+.tool-call-detail-body--diff {
+  font-family: inherit;
+  max-height: min(50vh, 420px);
+}
+
+/* Streaming cursor inside CreateDoc detail body. */
+.stream-doc-cursor {
+  display: inline-block;
+  width: 6px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--blue-500);
+  animation: stream-doc-blink 1s steps(2, start) infinite;
+}
+@keyframes stream-doc-blink {
+  to {
+    opacity: 0;
+  }
+}
+
 .tool-call-detail {
   display: flex;
   flex-direction: column;

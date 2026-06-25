@@ -280,6 +280,13 @@ export type AssistantBlock =
       status: "pending" | "success" | "error";
       output?: unknown;
       is_error?: boolean;
+      /**
+       * True while the tool's input arguments are still streaming in (OpenAI
+       * tool-call deltas). Cleared once the terminal `tool_use` event arrives
+       * with the fully-parsed input. Used to drive live cursors / spinners and
+       * to defer side-effects (e.g. opening the reader) until input is final.
+       */
+      streaming?: boolean;
     }
   | {
       /**
@@ -313,6 +320,7 @@ export interface MessageAbs {
       prompt_tokens?: number | null;
       completion_tokens?: number | null;
       total_tokens?: number | null;
+      last_prompt_tokens?: number | null;
     };
   } | null;
   created_at: number;

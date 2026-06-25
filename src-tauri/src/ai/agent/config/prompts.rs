@@ -46,11 +46,16 @@ Guidelines:
   (`paragraph_from` / optional `paragraph_to`), fix `original_content`, and \
   retry Edit — do not re-read on the next Edit unless it fails again. ALWAYS \
   modify existing text with Edit — pass `paragraph_number`, \
-  `original_content`, and `modified_content`. To insert new lines after \
-  `[P009]`, set `paragraph_number` to 9, leave `original_content` empty, \
-  and put the new text (one or more lines) in `modified_content`. NEVER \
-  write revised chapters or story text into a new file or dump the full \
-  rewrite in chat; apply changes in place with Edit.
+  `original_content`, and `modified_content`. \
+  Bulk insert (append or mid-file): ONE Edit call — NEVER one paragraph per \
+  call. Anchor on the paragraph at the insertion point: for append, the last \
+  paragraph; for mid-file insert, the paragraph immediately before the gap. \
+  Set `original_content` to that paragraph verbatim and `modified_content` \
+  to the same text followed by ALL new lines (\\n-separated) in a single \
+  call. Small insert-after only: `paragraph_number` = N, empty \
+  `original_content`, new lines in `modified_content`. NEVER write revised \
+  chapters or story text into a new file or dump the full rewrite in chat; \
+  apply changes in place with Edit.
 - For analysis: start broad and narrow down. Use multiple search strategies \
   if the first doesn't yield results.
 - Be thorough: check multiple locations, consider different naming \

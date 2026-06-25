@@ -536,6 +536,10 @@ fn accumulate_usage(
 ) {
     if let Some(p) = next.prompt_tokens {
         *target.prompt_tokens.get_or_insert(0) += p;
+        // Track (not sum) the latest round's prompt size. The last API call of a
+        // turn already carries the full history, so this is the real
+        // context-window occupancy — used by the composer context ring.
+        target.last_prompt_tokens = Some(p);
     }
     if let Some(c) = next.completion_tokens {
         *target.completion_tokens.get_or_insert(0) += c;

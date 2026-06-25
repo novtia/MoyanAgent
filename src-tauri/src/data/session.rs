@@ -378,15 +378,23 @@ pub fn set_model_and_context(
 
 /// Recompute `sessions.context_window_used` from stored messages.
 ///
-/// Uses the **most recent assistant message's `prompt_tokens`** as the context
-/// window usage indicator. `prompt_tokens` from the API already includes
-/// everything sent in that request: system prompt, tool definitions, injected
+/// Uses the **most recent assistant message's** prompt size as the context
+/// window usage indicator. The prompt sent to the API already includes
+/// everything in that request: system prompt, tool definitions, injected
 /// context (CLAUDE.md / env block), full conversation history, and the current
 /// user message. It therefore accurately represents how much of the context
 /// window is filled and how much remains for future turns.
 ///
-/// Falls back to `total_tokens` (prompt + completion) when `prompt_tokens` is
-/// absent, and to 0 when neither is available (e.g. image-generation APIs that
+/// Preference order:
+/// 1. `last_prompt_tokens` — the prompt of the *final* API call in the turn.
+///    For turns that fan out into multiple tool-call rounds, `prompt_tokens`
+///    (and hence `total_tokens`) is the *sum* of every round's prompt, which
+///    massively over-counts the real occupancy. `last_prompt_tokens` is the
+///    single most-recent request's prompt, so it reflects true occupancy.
+/// 2. `total_tokens` (prompt + completion) — legacy fallback for messages
+///    stored before `last_prompt_tokens` existed, and single-call turns.
+/// 3. `prompt_tokens` — for providers that only expose the input side.
+/// Falls back to 0 when none are available (e.g. image-generation APIs that
 /// don't report usage).
 pub fn recompute_context_window_used(conn: &DbConn, session_id: &str) -> AppResult<()> {
     let loaded = load_with_messages(conn, session_id)?;
@@ -397,13 +405,9 @@ pub fn recompute_context_window_used(conn: &DbConn, session_id: &str) -> AppResu
         }
         if let Some(ref p) = msg.params {
             let u = tokens::extract_usage(p);
-            // Use total_tokens (prompt + completion) because the completion
-            // from the current turn becomes part of the history on the NEXT
-            // turn.  This gives a realistic "how much context is occupied"
-            // reading.  Fall back to prompt_tokens for providers that only
-            // expose the input side.
-            let t = u.total_tokens
+            let t = u.last_prompt_tokens
                 .filter(|x| *x > 0)
+                .or_else(|| u.total_tokens.filter(|x| *x > 0))
                 .or_else(|| u.prompt_tokens.filter(|x| *x > 0));
             if let Some(t) = t {
                 used = t;

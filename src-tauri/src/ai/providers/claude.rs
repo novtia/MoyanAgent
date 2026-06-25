@@ -330,6 +330,7 @@ fn usage(v: &Value) -> TokenUsage {
             (Some(a), Some(b)) => Some(a + b),
             _ => None,
         },
+        last_prompt_tokens: None,
     }
 }
 
