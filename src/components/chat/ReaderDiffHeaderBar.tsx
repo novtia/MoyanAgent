@@ -36,7 +36,13 @@ export function ReaderDiffHeaderBar({
     const result = rejectAllDiffs(tab.path);
     if (result?.revertText && sessionId) {
       try {
-        await api.writeProjectFile(sessionId, tab.path, result.revertText);
+        await api.writeProjectFile(
+          sessionId,
+          tab.path,
+          result.revertText,
+          tab.encoding,
+          tab.hadBom,
+        );
       } catch {
         /* still update UI */
       }

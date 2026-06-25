@@ -235,6 +235,15 @@ export interface ProjectDirEntry {
   isDir: boolean;
 }
 
+/** Text file payload from `read_project_file` (encoding preserved for save). */
+export interface ProjectTextFile {
+  text: string;
+  encoding: string;
+  hadBom: boolean;
+}
+
+export const DEFAULT_TEXT_ENCODING = "utf-8";
+
 export interface SessionSearchResult extends SessionSummary {
   match_message_id: string | null;
   match_role: "user" | "assistant" | "error" | string | null;

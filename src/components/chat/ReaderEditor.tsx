@@ -190,14 +190,14 @@ export function ReaderEditor({ tab, activeHunkIndex, onActiveHunkChange }: Reade
     async (text: string) => {
       if (!sessionId || !tab.path) return;
       try {
-        await api.writeProjectFile(sessionId, tab.path, text);
+        await api.writeProjectFile(sessionId, tab.path, text, tab.encoding, tab.hadBom);
         dirtyRef.current = false;
         setTabDirty(tab.path, false, false);
       } catch {
         setTabDirty(tab.path, true, true);
       }
     },
-    [sessionId, tab.path, setTabDirty],
+    [sessionId, tab.path, tab.encoding, tab.hadBom, setTabDirty],
   );
 
   const scheduleSave = useCallback(
@@ -218,7 +218,15 @@ export function ReaderEditor({ tab, activeHunkIndex, onActiveHunkChange }: Reade
         timerRef.current = null;
       }
       if (dirtyRef.current && sessionId && tab.path) {
-        void api.writeProjectFile(sessionId, tab.path, latestTextRef.current).catch(() => {
+        void api
+          .writeProjectFile(
+            sessionId,
+            tab.path,
+            latestTextRef.current,
+            tab.encoding,
+            tab.hadBom,
+          )
+          .catch(() => {
           setTabDirty(tab.path, true, true);
         });
       }

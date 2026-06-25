@@ -1,3 +1,4 @@
+import { startTransition } from "react";
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import type {
@@ -190,6 +191,7 @@ function getGenerationEpoch(sessionId: string) {
 function bumpGenerationEpoch(sessionId: string) {
   const next = getGenerationEpoch(sessionId) + 1;
   generationEpochBySession.set(sessionId, next);
+  cancelStreamFlushRaf(sessionId);
   streamingBuffers.delete(sessionId);
   const state = useSession.getState();
   if (state.activeId === sessionId && state.active) {
@@ -315,6 +317,7 @@ export const useSession = create<SessionStore>((set, get) => {
       const data = await api.loadSession(sessionId);
       // Generation is complete — discard the streaming buffer so future
       // switchTo calls show the persisted DB content, not stale temp data.
+      cancelStreamFlushRaf(sessionId);
       streamingBuffers.delete(sessionId);
       set({
         active: data,
@@ -1266,15 +1269,17 @@ async function handleReaderToolComplete(
       const sessionId = useSession.getState().activeId;
       if (!sessionId) return;
       try {
-        const textAfterDisk = await api.readProjectFile(sessionId, path);
+        const disk = await api.readProjectFile(sessionId, path);
         textBefore =
-          revertParagraphEdit(textAfterDisk, paragraphNumber, original, modified) ??
-          textAfterDisk;
+          revertParagraphEdit(disk.text, paragraphNumber, original, modified) ??
+          disk.text;
         reader.openDoc(
           {
             path,
-            text: textAfterDisk,
+            text: disk.text,
             fileType: inferFileType(path),
+            encoding: disk.encoding,
+            hadBom: disk.hadBom,
           },
           { activate: false },
         );
@@ -1400,20 +1405,51 @@ function applyStreamBufferToMessages(
  * tmp-assistant message reflects the latest StreamBuffer. Both listeners
  * funnel through this so they always agree on the message shape.
  */
-function syncStreamingMessage(sessionId: string, buf: StreamBuffer) {
-  const state = useSession.getState();
-  if (state.activeId !== sessionId || !state.active) return;
-  const messages = applyStreamBufferToMessages(
-    state.active.messages,
-    sessionId,
-    buf,
-  );
-  useSession.setState({
-    active: {
-      ...state.active,
-      messages,
-    },
+function syncStreamingMessage(sessionId: string) {
+  // Low-priority update so clicks, drags, and session switches stay responsive.
+  startTransition(() => {
+    const state = useSession.getState();
+    if (state.activeId !== sessionId || !state.active) return;
+    const buf = streamingBuffers.get(sessionId);
+    if (!buf) return;
+    const messages = applyStreamBufferToMessages(
+      state.active.messages,
+      sessionId,
+      buf,
+    );
+    useSession.setState({
+      active: {
+        ...state.active,
+        messages,
+      },
+    });
   });
+}
+
+/** Coalesce high-frequency stream deltas to one React commit per animation frame. */
+const streamFlushRafBySession = new Map<string, number>();
+
+function cancelStreamFlushRaf(sessionId: string) {
+  const rafId = streamFlushRafBySession.get(sessionId);
+  if (rafId != null) {
+    cancelAnimationFrame(rafId);
+    streamFlushRafBySession.delete(sessionId);
+  }
+}
+
+function scheduleStreamingMessageSync(sessionId: string) {
+  if (streamFlushRafBySession.has(sessionId)) return;
+  const rafId = requestAnimationFrame(() => {
+    streamFlushRafBySession.delete(sessionId);
+    if (streamingBuffers.has(sessionId)) syncStreamingMessage(sessionId);
+  });
+  streamFlushRafBySession.set(sessionId, rafId);
+}
+
+/** Flush any pending frame batch immediately (stop, cancel, session restore). */
+function flushStreamingMessageSync(sessionId: string) {
+  cancelStreamFlushRaf(sessionId);
+  if (streamingBuffers.has(sessionId)) syncStreamingMessage(sessionId);
 }
 
 /** Stop streaming indicators and freeze in-flight tool cards the moment the user hits Stop. */
@@ -1433,7 +1469,7 @@ function freezeStreamingUi(sessionId: string) {
   });
   const next: StreamBuffer = { ...buf, blocks: nextBlocks };
   streamingBuffers.set(sessionId, next);
-  syncStreamingMessage(sessionId, next);
+  flushStreamingMessageSync(sessionId);
 }
 
 // ─── Stream listeners ─────────────────────────────────────────────────────────
@@ -1481,7 +1517,7 @@ function ensureGenerationStreamListener() {
         applyStreamingToolCallDelta(nextBlocks, sessionId, toolCallDelta);
       const next: StreamBuffer = { blocks: nextBlocks, requestId };
       streamingBuffers.set(sessionId, next);
-      syncStreamingMessage(sessionId, next);
+      scheduleStreamingMessageSync(sessionId);
     }).catch((e) => {
       generationStreamListenerStarted = false;
       console.warn(e);
@@ -1516,7 +1552,7 @@ function ensureGenerationStreamListener() {
       }
       const next: StreamBuffer = { blocks: nextBlocks, requestId };
       streamingBuffers.set(sessionId, next);
-      syncStreamingMessage(sessionId, next);
+      scheduleStreamingMessageSync(sessionId);
     }).catch((e) => {
       toolEventListenerStarted = false;
       console.warn(e);

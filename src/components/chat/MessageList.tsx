@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useId,
   useLayoutEffect,
@@ -622,6 +623,10 @@ function StreamingDocCard({
     if (isEdit) {
       const original = input.original_content ?? "";
       const modified = input.modified_content ?? "";
+      // Full char diff on every token blocks the main thread during Edit streaming.
+      if (streaming) {
+        return { added: countChars(modified), removed: 0 };
+      }
       let a = 0;
       let r = 0;
       for (const part of diffChars(original, modified)) {
@@ -632,7 +637,7 @@ function StreamingDocCard({
       return { added: a, removed: r };
     }
     return { added: countChars(content), removed: 0 };
-  }, [isEdit, input.original_content, input.modified_content, content]);
+  }, [isEdit, streaming, input.original_content, input.modified_content, content]);
 
   const readerDoc = useMemo(
     () =>
@@ -721,10 +726,17 @@ function StreamingDocCard({
         <div className="tool-call-detail">
           {isEdit ? (
             <div className="tool-call-detail-body tool-call-detail-body--diff">
-              <InlineDiffCode
-                oldText={input.original_content ?? ""}
-                newText={input.modified_content ?? ""}
-              />
+              {streaming ? (
+                <pre className="tool-call-detail-body">
+                  {input.modified_content ?? ""}
+                  <span className="stream-doc-cursor" aria-hidden />
+                </pre>
+              ) : (
+                <InlineDiffCode
+                  oldText={input.original_content ?? ""}
+                  newText={input.modified_content ?? ""}
+                />
+              )}
             </div>
           ) : (
             <pre className="tool-call-detail-body">
@@ -863,6 +875,65 @@ function summarizeToolInput(input: unknown): string {
   return "";
 }
 
+function ListFilesTreeView({ entries }: { entries: ListFilesEntry[] }) {
+  return (
+    <ul className="list-files-tree">
+      {entries.map((entry, i) => (
+        <ListFilesTreeNode key={`${entry.name}:${i}`} entry={entry} />
+      ))}
+    </ul>
+  );
+}
+
+function ListFilesTreeNode({ entry }: { entry: ListFilesEntry }) {
+  const isDir = entry.kind === "directory";
+  const children = entry.children ?? [];
+  return (
+    <li className={`list-files-tree-node ${isDir ? "is-dir" : "is-file"}`}>
+      <span className="list-files-tree-label">
+        <span className="list-files-tree-kind" aria-hidden>
+          {isDir ? "▸" : "·"}
+        </span>
+        {entry.name}
+      </span>
+      {isDir && (
+        <ListFilesTreeView entries={children} />
+      )}
+    </li>
+  );
+}
+
+interface ListFilesEntry {
+  name: string;
+  kind: string;
+  children?: ListFilesEntry[];
+}
+
+function parseListFilesOutput(output: unknown): ListFilesEntry[] | null {
+  if (!output || typeof output !== "object") return null;
+  const entries = (output as { entries?: unknown }).entries;
+  if (!Array.isArray(entries)) return null;
+  return parseListFilesEntries(entries);
+}
+
+function parseListFilesEntries(entries: unknown[]): ListFilesEntry[] {
+  const parsed: ListFilesEntry[] = [];
+  for (const row of entries) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    if (typeof o.name !== "string") continue;
+    const kind = o.kind === "directory" || o.kind === "file" ? o.kind : "file";
+    const children =
+      kind === "directory"
+        ? Array.isArray(o.children)
+          ? parseListFilesEntries(o.children)
+          : []
+        : undefined;
+    parsed.push({ name: o.name, kind, children });
+  }
+  return parsed;
+}
+
 function ToolCallBlock({
   block,
 }: {
@@ -890,7 +961,13 @@ function ToolCallBlock({
     [block.output],
   );
 
-  // Read tool results can be opened in the document reader panel.
+  const listFilesEntries = useMemo(
+    () =>
+      block.tool === "ListFiles" && status === "success"
+        ? parseListFilesOutput(block.output)
+        : null,
+    [block.tool, block.output, status],
+  );
   const readerDoc = useMemo(
     () =>
       block.tool === "Read" && status === "success"
@@ -949,13 +1026,24 @@ function ToolCallBlock({
               <pre className="tool-call-detail-body">{inputJson}</pre>
             </>
           )}
-          {outputJson && (
+          {listFilesEntries ? (
             <>
               <div className="tool-call-detail-label">
                 {t("message.toolCallOutput")}
               </div>
-              <pre className="tool-call-detail-body">{outputJson}</pre>
+              <div className="tool-call-detail-body tool-call-detail-body--tree">
+                <ListFilesTreeView entries={listFilesEntries} />
+              </div>
             </>
+          ) : (
+            outputJson && (
+              <>
+                <div className="tool-call-detail-label">
+                  {t("message.toolCallOutput")}
+                </div>
+                <pre className="tool-call-detail-body">{outputJson}</pre>
+              </>
+            )
           )}
         </div>
       )}
@@ -1187,7 +1275,7 @@ function safeJsonStringify(v: unknown): string {
   }
 }
 
-function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
+function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
   const { t } = useTranslation();
   const inputs = useMemo(() => m.images.filter((i) => i.role === "input"), [m.images]);
   const outputs = m.images.filter((i) => i.role === "output");
@@ -1684,6 +1772,14 @@ function MessageRow({ m, onPreviewImage, focused }: MessageRowProps) {
     </div>
   );
 }
+
+const MessageRow = memo(MessageRowImpl, (prev, next) => {
+  return (
+    prev.m === next.m &&
+    prev.focused === next.focused &&
+    prev.onPreviewImage === next.onPreviewImage
+  );
+});
 
 function PlateActions({
   img,

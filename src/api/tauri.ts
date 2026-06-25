@@ -16,6 +16,7 @@ import type {
   ModelParamSettings,
   Project,
   ProjectDirEntry,
+  ProjectTextFile,
   SessionSearchResult,
   SessionSummary,
   SessionWithMessagesAbs,
@@ -268,11 +269,23 @@ export const api = {
   getRoleStates: (sessionId: string) =>
     invoke<Role[]>("get_role_states", { sessionId }),
 
-  writeProjectFile: (sessionId: string, path: string, content: string) =>
-    invoke<void>("write_project_file", { sessionId, path, content }),
+  writeProjectFile: (
+    sessionId: string,
+    path: string,
+    content: string,
+    encoding?: string | null,
+    hadBom?: boolean | null,
+  ) =>
+    invoke<void>("write_project_file", {
+      sessionId,
+      path,
+      content,
+      encoding: encoding ?? null,
+      hadBom: hadBom ?? null,
+    }),
 
   readProjectFile: (sessionId: string, path: string) =>
-    invoke<string>("read_project_file", { sessionId, path }),
+    invoke<ProjectTextFile>("read_project_file", { sessionId, path }),
 
   listProjectDir: (sessionId: string, path?: string | null) =>
     invoke<ProjectDirEntry[]>("list_project_dir", {

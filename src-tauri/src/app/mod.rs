@@ -21,6 +21,9 @@ use crate::ai::agent::{
 use crate::ai::{chat, parameters, router, token_log};
 use crate::data::db::DbPool;
 use crate::data::{custom_agents, db, llm_catalog, paths, project, session, settings};
+use crate::ai::agent::tools::text_decode::{
+    read_text_file, write_text_file_labeled, ProjectTextFile, TextEncoding,
+};
 use crate::error::{AppError, AppResult};
 use crate::media::{editor, images};
 
@@ -271,21 +274,15 @@ fn write_project_file(
     session_id: String,
     path: String,
     content: String,
+    encoding: Option<String>,
+    had_bom: Option<bool>,
 ) -> Result<(), AppError> {
     let conn = state.conn()?;
     let file_path = PathBuf::from(&path);
     let cwd = session_project_cwd(&conn, &session_id);
     let resolved = validate_reader_write_path(&file_path, cwd.as_deref())?;
 
-    if let Some(parent) = resolved.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                AppError::Other(format!("write_project_file: mkdir {:?}: {e}", parent))
-            })?;
-        }
-    }
-
-    std::fs::write(&resolved, content.as_bytes()).map_err(|e| {
+    write_text_file_labeled(&resolved, &content, encoding.as_deref(), had_bom).map_err(|e| {
         AppError::Other(format!("write_project_file: write {:?}: {e}", resolved))
     })?;
     Ok(())
@@ -296,14 +293,14 @@ fn read_project_file(
     state: tauri::State<Arc<AppState>>,
     session_id: String,
     path: String,
-) -> Result<String, AppError> {
+) -> Result<ProjectTextFile, AppError> {
     let conn = state.conn()?;
     let file_path = PathBuf::from(&path);
     let cwd = session_project_cwd(&conn, &session_id);
     let resolved = validate_reader_write_path(&file_path, cwd.as_deref())?;
-    std::fs::read_to_string(&resolved).map_err(|e| {
-        AppError::Other(format!("read_project_file: read {:?}: {e}", resolved))
-    })
+    read_text_file(&resolved)
+        .map(ProjectTextFile::from)
+        .map_err(|e| AppError::Other(format!("read_project_file: read {:?}: {e}", resolved)))
 }
 
 /// Effective generation parameters for a session.
@@ -1689,12 +1686,17 @@ fn apply_file_restore(restore: &crate::data::file_snapshot::FileRestore) {
         return;
     }
     if let Some(content) = &restore.content {
-        if let Some(parent) = restore.path.parent() {
-            if !parent.as_os_str().is_empty() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-        }
-        let _ = std::fs::write(&restore.path, content.as_bytes());
+        let encoding = restore
+            .encoding
+            .as_deref()
+            .map(TextEncoding::parse_label)
+            .unwrap_or(TextEncoding::Utf8);
+        let _ = write_text_file_labeled(
+            &restore.path,
+            content,
+            Some(encoding.label()),
+            Some(restore.had_bom),
+        );
     }
 }
 

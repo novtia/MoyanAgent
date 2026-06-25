@@ -716,6 +716,51 @@
   border-radius: 3px;
 }
 
+.tool-call-detail-body--tree {
+  font-family: inherit;
+  white-space: normal;
+}
+
+.list-files-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.list-files-tree .list-files-tree {
+  margin-left: 1.1em;
+  padding-left: 0.65em;
+  border-left: 1px solid var(--line);
+}
+
+.list-files-tree-node {
+  margin: 2px 0;
+  line-height: 1.5;
+}
+
+.list-files-tree-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  word-break: break-word;
+}
+
+.list-files-tree-kind {
+  flex: 0 0 auto;
+  width: 0.75em;
+  color: var(--ink-mute);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+}
+
+.list-files-tree-node.is-dir > .list-files-tree-label {
+  font-weight: 500;
+}
+
+.list-files-tree-node.is-file > .list-files-tree-label {
+  color: var(--ink-soft);
+}
+
 /* Tighten the vertical rhythm where blocks alternate. */
 .bubble .text + .tool-call-block,
 .bubble .tool-call-block + .text,

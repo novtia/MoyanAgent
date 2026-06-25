@@ -1,21 +1,29 @@
-import { indentLess, indentMore } from "@codemirror/commands";
+import { indentLess, indentMore, insertNewline } from "@codemirror/commands";
 import type { KeyBinding } from "@codemirror/view";
 import type { EditorView } from "@codemirror/view";
-import { applyParagraphIndent } from "../../../utils/readerIndent";
+import { buildParagraphIndentChanges } from "../../../utils/readerIndent";
 
 function runParagraphIndent(view: EditorView, outdent: boolean): boolean {
   const text = view.state.doc.toString();
   const sel = view.state.selection.main;
-  const result = applyParagraphIndent(text, sel.from, sel.to, outdent);
+  const result = buildParagraphIndentChanges(text, sel.from, sel.to, outdent);
   if (!result) return false;
   view.dispatch({
-    changes: { from: 0, to: text.length, insert: result.text },
+    changes: result.changes,
     selection: { anchor: result.selectionStart, head: result.selectionEnd },
+    // Keep the viewport stable while indenting (especially with a leading space).
+    scrollIntoView: false,
   });
   return true;
 }
 
 export const readerIndentKeymap: KeyBinding[] = [
+  {
+    // Default CM Enter copies leading whitespace (insertNewlineAndIndent). Prose
+    // uses Tab for 首行缩进 only — new lines should start flush left.
+    key: "Enter",
+    run: insertNewline,
+  },
   {
     key: "Tab",
     run(view) {

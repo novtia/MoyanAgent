@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { DEFAULT_TEXT_ENCODING } from "../types";
 
 /** Renderable document kind. `.md`/`.markdown` → markdown, everything else → text. */
 export type ReaderFileType = "markdown" | "text";
@@ -8,6 +9,8 @@ export interface ReaderDoc {
   path: string;
   text: string;
   fileType: ReaderFileType;
+  encoding?: string;
+  hadBom?: boolean;
   chars?: number;
   lines?: number;
   bytes?: number;
@@ -33,6 +36,8 @@ export interface ReaderFileTab {
   path: string;
   text: string;
   fileType: ReaderFileType;
+  encoding: string;
+  hadBom: boolean;
   chars?: number;
   lines?: number;
   bytes?: number;
@@ -303,6 +308,8 @@ function docToTab(doc: ReaderDoc): ReaderFileTab {
     path: sanitizeReaderPath(doc.path),
     text,
     fileType: doc.fileType,
+    encoding: doc.encoding ?? DEFAULT_TEXT_ENCODING,
+    hadBom: doc.hadBom ?? false,
     chars: doc.chars ?? countChars(text),
     lines: doc.lines ?? text.split(/\n/).length,
     bytes: doc.bytes,
@@ -315,7 +322,15 @@ function docToTab(doc: ReaderDoc): ReaderFileTab {
 
 type PersistedTab = Pick<
   ReaderFileTab,
-  "path" | "text" | "fileType" | "chars" | "lines" | "bytes" | "truncated"
+  | "path"
+  | "text"
+  | "fileType"
+  | "encoding"
+  | "hadBom"
+  | "chars"
+  | "lines"
+  | "bytes"
+  | "truncated"
 >;
 
 function loadPersisted(sessionId: string | null): {
@@ -335,6 +350,8 @@ function loadPersisted(sessionId: string | null): {
     const tabs: ReaderFileTab[] = (parsed.tabs ?? []).map((t) => ({
       ...t,
       path: sanitizeReaderPath(t.path),
+      encoding: t.encoding ?? DEFAULT_TEXT_ENCODING,
+      hadBom: t.hadBom ?? false,
       id: newTabId(),
       pendingDiffs: [],
       dirty: false,
@@ -358,10 +375,22 @@ function persistTabs(sessionId: string | null, tabs: ReaderFileTab[], activeTabI
   const active = tabs.find((t) => t.id === activeTabId);
   const payload = {
     tabs: tabs.map(
-      ({ path, text, fileType, chars, lines, bytes, truncated }): PersistedTab => ({
+      ({
         path,
         text,
         fileType,
+        encoding,
+        hadBom,
+        chars,
+        lines,
+        bytes,
+        truncated,
+      }): PersistedTab => ({
+        path,
+        text,
+        fileType,
+        encoding,
+        hadBom,
         chars,
         lines,
         bytes,
@@ -424,6 +453,8 @@ export const useReader = create<ReaderStore>((set, get) => ({
                 ...t,
                 text: cleanText,
                 fileType: doc.fileType,
+                encoding: doc.encoding ?? t.encoding,
+                hadBom: doc.hadBom ?? t.hadBom,
                 chars: doc.chars ?? countChars(cleanText),
                 lines: doc.lines ?? cleanText.split(/\n/).length,
                 bytes: doc.bytes,
@@ -645,6 +676,11 @@ export function readerDocFromToolOutput(output: unknown): ReaderDoc | null {
     path: sanitizeReaderPath(path),
     text: clean,
     fileType: inferFileType(path),
+    encoding:
+      typeof o.encoding === "string" && o.encoding.trim()
+        ? o.encoding.trim()
+        : DEFAULT_TEXT_ENCODING,
+    hadBom: o.had_bom === true || o.hadBom === true,
     chars: typeof o.chars === "number" ? o.chars : countChars(clean),
     lines: typeof o.lines === "number" ? o.lines : clean.split(/\n/).length,
     bytes: typeof o.bytes === "number" ? o.bytes : undefined,

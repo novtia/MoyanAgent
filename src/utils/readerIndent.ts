@@ -5,6 +5,12 @@ export const PARAGRAPH_INDENT = "　　";
 
 const INDENT_LEN = PARAGRAPH_INDENT.length;
 
+export interface ParagraphIndentChange {
+  from: number;
+  to: number;
+  insert: string;
+}
+
 function lineIndexAt(text: string, pos: number): number {
   return text.slice(0, Math.max(0, pos)).split("\n").length - 1;
 }
@@ -77,6 +83,48 @@ export function applyParagraphIndent(
     text: lines.join("\n"),
     selectionStart: Math.max(0, newStart),
     selectionEnd: Math.max(0, newEnd),
+  };
+}
+
+/** Minimal per-line edits for CodeMirror (avoids full-doc replace + scroll jumps). */
+export function buildParagraphIndentChanges(
+  text: string,
+  selectionStart: number,
+  selectionEnd: number,
+  outdent: boolean,
+): {
+  changes: ParagraphIndentChange[];
+  selectionStart: number;
+  selectionEnd: number;
+} | null {
+  const result = applyParagraphIndent(text, selectionStart, selectionEnd, outdent);
+  if (!result) return null;
+
+  const oldLines = text.split("\n");
+  const newLines = result.text.split("\n");
+  const startLine = lineIndexAt(text, selectionStart);
+  const endLine =
+    selectionEnd > selectionStart
+      ? lineIndexAt(text, Math.max(0, selectionEnd - 1))
+      : startLine;
+  const starts = lineStartOffsets(text);
+  const changes: ParagraphIndentChange[] = [];
+
+  for (let i = startLine; i <= endLine; i += 1) {
+    if (oldLines[i] === newLines[i]) continue;
+    const lineStart = starts[i] ?? 0;
+    if (outdent) {
+      changes.push({ from: lineStart, to: lineStart + INDENT_LEN, insert: "" });
+    } else {
+      changes.push({ from: lineStart, to: lineStart, insert: PARAGRAPH_INDENT });
+    }
+  }
+
+  if (changes.length === 0) return null;
+  return {
+    changes,
+    selectionStart: result.selectionStart,
+    selectionEnd: result.selectionEnd,
   };
 }
 

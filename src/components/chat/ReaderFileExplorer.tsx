@@ -133,13 +133,15 @@ export function ReaderFileExplorer() {
       if (!activeId) return;
       if (isReaderTextFile(entry.path)) {
         try {
-          const text = await api.readProjectFile(activeId, entry.path);
+          const file = await api.readProjectFile(activeId, entry.path);
           openDoc({
             path: entry.path,
-            text,
+            text: file.text,
             fileType: inferFileType(entry.path),
-            chars: countChars(text),
-            lines: text.split("\n").length,
+            encoding: file.encoding,
+            hadBom: file.hadBom,
+            chars: countChars(file.text),
+            lines: file.text.split("\n").length,
           });
         } catch (err) {
           toast.error(t("fileExplorer.openFailed"), { description: String(err) });

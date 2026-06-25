@@ -19,6 +19,8 @@ pub struct FileRestore {
     pub path: PathBuf,
     /// `Some(text)` → rewrite the file with this content.
     pub content: Option<String>,
+    pub encoding: Option<String>,
+    pub had_bom: bool,
     /// `true` → remove the file (it was created within the rolled-back range).
     pub delete: bool,
 }
@@ -33,11 +35,15 @@ pub fn save_changes(
 ) -> AppResult<()> {
     let now = now_ms();
     for c in changes {
+        let encoding_label = c
+            .before_encoding
+            .map(|e| e.label().to_string());
         conn.execute(
             "INSERT INTO file_snapshots(
                 session_id, message_id, path, op,
-                before_existed, before_content, restorable, created_at)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                before_existed, before_content, restorable,
+                before_encoding, before_had_bom, created_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 session_id,
                 message_id,
@@ -46,6 +52,8 @@ pub fn save_changes(
                 c.before_existed as i64,
                 c.before_content,
                 c.restorable as i64,
+                encoding_label,
+                c.before_had_bom as i64,
                 now,
             ],
         )?;
@@ -77,7 +85,7 @@ pub fn rollback_from_message(
     let mut restores = Vec::new();
     {
         let mut stmt = conn.prepare(
-            "SELECT path, before_existed, before_content, restorable
+            "SELECT path, before_existed, before_content, restorable, before_encoding, before_had_bom
              FROM file_snapshots
              WHERE session_id = ?1 AND id >= ?2
              ORDER BY id DESC",
@@ -87,26 +95,37 @@ pub fn rollback_from_message(
             let before_existed: i64 = r.get(1)?;
             let before_content: Option<String> = r.get(2)?;
             let restorable: i64 = r.get(3)?;
-            Ok((path, before_existed != 0, before_content, restorable != 0))
+            let before_encoding: Option<String> = r.get(4)?;
+            let before_had_bom: i64 = r.get(5)?;
+            Ok((
+                path,
+                before_existed != 0,
+                before_content,
+                restorable != 0,
+                before_encoding,
+                before_had_bom != 0,
+            ))
         })?;
         for row in rows {
-            let (path, before_existed, before_content, restorable) = row?;
+            let (path, before_existed, before_content, restorable, before_encoding, had_bom) =
+                row?;
             let path = PathBuf::from(path);
             if before_existed {
-                // Restore prior content when we captured it; binary/oversized
-                // pre-images (restorable == false) can't be rewritten — skip.
                 if restorable {
                     restores.push(FileRestore {
                         path,
                         content: before_content,
+                        encoding: before_encoding,
+                        had_bom,
                         delete: false,
                     });
                 }
             } else {
-                // File was created within the range → undo = delete it.
                 restores.push(FileRestore {
                     path,
                     content: None,
+                    encoding: None,
+                    had_bom: false,
                     delete: true,
                 });
             }

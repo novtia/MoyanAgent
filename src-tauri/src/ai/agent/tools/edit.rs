@@ -19,7 +19,9 @@ use crate::ai::agent::tools::paragraph::{
     insert_paragraphs_after, join_paragraphs, replace_paragraph_with, split_paragraphs,
     strip_paragraph_label,
 };
-use crate::ai::agent::tools::text_decode::normalize_tool_string;
+use crate::ai::agent::tools::text_decode::{
+    detect_and_decode, normalize_tool_string, read_text_file, write_text_file, TextEncoding,
+};
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
@@ -100,7 +102,16 @@ impl Tool for FileWriteTool {
             self.snapshots
                 .record_before(invocation.context.session_id.as_deref(), &path, op);
 
-            std::fs::write(&path, content.as_bytes())
+            let (encoding, had_bom) = if exists {
+                let bytes = std::fs::read(&path).map_err(|e| {
+                    AppError::Other(format!("Write: read {:?}: {e}", path))
+                })?;
+                let decoded = detect_and_decode(&bytes);
+                (decoded.encoding, decoded.had_bom)
+            } else {
+                (TextEncoding::Utf8, false)
+            };
+            write_text_file(&path, &content, encoding, had_bom)
                 .map_err(|e| AppError::Other(format!("Write: write {:?}: {e}", path)))?;
 
             record_read_receipt(&invocation, &path);
@@ -248,9 +259,9 @@ impl Tool for FileEditTool {
                 )));
             }
 
-            let file_content = std::fs::read_to_string(&path)
+            let decoded = read_text_file(&path)
                 .map_err(|e| AppError::Other(format!("Edit: read {:?}: {e}", path)))?;
-            let mut paragraphs = split_paragraphs(&file_content);
+            let mut paragraphs = split_paragraphs(&decoded.text);
             if paragraph_number == 0 || paragraph_number > paragraphs.len() {
                 return Ok(ToolResult::error(format!(
                     "Edit: `paragraph_number` {paragraph_number} out of range (file has {} paragraphs)",
@@ -300,7 +311,7 @@ impl Tool for FileEditTool {
                 FileOp::Update,
             );
 
-            std::fs::write(&path, updated.as_bytes())
+            write_text_file(&path, &updated, decoded.encoding, decoded.had_bom)
                 .map_err(|e| AppError::Other(format!("Edit: write {:?}: {e}", path)))?;
 
             record_read_receipt(&invocation, &path);

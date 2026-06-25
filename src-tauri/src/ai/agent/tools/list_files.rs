@@ -1,10 +1,11 @@
 //! `ListFiles` — enumerate files and subdirectories under a path.
 //!
-//! Gives the model a structured directory listing without shelling out to
-//! `dir` / `ls`, so Unicode paths and names are handled correctly on Windows.
+//! Always returns a fully nested tree: every directory node includes a `children`
+//! array (possibly empty) with its files and subfolders inside.
 
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
@@ -13,6 +14,15 @@ use crate::error::{AppError, AppResult};
 const TOOL_NAME: &str = "ListFiles";
 const DEFAULT_MAX_ENTRIES: usize = 500;
 const MAX_ENTRIES_CAP: usize = 5_000;
+
+#[derive(Clone, Serialize)]
+struct ListEntry {
+    name: String,
+    kind: &'static str,
+    /// Present on every `directory` node (may be `[]`). Omitted on `file` nodes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    children: Option<Vec<ListEntry>>,
+}
 
 #[derive(Clone)]
 pub struct ListFilesTool {
@@ -30,10 +40,11 @@ impl ListFilesTool {
         Self {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
-                description: "List files and subdirectories under a directory. \
-                    Returns `{ success: true, files: [names…] }`. Use this instead of \
-                    Bash `dir`/`ls` when you need a reliable listing (especially with \
-                    non-ASCII paths on Windows)."
+                description: "List a directory as a fully nested tree. \
+                    Returns `{ success, entries: [{ name, kind, children? }] }` where \
+                    each directory has `children: [...]` containing its files and \
+                    subfolders (recursively). `kind` is `directory` or `file`. \
+                    Use instead of Bash `dir`/`ls` for reliable Unicode paths."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -42,18 +53,12 @@ impl ListFilesTool {
                             "type": "string",
                             "description": "Absolute path to the directory to list."
                         },
-                        "recursive": {
-                            "type": "boolean",
-                            "default": false,
-                            "description": "When true, include all nested entries (depth-first). \
-                                Names are relative paths from the listed directory."
-                        },
                         "max_entries": {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": MAX_ENTRIES_CAP,
                             "default": DEFAULT_MAX_ENTRIES,
-                            "description": "Stop after this many entries (safety cap for huge trees)."
+                            "description": "Stop after this many nodes total (safety cap for huge trees)."
                         }
                     },
                     "required": ["path"]
@@ -97,11 +102,6 @@ impl Tool for ListFilesTool {
                 )));
             }
 
-            let recursive = invocation
-                .input
-                .get("recursive")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
             let max_entries = invocation
                 .input
                 .get("max_entries")
@@ -120,106 +120,72 @@ impl Tool for ListFilesTool {
                 )));
             }
 
-            let mut items = Vec::new();
-            let mut capped = false;
-            if recursive {
-                collect_recursive(&canonical, &canonical, &mut items, max_entries, &mut capped)?;
-            } else {
-                collect_shallow(&canonical, &canonical, &mut items)?;
-            }
-
-            items.sort_by(|a, b| {
-                b.is_dir
-                    .cmp(&a.is_dir)
-                    .then_with(|| a.name.cmp(&b.name))
-            });
-
-            let files: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+            let mut count = 0usize;
+            let mut truncated = false;
+            let entries = collect_tree(&canonical, max_entries, &mut count, &mut truncated)?;
 
             Ok(ToolResult::ok(json!({
                 "success": true,
-                "files": files,
+                "path": canonical.to_string_lossy(),
+                "truncated": truncated,
+                "entries": entries,
             })))
         })
     }
 }
 
-struct ListedItem {
-    name: String,
-    is_dir: bool,
-}
-
-fn collect_shallow(root: &Path, dir: &Path, out: &mut Vec<ListedItem>) -> AppResult<()> {
-    for entry in std::fs::read_dir(dir).map_err(|e| {
-        AppError::Other(format!("ListFiles: read_dir {:?}: {e}", dir))
-    })? {
-        let entry = entry.map_err(|e| AppError::Other(format!("ListFiles: entry: {e}")))?;
-        if let Some(item) = entry_to_item(root, &entry)? {
-            out.push(item);
-        }
-    }
-    Ok(())
-}
-
-fn collect_recursive(
-    root: &Path,
+fn collect_tree(
     dir: &Path,
-    out: &mut Vec<ListedItem>,
     max: usize,
-    capped: &mut bool,
-) -> AppResult<()> {
-    if out.len() >= max {
-        *capped = true;
-        return Ok(());
-    }
-    collect_shallow(root, dir, out)?;
-    if out.len() >= max {
-        *capped = true;
-        out.truncate(max);
-        return Ok(());
-    }
+    count: &mut usize,
+    truncated: &mut bool,
+) -> AppResult<Vec<ListEntry>> {
+    let mut rows: Vec<(String, PathBuf, bool)> = Vec::new();
 
-    let subdirs: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map_err(|e| AppError::Other(format!("ListFiles: read_dir {:?}: {e}", dir)))?
-        .filter_map(|e| e.ok())
-        .filter_map(|e| e.path().is_dir().then_some(e.path()))
-        .collect();
-
-    for sub in subdirs {
-        if out.len() >= max {
-            *capped = true;
-            return Ok(());
+    for entry in std::fs::read_dir(dir).map_err(|e| {
+        AppError::Other(format!("{TOOL_NAME}: read_dir {:?}: {e}", dir))
+    })? {
+        let entry = entry.map_err(|e| AppError::Other(format!("{TOOL_NAME}: entry: {e}")))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.is_empty() || name.starts_with('.') {
+            continue;
         }
-        collect_recursive(root, &sub, out, max, capped)?;
+        let file_type = entry
+            .file_type()
+            .map_err(|e| AppError::Other(format!("{TOOL_NAME}: file_type: {e}")))?;
+        rows.push((name, entry.path(), file_type.is_dir()));
     }
-    Ok(())
-}
 
-fn entry_to_item(root: &Path, entry: &std::fs::DirEntry) -> AppResult<Option<ListedItem>> {
-    let path = entry.path();
-    let file_type = entry
-        .file_type()
-        .map_err(|e| AppError::Other(format!("ListFiles: file_type: {e}")))?;
+    rows.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
 
-    let name = path
-        .strip_prefix(root)
-        .ok()
-        .and_then(|p| {
-            let s = p.to_string_lossy().replace('\\', "/");
-            if s.is_empty() {
-                None
+    let mut out = Vec::with_capacity(rows.len());
+    for (name, path, is_dir) in rows {
+        if *count >= max {
+            *truncated = true;
+            break;
+        }
+        *count += 1;
+
+        if is_dir {
+            let children = if *count >= max {
+                *truncated = true;
+                Vec::new()
             } else {
-                Some(s)
-            }
-        })
-        .unwrap_or_else(|| entry.file_name().to_string_lossy().into_owned());
-
-    if name.is_empty() {
-        return Ok(None);
+                collect_tree(&path, max, count, truncated)?
+            };
+            out.push(ListEntry {
+                name,
+                kind: "directory",
+                children: Some(children),
+            });
+        } else {
+            out.push(ListEntry {
+                name,
+                kind: "file",
+                children: None,
+            });
+        }
     }
 
-    Ok(Some(ListedItem {
-        name,
-        is_dir: file_type.is_dir(),
-    }))
+    Ok(out)
 }

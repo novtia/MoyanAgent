@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::ai::agent::tools::paragraph::{number_paragraph_range, paragraph_count};
-use crate::ai::agent::tools::text_decode::decode_file_bytes;
+use crate::ai::agent::tools::text_decode::detect_and_decode;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
@@ -159,7 +159,8 @@ impl Tool for FileReadTool {
 
             let bytes = std::fs::read(&canonical)
                 .map_err(|e| AppError::Other(format!("Read: open {:?}: {e}", canonical)))?;
-            let text = decode_file_bytes(&bytes);
+            let decoded = detect_and_decode(&bytes);
+            let text = decoded.text;
             let paragraphs_total = paragraph_count(&text);
 
             let from = parse_optional_paragraph(invocation.input.get("paragraph_from"), "paragraph_from")?;
@@ -213,6 +214,8 @@ impl Tool for FileReadTool {
             Ok(ToolResult::ok(serde_json::json!({
                 "path": canonical.to_string_lossy(),
                 "bytes": bytes.len(),
+                "encoding": decoded.encoding.label(),
+                "had_bom": decoded.had_bom,
                 "chars": chars,
                 "lines": paragraphs_returned,
                 "paragraphs_total": paragraphs_total,

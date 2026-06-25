@@ -165,8 +165,8 @@ async function buildSearchTargets(
       const key = normalizeReaderPath(path);
       if (byPath.has(key)) continue;
       try {
-        const text = await api.readProjectFile(sessionId, path);
-        byPath.set(key, { tabId: null, path, text, inTab: false });
+        const file = await api.readProjectFile(sessionId, path);
+        byPath.set(key, { tabId: null, path, text: file.text, inTab: false });
       } catch {
         /* skip unreadable files */
       }
@@ -215,11 +215,13 @@ function activateMatch(match: ReaderFindMatch | null) {
   if (!tab && reader.sessionId) {
     void (async () => {
       try {
-        const text = await api.readProjectFile(reader.sessionId!, match.path);
+        const file = await api.readProjectFile(reader.sessionId!, match.path);
         reader.openDoc({
           path: match.path,
-          text,
+          text: file.text,
           fileType: inferFileType(match.path),
+          encoding: file.encoding,
+          hadBom: file.hadBom,
         });
         const opened = useReader.getState().getTabByPath(match.path);
         if (opened) useReader.getState().setActiveTab(opened.id);
@@ -244,6 +246,9 @@ function applyTextToTarget(
   const tab = reader.getTabByPath(path);
   if (tab) {
     reader.updateTabText(path, text, { dirty });
+    if (sessionId) {
+      void api.writeProjectFile(sessionId, path, text, tab.encoding, tab.hadBom);
+    }
     return;
   }
   if (sessionId) {
@@ -364,7 +369,9 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
     const sessionId = useReader.getState().sessionId;
     const reader = useReader.getState();
     const tab = reader.getTabByPath(match.path);
-    const text = tab?.text ?? (sessionId ? await api.readProjectFile(sessionId, match.path) : "");
+    const text =
+      tab?.text ??
+      (sessionId ? (await api.readProjectFile(sessionId, match.path)).text : "");
     const scrollIndex = resolveFindScrollIndex(
       text,
       query,
