@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::ai::agent::tools::paragraph::{number_paragraph_range, paragraph_count};
+use crate::ai::agent::tools::read_receipt::{expand_read_range, MIN_READ_CONTEXT_LINES};
 use crate::ai::agent::tools::text_decode::detect_and_decode;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
@@ -88,7 +89,9 @@ impl FileReadTool {
                     (one line = one paragraph). Read the target file once at the start of \
                     a prose task (full file is fine). Use ranged Read (`paragraph_from`, \
                     optional `paragraph_to`) ONLY when Edit failed and you need the exact \
-                    paragraph text to fix `original_content`. Do not re-read before every Edit."
+                    snippet — you may request a single paragraph; the system automatically \
+                    expands the returned window to include surrounding context (at least \
+                    20 paragraphs when the file is long enough). Do not re-read before every Edit."
                     .to_string(),
                 schema: serde_json::json!({
                     "type": "object",
@@ -167,22 +170,26 @@ impl Tool for FileReadTool {
             let to = parse_optional_paragraph(invocation.input.get("paragraph_to"), "paragraph_to")?;
             let range = resolve_paragraph_range(from, to)?;
 
-            let (paragraph_from, paragraph_to) = match range {
-                None => (1, paragraphs_total),
-                Some((f, t)) => {
-                    if f == 0 || f > paragraphs_total {
-                        return Ok(ToolResult::error(format!(
-                            "Read: `paragraph_from` {f} out of range (file has {paragraphs_total} paragraphs)"
-                        )));
+            let (requested_from, requested_to, paragraph_from, paragraph_to, context_expanded) =
+                match range {
+                    None => (1, paragraphs_total, 1, paragraphs_total, false),
+                    Some((f, t)) => {
+                        if f == 0 || f > paragraphs_total {
+                            return Ok(ToolResult::error(format!(
+                                "Read: `paragraph_from` {f} out of range (file has {paragraphs_total} paragraphs)"
+                            )));
+                        }
+                        if t > paragraphs_total {
+                            return Ok(ToolResult::error(format!(
+                                "Read: `paragraph_to` {t} out of range (file has {paragraphs_total} paragraphs)"
+                            )));
+                        }
+                        let (expanded_from, expanded_to) =
+                            expand_read_range(f, t, paragraphs_total);
+                        let expanded = expanded_from != f || expanded_to != t;
+                        (f, t, expanded_from, expanded_to, expanded)
                     }
-                    if t > paragraphs_total {
-                        return Ok(ToolResult::error(format!(
-                            "Read: `paragraph_to` {t} out of range (file has {paragraphs_total} paragraphs)"
-                        )));
-                    }
-                    (f, t)
-                }
-            };
+                };
 
             let numbered = number_paragraph_range(&text, paragraph_from, paragraph_to);
             let slice_text: String = text
@@ -221,6 +228,10 @@ impl Tool for FileReadTool {
                 "paragraphs_total": paragraphs_total,
                 "paragraph_from": paragraph_from,
                 "paragraph_to": paragraph_to,
+                "requested_paragraph_from": requested_from,
+                "requested_paragraph_to": requested_to,
+                "context_expanded": context_expanded,
+                "min_context_lines": MIN_READ_CONTEXT_LINES,
                 "paragraphs_returned": paragraphs_returned,
                 "ranged": ranged,
                 "text": numbered,

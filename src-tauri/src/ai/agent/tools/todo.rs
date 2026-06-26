@@ -157,7 +157,9 @@ Keep the list as short as possible: 2–5 tasks is typical. \
 If you find yourself writing 6+ tasks, reconsider — you are almost certainly \
 splitting one action into meaningless micro-tasks.\n\n\
 ━━━ WORKFLOW (two phases only) ━━━\n\
-1. PLAN once: call `add` with ALL tasks as an array at the very start.\n\
+1. PLAN once: call `add` with ALL tasks as a JSON array at the very start, e.g. \
+   content: [\"撰写正文\", \"自查字数\"]. Each array element is exactly ONE task. \
+   NEVER pass the whole list as one string like \"[\\\"a\\\", \\\"b\\\"]\". \
    Do NOT add more tasks later.\n\
 2. EXECUTE: before starting each task, call `update` → in_progress. \
    When done, call `update` with `status: done` ONLY — do NOT change `content`. \
@@ -184,7 +186,10 @@ Status lifecycle: pending → in_progress → done | cancelled"
                             "description": "The operation to perform."
                         },
                         "content": {
-                            "description": "For 'add': a single string or an array of strings. For 'update': the new text.",
+                            "description": "For 'add': pass multiple tasks as a JSON array of strings, e.g. \
+                                [\"task one\", \"task two\"] — each element is ONE task. \
+                                Do NOT put the whole array inside a single string. \
+                                For 'update': the new text.",
                             "oneOf": [
                                 { "type": "string" },
                                 { "type": "array", "items": { "type": "string" } }
@@ -207,6 +212,72 @@ Status lifecycle: pending → in_progress → done | cancelled"
             },
         }
     }
+}
+
+/// Expand `add` content into individual task strings.
+///
+/// Returns `(tasks, split_from_string)` where `split_from_string` is true when
+/// a single string that looked like a JSON array was auto-split.
+fn expand_add_contents(content_val: Value) -> AppResult<(Vec<String>, bool)> {
+    match content_val {
+        Value::String(s) => {
+            let texts = parse_task_text(&s);
+            let split = texts.len() > 1 && looks_like_json_array_string(&s);
+            Ok((texts, split))
+        }
+        Value::Array(arr) => {
+            let mut texts = Vec::new();
+            let mut split_from_string = false;
+            for v in arr {
+                match v {
+                    Value::String(s) => {
+                        let parts = parse_task_text(&s);
+                        if parts.len() > 1 && looks_like_json_array_string(&s) {
+                            split_from_string = true;
+                        }
+                        texts.extend(parts);
+                    }
+                    _ => {}
+                }
+            }
+            Ok((texts, split_from_string))
+        }
+        _ => Err(AppError::Invalid(
+            "TodoList add: `content` must be a string or array of strings".into(),
+        )),
+    }
+}
+
+fn looks_like_json_array_string(s: &str) -> bool {
+    let trimmed = s.trim();
+    trimmed.starts_with('[') && trimmed.ends_with(']')
+}
+
+/// Parse one task string; auto-split when the model stringifies a JSON array.
+fn parse_task_text(s: &str) -> Vec<String> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    if looks_like_json_array_string(trimmed) {
+        if let Ok(Value::Array(arr)) = serde_json::from_str(trimmed) {
+            let mut out = Vec::new();
+            for v in arr {
+                if let Value::String(text) = v {
+                    let t = text.trim();
+                    if !t.is_empty() {
+                        out.push(t.to_string());
+                    }
+                }
+            }
+            if out.len() > 1 {
+                return out;
+            }
+        }
+    }
+
+    vec![trimmed.to_string()]
 }
 
 impl Tool for TodoListTool {
@@ -278,34 +349,26 @@ impl Tool for TodoListTool {
             match action.as_str() {
                 "add" => {
                     let content_val = invocation.input.get("content").cloned().unwrap_or(Value::Null);
-                    let texts: Vec<String> = match content_val {
-                        Value::String(s) => vec![s],
-                        Value::Array(arr) => arr
-                            .into_iter()
-                            .filter_map(|v| v.as_str().map(str::to_string))
-                            .collect(),
-                        _ => {
-                            return Ok(ToolResult::error(
-                                "TodoList add: `content` must be a string or array of strings",
-                            ));
-                        }
-                    };
+                    let (texts, split_from_string) = expand_add_contents(content_val)?;
                     if texts.is_empty() {
                         return Ok(ToolResult::error("TodoList add: no content items provided"));
                     }
                     let mut added = Vec::with_capacity(texts.len());
                     for text in texts {
-                        let trimmed = text.trim().to_string();
-                        if trimmed.is_empty() {
-                            continue;
-                        }
-                        let item = store.add(trimmed);
+                        let item = store.add(text);
                         added.push(item.to_json());
                     }
-                    Ok(ToolResult::ok(json!({
+                    let mut result = json!({
                         "added": added,
                         "total": store.items.len()
-                    })))
+                    });
+                    if split_from_string {
+                        result["note"] = json!(
+                            "Detected a JSON array written as one string; split into separate tasks. \
+                             Pass `content` as a JSON array of strings, not a stringified array."
+                        );
+                    }
+                    Ok(ToolResult::ok(result))
                 }
 
                 "update" => {
@@ -421,5 +484,32 @@ mod tests {
             assert_eq!(item.content, "重写 P013");
             assert_eq!(item.status, "done");
         }
+    }
+
+    #[test]
+    fn expand_splits_stringified_json_array() {
+        let raw = r#"["阅读并解析原第九章", "撰写第九章正文", "对正文进行字数估算"]"#;
+        let (texts, split) = expand_add_contents(Value::String(raw.into())).unwrap();
+        assert!(split);
+        assert_eq!(texts.len(), 3);
+        assert_eq!(texts[0], "阅读并解析原第九章");
+    }
+
+    #[test]
+    fn expand_keeps_single_task_string() {
+        let (texts, split) =
+            expand_add_contents(Value::String("撰写第九章正文".into())).unwrap();
+        assert!(!split);
+        assert_eq!(texts, vec!["撰写第九章正文".to_string()]);
+    }
+
+    #[test]
+    fn expand_splits_array_element_that_is_stringified_json_array() {
+        let raw = json!([
+            r#"["任务一", "任务二", "任务三"]"#
+        ]);
+        let (texts, split) = expand_add_contents(raw).unwrap();
+        assert!(split);
+        assert_eq!(texts.len(), 3);
     }
 }

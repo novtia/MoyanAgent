@@ -28,6 +28,9 @@ import {
 } from "../../store/reader";
 import type { ProjectDirEntry } from "../../types";
 
+/** DataTransfer MIME for dragging reader files into the composer as @ mentions. */
+export const READER_FILE_DRAG_TYPE = "application/x-moyan-reader-file";
+
 const TEXT_EXTENSIONS = [
   ".txt",
   ".md",
@@ -139,6 +142,7 @@ export function ReaderFileExplorer() {
   const loading = useFileExplorer((s) => s.loading);
   const error = useFileExplorer((s) => s.error);
   const setSelection = useFileExplorer((s) => s.setSelection);
+  const setSelectedPaths = useFileExplorer((s) => s.setSelectedPaths);
   const toggleSelection = useFileExplorer((s) => s.toggleSelection);
   const selectRange = useFileExplorer((s) => s.selectRange);
   const selectAll = useFileExplorer((s) => s.selectAll);
@@ -157,8 +161,20 @@ export function ReaderFileExplorer() {
   const openDoc = useReader((s) => s.openDoc);
   const lastClickRef = useRef<{ path: string; at: number } | null>(null);
   const dragPathsRef = useRef<string[]>([]);
+  const viewRef = useRef<HTMLDivElement | null>(null);
+  const suppressClickRef = useRef(false);
+  const marqueeRef = useRef<{
+    startX: number;
+    startY: number;
+    additive: boolean;
+    base: string[];
+    moved: boolean;
+  } | null>(null);
 
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [marquee, setMarquee] = useState<
+    { left: number; top: number; width: number; height: number } | null
+  >(null);
 
   const [viewMode, setViewMode] = useState<"grid" | "list">(() => {
     return (localStorage.getItem("reader-file-explorer-view") as "grid" | "list") || "grid";
@@ -491,6 +507,10 @@ export function ReaderFileExplorer() {
 
   const onItemClick = useCallback(
     (event: ReactMouseEvent, entry: ProjectDirEntry) => {
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false;
+        return;
+      }
       if (event.shiftKey) {
         selectRange(entry.path);
         return;
@@ -583,14 +603,21 @@ export function ReaderFileExplorer() {
         setSelection(entry.path);
       }
       dragPathsRef.current = paths;
-      event.dataTransfer.effectAllowed = "move";
+      // copyMove: move when dropped on a folder/breadcrumb, copy (as @ mention)
+      // when dropped into the composer input.
+      event.dataTransfer.effectAllowed = "copyMove";
+      const items = paths.map((p) => ({
+        path: p,
+        isDir: entryMap.get(p)?.isDir ?? false,
+      }));
       try {
         event.dataTransfer.setData("text/plain", paths.join("\n"));
+        event.dataTransfer.setData(READER_FILE_DRAG_TYPE, JSON.stringify(items));
       } catch {
         /* ignore */
       }
     },
-    [selectedPaths, setSelection],
+    [entryMap, selectedPaths, setSelection],
   );
 
   const onItemDragEnd = useCallback(() => {
@@ -669,9 +696,80 @@ export function ReaderFileExplorer() {
 
   const onViewClick = useCallback(
     (event: ReactMouseEvent) => {
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false;
+        return;
+      }
       if (event.target === event.currentTarget) clearSelection();
     },
     [clearSelection],
+  );
+
+  const onViewMouseDown = useCallback(
+    (event: ReactMouseEvent) => {
+      if (event.button !== 0) return;
+      const target = event.target as HTMLElement;
+      if (target.closest(".reader-files-item")) return;
+      const container = viewRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const additive = event.ctrlKey || event.metaKey || event.shiftKey;
+      marqueeRef.current = {
+        startX: event.clientX - rect.left + container.scrollLeft,
+        startY: event.clientY - rect.top + container.scrollTop,
+        additive,
+        base: additive ? [...selectedPaths] : [],
+        moved: false,
+      };
+
+      const onMove = (e: MouseEvent) => {
+        const m = marqueeRef.current;
+        const el = viewRef.current;
+        if (!m || !el) return;
+        const r = el.getBoundingClientRect();
+        const clamp = (v: number, min: number, max: number) =>
+          Math.max(min, Math.min(max, v));
+        const curX = clamp(e.clientX - r.left, 0, r.width) + el.scrollLeft;
+        const curY = clamp(e.clientY - r.top, 0, r.height) + el.scrollTop;
+        const left = Math.min(m.startX, curX);
+        const top = Math.min(m.startY, curY);
+        const width = Math.abs(curX - m.startX);
+        const height = Math.abs(curY - m.startY);
+        if (!m.moved && width < 5 && height < 5) return;
+        m.moved = true;
+        setMarquee({ left, top, width, height });
+        const right = left + width;
+        const bottom = top + height;
+        const hits: string[] = [];
+        el.querySelectorAll<HTMLElement>("[data-path]").forEach((node) => {
+          const nr = node.getBoundingClientRect();
+          const il = nr.left - r.left + el.scrollLeft;
+          const it = nr.top - r.top + el.scrollTop;
+          if (il < right && il + nr.width > left && it < bottom && it + nr.height > top) {
+            const p = node.getAttribute("data-path");
+            if (p) hits.push(p);
+          }
+        });
+        const next = m.additive
+          ? Array.from(new Set([...m.base, ...hits]))
+          : hits;
+        setSelectedPaths(next);
+      };
+
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        if (marqueeRef.current?.moved) {
+          suppressClickRef.current = true;
+        }
+        marqueeRef.current = null;
+        setMarquee(null);
+      };
+
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [selectedPaths, setSelectedPaths],
   );
 
   const breadcrumbSegments = useMemo(() => {
@@ -751,17 +849,30 @@ export function ReaderFileExplorer() {
         <p className="reader-files-status">{t("fileExplorer.emptyDir")}</p>
       ) : (
         <div
-          className={`reader-files-view is-${viewMode}${dropTarget === "__view__" ? " is-drop-target" : ""}`}
+          ref={viewRef}
+          className={`reader-files-view is-${viewMode}${dropTarget === "__view__" ? " is-drop-target" : ""}${marquee ? " is-marqueeing" : ""}`}
           role="list"
           tabIndex={0}
           onKeyDown={onViewKeyDown}
           onClick={onViewClick}
+          onMouseDown={onViewMouseDown}
           onDragOver={onViewDragOver}
           onDragLeave={(e) => {
             if (e.target === e.currentTarget) setDropTarget((p) => (p === "__view__" ? null : p));
           }}
           onDrop={onViewDrop}
         >
+          {marquee ? (
+            <div
+              className="reader-files-marquee"
+              style={{
+                left: marquee.left,
+                top: marquee.top,
+                width: marquee.width,
+                height: marquee.height,
+              }}
+            />
+          ) : null}
           {entries.map((entry) => {
             const selected = selectedPaths.includes(entry.path);
             const isCut = cutPaths.has(entry.path);
@@ -772,6 +883,7 @@ export function ReaderFileExplorer() {
                 type="button"
                 role="listitem"
                 draggable
+                data-path={entry.path}
                 className={`reader-files-item${selected ? " is-selected" : ""}${isCut ? " is-cut" : ""}${isDropTarget ? " is-drop-target" : ""}`}
                 onClick={(e) => onItemClick(e, entry)}
                 onContextMenu={(e) => openEntryMenu(e, entry)}

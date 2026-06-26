@@ -13,13 +13,24 @@ import {
   useReader,
   readerDocFromToolOutput,
   countChars,
+  formatReadToolTitle,
 } from "../../store/reader";
 import { diffChars } from "diff";
 import { InlineDiffCode } from "../../utils/inlineDiff";
 import { srcOf, api } from "../../api/tauri";
-import { dialog } from "../ui";
+import { dialog, toast } from "../ui";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { ATELIER_DRAG_TYPE } from "./SessionGallery";
+import {
+  MentionText,
+  MentionEditor,
+  parseMentionPaths,
+  normalizeMentionPath,
+  isWithinProject,
+  type MentionEditorHandle,
+} from "./mention";
+import { READER_FILE_DRAG_TYPE } from "./ReaderFileExplorer";
+import { useProject } from "../../store/project";
 import type {
   AssistantBlock,
   AttachmentDraft,
@@ -70,6 +81,12 @@ function MessageTokenUsage({ usage }: { usage?: MessageTokenUsageData | null }) 
 
 function nativeFilePath(file: File) {
   return (file as File & { path?: string }).path || "";
+}
+
+const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|svg)$/i;
+
+function isImageFile(file: File): boolean {
+  return file.type.startsWith("image/") || IMAGE_EXT_RE.test(file.name);
 }
 
 async function fileToBytes(file: File): Promise<Uint8Array> {
@@ -438,6 +455,9 @@ function AssistantContent({
         if (block.tool === "Delete") {
           return <DeleteDocCard key={`del:${block.id}:${i}`} block={block} />;
         }
+        if (block.tool === "Read") {
+          return <ReadToolCard key={`read:${block.id}:${i}`} block={block} />;
+        }
         return <ToolCallBlock key={`tool:${block.id}:${i}`} block={block} />;
       })}
     </>
@@ -750,6 +770,61 @@ function StreamingDocCard({
   );
 }
 
+/** Dedicated row for the `Read` tool — title shows file name or folder + range. */
+function ReadToolCard({
+  block,
+}: {
+  block: Extract<AssistantBlock, { type: "tool_use" }>;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const status = block.status;
+  const title = useMemo(
+    () => formatReadToolTitle(block.input, block.output),
+    [block.input, block.output],
+  );
+  const bodyText = useMemo(() => {
+    const o = block.output;
+    if (!o || typeof o !== "object") return "";
+    const text = (o as { text?: unknown }).text;
+    return typeof text === "string" ? text : "";
+  }, [block.output]);
+  const hasDetail = bodyText.length > 0;
+
+  const statusLabel =
+    status === "pending"
+      ? t("message.toolCallRunning")
+      : status === "error"
+        ? t("message.toolCallError")
+        : t("message.toolCallDone");
+
+  return (
+    <div className={`tool-call-block read-tool-card ${status} ${open ? "is-open" : ""}`}>
+      <button
+        type="button"
+        className="tool-call-summary"
+        aria-expanded={open}
+        title={t("message.toolCallToggle")}
+        onClick={() => hasDetail && setOpen((v) => !v)}
+        disabled={!hasDetail}
+      >
+        <ToolCallIcon status={status} />
+        <span className="tool-call-name read-tool-title" title={title}>
+          {title || t("message.readToolUntitled")}
+        </span>
+        <span className="tool-call-spacer" aria-hidden />
+        <span className={`tool-call-badge ${status}`}>{statusLabel}</span>
+        {hasDetail && <ThinkingChevronIcon />}
+      </button>
+      {open && hasDetail && (
+        <div className="tool-call-detail">
+          <pre className="tool-call-detail-body">{bodyText}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Dedicated row for the `Delete` tool — same shell as [`ToolCallBlock`]. */
 function DeleteDocCard({
   block,
@@ -968,13 +1043,6 @@ function ToolCallBlock({
         : null,
     [block.tool, block.output, status],
   );
-  const readerDoc = useMemo(
-    () =>
-      block.tool === "Read" && status === "success"
-        ? readerDocFromToolOutput(block.output)
-        : null,
-    [block.tool, block.output, status],
-  );
 
   return (
     <div
@@ -992,27 +1060,6 @@ function ToolCallBlock({
         <span className="tool-call-name">{block.tool}</span>
         {summary && <span className="tool-call-args">{summary}</span>}
         <span className="tool-call-spacer" aria-hidden />
-        {readerDoc && (
-          <span
-            className="tool-call-read-btn"
-            role="button"
-            tabIndex={0}
-            title={t("message.openInReader")}
-            onClick={(e) => {
-              e.stopPropagation();
-              useReader.getState().openDoc(readerDoc);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                e.stopPropagation();
-                useReader.getState().openDoc(readerDoc);
-              }
-            }}
-          >
-            {t("message.openInReader")}
-          </span>
-        )}
         <span className={`tool-call-badge ${status}`}>{statusLabel}</span>
         {hasDetail && <ThinkingChevronIcon />}
       </button>
@@ -1284,6 +1331,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
   const editMessage = useSession((s) => s.editMessage);
   const quoteMessage = useSession((s) => s.quoteMessage);
   const busy = useSession((s) => s.busy);
+  const active = useSession((s) => s.active);
 
   const isUser = m.role === "user";
   const isAssistant = m.role === "assistant";
@@ -1321,13 +1369,28 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(m.text || "");
+  const [draftMentions, setDraftMentions] = useState<string[]>([]);
   const [draftImages, setDraftImages] = useState<ImageRefAbs[]>(inputs);
   const [picking, setPicking] = useState(false);
   const [editDragOver, setEditDragOver] = useState(false);
   const editDragDepth = useRef(0);
   const addedDraftIdsRef = useRef<Set<string>>(new Set());
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const mentionEditorRef = useRef<MentionEditorHandle | null>(null);
 
+  const projects = useProject((s) => s.projects);
+  const projectRoot = useMemo(() => {
+    const projectId = active?.session.project_id ?? null;
+    if (!projectId) return null;
+    return projects.find((p) => p.id === projectId)?.path?.trim() || null;
+  }, [active, projects]);
+
+  const onMentionEditorChange = (text: string, paths: string[]) => {
+    setDraft(text);
+    setDraftMentions(paths);
+  };
+
+  // Auto-grow the assistant edit textarea (user edits use the mention editor).
   useLayoutEffect(() => {
     if (!editing) return;
     const ta = taRef.current;
@@ -1359,7 +1422,9 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
 
   const beginEdit = () => {
     if (!canEdit) return;
-    setDraft((m.text || "").trim() || blocksText || "");
+    const seed = (m.text || "").trim() || blocksText || "";
+    setDraft(seed);
+    setDraftMentions(isUser ? parseMentionPaths(seed) : []);
     setDraftImages(isUser ? inputs : []);
     addedDraftIdsRef.current = new Set();
     setEditing(true);
@@ -1368,6 +1433,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     const orphans = Array.from(addedDraftIdsRef.current);
     addedDraftIdsRef.current = new Set();
     setDraft(m.text || "");
+    setDraftMentions(isUser ? parseMentionPaths(m.text || "") : []);
     setDraftImages(isUser ? inputs : []);
     setEditing(false);
     if (orphans.length) await cleanupAddedDrafts(orphans);
@@ -1469,7 +1535,18 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
 
   const editHasDragPayload = (e: React.DragEvent) => {
     const types = Array.from(e.dataTransfer?.types || []);
-    return types.includes("Files") || types.includes(ATELIER_DRAG_TYPE);
+    return (
+      types.includes("Files") ||
+      types.includes(ATELIER_DRAG_TYPE) ||
+      types.includes(READER_FILE_DRAG_TYPE)
+    );
+  };
+
+  const insertMentionPath = (rawPath: string): boolean => {
+    const p = normalizeMentionPath(rawPath);
+    if (projectRoot && !isWithinProject(p, projectRoot)) return false;
+    mentionEditorRef.current?.insertMention(p);
+    return true;
   };
   const onEditDragEnter = (e: React.DragEvent) => {
     if (!isUser || !editing || !editHasDragPayload(e)) return;
@@ -1508,9 +1585,44 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
       return;
     }
 
+    // Files dragged from the reader file explorer become @ mentions; they're
+    // project-internal and trusted, so insert them without re-validating.
+    const readerPayload = e.dataTransfer?.getData(READER_FILE_DRAG_TYPE);
+    if (readerPayload) {
+      try {
+        const items = JSON.parse(readerPayload) as Array<
+          string | { path: string; isDir?: boolean }
+        >;
+        for (const it of items) {
+          if (typeof it === "string") {
+            mentionEditorRef.current?.insertMention(it);
+          } else if (it && it.path) {
+            mentionEditorRef.current?.insertMention(it.path, it.isDir);
+          }
+        }
+      } catch (err) {
+        console.warn(err);
+      }
+      return;
+    }
+
     const files = Array.from(e.dataTransfer?.files || []);
     if (!files.length) return;
-    ingestFiles(files);
+
+    const images = files.filter(isImageFile);
+    const others = files.filter((f) => !isImageFile(f));
+
+    if (images.length) ingestFiles(images);
+
+    if (others.length) {
+      let outside = 0;
+      for (const f of others) {
+        const p = nativeFilePath(f);
+        if (!p) continue;
+        if (!insertMentionPath(p)) outside += 1;
+      }
+      if (outside) toast.error(t("composer.mentionOutsideProject"));
+    }
   };
 
   const imageIdsEqual = (a: ImageRefAbs[], b: ImageRefAbs[]) => {
@@ -1597,7 +1709,9 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
           )}
 
           {!editing && showMessageText && !isError && (
-            <div className="text">{m.text}</div>
+            <div className="text">
+              {isUser ? <MentionText text={m.text || ""} /> : m.text}
+            </div>
           )}
           {!editing && isError && <div className="text mono">{m.text}</div>}
 
@@ -1635,21 +1749,46 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
                   ))}
                 </div>
               )}
-              <textarea
-                ref={taRef}
-                className="bubble-edit-textarea field-input field-input--bare"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    cancelEdit();
-                  } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                    e.preventDefault();
-                    saveEdit();
-                  }
-                }}
-              />
+              {isUser ? (
+                <div
+                  className="bubble-edit-editor-wrap"
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      cancelEdit();
+                    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      saveEdit();
+                    }
+                  }}
+                >
+                  <MentionEditor
+                    ref={mentionEditorRef}
+                    className="bubble-edit-editor"
+                    value={draft}
+                    mentions={draftMentions}
+                    onChange={onMentionEditorChange}
+                    placeholder={t("composer.placeholderDefault")}
+                    autoFocus
+                  />
+                </div>
+              ) : (
+                <textarea
+                  ref={taRef}
+                  className="bubble-edit-textarea field-input field-input--bare"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      cancelEdit();
+                    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      saveEdit();
+                    }
+                  }}
+                />
+              )}
               <div className="bubble-edit-actions">
                 {isUser ? (
                   <button

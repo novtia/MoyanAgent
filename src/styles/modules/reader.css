@@ -1276,6 +1276,21 @@
   min-height: 0;
   overflow: auto;
   padding: 2px;
+  position: relative;
+}
+
+.reader-files-view.is-marqueeing {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.reader-files-marquee {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-radius: 2px;
 }
 
 /* Grid View */

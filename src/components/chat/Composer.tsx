@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
 import { useSettings } from "../../store/settings";
+import { useProject } from "../../store/project";
 import { api, srcOf } from "../../api/tauri";
+import { toast } from "../ui/Toast";
 import {
   ASPECT_RATIOS,
   IMAGE_SIZES,
@@ -11,11 +12,24 @@ import {
   shortModelName,
 } from "../../config/generation";
 import type { AttachmentDraft, ModelServiceModel } from "../../types";
-import { ComposerTextarea } from "./ComposerTextarea";
+import {
+  ComposerEditor,
+  normalizeMentionPath,
+  isWithinProject,
+  type ComposerEditorHandle,
+} from "./mention";
+import { ComposerFileTree } from "./ComposerFileTree";
+import { READER_FILE_DRAG_TYPE } from "./ReaderFileExplorer";
 import { ATELIER_DRAG_TYPE } from "./SessionGallery";
 
 function nativeFilePath(file: File) {
   return (file as File & { path?: string }).path || "";
+}
+
+const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|svg)$/i;
+
+function isImageFile(file: File): boolean {
+  return file.type.startsWith("image/") || IMAGE_EXT_RE.test(file.name);
 }
 
 /** Popover uses `bottom: calc(100% + POPOVER_GAP)` — its bottom sits this many px above the anchor box top. */
@@ -55,7 +69,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   // Subscribe to composer fields granularly (not the whole `composer` object)
   // so that typing — which replaces the composer object on every keystroke —
   // doesn't re-render this heavy component. The prompt text itself lives in the
-  // isolated `ComposerTextarea` leaf below.
+  // isolated `ComposerEditor` leaf below.
   const attachments = useSession((s) => s.composer.attachments);
   const pendingAttachments = useSession((s) => s.composer.pendingAttachments);
   const aspectRatio = useSession((s) => s.composer.aspectRatio);
@@ -82,14 +96,23 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const setChatMode = useSession((s) => s.setChatMode);
   const settings = useSettings((s) => s.settings);
   const update = useSettings((s) => s.update);
+  const projects = useProject((s) => s.projects);
 
-  const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const projectRoot = useMemo(() => {
+    const projectId = active?.session.project_id ?? null;
+    if (!projectId) return null;
+    return projects.find((p) => p.id === projectId)?.path?.trim() || null;
+  }, [active, projects]);
+
+  const editorRef = useRef<ComposerEditorHandle | null>(null);
   const paramsRef = useRef<HTMLDivElement | null>(null);
   const thinkingRef = useRef<HTMLDivElement | null>(null);
   const modeRef = useRef<HTMLDivElement | null>(null);
   const modelRef = useRef<HTMLDivElement | null>(null);
+  const mentionRef = useRef<HTMLDivElement | null>(null);
 
   const [paramsOpen, setParamsOpen] = useState(false);
+  const [mentionOpen, setMentionOpen] = useState(false);
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
@@ -139,11 +162,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
 
   useEffect(() => {
     const onFocusComposer = () => {
-      const ta = taRef.current;
-      if (!ta) return;
-      ta.focus();
-      const len = ta.value.length;
-      ta.setSelectionRange(len, len);
+      editorRef.current?.focus();
     };
     window.addEventListener("atelier:focus-composer", onFocusComposer);
     return () =>
@@ -195,6 +214,17 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     window.addEventListener("mousedown", onDoc);
     return () => window.removeEventListener("mousedown", onDoc);
   }, [modeOpen]);
+
+  useEffect(() => {
+    if (!mentionOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (mentionRef.current && !mentionRef.current.contains(e.target as Node)) {
+        setMentionOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onDoc);
+    return () => window.removeEventListener("mousedown", onDoc);
+  }, [mentionOpen]);
 
   useEffect(() => {
     if (!modelOpen) return;
@@ -288,20 +318,31 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     }
     onSubmit();
   };
-  const pickAttachments = async () => {
-    const selected = await open({
-      multiple: true,
-      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }],
-    });
-    const paths = Array.isArray(selected) ? selected : selected ? [selected] : [];
-    if (paths.length) {
-      addAttachmentsFromPaths(paths);
+  const toggleMentionPanel = () => {
+    if (!projectRoot || !activeId) {
+      toast.error(t("composer.noProjectForMention"));
+      return;
     }
+    setMentionOpen((v) => !v);
+  };
+  const pickMention = (absPath: string, isDir: boolean) => {
+    editorRef.current?.insertMention(absPath, isDir);
   };
 
   const hasDragPayload = (e: React.DragEvent) => {
     const types = Array.from(e.dataTransfer?.types || []);
-    return types.includes("Files") || types.includes(ATELIER_DRAG_TYPE);
+    return (
+      types.includes("Files") ||
+      types.includes(ATELIER_DRAG_TYPE) ||
+      types.includes(READER_FILE_DRAG_TYPE)
+    );
+  };
+
+  const insertMentionPath = (rawPath: string): boolean => {
+    const p = normalizeMentionPath(rawPath);
+    if (projectRoot && !isWithinProject(p, projectRoot)) return false;
+    editorRef.current?.insertMention(p);
+    return true;
   };
 
   const onDragEnter = (e: React.DragEvent) => {
@@ -343,13 +384,53 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
       return;
     }
 
+    // Files dragged from the reader file explorer become @ mentions.
+    // Files dragged from the reader file explorer are already project-internal
+    // and trusted — insert them directly without re-validating the path.
+    const readerPayload = e.dataTransfer?.getData(READER_FILE_DRAG_TYPE);
+    if (readerPayload) {
+      try {
+        const items = JSON.parse(readerPayload) as Array<
+          string | { path: string; isDir?: boolean }
+        >;
+        for (const it of items) {
+          if (typeof it === "string") {
+            editorRef.current?.insertMention(it);
+          } else if (it && it.path) {
+            editorRef.current?.insertMention(it.path, it.isDir);
+          }
+        }
+      } catch (err) {
+        console.warn(err);
+      }
+      return;
+    }
+
     const files = Array.from(e.dataTransfer?.files || []);
     if (!files.length) return;
-    const paths = files.map(nativeFilePath).filter(Boolean);
-    if (paths.length === files.length) {
-      addAttachmentsFromPaths(paths);
-    } else {
-      addAttachments(files);
+
+    const images = files.filter(isImageFile);
+    const others = files.filter((f) => !isImageFile(f));
+
+    if (images.length) {
+      const imgPaths = images.map(nativeFilePath).filter(Boolean);
+      if (imgPaths.length === images.length) {
+        addAttachmentsFromPaths(imgPaths);
+      } else {
+        addAttachments(images);
+      }
+    }
+
+    if (others.length) {
+      let outside = 0;
+      for (const f of others) {
+        const p = nativeFilePath(f);
+        if (!p) continue;
+        if (!insertMentionPath(p)) {
+          outside += 1;
+        }
+      }
+      if (outside) toast.error(t("composer.mentionOutsideProject"));
     }
   };
 
@@ -358,6 +439,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
       <div
         className={`composer-card ${dragOver ? "drag-over" : ""}`}
         data-local-file-dropzone="true"
+        data-drop-hint={t("composer.dropHint")}
         onDragEnter={onDragEnter}
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
@@ -417,8 +499,8 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
           </div>
         )}
 
-        <ComposerTextarea
-          ref={taRef}
+        <ComposerEditor
+          ref={editorRef}
           placeholder={
             hasAttachments
               ? t("composer.placeholderWithAttachments")
@@ -476,14 +558,28 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                 </div>
               )}
             </div>
-            <button
-              type="button"
-              className="composer-btn composer-add-btn"
-              title={t("composer.addImage")}
-              onClick={pickAttachments}
-            >
-              <PlusIcon />
-            </button>
+            <div className="composer-mention-wrap" ref={mentionRef}>
+              <button
+                type="button"
+                className={`composer-btn composer-add-btn ${mentionOpen ? "active" : ""}`}
+                title={t("composer.addFileMention")}
+                onClick={toggleMentionPanel}
+              >
+                <AtIcon />
+              </button>
+              {mentionOpen && projectRoot && activeId && (
+                <div className="composer-mention-popover" role="dialog" aria-label={t("composer.addFileMention")}>
+                  <div className="composer-mention-popover-title">{t("composer.addFileMention")}</div>
+                  <div className="composer-mention-popover-body">
+                    <ComposerFileTree
+                      sessionId={activeId}
+                      projectRoot={projectRoot}
+                      onPick={pickMention}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
             {showThinking && (
               <div className="composer-thinking" ref={thinkingRef}>
                 <button
@@ -813,11 +909,11 @@ function LockIcon() {
     </svg>
   );
 }
-function PlusIcon() {
+function AtIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-      <line x1="12" y1="5" x2="12" y2="19" />
-      <line x1="5" y1="12" x2="19" y2="12" />
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94" />
     </svg>
   );
 }

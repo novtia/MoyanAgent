@@ -31,6 +31,8 @@ import { useSettings } from "./settings";
 
 interface ComposerState {
   prompt: string;
+  /** Absolute file paths referenced as `@` mention chips in the prompt. */
+  mentions: string[];
   attachments: AttachmentDraft[];
   pendingAttachments: PendingAttachmentDraft[];
   aspectRatio: string;
@@ -127,6 +129,7 @@ interface SessionStore {
   reloadActiveSession: () => Promise<void>;
 
   setPrompt: (s: string) => void;
+  setMentions: (paths: string[]) => void;
   setAspectRatio: (s: string) => void;
   setImageSize: (s: string) => void;
   setThinkingEnabled: (on: boolean) => void;
@@ -364,6 +367,7 @@ export const useSession = create<SessionStore>((set, get) => {
   busyBySession: {},
   composer: {
     prompt: "",
+    mentions: [],
     attachments: [],
     pendingAttachments: [],
     aspectRatio: "auto",
@@ -414,6 +418,7 @@ export const useSession = create<SessionStore>((set, get) => {
       composer: {
         ...get().composer,
         prompt: draft?.prompt ?? "",
+        mentions: draft?.mentions ?? [],
         attachments: draft?.attachments ?? [],
         pendingAttachments: [],
         aspectRatio: draft?.aspectRatio ?? get().composer.aspectRatio,
@@ -485,6 +490,7 @@ export const useSession = create<SessionStore>((set, get) => {
   },
 
   setPrompt: (s) => set({ composer: { ...get().composer, prompt: s } }),
+  setMentions: (paths) => set({ composer: { ...get().composer, mentions: paths } }),
   setAspectRatio: (s) => set({ composer: { ...get().composer, aspectRatio: s } }),
   setImageSize: (s) => set({ composer: { ...get().composer, imageSize: s } }),
   setThinkingEnabled: (on) =>
@@ -692,6 +698,7 @@ export const useSession = create<SessionStore>((set, get) => {
       composer: {
         ...get().composer,
         prompt: "",
+        mentions: [],
         attachments: [],
         pendingAttachments: [],
       },
@@ -950,7 +957,7 @@ export const useSession = create<SessionStore>((set, get) => {
       messages: [...active.messages, optimisticUser],
     }));
     set({
-      composer: { ...get().composer, prompt: "", attachments: [], pendingAttachments: [] },
+      composer: { ...get().composer, prompt: "", mentions: [], attachments: [], pendingAttachments: [] },
     });
     // Clear the saved draft once the message is sent.
     composerDrafts.delete(sid);
@@ -1028,6 +1035,7 @@ export const useSession = create<SessionStore>((set, get) => {
 
 interface ComposerDraft {
   prompt: string;
+  mentions: string[];
   attachments: AttachmentDraft[];
   aspectRatio: string;
   imageSize: string;
@@ -1038,6 +1046,7 @@ const composerDrafts = new Map<string, ComposerDraft>();
 function saveComposerDraft(sessionId: string, composer: ComposerState) {
   composerDrafts.set(sessionId, {
     prompt: composer.prompt,
+    mentions: composer.mentions,
     attachments: composer.attachments,
     aspectRatio: composer.aspectRatio,
     imageSize: composer.imageSize,

@@ -26,6 +26,7 @@ pub mod fs;
 pub mod grep;
 pub mod list_files;
 pub mod paragraph;
+pub mod read_receipt;
 pub mod role_state;
 pub mod rpg_choice;
 pub mod text_decode;

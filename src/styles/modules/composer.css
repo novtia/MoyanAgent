@@ -32,7 +32,7 @@
   box-shadow: 0 0 0 4px var(--bg-sunk);
 }
 .composer-card.drag-over::after {
-  content: '松手即可作为参考图';
+  content: attr(data-drop-hint);
   position: absolute;
   inset: 0;
   display: flex;
@@ -101,14 +101,21 @@
 }
 .attachment {
   position: relative;
-  width: 56px;
-  height: 56px;
-  border-radius: 8px;
+  width: 60px;
+  height: 60px;
+  border-radius: 10px;
   overflow: hidden;
   border: 1px solid var(--line);
   background: var(--bg-sunk);
   flex-shrink: 0;
   animation: pop-in 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
+  box-shadow: 0 2px 4px color-mix(in srgb, var(--ink) 4%, transparent);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.attachment:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line-strong));
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--ink) 10%, transparent);
+  transform: translateY(-2px);
 }
 @keyframes pop-in {
   from {
@@ -231,6 +238,226 @@
   opacity: 1;
 }
 .composer-textarea::placeholder {
+  color: var(--ink-mute);
+}
+
+/* ───── contenteditable editor with @file mention chips ───── */
+.composer-editor {
+  width: 100%;
+  min-height: calc(3.1em + 8px);
+  max-height: 200px;
+  overflow-y: auto;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  padding: 4px var(--composer-textarea-padding-x);
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+.composer-editor:focus {
+  outline: none;
+  box-shadow: none;
+  border: none;
+}
+.composer-editor[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  color: var(--ink-mute);
+  pointer-events: none;
+}
+
+.composer-mention {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  margin: 0 2px;
+  padding: 0 7px 0 5px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), color-mix(in srgb, var(--accent) 4%, transparent));
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: 500;
+  line-height: inherit;
+  /* The leading `@` glyph (`.composer-mention-at`) is the first flex child and a
+     real text node, so the inline-flex chip's baseline IS that glyph's text
+     baseline. With `vertical-align: baseline` the card's text therefore sits on
+     the surrounding text's baseline — in both the editor and the chat list. */
+  vertical-align: baseline;
+  user-select: none;
+  white-space: nowrap;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+}
+.composer-mention:hover {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--accent) 8%, transparent));
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: 0 2px 5px color-mix(in srgb, var(--accent) 15%, transparent);
+  transform: translateY(-0.5px);
+}
+/* Static (read-only) chip used when rendering message history in the chat list. */
+.composer-mention--static {
+  cursor: default;
+}
+.composer-mention--static:hover {
+  transform: none;
+}
+.composer-mention-at {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-weight: 700;
+}
+.composer-mention-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-mention-remove {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin-left: 2px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: color-mix(in srgb, var(--ink) 45%, transparent);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.composer-mention-remove:hover {
+  background: color-mix(in srgb, var(--rose-500) 15%, transparent);
+  color: var(--rose-500);
+  transform: scale(1.1);
+}
+
+/* ───── @ mention file-tree pull-up panel ───── */
+.composer-mention-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.composer-mention-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: min(320px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--ink) 12%, transparent), 0 2px 8px color-mix(in srgb, var(--ink) 6%, transparent);
+  z-index: 62;
+  overflow: hidden;
+  animation: popover-expand 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  backdrop-filter: blur(8px);
+}
+.composer-mention-popover-title {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  border-bottom: 1px solid var(--line);
+}
+.composer-mention-popover-body {
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.composer-mention-tree {
+  display: flex;
+  flex-direction: column;
+}
+.composer-mention-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.composer-mention-row:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+.composer-mention-chevron {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-mute);
+  transition: transform 0.15s var(--ease-pop);
+}
+.composer-mention-chevron.is-open {
+  transform: rotate(90deg);
+}
+.composer-mention-ficon {
+  flex-shrink: 0;
+  color: var(--ink-mute);
+}
+.composer-mention-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-mention-rowwrap {
+  display: flex;
+  align-items: center;
+}
+.composer-mention-rowwrap .composer-mention-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.composer-mention-ref {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink-mute);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.composer-mention-rowwrap:hover .composer-mention-ref,
+.composer-mention-ref:focus-visible {
+  opacity: 1;
+}
+.composer-mention-ref:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.composer-mention-status {
+  padding: 4px 8px;
+  font-size: 12px;
   color: var(--ink-mute);
 }
 

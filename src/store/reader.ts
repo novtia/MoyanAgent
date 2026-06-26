@@ -281,6 +281,63 @@ export function readerFileName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
+/** Parent path segments (folder trail), excluding the file name. */
+export function readerFolderLabel(path: string): string {
+  const parts = sanitizeReaderPath(path).split(/[/\\]/).filter(Boolean);
+  if (parts.length <= 1) return "";
+  return parts.slice(0, -1).join("/");
+}
+
+function readToolPath(input: unknown, output: unknown): string {
+  const o = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const out = output && typeof output === "object" ? (output as Record<string, unknown>) : {};
+  const raw =
+    (typeof out.path === "string" && out.path.trim()) ||
+    (typeof o.path === "string" && o.path.trim()) ||
+    "";
+  return raw ? sanitizeReaderPath(raw) : "";
+}
+
+function readToolParagraph(v: unknown): number | undefined {
+  if (typeof v === "number" && Number.isFinite(v) && v >= 1) return Math.trunc(v);
+  if (typeof v === "string" && /^\d+$/.test(v)) {
+    const n = parseInt(v, 10);
+    return n >= 1 ? n : undefined;
+  }
+  return undefined;
+}
+
+function formatReadParagraphRange(from: number, to: number): string {
+  const pad = (n: number) => String(n).padStart(3, "0");
+  if (from === to) return `P${pad(from)}`;
+  return `P${pad(from)}–P${pad(to)}`;
+}
+
+/** Chat card title for a `Read` tool call — file name or folder + paragraph range. */
+export function formatReadToolTitle(input: unknown, output: unknown): string {
+  const path = readToolPath(input, output);
+  if (!path) return "";
+
+  const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const out = output && typeof output === "object" ? (output as Record<string, unknown>) : {};
+  const ranged =
+    out.ranged === true ||
+    inp.paragraph_from != null ||
+    inp.paragraph_to != null;
+  const from = readToolParagraph(out.paragraph_from) ?? readToolParagraph(inp.paragraph_from);
+  const to =
+    readToolParagraph(out.paragraph_to) ??
+    readToolParagraph(inp.paragraph_to) ??
+    from;
+
+  if (ranged && from != null) {
+    const folder = readerFolderLabel(path);
+    const range = formatReadParagraphRange(from, to ?? from);
+    return folder ? `${folder} · ${range}` : range;
+  }
+  return readerFileName(path);
+}
+
 /** Count non-whitespace characters (CJK-aware). */
 export function countChars(text: string): number {
   let n = 0;

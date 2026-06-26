@@ -203,6 +203,25 @@
   font-size: 14px;
   line-height: 1.55;
 }
+/* Contenteditable mention editor (user message edit) — mirrors the textarea. */
+.bubble-edit-editor {
+  width: 100%;
+  min-height: 48px;
+  max-height: 320px;
+  overflow-y: auto;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  outline: none;
+  cursor: text;
+}
+.bubble-edit-editor[data-empty="true"]::before {
+  content: attr(data-placeholder);
+  color: var(--ink-mute);
+  pointer-events: none;
+}
 .bubble-edit-actions {
   display: flex;
   justify-content: flex-end;
@@ -593,6 +612,16 @@
   color: var(--ink);
   white-space: nowrap;
   flex-shrink: 0;
+}
+.read-tool-card .read-tool-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 500;
 }
 .tool-call-args {
   font-family: 'JetBrains Mono', monospace;

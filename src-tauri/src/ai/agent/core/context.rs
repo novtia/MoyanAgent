@@ -45,7 +45,7 @@ pub struct ToolUseContext {
     /// tasks keep an isolated controller.
     pub abort: AbortSignal,
 
-    /// Files the model has already Read this turn. Used by FileReadTool
+    /// Files the model has already Read this session. Used by FileReadTool
     /// to short-circuit unchanged reads, and by attachment rendering to
     /// avoid duplicate `nested_memory` injections.
     pub read_file_state: Arc<Mutex<HashSet<PathBuf>>>,

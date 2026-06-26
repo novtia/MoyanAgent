@@ -21,6 +21,7 @@ interface FileExplorerStore {
   error: string | null;
   bindSession: (sessionId: string | null, projectRoot: string | null) => void;
   setSelection: (path: string | null) => void;
+  setSelectedPaths: (paths: string[]) => void;
   toggleSelection: (path: string) => void;
   selectRange: (path: string) => void;
   selectAll: () => void;
@@ -144,6 +145,12 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
     set({
       selectedPath: path,
       selectedPaths: path ? [path] : [],
+    }),
+
+  setSelectedPaths: (paths) =>
+    set({
+      selectedPaths: paths,
+      selectedPath: paths.length > 0 ? paths[paths.length - 1] : null,
     }),
 
   toggleSelection: (path) => {

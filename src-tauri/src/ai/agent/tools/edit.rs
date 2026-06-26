@@ -149,7 +149,7 @@ impl FileEditTool {
                 name: EDIT_TOOL.to_string(),
                 description: "Edit a numbered paragraph in a file (Read labels lines `[P001]`, …; one line = one paragraph, blank lines included). \
                     Read the file once up front; then Edit from memory — do NOT Read before each Edit. \
-                    Ranged Read only when an Edit fails and you need the exact snippet. \
+                    Ranged Read only when an Edit fails and you need the exact snippet (system auto-expands context). \
                     Two modes, auto-detected from `original_content`: \
                     (1) REPLACE — `original_content` = the target paragraph verbatim, an exact unique snippet inside it, OR several consecutive paragraphs verbatim (\\n-separated) for a multi-line block; `modified_content` = the new text. `paragraph_number` is only a hint — if the block isn't there, the file is searched for a unique match, so you don't have to count perfectly. To grow a block (e.g. add a table row), put the whole existing block in `original_content` and the block + the new line(s) in `modified_content`. \
                     (2) INSERT / FILL — leave `original_content` EMPTY: if paragraph N is a blank line the text fills it in place, otherwise the text is inserted right after paragraph N. \
