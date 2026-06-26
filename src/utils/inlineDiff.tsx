@@ -1,6 +1,37 @@
 import { diffChars, diffLines, type Change } from "diff";
 import { formatParagraphNumber } from "../store/reader";
 
+/** Strip optional `[P123]` prefix from agent paragraph snippets. */
+function stripParagraphLabelPrefix(s: string): string {
+  const trimmed = s.trimStart();
+  if (!trimmed.startsWith("[P")) return s;
+  const rest = trimmed.slice(2);
+  const closeIdx = rest.indexOf("]");
+  if (closeIdx < 0) return s;
+  const digits = rest.slice(0, closeIdx);
+  if (!/^\d+$/.test(digits)) return s;
+  return rest.slice(closeIdx + 1).trimStart();
+}
+
+/** Normalize one diff line for semantic equality (labels, NFC, line endings). */
+export function normalizeDiffLine(s: string): string {
+  return stripParagraphLabelPrefix(s).normalize("NFC").replace(/\r/g, "");
+}
+
+/** Normalize multi-line diff text for semantic equality. */
+export function normalizeDiffText(s: string): string {
+  return s
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => normalizeDiffLine(line))
+    .join("\n");
+}
+
+export function isDiffTextEqual(a: string, b: string): boolean {
+  return normalizeDiffText(a) === normalizeDiffText(b);
+}
+
 export type DiffRow =
   | { kind: "equal"; text: string }
   | { kind: "delete"; text: string }
@@ -30,6 +61,12 @@ function splitDiffValue(value: string): string[] {
 
 /** Merge consecutive remove+add from diffLines into replace rows. */
 export function buildDiffRows(oldText: string, newText: string): DiffRow[] {
+  if (isDiffTextEqual(oldText, newText)) {
+    const lines = normalizeDiffText(newText).split("\n");
+    if (lines.length === 1 && lines[0] === "") return [];
+    return lines.map((text) => ({ kind: "equal" as const, text }));
+  }
+
   const parts = diffLines(oldText, newText);
   const rows: DiffRow[] = [];
   let i = 0;
@@ -44,8 +81,11 @@ export function buildDiffRows(oldText: string, newText: string): DiffRow[] {
         const o = oldLines[j];
         const ne = newLines[j];
         if (o !== undefined && ne !== undefined) {
-          if (o === ne) rows.push({ kind: "equal", text: o });
-          else rows.push({ kind: "replace", oldText: o, newText: ne });
+          if (o === ne || normalizeDiffLine(o) === normalizeDiffLine(ne)) {
+            rows.push({ kind: "equal", text: ne });
+          } else {
+            rows.push({ kind: "replace", oldText: o, newText: ne });
+          }
         } else if (o !== undefined) {
           rows.push({ kind: "delete", text: o });
         } else if (ne !== undefined) {
@@ -363,7 +403,7 @@ export function EditorLineHighlight({
   oldLine: string;
   newLine: string;
 }) {
-  if (oldLine === newLine) {
+  if (oldLine === newLine || normalizeDiffLine(oldLine) === normalizeDiffLine(newLine)) {
     return (
       <span className="reader-editor-backdrop-text reader-editor-backdrop-text--changed">
         {newLine || "\u00a0"}
@@ -431,6 +471,15 @@ function ReplaceLinePair({
   paragraphLabel?: number | null;
   insertParagraphLabel?: number | null;
 }) {
+  if (normalizeDiffLine(oldText) === normalizeDiffLine(newText)) {
+    return (
+      <div className="reader-diff-line is-context">
+        <ParaGutter label={paragraphLabel} />
+        <span className="reader-diff-gutter" aria-hidden />
+        <span className="reader-diff-text">{newText || " "}</span>
+      </div>
+    );
+  }
   const parts = diffChars(oldText, newText);
   return (
     <>

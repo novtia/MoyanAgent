@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
 import { useReader } from "../../store/reader";
 import { dialog } from "../ui";
-import { MessageList } from "./MessageList";
+import { MessageList } from "./messageList";
 import { Composer } from "./Composer";
 import { EmptyChat } from "./EmptyChat";
 import { RightPanel } from "./RightPanel";

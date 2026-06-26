@@ -8,12 +8,20 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use crate::ai::agent::tools::paragraph::paragraph_count;
+use crate::ai::agent::tools::text_decode::decode_file_bytes;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
 const TOOL_NAME: &str = "ListFiles";
 const DEFAULT_MAX_ENTRIES: usize = 500;
 const MAX_ENTRIES_CAP: usize = 5_000;
+
+/// File extensions treated as paragraph-countable text (same set as `Grep`).
+const TEXT_EXTENSIONS: &[&str] = &[
+    "txt", "md", "markdown", "json", "toml", "yaml", "yml", "csv", "log", "html", "htm", "xml",
+    "rs", "ts", "tsx", "js", "jsx", "css", "py",
+];
 
 #[derive(Clone, Serialize)]
 struct ListEntry {
@@ -22,6 +30,9 @@ struct ListEntry {
     /// Present on every `directory` node (may be `[]`). Omitted on `file` nodes.
     #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<ListEntry>>,
+    /// Present on text `file` nodes: one line = one paragraph (see [`super::paragraph`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paragraphs: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -41,9 +52,11 @@ impl ListFilesTool {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
                 description: "List a directory as a fully nested tree. \
-                    Returns `{ success, entries: [{ name, kind, children? }] }` where \
+                    Returns `{ success, entries: [{ name, kind, children?, paragraphs? }] }` where \
                     each directory has `children: [...]` containing its files and \
                     subfolders (recursively). `kind` is `directory` or `file`. \
+                    Text files also include `paragraphs` (one line = one paragraph, \
+                    matching `Read`/`Edit` numbering). \
                     Use instead of Bash `dir`/`ls` for reliable Unicode paths."
                     .to_string(),
                 schema: json!({
@@ -177,15 +190,51 @@ fn collect_tree(
                 name,
                 kind: "directory",
                 children: Some(children),
+                paragraphs: None,
             });
         } else {
             out.push(ListEntry {
                 name,
                 kind: "file",
                 children: None,
+                paragraphs: file_paragraph_count(&path),
             });
         }
     }
 
     Ok(out)
+}
+
+fn is_text_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| TEXT_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+fn file_paragraph_count(path: &Path) -> Option<usize> {
+    if !is_text_file(path) {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    Some(paragraph_count(&decode_file_bytes(&bytes)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paragraph_count_for_text_file() {
+        assert_eq!(paragraph_count("a\n\nb"), 3);
+        assert_eq!(paragraph_count("a\nb"), 2);
+    }
+
+    #[test]
+    fn is_text_file_by_extension() {
+        assert!(is_text_file(Path::new("/x/story.txt")));
+        assert!(is_text_file(Path::new("/x/readme.MD")));
+        assert!(!is_text_file(Path::new("/x/image.png")));
+        assert!(!is_text_file(Path::new("/x/noext")));
+    }
 }

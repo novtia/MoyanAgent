@@ -411,6 +411,7 @@ const enUS: Resource = {
     toolCallToggle: "Expand or collapse details",
     toolCallInput: "Input",
     toolCallOutput: "Output",
+    listFilesParagraphs: "{{count}} ¶",
     openInReader: "Read",
     createDocCreated: "Document created",
     createDocUpdated: "Document updated",

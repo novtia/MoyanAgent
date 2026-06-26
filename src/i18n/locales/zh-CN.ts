@@ -402,6 +402,7 @@ const zhCN = {
     toolCallToggle: "展开或收起详情",
     toolCallInput: "输入",
     toolCallOutput: "输出",
+    listFilesParagraphs: "{{count}} 段",
     openInReader: "阅读",
     createDocCreated: "已创建文档",
     createDocUpdated: "已更新文档",

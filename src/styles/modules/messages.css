@@ -790,6 +790,13 @@
   color: var(--ink-soft);
 }
 
+.list-files-tree-paragraphs {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ink-mute);
+  font-family: 'JetBrains Mono', monospace;
+}
+
 /* Tighten the vertical rhythm where blocks alternate. */
 .bubble .text + .tool-call-block,
 .bubble .tool-call-block + .text,

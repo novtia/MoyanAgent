@@ -28,6 +28,7 @@ import {
   inferFileType,
 } from "./reader";
 import { useSettings } from "./settings";
+import { isDiffTextEqual, normalizeDiffText } from "../utils/inlineDiff";
 
 interface ComposerState {
   prompt: string;
@@ -1301,9 +1302,10 @@ async function handleReaderToolComplete(
 
     const textAfter = applyParagraphEdit(textBefore, paragraphNumber, original, modified);
     if (textAfter == null) return;
+    if (isDiffTextEqual(original, modified)) return;
     reader.appendPendingDiff(path, {
-      before: original,
-      after: modified,
+      before: normalizeDiffText(original),
+      after: normalizeDiffText(modified),
       paragraphNumber,
       textBefore,
       textAfter,

@@ -19,6 +19,7 @@ import { api } from "../../api/tauri";
 import {
   buildEditorDisplaySegments,
   buildPendingDiffLineRanges,
+  isDiffTextEqual,
   replaceTabLineRange,
   sliceTabLines,
   type EditorDisplaySegment,
@@ -318,6 +319,14 @@ export function ReaderEditor({ tab, activeHunkIndex, onActiveHunkChange }: Reade
   };
 
   const renderHunk = (seg: Extract<EditorDisplaySegment, { kind: "hunk" }>) => {
+    if (isDiffTextEqual(seg.before, seg.after)) {
+      return renderContextBlock({
+        kind: "context",
+        tabStart: seg.tabStart,
+        tabEnd: seg.tabEnd,
+      });
+    }
+
     const deleteLines = seg.before.trim() ? seg.before.split("\n") : [];
     const insertLines = seg.after ? seg.after.split("\n") : [];
     const insertLabels: (number | null)[] = insertLines.map((_, i) => {
