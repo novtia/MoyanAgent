@@ -18,17 +18,18 @@ import {
 } from "../config/chatMode";
 import { useRoleState, type RoleStateOp } from "./roleState";
 import {
-  applyParagraphEdit,
-  revertParagraphEdit,
+  applyParagraphRangeEdit,
+  revertParagraphRangeEdit,
   useReader,
   readerDocFromToolOutput,
   stripParagraphLabels,
   resolveToolFilePath,
-  parseEditParagraphNumber,
+  parseEditParagraphRange,
+  paragraphsAtRange,
   inferFileType,
 } from "./reader";
 import { useSettings } from "./settings";
-import { isDiffTextEqual, normalizeDiffText } from "../utils/inlineDiff";
+import { normalizeDiffText } from "../utils/inlineDiff";
 
 interface ComposerState {
   prompt: string;
@@ -1188,8 +1189,7 @@ function buildStreamingToolInput(
   if (tool === "Edit") {
     return {
       path: extractJsonStringField(raw, "path"),
-      original_content: extractJsonStringField(raw, "original_content"),
-      modified_content: extractJsonStringField(raw, "modified_content"),
+      content: extractJsonStringField(raw, "content"),
     };
   }
   try {
@@ -1267,12 +1267,14 @@ async function handleReaderToolComplete(
 
   if (tool === "Edit") {
     const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-    const original =
-      typeof inp.original_content === "string" ? inp.original_content : "";
-    const modified =
-      typeof inp.modified_content === "string" ? inp.modified_content : "";
-    const paragraphNumber = parseEditParagraphNumber(input);
-    if (paragraphNumber == null) return;
+    const out = (output && typeof output === "object" ? output : {}) as Record<string, unknown>;
+    const content = typeof inp.content === "string" ? inp.content : "";
+    const range = parseEditParagraphRange(input);
+    if (range == null) return;
+    const { from: paragraphFrom, to: paragraphTo } = range;
+
+    const beforeFromOutput =
+      typeof out.before === "string" ? out.before : undefined;
 
     let textBefore = existing?.text;
     if (textBefore == null) {
@@ -1281,8 +1283,14 @@ async function handleReaderToolComplete(
       try {
         const disk = await api.readProjectFile(sessionId, path);
         textBefore =
-          revertParagraphEdit(disk.text, paragraphNumber, original, modified) ??
-          disk.text;
+          beforeFromOutput != null
+            ? revertParagraphRangeEdit(
+                disk.text,
+                paragraphFrom,
+                content,
+                beforeFromOutput,
+              ) ?? disk.text
+            : disk.text;
         reader.openDoc(
           {
             path,
@@ -1300,13 +1308,19 @@ async function handleReaderToolComplete(
       }
     }
 
-    const textAfter = applyParagraphEdit(textBefore, paragraphNumber, original, modified);
+    const before =
+      beforeFromOutput ?? paragraphsAtRange(textBefore, paragraphFrom, paragraphTo);
+    const textAfter = applyParagraphRangeEdit(
+      textBefore,
+      paragraphFrom,
+      paragraphTo,
+      content,
+    );
     if (textAfter == null) return;
-    if (isDiffTextEqual(original, modified)) return;
     reader.appendPendingDiff(path, {
-      before: normalizeDiffText(original),
-      after: normalizeDiffText(modified),
-      paragraphNumber,
+      before: normalizeDiffText(before),
+      after: normalizeDiffText(stripParagraphLabels(content)),
+      paragraphNumber: paragraphFrom,
       textBefore,
       textAfter,
     });

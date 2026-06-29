@@ -101,103 +101,69 @@ function stripParagraphLabel(s: string): string {
   return rest.slice(closeIdx + 1).trimStart();
 }
 
-function splitAgentParagraphs(text: string): string[] {
-  return splitParagraphs(stripParagraphLabels(text));
-}
-
-function insertParagraphsAfter(
-  paragraphs: string[],
-  afterIndex: number,
-  content: string,
-): number {
-  const newParas = splitAgentParagraphs(content);
-  if (newParas.length === 0 || newParas.every((p) => p === "")) return 0;
-  const insertAt = afterIndex + 1;
-  for (let offset = 0; offset < newParas.length; offset++) {
-    paragraphs.splice(insertAt + offset, 0, newParas[offset]!);
-  }
-  return newParas.length;
-}
-
-function replaceParagraphWith(paragraphs: string[], index: number, content: string): void {
-  const newParas = splitAgentParagraphs(content);
-  if (newParas.length === 0) {
-    paragraphs[index] = "";
-    return;
-  }
-  if (newParas.length === 1) {
-    paragraphs[index] = newParas[0]!;
-    return;
-  }
-  paragraphs.splice(index, 1, ...newParas);
-}
-
 /** Apply one Edit tool call to in-memory file text (mirrors backend Edit). */
-export function applyParagraphEdit(
+export function applyParagraphRangeEdit(
   fileText: string,
-  paragraphNumber: number,
-  originalContent: string,
-  modifiedContent: string,
+  paragraphFrom: number,
+  paragraphTo: number,
+  content: string,
 ): string | null {
-  const original = stripParagraphLabel(originalContent);
-  const modified = stripParagraphLabel(modifiedContent);
   const paragraphs = splitParagraphs(fileText);
-  if (paragraphNumber < 1 || paragraphNumber > paragraphs.length) return null;
-  const idx = paragraphNumber - 1;
-  const para = paragraphs[idx] ?? "";
-
-  if (original === "") {
-    if (para.trim() === "") {
-      paragraphs[idx] = modified;
-    } else if (insertParagraphsAfter(paragraphs, idx, modified) === 0) {
-      return null;
-    }
-  } else if (original === para || original === para.trim()) {
-    replaceParagraphWith(paragraphs, idx, modified);
-  } else {
-    const occurrences = para.split(original).length - 1;
-    if (occurrences !== 1) return null;
-    paragraphs[idx] = para.replace(original, modified);
+  if (
+    paragraphFrom < 1 ||
+    paragraphTo < paragraphFrom ||
+    paragraphTo > paragraphs.length
+  ) {
+    return null;
   }
+  const start = paragraphFrom - 1;
+  const end = paragraphTo - 1;
+  const newParas = splitParagraphs(stripParagraphLabels(content));
+  paragraphs.splice(start, end - start + 1, ...(newParas.length ? newParas : [""]));
   return paragraphs.join("\n");
 }
 
-/** Undo one Edit on in-memory text (inverse of `applyParagraphEdit`). */
-export function revertParagraphEdit(
+/** Undo one Edit on in-memory text (inverse of `applyParagraphRangeEdit`). */
+export function revertParagraphRangeEdit(
   fileText: string,
-  paragraphNumber: number,
-  originalContent: string,
-  modifiedContent: string,
+  paragraphFrom: number,
+  content: string,
+  before: string,
 ): string | null {
-  const original = stripParagraphLabel(originalContent);
-  const modified = stripParagraphLabel(modifiedContent);
   const paragraphs = splitParagraphs(fileText);
-  if (paragraphNumber < 1 || paragraphNumber > paragraphs.length) return null;
-  const idx = paragraphNumber - 1;
-  const para = paragraphs[idx] ?? "";
-
-  if (original === "") {
-    const inserted = splitAgentParagraphs(modified);
-    if (para.trim() === "" && inserted.length <= 1) {
-      paragraphs[idx] = original;
-    } else if (inserted.length > 0) {
-      const start = idx + 1;
-      const end = start + inserted.length;
-      if (end > paragraphs.length) return null;
-      const slice = paragraphs.slice(start, end);
-      if (slice.some((p, i) => p !== (inserted[i] ?? ""))) return null;
-      paragraphs.splice(start, inserted.length);
-    } else {
-      return null;
-    }
-  } else if (original === para || original === para.trim()) {
-    paragraphs[idx] = original;
-  } else {
-    const occurrences = para.split(modified).length - 1;
-    if (occurrences !== 1) return null;
-    paragraphs[idx] = para.replace(modified, original);
-  }
+  if (paragraphFrom < 1 || paragraphFrom > paragraphs.length) return null;
+  const start = paragraphFrom - 1;
+  const oldParas = splitParagraphs(before);
+  const newParas = splitParagraphs(stripParagraphLabels(content));
+  const removeCount = newParas.length || 1;
+  if (start + removeCount > paragraphs.length) return null;
+  paragraphs.splice(start, removeCount, ...(oldParas.length ? oldParas : [""]));
   return paragraphs.join("\n");
+}
+
+export function parseEditParagraphRange(
+  input: unknown,
+): { from: number; to: number } | undefined {
+  const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const from = readToolParagraph(inp.paragraph_from);
+  if (from == null) return undefined;
+  const to = readToolParagraph(inp.paragraph_to) ?? from;
+  if (to < from) return undefined;
+  return { from, to };
+}
+
+/** Text of paragraphs in inclusive 1-based range `[from, to]`. */
+export function paragraphsAtRange(text: string, from: number, to: number): string {
+  const paras = splitParagraphs(text);
+  if (from < 1 || to < from || to > paras.length) return "";
+  return paras.slice(from - 1, to).join("\n");
+}
+
+/** Format paragraph range label like Read tool output (`P009–P015`). */
+export function formatParagraphRangeLabel(from: number, to: number): string {
+  const pad = (n: number) => String(n).padStart(3, "0");
+  if (from === to) return `[P${pad(from)}]`;
+  return `[P${pad(from)}–P${pad(to)}]`;
 }
 
 /** 1-based paragraph index, matches Edit `paragraph_number`. */
@@ -251,19 +217,6 @@ export function resolveToolFilePath(input: unknown, output: unknown): string {
     (typeof o.path === "string" && o.path.trim()) ||
     "";
   return raw ? sanitizeReaderPath(raw) : "";
-}
-
-export function parseEditParagraphNumber(input: unknown): number | undefined {
-  const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-  const n = inp.paragraph_number;
-  if (typeof n === "number" && Number.isFinite(n) && n >= 1) {
-    return Math.trunc(n);
-  }
-  if (typeof n === "string" && /^\d+$/.test(n)) {
-    const parsed = parseInt(n, 10);
-    return parsed >= 1 ? parsed : undefined;
-  }
-  return undefined;
 }
 
 /** Infer the renderable file type from a path's extension. */

@@ -315,7 +315,7 @@ const enUS: Resource = {
       Bash: "Run shell commands and return output",
       CreateDoc: "Create a doc from title/content/type (md or txt)",
       Delete: "Delete a file (rolls back with its message)",
-      Edit: "Edit or insert numbered paragraphs ([P009] + empty original = insert after P009)",
+      Edit: "Replace a paragraph range (`paragraph_from` / `paragraph_to` + `content`)",
       Read: "Read a local text file; each line is one numbered paragraph ([P001], …; empty lines included)",
       ListFiles: "List files and subdirectories under a path",
       RoleState: "Maintain character attribute and state cards",

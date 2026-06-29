@@ -213,6 +213,9 @@ export function buildDocumentDiffSegments(
     if (start < 0 && block.after.trim()) {
       start = findLineSubsequence(tabLines, newLines);
     }
+    if (start < 0 && block.before.trim()) {
+      start = findLineSubsequence(tabLines, oldLines);
+    }
     if (start < 0) start = 0;
 
     const skip = block.after.trim()
@@ -282,6 +285,9 @@ export function buildPendingDiffLineRanges(
     }
     if (start < 0 && block.after.trim()) {
       start = findLineSubsequence(tabLines, newLines);
+    }
+    if (start < 0 && block.before.trim()) {
+      start = findLineSubsequence(tabLines, oldLines);
     }
     if (start < 0) start = 0;
 

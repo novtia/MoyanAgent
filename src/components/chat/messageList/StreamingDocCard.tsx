@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { diffChars } from "diff";
-import { countChars, readerDocFromToolOutput, useReader } from "../../../store/reader";
-import { isDiffTextEqual, InlineDiffCode } from "../../../utils/inlineDiff";
+import { countChars, formatParagraphRangeLabel, parseEditParagraphRange, readerDocFromToolOutput, useReader } from "../../../store/reader";
 import type { AssistantBlock } from "../../../types";
 import { ThinkingChevronIcon, ToolCallIcon } from "./icons";
 
@@ -22,8 +20,8 @@ export function StreamingDocCard({
     doc_type?: string;
     content?: string;
     path?: string;
-    original_content?: string;
-    modified_content?: string;
+    paragraph_from?: number;
+    paragraph_to?: number;
   };
   const output = (block.output ?? {}) as {
     title?: string;
@@ -31,37 +29,21 @@ export function StreamingDocCard({
     created?: boolean;
   };
 
-  const content = isEdit ? input.modified_content ?? "" : input.content ?? "";
+  const content = isEdit ? input.content ?? "" : input.content ?? "";
 
   const path = (output.path || input.path || "").toString();
   const baseName = path ? path.split(/[\\/]/).pop() || path : "";
+  const editRange = isEdit ? parseEditParagraphRange(input) : undefined;
+  const paraLabel =
+    editRange != null
+      ? formatParagraphRangeLabel(editRange.from, editRange.to)
+      : "";
   const summary = isEdit
-    ? baseName || t("message.streamDocEditUntitled")
+    ? [baseName || t("message.streamDocEditUntitled"), paraLabel].filter(Boolean).join(" · ")
     : (output.title || input.title || "").trim() ||
       t("message.createDocUntitled");
 
-  const { added, removed } = useMemo(() => {
-    if (isEdit) {
-      const original = input.original_content ?? "";
-      const modified = input.modified_content ?? "";
-      if (isDiffTextEqual(original, modified)) {
-        return { added: 0, removed: 0 };
-      }
-      // Full char diff on every token blocks the main thread during Edit streaming.
-      if (streaming) {
-        return { added: countChars(modified), removed: 0 };
-      }
-      let a = 0;
-      let r = 0;
-      for (const part of diffChars(original, modified)) {
-        const n = countChars(part.value);
-        if (part.added) a += n;
-        else if (part.removed) r += n;
-      }
-      return { added: a, removed: r };
-    }
-    return { added: countChars(content), removed: 0 };
-  }, [isEdit, streaming, input.original_content, input.modified_content, content]);
+  const added = useMemo(() => countChars(content), [content]);
 
   const readerDoc = useMemo(
     () =>
@@ -78,10 +60,7 @@ export function StreamingDocCard({
         ? t("message.toolCallError")
         : t("message.toolCallDone");
 
-  const hasContent = isEdit
-    ? (input.original_content ?? "").length > 0 ||
-      (input.modified_content ?? "").length > 0
-    : content.length > 0;
+  const hasContent = content.length > 0;
 
   useEffect(() => {
     if (streaming) setOpen(true);
@@ -105,20 +84,12 @@ export function StreamingDocCard({
         <span className="tool-call-name">{block.tool}</span>
         {summary && <span className="tool-call-args">{summary}</span>}
         <span className="tool-call-spacer" aria-hidden />
-        {(added > 0 || removed > 0) && (
-          <span className="tool-call-diff-chips" aria-hidden={added === 0 && removed === 0}>
-            {added > 0 && (
-              <span className="is-add">
-                +{added}
-                {t("message.createDocCharsUnit")}
-              </span>
-            )}
-            {removed > 0 && (
-              <span className="is-del">
-                -{removed}
-                {t("message.createDocCharsUnit")}
-              </span>
-            )}
+        {added > 0 && (
+          <span className="tool-call-diff-chips" aria-hidden={added === 0}>
+            <span className="is-add">
+              +{added}
+              {t("message.createDocCharsUnit")}
+            </span>
           </span>
         )}
         {readerDoc && (
@@ -148,26 +119,10 @@ export function StreamingDocCard({
 
       {open && hasContent && (
         <div className="tool-call-detail">
-          {isEdit ? (
-            <div className="tool-call-detail-body tool-call-detail-body--diff">
-              {streaming ? (
-                <pre className="tool-call-detail-body">
-                  {input.modified_content ?? ""}
-                  <span className="stream-doc-cursor" aria-hidden />
-                </pre>
-              ) : (
-                <InlineDiffCode
-                  oldText={input.original_content ?? ""}
-                  newText={input.modified_content ?? ""}
-                />
-              )}
-            </div>
-          ) : (
-            <pre className="tool-call-detail-body">
-              {content}
-              {streaming && <span className="stream-doc-cursor" aria-hidden />}
-            </pre>
-          )}
+          <pre className="tool-call-detail-body">
+            {content}
+            {streaming && <span className="stream-doc-cursor" aria-hidden />}
+          </pre>
         </div>
       )}
     </div>

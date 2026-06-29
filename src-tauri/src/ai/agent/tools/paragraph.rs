@@ -65,6 +65,22 @@ pub fn insert_paragraphs_after(
     new_paras.len()
 }
 
+/// Replace paragraphs in the inclusive 1-based range `[from, to]` with lines from `content`.
+pub fn replace_paragraph_range(
+    paragraphs: &mut Vec<String>,
+    from: usize,
+    to: usize,
+    content: &str,
+) {
+    let from_idx = from.saturating_sub(1);
+    let to_idx = to.saturating_sub(1);
+    if from_idx > to_idx || to_idx >= paragraphs.len() {
+        return;
+    }
+    let new_paras = split_agent_paragraphs(content);
+    paragraphs.splice(from_idx..=to_idx, new_paras);
+}
+
 /// Replace paragraph at `index` with one or more lines from `content`.
 pub fn replace_paragraph_with(paragraphs: &mut Vec<String>, index: usize, content: &str) {
     let new_paras = split_agent_paragraphs(content);
@@ -160,6 +176,13 @@ mod tests {
     fn number_paragraph_range_single() {
         let text = "a\nb\nc";
         assert_eq!(number_paragraph_range(text, 2, 2), "[P002] b");
+    }
+
+    #[test]
+    fn replace_paragraph_range_multi() {
+        let mut paras = vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into()];
+        replace_paragraph_range(&mut paras, 2, 4, "X\nY");
+        assert_eq!(paras, vec!["a", "X", "Y", "e"]);
     }
 
     #[test]
