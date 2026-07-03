@@ -399,6 +399,7 @@ const zhCN = {
     toolCallRunning: "调用中",
     toolCallDone: "已完成",
     toolCallError: "失败",
+    toolCallErrorReason: "失败原因",
     toolCallToggle: "展开或收起详情",
     toolCallInput: "输入",
     toolCallOutput: "输出",

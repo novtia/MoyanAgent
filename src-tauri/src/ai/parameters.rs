@@ -139,10 +139,11 @@ impl GenerationParameters {
         }
     }
 
-    /// DeepSeek direct API: `thinking.type` must be set explicitly.
-    ///   - thinking enabled  → `{"thinking": {"type": "enabled"}}`
-    ///   - thinking disabled → `{"thinking": {"type": "disabled"}}`
-    pub fn apply_deepseek_thinking_object(&self, body: &mut Map<String, Value>) {
+    /// DeepSeek / Volcengine Ark (Doubao) chat APIs require an explicit
+    /// `thinking.type`. If `reasoning_effort` is sent without
+    /// `thinking.type: "enabled"`, Doubao defaults thinking to `disabled`
+    /// and rejects the request.
+    pub fn apply_native_thinking_object(&self, body: &mut Map<String, Value>) {
         if self.model.resolved_thinking_effort().is_some() {
             body.insert("thinking".into(), json!({ "type": "enabled" }));
         } else {
@@ -160,10 +161,14 @@ impl GenerationParameters {
             self.apply_openrouter_reasoning(body);
             return;
         }
-        self.apply_openai_reasoning_effort(body);
-        if is_deepseek_endpoint(endpoint) {
-            self.apply_deepseek_thinking_object(body);
+        if uses_native_thinking_object(endpoint) {
+            if self.model.resolved_thinking_effort().is_some() {
+                self.apply_openai_reasoning_effort(body);
+            }
+            self.apply_native_thinking_object(body);
+            return;
         }
+        self.apply_openai_reasoning_effort(body);
     }
 
     pub fn image_config(&self) -> Option<Value> {
@@ -228,7 +233,73 @@ fn is_openrouter_endpoint(endpoint: &str) -> bool {
         .contains("openrouter.ai")
 }
 
+fn uses_native_thinking_object(endpoint: &str) -> bool {
+    is_deepseek_endpoint(endpoint) || is_volcengine_endpoint(endpoint)
+}
+
 fn is_deepseek_endpoint(endpoint: &str) -> bool {
     let e = endpoint.trim().to_ascii_lowercase();
     e.contains("deepseek.com") || e.contains("deepseek.ai")
+}
+
+fn is_volcengine_endpoint(endpoint: &str) -> bool {
+    let e = endpoint.trim().to_ascii_lowercase();
+    e.contains("volces.com")
+        || e.contains("volcengine.com")
+        || e.contains("volcengine.cn")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::settings::ModelParamSettings;
+
+    fn params(thinking_enabled: bool) -> GenerationParameters {
+        factory().build(
+            "auto".into(),
+            "auto".into(),
+            ModelParamSettings {
+                thinking_enabled: Some(thinking_enabled),
+                thinking_effort: Some("high".into()),
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn volcengine_thinking_enabled_sends_reasoning_effort_and_enabled_type() {
+        let p = params(true);
+        let mut body = Map::new();
+        p.apply_thinking_params(
+            &mut body,
+            "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        );
+        assert_eq!(
+            body.get("reasoning_effort").and_then(Value::as_str),
+            Some("high")
+        );
+        assert_eq!(
+            body.get("thinking")
+                .and_then(|v| v.get("type"))
+                .and_then(Value::as_str),
+            Some("enabled")
+        );
+    }
+
+    #[test]
+    fn volcengine_thinking_disabled_sends_disabled_type_only() {
+        let p = params(false);
+        let mut body = Map::new();
+        p.apply_thinking_params(
+            &mut body,
+            "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        );
+        assert!(!body.contains_key("reasoning_effort"));
+        assert_eq!(
+            body.get("thinking")
+                .and_then(|v| v.get("type"))
+                .and_then(Value::as_str),
+            Some("disabled")
+        );
+    }
 }

@@ -17,6 +17,9 @@ export {
   looksLikeDir,
   mentionIconKind,
   mentionIconSvg,
+  serializeMentionPath,
+  parseMentionAt,
+  parseMentionSegments,
   parseMentionPaths,
   isWithinProject,
   createMentionNode,
@@ -25,7 +28,9 @@ export {
   buildMentionNodes,
   moveCaretToEnd,
   type MentionIconKind,
+  type MentionSegment,
 } from "./core";
+export { MentionIcon } from "./MentionIcon";
 export { MentionChip } from "./MentionChip";
 export { MentionText } from "./MentionText";
 export {

@@ -116,7 +116,39 @@ impl From<DecodedText> for ProjectTextFile {
 }
 
 /// Normalize a tool argument string after JSON parsing.
+///
+/// Models and partial JSON repair sometimes leave JSON-style escapes (`\"`, `\n`, …)
+/// in prose `content` fields. Run until stable so nested escapes like `\\"` are
+/// fully resolved before writing to disk.
 pub fn normalize_tool_string(s: &str) -> String {
+    let mut cur = s.to_string();
+    for _ in 0..8 {
+        let next = normalize_tool_string_once(&cur);
+        if next == cur {
+            break;
+        }
+        cur = next;
+    }
+    // Final sweep: stray `\"` pairs still seen in streamed CreateDoc / Edit payloads.
+    while cur.contains("\\\"") {
+        cur = cur.replace("\\\"", "\"");
+    }
+    // HTML entities occasionally leak from model output or partial JSON repair.
+    cur = decode_html_entities(&cur);
+    cur
+}
+
+fn decode_html_entities(s: &str) -> String {
+    s.replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&#34;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+fn normalize_tool_string_once(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut it = s.chars().peekable();
     while let Some(c) = it.next() {
@@ -314,6 +346,30 @@ mod tests {
     fn normalize_unescapes_literal_backslash_quote() {
         let input = "问题\\\"你现在还觉得";
         assert_eq!(normalize_tool_string(input), "问题\"你现在还觉得");
+    }
+
+    #[test]
+    fn normalize_unescapes_dialogue_quotes() {
+        let input = "\\\"孩子，你、你再试一次，魂力测试！\\\"他从怀里掏出一块白色的水晶球";
+        assert_eq!(
+            normalize_tool_string(input),
+            "\"孩子，你、你再试一次，魂力测试！\"他从怀里掏出一块白色的水晶球"
+        );
+    }
+
+    #[test]
+    fn normalize_decodes_html_quot_entities() {
+        let input = "&quot;我七岁呀，&quot;小舞扳着手指头算";
+        assert_eq!(
+            normalize_tool_string(input),
+            "\"我七岁呀，\"小舞扳着手指头算"
+        );
+    }
+
+    #[test]
+    fn normalize_resolves_double_escaped_quotes() {
+        let input = "\\\\\\\"hello\\\\\\\"";
+        assert_eq!(normalize_tool_string(input), "\"hello\"");
     }
 
     #[test]

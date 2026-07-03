@@ -17,6 +17,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
+use crate::ai::agent::tools::text_decode::normalize_tool_string;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
@@ -66,9 +67,8 @@ impl CreateDocTool {
                         "folder": {
                             "type": "string",
                             "description": "Optional subfolder within the project. \
-                                Use a single folder name or a breadcrumb path for nested \
-                                folders, e.g. `notes`, `chapters/01`, or `chapters > 01`. \
-                                Omit to save at the project root."
+                                Single folder name or breadcrumb, e.g. `notes`, \
+                                `网文测试\\草稿`, `chapters\\01`. Omit to save at project root."
                         }
                     },
                     "required": ["title", "content", "doc_type"]
@@ -114,12 +114,13 @@ impl Tool for CreateDocTool {
                 .unwrap_or_default()
                 .trim()
                 .to_string();
-            let content = invocation
-                .input
-                .get("content")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
+            let content = normalize_tool_string(
+                invocation
+                    .input
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            );
             let doc_type = invocation
                 .input
                 .get("doc_type")

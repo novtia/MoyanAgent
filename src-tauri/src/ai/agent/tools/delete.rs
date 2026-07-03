@@ -6,12 +6,13 @@
 //! before unlinking it, so deleting / regenerating the triggering message can
 //! recreate the file.
 
-use std::path::PathBuf;
+
 use std::sync::Arc;
 
 use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
+use crate::ai::agent::tools::project_path::{self, FILE_REF_DESC};
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
@@ -29,17 +30,16 @@ impl DeleteTool {
             snapshots,
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
-                description: "Delete a file from disk. Requires an absolute path to an existing \
-                    regular file. The deletion is snapshotted so it can be rolled back if the \
-                    triggering message is later removed. Prefer this over a Bash `rm` so the \
-                    change is tracked."
+                description: "Delete a file from the project folder. Pass the file name, or \
+                    folder\\file breadcrumb for nested files. The deletion is snapshotted so \
+                    it can be rolled back if the triggering message is later removed."
                     .to_string(),
                 schema: json!({
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Absolute path to the file to delete."
+                            "description": FILE_REF_DESC
                         }
                     },
                     "required": ["path"]
@@ -76,12 +76,7 @@ impl Tool for DeleteTool {
                 .get("path")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let path = PathBuf::from(raw);
-            if !path.is_absolute() {
-                return Err(AppError::Invalid(format!(
-                    "{TOOL_NAME}: `path` must be absolute, got `{raw}`"
-                )));
-            }
+            let path = project_path::resolve_project_file(&invocation.context.cwd, raw, TOOL_NAME)?;
             if !path.exists() {
                 return Ok(ToolResult::error(format!(
                     "{TOOL_NAME}: file does not exist: {}",

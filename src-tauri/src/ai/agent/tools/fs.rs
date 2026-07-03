@@ -17,11 +17,10 @@
 //! file reader; this implementation exists primarily so the agent loop
 //! has a working nested-memory trigger.
 
-use std::path::PathBuf;
-
 use serde_json::Value;
 
 use crate::ai::agent::tools::paragraph::{number_paragraph_range, paragraph_count};
+use crate::ai::agent::tools::project_path::{self, FILE_REF_DESC};
 use crate::ai::agent::tools::read_receipt::{expand_read_range, MIN_READ_CONTEXT_LINES};
 use crate::ai::agent::tools::text_decode::detect_and_decode;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
@@ -98,7 +97,7 @@ impl FileReadTool {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Absolute path to the file to read."
+                            "description": FILE_REF_DESC
                         },
                         "paragraph_from": {
                             "type": "integer",
@@ -145,20 +144,14 @@ impl Tool for FileReadTool {
                 .input
                 .get("path")
                 .and_then(Value::as_str)
-                .map(PathBuf::from)
                 .ok_or_else(|| AppError::Invalid("Read: missing path".into()))?;
+            let canonical = project_path::resolve_project_file(&invocation.context.cwd, path, TOOL_NAME)?;
 
-            // Relative paths would resolve against the host process CWD
-            // (the app's own directory) — never allowed.
-            if !path.is_absolute() {
+            if !canonical.is_file() {
                 return Ok(ToolResult::error(format!(
-                    "Read: `path` must be absolute, got `{}`",
-                    path.display()
+                    "Read: file not found: `{path}`"
                 )));
             }
-
-            let canonical = std::fs::canonicalize(&path)
-                .map_err(|e| AppError::Other(format!("Read: canonicalize {:?}: {e}", path)))?;
 
             let bytes = std::fs::read(&canonical)
                 .map_err(|e| AppError::Other(format!("Read: open {:?}: {e}", canonical)))?;

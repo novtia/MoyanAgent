@@ -358,6 +358,16 @@
   color: var(--ink);
   border-bottom-right-radius: 4px;
 }
+.msg.user .bubble .composer-mention--static {
+  vertical-align: middle;
+}
+.msg.user .bubble .text {
+  display: block;
+  line-height: 1.65;
+}
+.msg.user .bubble .composer-mention--static + .composer-mention--static {
+  margin-top: 4px;
+}
 .msg.assistant .bubble {
   background: transparent;
   color: var(--ink);
@@ -555,6 +565,16 @@
   border-color: #fecdd3;
   background: var(--rose-50);
 }
+/* CreateDoc / Edit: keep normal card chrome on failure; only the icon turns to ✕. */
+.tool-call-block.doc-tool-card.error {
+  border-color: var(--line);
+  background: var(--bg-soft);
+}
+.tool-call-block.doc-tool-card.error .tool-call-badge.error {
+  color: var(--ink-mute);
+  background: var(--bg-sunk);
+  border-color: var(--line);
+}
 
 .tool-call-summary {
   appearance: none;
@@ -703,6 +723,32 @@
   to {
     opacity: 0;
   }
+}
+
+/* Always-visible failure reason bar under a failed CreateDoc / Edit card. */
+.tool-call-error-detail {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 12px 8px;
+  border-top: 1px solid #fecdd3;
+  background: var(--rose-50);
+}
+.tool-call-error-detail-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rose-500);
+  flex-shrink: 0;
+}
+.tool-call-error-detail-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--rose-500);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .tool-call-detail {

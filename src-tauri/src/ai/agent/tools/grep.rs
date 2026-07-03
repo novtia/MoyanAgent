@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 use crate::ai::agent::tools::paragraph::split_paragraphs;
+use crate::ai::agent::tools::project_path::{self, FILE_REF_DESC};
 use crate::ai::agent::tools::text_decode::decode_file_bytes;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
@@ -45,6 +46,9 @@ impl Default for GrepTool {
 
 impl GrepTool {
     pub fn new() -> Self {
+        let path_desc = format!(
+            "{FILE_REF_DESC} For a directory, pass a folder breadcrumb only."
+        );
         Self {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
@@ -61,7 +65,7 @@ impl GrepTool {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Absolute path to the file or directory to search."
+                            "description": path_desc
                         },
                         "query": {
                             "type": "string",
@@ -128,12 +132,11 @@ impl Tool for GrepTool {
                 .get("path")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let path = PathBuf::from(raw);
-            if !path.is_absolute() {
-                return Ok(ToolResult::error(format!(
-                    "{TOOL_NAME}: `path` must be absolute, got `{raw}`"
-                )));
-            }
+            let path = project_path::resolve_project_file_or_dir(
+                &invocation.context.cwd,
+                raw,
+                TOOL_NAME,
+            )?;
 
             let query = invocation
                 .input

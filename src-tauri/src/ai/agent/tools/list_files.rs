@@ -9,6 +9,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::ai::agent::tools::paragraph::paragraph_count;
+use crate::ai::agent::tools::project_path::{self, DIR_REF_DESC};
 use crate::ai::agent::tools::text_decode::decode_file_bytes;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
@@ -64,7 +65,7 @@ impl ListFilesTool {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Absolute path to the directory to list."
+                            "description": DIR_REF_DESC
                         },
                         "max_entries": {
                             "type": "integer",
@@ -74,7 +75,7 @@ impl ListFilesTool {
                             "description": "Stop after this many nodes total (safety cap for huge trees)."
                         }
                     },
-                    "required": ["path"]
+                    "required": []
                 }),
                 read_only: true,
                 concurrency_safe: true,
@@ -89,31 +90,24 @@ impl Tool for ListFilesTool {
     }
 
     fn validate(&self, input: &Value) -> AppResult<()> {
-        let path = input
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or_else(|| AppError::Invalid(format!("{TOOL_NAME}: `path` must be a string")))?;
-        if path.trim().is_empty() {
-            return Err(AppError::Invalid(format!(
-                "{TOOL_NAME}: `path` must be non-empty"
-            )));
+        if let Some(path) = input.get("path") {
+            if !path.is_string() && !path.is_null() {
+                return Err(AppError::Invalid(format!(
+                    "{TOOL_NAME}: `path` must be a string"
+                )));
+            }
         }
         Ok(())
     }
 
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
-            let raw = invocation
-                .input
-                .get("path")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let path = PathBuf::from(raw);
-            if !path.is_absolute() {
-                return Ok(ToolResult::error(format!(
-                    "{TOOL_NAME}: `path` must be absolute, got `{raw}`"
-                )));
-            }
+            let raw = invocation.input.get("path").and_then(Value::as_str);
+            let path = project_path::resolve_project_dir(
+                &invocation.context.cwd,
+                raw,
+                TOOL_NAME,
+            )?;
 
             let max_entries = invocation
                 .input
@@ -123,9 +117,7 @@ impl Tool for ListFilesTool {
                 .unwrap_or(DEFAULT_MAX_ENTRIES)
                 .clamp(1, MAX_ENTRIES_CAP);
 
-            let canonical = std::fs::canonicalize(&path).map_err(|e| {
-                AppError::Other(format!("{TOOL_NAME}: canonicalize {:?}: {e}", path))
-            })?;
+            let canonical = path;
             if !canonical.is_dir() {
                 return Ok(ToolResult::error(format!(
                     "{TOOL_NAME}: not a directory: {}",

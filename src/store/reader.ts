@@ -212,9 +212,11 @@ export function sanitizeReaderPath(path: string): string {
 export function resolveToolFilePath(input: unknown, output: unknown): string {
   const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const o = output && typeof output === "object" ? (output as Record<string, unknown>) : {};
+  // Prefer the backend-resolved absolute path so reader tabs / diffs stay keyed
+  // consistently even when the model passes a project-relative breadcrumb in input.
   const raw =
-    (typeof inp.path === "string" && inp.path.trim()) ||
     (typeof o.path === "string" && o.path.trim()) ||
+    (typeof inp.path === "string" && inp.path.trim()) ||
     "";
   return raw ? sanitizeReaderPath(raw) : "";
 }

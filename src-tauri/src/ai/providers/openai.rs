@@ -1107,12 +1107,7 @@ fn finalize_pending_tool_calls(
         .into_iter()
         .filter(|p| !p.name.is_empty())
         .map(|p| {
-            let raw_args = if p.arguments.trim().is_empty() {
-                "{}"
-            } else {
-                p.arguments.as_str()
-            };
-            let arguments = serde_json::from_str::<Value>(raw_args).unwrap_or(Value::Null);
+            let arguments = parse_tool_call_arguments(&p.name, &p.arguments);
             crate::ai::chat::ProviderToolCall {
                 id: p.id,
                 name: p.name,
@@ -1120,6 +1115,189 @@ fn finalize_pending_tool_calls(
             }
         })
         .collect()
+}
+
+/// Parse a tool call's accumulated `function.arguments` string.
+///
+/// Some upstreams (notably doubao/ark) occasionally emit argument JSON that
+/// strict parsing rejects: raw control characters inside string values,
+/// output truncated mid-stream, or the whole payload concatenated twice.
+/// Dropping the call to `Value::Null` loses the entire generation, so on
+/// strict-parse failure we attempt a best-effort repair before giving up.
+fn parse_tool_call_arguments(tool_name: &str, raw: &str) -> Value {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return json!({});
+    }
+    match serde_json::from_str::<Value>(trimmed) {
+        Ok(v) => v,
+        Err(err) => match repair_tool_call_arguments(trimmed) {
+            Some(v) => {
+                eprintln!(
+                    "[ATELIER_TOOL_ARGS] repaired malformed `{}` arguments ({} bytes; strict parse: {})",
+                    tool_name,
+                    trimmed.len(),
+                    err
+                );
+                v
+            }
+            None => {
+                eprintln!(
+                    "[ATELIER_TOOL_ARGS] unrepairable `{}` arguments ({} bytes; strict parse: {})",
+                    tool_name,
+                    trimmed.len(),
+                    err
+                );
+                Value::Null
+            }
+        },
+    }
+}
+
+/// Best-effort repair of malformed tool-argument JSON. Returns `None` when
+/// nothing parseable can be salvaged.
+fn repair_tool_call_arguments(raw: &str) -> Option<Value> {
+    // Duplicated / concatenated payloads (`{...}{...}`): strict parsing fails
+    // with "trailing characters", but the first value alone is valid.
+    if let Some(v) = first_json_value(raw) {
+        return Some(v);
+    }
+
+    // Escape raw control chars and invalid escape sequences inside strings.
+    let (clean, open_stack, in_string) = sanitize_json_fragment(raw);
+    if let Some(v) = first_json_value(&clean) {
+        return Some(v);
+    }
+
+    // Truncated output: close whatever is still open. Several closing
+    // strategies are tried because the cut may fall mid-key, mid-value or
+    // right after a separator.
+    let closers: String = open_stack
+        .iter()
+        .rev()
+        .map(|c| if *c == '{' { '}' } else { ']' })
+        .collect();
+    let mut candidates: Vec<String> = Vec::new();
+    if in_string {
+        // Cut inside a string value: close the quote.
+        candidates.push(format!("{clean}\"{closers}"));
+        // Cut inside an object key: close the quote and give it a value.
+        candidates.push(format!("{clean}\":null{closers}"));
+    } else {
+        candidates.push(format!("{clean}{closers}"));
+        // Cut right after `:` → the key still needs a value.
+        candidates.push(format!("{clean}null{closers}"));
+        // Cut right after `,` → drop the dangling separator.
+        let stripped = clean.trim_end().trim_end_matches([',', ':']);
+        candidates.push(format!("{stripped}{closers}"));
+    }
+    candidates
+        .iter()
+        .find_map(|cand| serde_json::from_str::<Value>(cand).ok())
+}
+
+/// Extract the first complete JSON value from `raw`, ignoring anything after it.
+fn first_json_value(raw: &str) -> Option<Value> {
+    let mut iter = serde_json::Deserializer::from_str(raw).into_iter::<Value>();
+    match iter.next() {
+        Some(Ok(v)) => Some(v),
+        _ => None,
+    }
+}
+
+/// Single pass over a (possibly malformed) JSON fragment:
+/// - escapes raw control characters (U+0000..U+001F) inside strings;
+/// - neutralizes invalid escape sequences (`\x`, incomplete `\uXX`) by
+///   escaping the backslash itself;
+/// - records which containers are still open and whether the fragment ends
+///   inside a string, so the caller can synthesize closers.
+fn sanitize_json_fragment(raw: &str) -> (String, Vec<char>, bool) {
+    let chars: Vec<char> = raw.chars().collect();
+    let mut out = String::with_capacity(raw.len());
+    let mut stack: Vec<char> = Vec::new();
+    let mut in_string = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let ch = chars[i];
+        if !in_string {
+            match ch {
+                '"' => {
+                    in_string = true;
+                    out.push(ch);
+                }
+                '{' | '[' => {
+                    stack.push(ch);
+                    out.push(ch);
+                }
+                '}' => {
+                    if stack.last() == Some(&'{') {
+                        stack.pop();
+                    }
+                    out.push(ch);
+                }
+                ']' => {
+                    if stack.last() == Some(&'[') {
+                        stack.pop();
+                    }
+                    out.push(ch);
+                }
+                _ => out.push(ch),
+            }
+            i += 1;
+            continue;
+        }
+        match ch {
+            '"' => {
+                in_string = false;
+                out.push(ch);
+                i += 1;
+            }
+            '\\' => match chars.get(i + 1) {
+                None => {
+                    // Dangling escape at buffer end: drop it.
+                    i += 1;
+                }
+                Some('u') => {
+                    let hex_ok = chars.len() >= i + 6
+                        && chars[i + 2..i + 6].iter().all(|c| c.is_ascii_hexdigit());
+                    if hex_ok {
+                        out.push('\\');
+                        out.push('u');
+                        out.extend(&chars[i + 2..i + 6]);
+                        i += 6;
+                    } else {
+                        out.push_str("\\\\u");
+                        i += 2;
+                    }
+                }
+                Some(next @ ('"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't')) => {
+                    out.push('\\');
+                    out.push(*next);
+                    i += 2;
+                }
+                Some(_) => {
+                    // Invalid escape like `\x`: escape the backslash literally
+                    // and reprocess the following char normally.
+                    out.push_str("\\\\");
+                    i += 1;
+                }
+            },
+            c if (c as u32) < 0x20 => {
+                match c {
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    '\t' => out.push_str("\\t"),
+                    _ => out.push_str(&format!("\\u{:04x}", c as u32)),
+                }
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    (out, stack, in_string)
 }
 
 fn finalize_stream_response(
@@ -1711,7 +1889,7 @@ fn extract_openai_chat_tool_calls(v: &Value) -> Vec<crate::ai::chat::ProviderToo
                 .pointer("/function/arguments")
                 .and_then(Value::as_str)
                 .unwrap_or("{}");
-            let arguments = serde_json::from_str::<Value>(raw_args).unwrap_or(Value::Null);
+            let arguments = parse_tool_call_arguments(&name, raw_args);
             Some(crate::ai::chat::ProviderToolCall {
                 id,
                 name,
@@ -2098,4 +2276,78 @@ fn empty_response_details(v: &Value) -> String {
 #[allow(dead_code)]
 fn _usage_from_openai(v: &Value) -> TokenUsage {
     tokens::extract_usage(v)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_tool_args_valid_json_passes_through() {
+        let v = parse_tool_call_arguments("CreateDoc", r#"{"title":"第二章","content":"正文"}"#);
+        assert_eq!(v["title"], "第二章");
+        assert_eq!(v["content"], "正文");
+    }
+
+    #[test]
+    fn parse_tool_args_empty_becomes_object() {
+        assert_eq!(parse_tool_call_arguments("CreateDoc", "   "), json!({}));
+    }
+
+    #[test]
+    fn repair_recovers_raw_newlines_in_strings() {
+        let raw = "{\"title\":\"第二章\",\"content\":\"第一行\n\t第二行\"}";
+        let v = parse_tool_call_arguments("CreateDoc", raw);
+        assert_eq!(v["title"], "第二章");
+        assert_eq!(v["content"], "第一行\n\t第二行");
+    }
+
+    #[test]
+    fn repair_recovers_duplicated_payload() {
+        let raw = r#"{"title":"a","content":"b"}{"title":"a","content":"b"}"#;
+        let v = parse_tool_call_arguments("CreateDoc", raw);
+        assert_eq!(v["title"], "a");
+        assert_eq!(v["content"], "b");
+    }
+
+    #[test]
+    fn repair_recovers_truncated_string_value() {
+        let raw = r#"{"title":"第二章","content":"写到一半突然断"#;
+        let v = parse_tool_call_arguments("CreateDoc", raw);
+        assert_eq!(v["title"], "第二章");
+        assert_eq!(v["content"], "写到一半突然断");
+    }
+
+    #[test]
+    fn repair_recovers_cut_after_colon_and_comma() {
+        let after_colon = r#"{"title":"a","content":"#;
+        let v = parse_tool_call_arguments("CreateDoc", after_colon);
+        assert_eq!(v["title"], "a");
+        assert_eq!(v["content"], Value::Null);
+
+        let after_comma = r#"{"title":"a","content":"b","#;
+        let v = parse_tool_call_arguments("CreateDoc", after_comma);
+        assert_eq!(v["title"], "a");
+        assert_eq!(v["content"], "b");
+    }
+
+    #[test]
+    fn repair_recovers_truncated_mid_key() {
+        let raw = r#"{"title":"a","cont"#;
+        let v = parse_tool_call_arguments("CreateDoc", raw);
+        assert_eq!(v["title"], "a");
+    }
+
+    #[test]
+    fn repair_neutralizes_invalid_escapes() {
+        let raw = r#"{"title":"a\x1","content":"b\u12"}"#;
+        let v = parse_tool_call_arguments("CreateDoc", raw);
+        assert_eq!(v["title"], "a\\x1");
+        assert_eq!(v["content"], "b\\u12");
+    }
+
+    #[test]
+    fn unrepairable_garbage_falls_back_to_null() {
+        assert_eq!(parse_tool_call_arguments("CreateDoc", "not json at all"), Value::Null);
+    }
 }

@@ -18,6 +18,7 @@ use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
 use crate::ai::agent::tools::paragraph::{
     join_paragraphs, replace_paragraph_range, split_paragraphs, strip_paragraph_label,
 };
+use crate::ai::agent::tools::project_path::{self, FILE_REF_DESC};
 use crate::ai::agent::tools::text_decode::{
     detect_and_decode, normalize_tool_string, read_text_file, write_text_file, TextEncoding,
 };
@@ -45,7 +46,7 @@ impl FileWriteTool {
                 schema: json!({
                     "type": "object",
                     "properties": {
-                        "path":    { "type": "string", "description": "Absolute path to the file to write." },
+                        "path":    { "type": "string", "description": FILE_REF_DESC },
                         "content": { "type": "string", "description": "Full file content. Overwrites existing data." }
                     },
                     "required": ["path", "content"]
@@ -70,7 +71,7 @@ impl Tool for FileWriteTool {
 
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
-            let path = path_arg(&invocation.input, WRITE_TOOL)?;
+            let path = path_arg(&invocation.input, WRITE_TOOL, &invocation.context.cwd)?;
             let content = normalize_tool_string(
                 invocation
                     .input
@@ -155,7 +156,7 @@ impl FileEditTool {
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Absolute path to the file to edit."
+                            "description": FILE_REF_DESC
                         },
                         "paragraph_from": {
                             "type": "integer",
@@ -213,7 +214,7 @@ impl Tool for FileEditTool {
 
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
-            let path = path_arg(&invocation.input, EDIT_TOOL)?;
+            let path = path_arg(&invocation.input, EDIT_TOOL, &invocation.context.cwd)?;
             let paragraph_from = parse_paragraph(
                 invocation.input.get("paragraph_from"),
                 "paragraph_from",
@@ -314,20 +315,12 @@ fn require_string(input: &Value, key: &str, tool: &str) -> AppResult<()> {
     Ok(())
 }
 
-fn path_arg(input: &Value, tool: &str) -> AppResult<PathBuf> {
+fn path_arg(input: &Value, tool: &str, cwd: &Path) -> AppResult<PathBuf> {
     let raw = input
         .get("path")
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::Invalid(format!("{tool}: missing path")))?;
-    let path = PathBuf::from(raw);
-    // Relative paths would resolve against the host process CWD (the
-    // app's own directory) — never allowed.
-    if !path.is_absolute() {
-        return Err(AppError::Invalid(format!(
-            "{tool}: `path` must be absolute, got `{raw}`"
-        )));
-    }
-    Ok(path)
+    project_path::resolve_project_file(cwd, raw, tool)
 }
 
 /// True iff the agent has registered a read receipt for `path` (or its

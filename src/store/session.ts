@@ -30,6 +30,7 @@ import {
 } from "./reader";
 import { useSettings } from "./settings";
 import { normalizeDiffText } from "../utils/inlineDiff";
+import { normalizeToolContent } from "../utils/normalizeToolContent";
 
 interface ComposerState {
   prompt: string;
@@ -317,13 +318,15 @@ export const useSession = create<SessionStore>((set, get) => {
 
   /** Replace active chat with server truth (avoids duplicate/stale merges after async gen or tab switches). */
   const reloadActiveSessionIfViewing = async (sessionId: string) => {
+    // Generation is complete — always discard the streaming buffer, even when
+    // the user is viewing another session. A leftover buffer would otherwise
+    // be picked up by the next generation in this session and render the
+    // previous assistant reply as part of the new streaming message.
+    cancelStreamFlushRaf(sessionId);
+    streamingBuffers.delete(sessionId);
     if (get().activeId !== sessionId) return;
     try {
       const data = await api.loadSession(sessionId);
-      // Generation is complete — discard the streaming buffer so future
-      // switchTo calls show the persisted DB content, not stale temp data.
-      cancelStreamFlushRaf(sessionId);
-      streamingBuffers.delete(sessionId);
       set({
         active: data,
         composer: {
@@ -1268,7 +1271,8 @@ async function handleReaderToolComplete(
   if (tool === "Edit") {
     const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
     const out = (output && typeof output === "object" ? output : {}) as Record<string, unknown>;
-    const content = typeof inp.content === "string" ? inp.content : "";
+    const contentRaw = typeof inp.content === "string" ? inp.content : "";
+    const content = normalizeToolContent(contentRaw);
     const range = parseEditParagraphRange(input);
     if (range == null) return;
     const { from: paragraphFrom, to: paragraphTo } = range;
@@ -1351,10 +1355,35 @@ function applyToolEvent(
     for (let i = blocks.length - 1; i >= 0; i--) {
       const b = blocks[i];
       if (b.type === "tool_use" && b.id === event.id) {
+        const prevInput =
+          b.input && typeof b.input === "object"
+            ? (b.input as Record<string, unknown>)
+            : {};
+        const nextInput =
+          event.input && typeof event.input === "object"
+            ? (event.input as Record<string, unknown>)
+            : {};
+        const input = { ...prevInput, ...nextInput };
+        // Keep streamed doc fields when the final payload fails validation
+        // (e.g. content sent as non-string) so the UI can still show them.
+        if (
+          (event.tool === "CreateDoc" || event.tool === "Edit") &&
+          typeof input.content !== "string" &&
+          typeof prevInput.content === "string"
+        ) {
+          input.content = prevInput.content;
+        }
+        if (
+          event.tool === "CreateDoc" &&
+          typeof input.title !== "string" &&
+          typeof prevInput.title === "string"
+        ) {
+          input.title = prevInput.title;
+        }
         blocks[i] = {
           ...b,
           tool: event.tool,
-          input: event.input,
+          input,
           status: "pending",
           streaming: false,
         };
@@ -1522,10 +1551,14 @@ function ensureGenerationStreamListener() {
         return;
 
       const requestId = payload.request_message_id || sessionId;
-      const prev = streamingBuffers.get(sessionId) ?? {
-        blocks: [],
-        requestId,
-      };
+      // A buffer left over from a previous request (e.g. a generation that
+      // finished while another session was active) must not leak into this
+      // one — start from a clean slate when the requestId doesn't match.
+      const existing = streamingBuffers.get(sessionId);
+      const prev =
+        existing && existing.requestId === requestId
+          ? existing
+          : { blocks: [], requestId };
       // Always work on a fresh array so React sees a new reference.
       const nextBlocks = prev.blocks.map((b) => ({ ...b }));
       if (stage) {
@@ -1557,10 +1590,12 @@ function ensureGenerationStreamListener() {
       if (!sessionId) return;
       if (cancellingSessions.has(sessionId)) return;
       const requestId = payload.request_message_id || sessionId;
-      const prev = streamingBuffers.get(sessionId) ?? {
-        blocks: [],
-        requestId,
-      };
+      // Same stale-buffer guard as the gen://stream listener above.
+      const existing = streamingBuffers.get(sessionId);
+      const prev =
+        existing && existing.requestId === requestId
+          ? existing
+          : { blocks: [], requestId };
       const nextBlocks = prev.blocks.map((b) => ({ ...b }));
       applyToolEvent(nextBlocks, payload, sessionId);
       // Incrementally drive the character state board off RoleState results.

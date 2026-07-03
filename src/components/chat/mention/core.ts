@@ -10,11 +10,15 @@
 export const MENTION_PREFIX = "@";
 
 /**
- * Matches a serialized mention in plain text: `@` followed by an absolute path
- * (Windows drive `C:\`, UNC `\\`, or POSIX `/`), spanning until the next
- * whitespace or `@`.
+ * Matches a serialized mention in plain text (legacy, space-free paths only).
+ * Prefer {@link parseMentionSegments} for rendering and {@link parseMentionPaths}
+ * for path extraction — both handle quoted paths and filenames with spaces.
  */
-export const MENTION_RE = /@((?:[A-Za-z]:[\\/]|\\\\|\/)[^\s@]*)/g;
+export const MENTION_RE = /@(?:"((?:[^"\\]|\\.)*)"|((?:[A-Za-z]:[\\/]|\\\\|\/)[^\s@]*))/g;
+
+export type MentionSegment =
+  | { type: "text"; value: string }
+  | { type: "mention"; path: string };
 
 export type MentionIconKind = "folder" | "image" | "code" | "file";
 
@@ -68,14 +72,100 @@ export function mentionIconSvg(absPath: string, isDir?: boolean): string {
   return `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
 }
 
+/** True when the path must be JSON-quoted in serialized text (spaces / quotes). */
+function needsMentionQuotes(path: string): boolean {
+  return /[\s"]/.test(path);
+}
+
+/** Serialize one mention path into the `@…` plain-text form stored in messages. */
+export function serializeMentionPath(path: string): string {
+  if (needsMentionQuotes(path)) {
+    return `${MENTION_PREFIX}${JSON.stringify(path)}`;
+  }
+  return `${MENTION_PREFIX}${path}`;
+}
+
+const QUOTED_MENTION_HEAD = /^@"((?:[^"\\]|\\.)*)"/;
+const UNQUOTED_MENTION_HEAD = /^@((?:[A-Za-z]:[\\/]|\\\\|\/)[^\s@]*)/;
+
+/** Decode the inner payload of a quoted `@\"…\"` mention. */
+function decodeQuotedMentionPayload(raw: string): string {
+  return JSON.parse(`"${raw}"`) as string;
+}
+
+/**
+ * When older messages stored an unquoted mention, parsing stopped at the first
+ * space inside a filename. If the remainder looks like the rest of that name
+ * (e.g. ` 穿越斗罗，废柴蓝银草.md`), merge it back onto the path.
+ */
+function legacyMentionContinuation(textAfterPartial: string): string {
+  const m = textAfterPartial.match(/^\s+[^\s@]+/);
+  return m?.[0] ?? "";
+}
+
+/** Parse a single `@…` mention starting at `atIndex` (which must point to `@`). */
+export function parseMentionAt(
+  text: string,
+  atIndex: number,
+): { path: string; length: number } | null {
+  if (text[atIndex] !== MENTION_PREFIX) return null;
+  const rest = text.slice(atIndex);
+
+  const quoted = rest.match(QUOTED_MENTION_HEAD);
+  if (quoted) {
+    return {
+      path: normalizeMentionPath(decodeQuotedMentionPayload(quoted[1])),
+      length: quoted[0].length,
+    };
+  }
+
+  const unquoted = rest.match(UNQUOTED_MENTION_HEAD);
+  if (unquoted) {
+    let path = unquoted[1];
+    let length = unquoted[0].length;
+    const cont = legacyMentionContinuation(text.slice(atIndex + length));
+    if (cont) {
+      path += cont;
+      length += cont.length;
+    }
+    return { path: normalizeMentionPath(path), length };
+  }
+
+  return null;
+}
+
+/** Split plain text into alternating text / mention segments. */
+export function parseMentionSegments(text: string): MentionSegment[] {
+  const segments: MentionSegment[] = [];
+  if (!text) return segments;
+
+  let i = 0;
+  while (i < text.length) {
+    const at = text.indexOf(MENTION_PREFIX, i);
+    if (at === -1) {
+      segments.push({ type: "text", value: text.slice(i) });
+      break;
+    }
+    if (at > i) {
+      segments.push({ type: "text", value: text.slice(i, at) });
+    }
+    const parsed = parseMentionAt(text, at);
+    if (parsed) {
+      segments.push({ type: "mention", path: parsed.path });
+      i = at + parsed.length;
+      continue;
+    }
+    segments.push({ type: "text", value: MENTION_PREFIX });
+    i = at + 1;
+  }
+  return segments;
+}
+
 /** Extract the mention paths from serialized text, in document order. */
 export function parseMentionPaths(text: string): string[] {
-  const paths: string[] = [];
-  if (!text) return paths;
-  MENTION_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = MENTION_RE.exec(text)) !== null) paths.push(m[1]);
-  return paths;
+  return parseMentionSegments(text)
+    .filter((s): s is Extract<MentionSegment, { type: "mention" }> => s.type === "mention")
+    .map((s) => s.path);
 }
 
 /* ───── project-scope validation ───── */
@@ -98,20 +188,17 @@ export function isWithinProject(path: string, root: string): boolean {
  * Layout: file-type icon, file name, remove button. The full path lives on
  * `dataset.path` (used for serialization), while only the name is displayed.
  */
-export function createMentionNode(absPath: string, _isDir?: boolean): HTMLElement {
+export function createMentionNode(absPath: string, isDir?: boolean): HTMLElement {
   const chip = document.createElement("span");
   chip.className = "composer-mention";
   chip.contentEditable = "false";
   chip.dataset.path = absPath;
   chip.setAttribute("title", absPath);
 
-  // A real text glyph as the FIRST child gives the inline-flex chip a genuine
-  // text baseline (an SVG icon would not), so the label aligns with the
-  // surrounding text's baseline. See `.composer-mention` in composer.css.
-  const at = document.createElement("span");
-  at.className = "composer-mention-at";
-  at.textContent = MENTION_PREFIX;
-  chip.appendChild(at);
+  const icon = document.createElement("span");
+  icon.className = "composer-mention-icon";
+  icon.innerHTML = mentionIconSvg(absPath, isDir);
+  chip.appendChild(icon);
 
   const label = document.createElement("span");
   label.className = "composer-mention-label";
@@ -140,7 +227,7 @@ export function serializeMentions(root: HTMLElement): string {
       if (child.nodeType !== Node.ELEMENT_NODE) return;
       const el = child as HTMLElement;
       if (el.dataset.path) {
-        out += `${MENTION_PREFIX}${el.dataset.path}`;
+        out += serializeMentionPath(el.dataset.path);
       } else if (el.tagName === "BR") {
         out += "\n";
       } else if (el.tagName === "DIV" || el.tagName === "P") {
@@ -186,6 +273,13 @@ export function buildMentionNodes(text: string, mentions: string[]): Node[] {
   };
   while (i < text.length) {
     if (text[i] === MENTION_PREFIX) {
+      const parsed = parseMentionAt(text, i);
+      if (parsed) {
+        flush();
+        nodes.push(createMentionNode(parsed.path));
+        i += parsed.length;
+        continue;
+      }
       const rest = text.slice(i + 1);
       const hit = sorted.find((p) => p && rest.startsWith(p));
       if (hit) {

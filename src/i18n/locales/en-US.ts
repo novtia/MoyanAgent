@@ -408,6 +408,7 @@ const enUS: Resource = {
     toolCallRunning: "Running",
     toolCallDone: "Done",
     toolCallError: "Error",
+    toolCallErrorReason: "Failure reason",
     toolCallToggle: "Expand or collapse details",
     toolCallInput: "Input",
     toolCallOutput: "Output",

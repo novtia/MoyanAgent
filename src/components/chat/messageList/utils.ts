@@ -54,6 +54,25 @@ export function safeJsonStringify(v: unknown): string {
   }
 }
 
+/**
+ * Extract a human-readable error message from a failed tool call's output.
+ * Backend errors arrive as `{ error: "..." }`; cancelled calls as a plain
+ * string. Falls back to a JSON dump so the reason is never silently lost.
+ */
+export function extractToolErrorMessage(output: unknown): string {
+  if (output == null) return "";
+  if (typeof output === "string") return output;
+  if (typeof output === "object") {
+    const o = output as Record<string, unknown>;
+    for (const key of ["error", "message", "detail"]) {
+      const v = o[key];
+      if (typeof v === "string" && v.trim()) return v;
+    }
+    return safeJsonStringify(output);
+  }
+  return String(output);
+}
+
 export function summarizeToolInput(input: unknown): string {
   if (input == null) return "";
   if (typeof input === "string") return input;

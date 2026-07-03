@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { countChars, formatParagraphRangeLabel, parseEditParagraphRange, readerDocFromToolOutput, useReader } from "../../../store/reader";
+import { countChars, formatParagraphRangeLabel, parseEditParagraphRange, readerDocFromToolOutput, resolveToolFilePath, useReader } from "../../../store/reader";
 import type { AssistantBlock } from "../../../types";
+import { normalizeToolContent } from "../../../utils/normalizeToolContent";
+import { extractToolErrorMessage } from "./utils";
 import { ThinkingChevronIcon, ToolCallIcon } from "./icons";
 
 export function StreamingDocCard({
@@ -29,9 +31,12 @@ export function StreamingDocCard({
     created?: boolean;
   };
 
-  const content = isEdit ? input.content ?? "" : input.content ?? "";
+  const content = useMemo(
+    () => normalizeToolContent(input.content ?? ""),
+    [input.content],
+  );
 
-  const path = (output.path || input.path || "").toString();
+  const path = resolveToolFilePath(block.input, block.output);
   const baseName = path ? path.split(/[\\/]/).pop() || path : "";
   const editRange = isEdit ? parseEditParagraphRange(input) : undefined;
   const paraLabel =
@@ -61,14 +66,20 @@ export function StreamingDocCard({
         : t("message.toolCallDone");
 
   const hasContent = content.length > 0;
+  const errorMessage =
+    status === "error" ? extractToolErrorMessage(block.output) : "";
 
   useEffect(() => {
     if (streaming) setOpen(true);
   }, [streaming]);
 
+  useEffect(() => {
+    if (status === "error" && hasContent) setOpen(true);
+  }, [status, hasContent]);
+
   return (
     <div
-      className={`tool-call-block ${status} ${open ? "is-open" : ""} ${
+      className={`tool-call-block doc-tool-card ${status} ${open ? "is-open" : ""} ${
         streaming ? "is-streaming" : ""
       }`}
     >
@@ -123,6 +134,15 @@ export function StreamingDocCard({
             {content}
             {streaming && <span className="stream-doc-cursor" aria-hidden />}
           </pre>
+        </div>
+      )}
+
+      {errorMessage && (
+        <div className="tool-call-error-detail" role="alert">
+          <span className="tool-call-error-detail-label">
+            {t("message.toolCallErrorReason")}
+          </span>
+          <span className="tool-call-error-detail-text">{errorMessage}</span>
         </div>
       )}
     </div>
