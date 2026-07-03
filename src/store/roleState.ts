@@ -154,14 +154,22 @@ export function nsfwSensitiveSpots(nsfw: RoleNsfw): string[] {
   return Array.isArray(raw) ? raw.map(String) : [];
 }
 
-interface RoleStateStore {
-  orderBySession: Record<string, string[]>;
-  rolesBySession: Record<string, Record<string, Role>>;
+/** Project sessions share `project_id`; standalone sessions use session id. */
+export function resolveRoleStateScope(session: {
+  id: string;
+  project_id?: string | null;
+}): string {
+  return session.project_id ?? session.id;
+}
 
-  applyOp: (sessionId: string, op: RoleStateOp) => void;
-  setRoles: (sessionId: string, roles: Role[]) => void;
-  loadLatest: (sessionId: string) => Promise<void>;
-  rolesOf: (sessionId: string | null | undefined) => Role[];
+interface RoleStateStore {
+  orderByScope: Record<string, string[]>;
+  rolesByScope: Record<string, Record<string, Role>>;
+
+  applyOp: (scopeId: string, op: RoleStateOp) => void;
+  setRoles: (scopeId: string, roles: Role[]) => void;
+  loadLatest: (sessionId: string, scopeId: string) => Promise<void>;
+  rolesOf: (scopeId: string | null | undefined) => Role[];
 }
 
 function dedupeOrder(order: string[]): string[] {
@@ -169,10 +177,10 @@ function dedupeOrder(order: string[]): string[] {
 }
 
 export const useRoleState = create<RoleStateStore>((set, get) => ({
-  orderBySession: {},
-  rolesBySession: {},
+  orderByScope: {},
+  rolesByScope: {},
 
-  setRoles: (sessionId, roles) => {
+  setRoles: (scopeId, roles) => {
     const map: Record<string, Role> = {};
     const order: string[] = [];
     for (const r of roles) {
@@ -181,19 +189,19 @@ export const useRoleState = create<RoleStateStore>((set, get) => ({
       order.push(r.id);
     }
     set((s) => ({
-      rolesBySession: { ...s.rolesBySession, [sessionId]: map },
-      orderBySession: { ...s.orderBySession, [sessionId]: dedupeOrder(order) },
+      rolesByScope: { ...s.rolesByScope, [scopeId]: map },
+      orderByScope: { ...s.orderByScope, [scopeId]: dedupeOrder(order) },
     }));
   },
 
-  applyOp: (sessionId, op) => {
+  applyOp: (scopeId, op) => {
     if (op.op === "get") {
-      if (Array.isArray(op.roles)) get().setRoles(sessionId, op.roles);
+      if (Array.isArray(op.roles)) get().setRoles(scopeId, op.roles);
       return;
     }
     set((s) => {
-      const map = { ...(s.rolesBySession[sessionId] ?? {}) };
-      let order = [...(s.orderBySession[sessionId] ?? [])];
+      const map = { ...(s.rolesByScope[scopeId] ?? {}) };
+      let order = [...(s.orderByScope[scopeId] ?? [])];
 
       if (op.op === "create" && op.role && typeof op.role.id === "string") {
         map[op.role.id] = op.role;
@@ -207,27 +215,26 @@ export const useRoleState = create<RoleStateStore>((set, get) => ({
       }
 
       return {
-        rolesBySession: { ...s.rolesBySession, [sessionId]: map },
-        orderBySession: { ...s.orderBySession, [sessionId]: order },
+        rolesByScope: { ...s.rolesByScope, [scopeId]: map },
+        orderByScope: { ...s.orderByScope, [scopeId]: order },
       };
     });
   },
 
-  loadLatest: async (sessionId) => {
+  loadLatest: async (_sessionId, scopeId) => {
     try {
-      const roles = await api.getRoleStates(sessionId);
-      get().setRoles(sessionId, Array.isArray(roles) ? roles : []);
+      const roles = await api.getRoleStates(_sessionId);
+      get().setRoles(scopeId, Array.isArray(roles) ? roles : []);
     } catch (e) {
       console.warn("[roleState] loadLatest failed", e);
     }
   },
 
-  rolesOf: (sessionId) => {
-    if (!sessionId) return [];
-    const map = get().rolesBySession[sessionId];
-    const order = get().orderBySession[sessionId];
+  rolesOf: (scopeId) => {
+    if (!scopeId) return [];
+    const map = get().rolesByScope[scopeId];
+    const order = get().orderByScope[scopeId];
     if (!map || !order) return [];
     return order.map((id) => map[id]).filter(Boolean) as Role[];
   },
 }));
-

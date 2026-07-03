@@ -38,11 +38,11 @@ export function AssistantContent({
     () => blocks.findIndex((b) => b.type === "tool_use" && b.tool === "TodoList"),
     [blocks],
   );
-  const todoBlocks = useMemo(
+  const toolBlocks = useMemo(
     () =>
       blocks.filter(
         (b): b is Extract<AssistantBlock, { type: "tool_use" }> =>
-          b.type === "tool_use" && b.tool === "TodoList",
+          b.type === "tool_use",
       ),
     [blocks],
   );
@@ -83,7 +83,7 @@ export function AssistantContent({
             return (
               <TodoMasterView
                 key="todo-master"
-                todoBlocks={todoBlocks}
+                toolBlocks={toolBlocks}
                 isStreaming={isStreaming}
               />
             );

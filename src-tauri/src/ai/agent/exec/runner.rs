@@ -72,6 +72,9 @@ pub struct RunAgentParams {
     /// [`ToolUseContext`] so session-scoped tools (e.g. `RoleState`) can
     /// persist their state against the right conversation.
     pub session_id: Option<String>,
+    /// Role-state scope (`project_id` or session id). Resolved by the host
+    /// before the run starts.
+    pub role_state_scope_id: Option<String>,
     /// User message id correlating token events for this generation turn.
     pub correlation_id: Option<String>,
     /// Token usage logger shared from [`AppState`].
@@ -115,6 +118,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         project_cwd,
         abort_signal,
         session_id,
+        role_state_scope_id,
         correlation_id,
         token_logger,
     } = params;
@@ -198,6 +202,9 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
     }
     if let Some(sid) = session_id {
         ctx_builder = ctx_builder.session_id(sid);
+    }
+    if let Some(scope) = role_state_scope_id {
+        ctx_builder = ctx_builder.role_state_scope_id(scope);
     }
     if let Some(cid) = correlation_id {
         ctx_builder = ctx_builder.correlation_id(cid);

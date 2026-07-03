@@ -28,7 +28,7 @@ use crate::ai::agent::exec::query::{
     QueryEngine, QueryFuture, QueryRequest, QueryResult, ToolEventCallback,
 };
 use crate::ai::agent::core::task::{Task, TaskId, TaskState, TaskStore};
-use crate::ai::agent::tools::{ToolInvocation, ToolPool, ToolResult};
+use crate::ai::agent::tools::{ToolInvocation, ToolPool, ToolResult, todo};
 use crate::ai::agent::types::{AgentId, MessageEvent, MessageId};
 use crate::ai::chat::{ChatRequest, GenerateResponse, StreamDelta, TextDeltaCallback};
 use crate::ai::providers::ProviderFactory;
@@ -519,10 +519,14 @@ fn collect_tool_definitions(tools: &ToolPool) -> Vec<crate::ai::chat::ToolDefini
         .into_iter()
         .map(|t| {
             let s = t.spec();
+            let mut schema = s.schema.clone();
+            if s.name != todo::TOOL_NAME {
+                todo::inject_todo_done_schema(&mut schema);
+            }
             crate::ai::chat::ToolDefinition {
                 name: s.name.clone(),
                 description: s.description.clone(),
-                schema: s.schema.clone(),
+                schema,
             }
         })
         .collect()
@@ -576,6 +580,7 @@ fn inject_todo_continuation(chat: &mut ChatRequest, message: &str) {
         text: Some(message.to_string()),
         images: Vec::new(),
         thinking_content: None,
+        timeline: Vec::new(),
     });
 }
 
@@ -593,6 +598,7 @@ pub fn inject_attachments_into_history(chat: &mut ChatRequest, attachments: &[At
             text: Some(body),
             images: Vec::new(),
             thinking_content: None,
+            timeline: Vec::new(),
         });
         // Bookkeeping: mark notification-shaped attachments rendered so
         // they don't get re-drained next time.

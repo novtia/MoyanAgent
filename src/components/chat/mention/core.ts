@@ -2,7 +2,7 @@
  * Single source of truth for `@file` mention "reference cards".
  *
  * All mention logic — path normalization, icon selection, serialization to/from
- * the `@<path>` text form, the contenteditable chip DOM node, and project-scope
+ * the `@\"…\"` text form, the contenteditable chip DOM node, and project-scope
  * validation — lives here so the editor, the static renderer and the drop
  * handlers all behave identically. No React in this file (pure + DOM helpers).
  */
@@ -10,11 +10,11 @@
 export const MENTION_PREFIX = "@";
 
 /**
- * Matches a serialized mention in plain text (legacy, space-free paths only).
+ * Matches a serialized mention in plain text (`@"…"` form only).
  * Prefer {@link parseMentionSegments} for rendering and {@link parseMentionPaths}
- * for path extraction — both handle quoted paths and filenames with spaces.
+ * for path extraction.
  */
-export const MENTION_RE = /@(?:"((?:[^"\\]|\\.)*)"|((?:[A-Za-z]:[\\/]|\\\\|\/)[^\s@]*))/g;
+export const MENTION_RE = /@"((?:[^"\\]|\\.)*)"/g;
 
 export type MentionSegment =
   | { type: "text"; value: string }
@@ -72,38 +72,19 @@ export function mentionIconSvg(absPath: string, isDir?: boolean): string {
   return `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
 }
 
-/** True when the path must be JSON-quoted in serialized text (spaces / quotes). */
-function needsMentionQuotes(path: string): boolean {
-  return /[\s"]/.test(path);
-}
-
-/** Serialize one mention path into the `@…` plain-text form stored in messages. */
+/** Serialize one mention path into the `@\"…\"` plain-text form stored in messages. */
 export function serializeMentionPath(path: string): string {
-  if (needsMentionQuotes(path)) {
-    return `${MENTION_PREFIX}${JSON.stringify(path)}`;
-  }
-  return `${MENTION_PREFIX}${path}`;
+  return `${MENTION_PREFIX}${JSON.stringify(path)}`;
 }
 
 const QUOTED_MENTION_HEAD = /^@"((?:[^"\\]|\\.)*)"/;
-const UNQUOTED_MENTION_HEAD = /^@((?:[A-Za-z]:[\\/]|\\\\|\/)[^\s@]*)/;
 
 /** Decode the inner payload of a quoted `@\"…\"` mention. */
 function decodeQuotedMentionPayload(raw: string): string {
   return JSON.parse(`"${raw}"`) as string;
 }
 
-/**
- * When older messages stored an unquoted mention, parsing stopped at the first
- * space inside a filename. If the remainder looks like the rest of that name
- * (e.g. ` 穿越斗罗，废柴蓝银草.md`), merge it back onto the path.
- */
-function legacyMentionContinuation(textAfterPartial: string): string {
-  const m = textAfterPartial.match(/^\s+[^\s@]+/);
-  return m?.[0] ?? "";
-}
-
-/** Parse a single `@…` mention starting at `atIndex` (which must point to `@`). */
+/** Parse a single `@\"…\"` mention starting at `atIndex` (which must point to `@`). */
 export function parseMentionAt(
   text: string,
   atIndex: number,
@@ -117,18 +98,6 @@ export function parseMentionAt(
       path: normalizeMentionPath(decodeQuotedMentionPayload(quoted[1])),
       length: quoted[0].length,
     };
-  }
-
-  const unquoted = rest.match(UNQUOTED_MENTION_HEAD);
-  if (unquoted) {
-    let path = unquoted[1];
-    let length = unquoted[0].length;
-    const cont = legacyMentionContinuation(text.slice(atIndex + length));
-    if (cont) {
-      path += cont;
-      length += cont.length;
-    }
-    return { path: normalizeMentionPath(path), length };
   }
 
   return null;
@@ -280,12 +249,12 @@ export function buildMentionNodes(text: string, mentions: string[]): Node[] {
         i += parsed.length;
         continue;
       }
-      const rest = text.slice(i + 1);
-      const hit = sorted.find((p) => p && rest.startsWith(p));
+      const rest = text.slice(i);
+      const hit = sorted.find((p) => p && rest.startsWith(serializeMentionPath(p)));
       if (hit) {
         flush();
         nodes.push(createMentionNode(hit));
-        i += 1 + hit.length;
+        i += serializeMentionPath(hit).length;
         continue;
       }
     }

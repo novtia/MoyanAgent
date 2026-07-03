@@ -1,8 +1,8 @@
 //! Incremental role-state tool.
 //!
-//! Drives the per-conversation "character state board". Unlike [`super::todo`]
-//! the store is **session-scoped and shared** across every agent run that
-//! belongs to the same chat session, so the dedicated `role-state` sub-agent
+//! Drives the project-scoped "character state board" (standalone sessions fall
+//! back to session scope). Unlike [`super::todo`] the store is **shared** across
+//! every agent run that belongs to the same project (or standalone session),
 //! can read what previous turns established and only emit the *delta*.
 //!
 //! Semantics are deliberately incremental (NEVER full-replace):
@@ -60,13 +60,13 @@ use crate::error::{AppError, AppResult};
 
 pub const TOOL_NAME: &str = "RoleState";
 
-/// Session-scoped, shared store of role boards. Lives on `AppState` so the
+/// Scope-scoped, shared store of role boards. Lives on `AppState` so the
 /// `role-state` sub-agent, the persistence layer and the Tauri commands all
 /// see the same in-memory truth.
 #[derive(Debug, Default)]
 pub struct RoleStateStore {
-    /// session_id → ordered list of role objects (insertion order preserved).
-    sessions: Mutex<HashMap<String, Vec<Value>>>,
+    /// scope_id (project_id or session_id) → ordered role list.
+    boards: Mutex<HashMap<String, Vec<Value>>>,
 }
 
 impl RoleStateStore {
@@ -74,35 +74,35 @@ impl RoleStateStore {
         Self::default()
     }
 
-    /// Snapshot every role for a session as a JSON array (insertion order).
-    pub fn snapshot(&self, session_id: &str) -> Vec<Value> {
-        self.sessions
+    /// Snapshot every role for a scope as a JSON array (insertion order).
+    pub fn snapshot(&self, scope_id: &str) -> Vec<Value> {
+        self.boards
             .lock()
             .ok()
-            .and_then(|g| g.get(session_id).cloned())
+            .and_then(|g| g.get(scope_id).cloned())
             .unwrap_or_default()
     }
 
-    /// Replace a session's roles wholesale. Used when loading a persisted
+    /// Replace a scope's roles wholesale. Used when loading a persisted
     /// snapshot back into memory (session open / rollback).
-    pub fn load(&self, session_id: &str, roles: Vec<Value>) {
-        if let Ok(mut g) = self.sessions.lock() {
+    pub fn load(&self, scope_id: &str, roles: Vec<Value>) {
+        if let Ok(mut g) = self.boards.lock() {
             if roles.is_empty() {
-                g.remove(session_id);
+                g.remove(scope_id);
             } else {
-                g.insert(session_id.to_string(), roles);
+                g.insert(scope_id.to_string(), roles);
             }
         }
     }
 
-    /// Drop a session's roles entirely (e.g. when no snapshot remains).
-    pub fn clear(&self, session_id: &str) {
-        if let Ok(mut g) = self.sessions.lock() {
-            g.remove(session_id);
+    /// Drop a scope's roles entirely (e.g. when no snapshot remains).
+    pub fn clear(&self, scope_id: &str) {
+        if let Ok(mut g) = self.boards.lock() {
+            g.remove(scope_id);
         }
     }
 
-    fn create(&self, session_id: &str, id: &str, role: Value) -> AppResult<Value> {
+    fn create(&self, scope_id: &str, id: &str, role: Value) -> AppResult<Value> {
         let mut role = match role {
             Value::Object(m) => m,
             _ => {
@@ -115,10 +115,10 @@ impl RoleStateStore {
         let role = Value::Object(role);
 
         let mut g = self
-            .sessions
+            .boards
             .lock()
             .map_err(|_| AppError::Other("RoleState: store lock poisoned".into()))?;
-        let list = g.entry(session_id.to_string()).or_default();
+        let list = g.entry(scope_id.to_string()).or_default();
         match list.iter_mut().find(|r| role_id(r) == Some(id)) {
             Some(slot) => {
                 // Idempotent create: overwrite the existing entry.
@@ -131,18 +131,18 @@ impl RoleStateStore {
 
     fn update(
         &self,
-        session_id: &str,
+        scope_id: &str,
         id: &str,
         set: Option<&Map<String, Value>>,
         unset: &[String],
     ) -> AppResult<Value> {
         let mut g = self
-            .sessions
+            .boards
             .lock()
             .map_err(|_| AppError::Other("RoleState: store lock poisoned".into()))?;
         let list = g
-            .get_mut(session_id)
-            .ok_or_else(|| AppError::Invalid("RoleState update: no roles for session".into()))?;
+            .get_mut(scope_id)
+            .ok_or_else(|| AppError::Invalid("RoleState update: no roles for scope".into()))?;
         let role = list
             .iter_mut()
             .find(|r| role_id(r) == Some(id))
@@ -159,19 +159,19 @@ impl RoleStateStore {
         Ok(role.clone())
     }
 
-    fn delete(&self, session_id: &str, id: &str) -> AppResult<bool> {
+    fn delete(&self, scope_id: &str, id: &str) -> AppResult<bool> {
         let mut g = self
-            .sessions
+            .boards
             .lock()
             .map_err(|_| AppError::Other("RoleState: store lock poisoned".into()))?;
-        let Some(list) = g.get_mut(session_id) else {
+        let Some(list) = g.get_mut(scope_id) else {
             return Ok(false);
         };
         let before = list.len();
         list.retain(|r| role_id(r) != Some(id));
         let removed = list.len() < before;
         if list.is_empty() {
-            g.remove(session_id);
+            g.remove(scope_id);
         }
         Ok(removed)
     }
@@ -409,7 +409,12 @@ impl Tool for RoleStateTool {
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         let store = self.store.clone();
         Box::pin(async move {
-            let session_id = invocation.context.session_id.clone().ok_or_else(|| {
+            let scope_id = invocation
+                .context
+                .role_state_scope_id
+                .clone()
+                .or_else(|| invocation.context.session_id.clone())
+                .ok_or_else(|| {
                 AppError::Invalid(
                     "RoleState: no session id on this run; cannot persist role state".into(),
                 )
@@ -423,7 +428,7 @@ impl Tool for RoleStateTool {
 
             match action.as_str() {
                 "get" => {
-                    let roles = store.snapshot(&session_id);
+                    let roles = store.snapshot(&scope_id);
                     Ok(ToolResult::ok(json!({
                         "op": "get",
                         "roles": roles,
@@ -432,7 +437,7 @@ impl Tool for RoleStateTool {
                 "create" => {
                     let id = input.get("id").and_then(Value::as_str).unwrap_or("").to_string();
                     let role = input.get("role").cloned().unwrap_or(Value::Null);
-                    let role = store.create(&session_id, &id, role)?;
+                    let role = store.create(&scope_id, &id, role)?;
                     Ok(ToolResult::ok(json!({
                         "op": "create",
                         "id": id,
@@ -451,7 +456,7 @@ impl Tool for RoleStateTool {
                                 .collect()
                         })
                         .unwrap_or_default();
-                    let role = store.update(&session_id, &id, set, &unset)?;
+                    let role = store.update(&scope_id, &id, set, &unset)?;
                     Ok(ToolResult::ok(json!({
                         "op": "update",
                         "id": id,
@@ -460,7 +465,7 @@ impl Tool for RoleStateTool {
                 }
                 "delete" => {
                     let id = input.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-                    let removed = store.delete(&session_id, &id)?;
+                    let removed = store.delete(&scope_id, &id)?;
                     Ok(ToolResult::ok(json!({
                         "op": "delete",
                         "id": id,

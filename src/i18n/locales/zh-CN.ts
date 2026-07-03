@@ -223,7 +223,8 @@ const zhCN = {
     nsfwSemenAnal: "肛门精液量",
     noSession: "请先打开一个会话",
     empty: "暂无角色状态",
-    emptyHint: "把「角色状态」agent 加入 Agent 流程链，正文生成后会自动绘制角色卡片。",
+    emptyHint:
+      "把「角色状态」agent 加入 Agent 流程链；正文生成后会自动绘制角色卡片。项目内所有会话共享同一块状态板。",
     opCreate: "新建角色",
     opUpdate: "更新角色",
     opDelete: "移除角色",

@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::ai::parameters::GenerationParameters;
 use crate::ai::tokens::TokenUsage;
 
@@ -134,6 +136,14 @@ pub struct HistoryTurn {
     /// Required by some providers (e.g. DeepSeek thinking mode) when
     /// replaying conversation history that originally contained it.
     pub thinking_content: Option<String>,
+    /// Ordered timeline reconstructed from a prior assistant turn's
+    /// `blocks` (or persisted `timeline`). Providers replay assistant
+    /// history segment-by-segment: `Text` becomes a plain assistant
+    /// message, `ToolRound` becomes native `assistant{tool_calls}` +
+    /// tool-result messages, `AgentStage` is dropped. This is what keeps
+    /// host-only tool transcripts out of the model-visible history.
+    /// Empty for user turns and for synthetic/meta turns.
+    pub timeline: Vec<TimelineSegment>,
 }
 
 #[derive(Debug, Clone)]
@@ -197,6 +207,86 @@ pub struct PendingAssistantTurn {
     /// echoed on the assistant message when continuing after `tool_calls`.
     pub thinking_content: Option<String>,
     pub tool_calls: Vec<ProviderToolCall>,
+}
+
+/// One ordered segment of a reconstructed assistant turn, shared by
+/// LLM history replay and (potentially) frontend rendering. Persisted
+/// under `params.timeline` and rebuilt from `blocks` for legacy rows —
+/// see [`crate::ai::block_timeline`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TimelineSegment {
+    AgentStage {
+        #[serde(rename = "agentType")]
+        agent_type: String,
+        index: u32,
+    },
+    Text {
+        text: String,
+    },
+    ToolRound {
+        #[serde(rename = "assistantText", skip_serializing_if = "Option::is_none")]
+        assistant_text: Option<String>,
+        #[serde(rename = "thinkingContent", skip_serializing_if = "Option::is_none")]
+        thinking_content: Option<String>,
+        calls: Vec<TimelineToolCall>,
+        results: Vec<TimelineToolResult>,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineToolResult {
+    #[serde(rename = "toolCallId")]
+    pub tool_call_id: String,
+    pub content: serde_json::Value,
+    #[serde(rename = "isError")]
+    pub is_error: bool,
+}
+
+impl TimelineSegment {
+    /// Convert a `ToolRound` segment into a provider-ready [`ToolChainRound`]
+    /// so history replay can reuse the same native serialization used for
+    /// the in-flight tool loop. Returns `None` for non-`ToolRound` segments.
+    pub fn to_tool_round(&self) -> Option<ToolChainRound> {
+        let Self::ToolRound {
+            assistant_text,
+            thinking_content,
+            calls,
+            results,
+        } = self
+        else {
+            return None;
+        };
+        Some(ToolChainRound {
+            assistant: PendingAssistantTurn {
+                text: assistant_text.clone(),
+                thinking_content: thinking_content.clone(),
+                tool_calls: calls
+                    .iter()
+                    .map(|c| ProviderToolCall {
+                        id: c.id.clone(),
+                        name: c.name.clone(),
+                        arguments: c.arguments.clone(),
+                    })
+                    .collect(),
+            },
+            results: results
+                .iter()
+                .map(|r| ToolResultMessage {
+                    tool_call_id: r.tool_call_id.clone(),
+                    content: r.content.clone(),
+                    is_error: r.is_error,
+                })
+                .collect(),
+        })
+    }
 }
 
 #[derive(Debug, Clone)]

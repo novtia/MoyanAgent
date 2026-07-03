@@ -70,9 +70,32 @@ fn provider_label(request: &ChatRequest) -> String {
 }
 
 fn build_body(request: &ChatRequest) -> Value {
+    use crate::ai::chat::TimelineSegment;
     let mut messages: Vec<Value> = Vec::new();
     for turn in &request.history {
-        if let Some(message) = history_turn_to_message(turn) {
+        if turn.role == "assistant" && !turn.timeline.is_empty() {
+            // Replay the prior assistant turn segment-by-segment so tool
+            // history reads as native tool_use / tool_result blocks rather
+            // than a leak-prone plain-text transcript. AgentStage markers
+            // are host-only and dropped.
+            for seg in &turn.timeline {
+                match seg {
+                    TimelineSegment::Text { text } => {
+                        let t = text.trim();
+                        if !t.is_empty() {
+                            messages.push(message_from_parts("assistant", Some(t), &[]));
+                        }
+                    }
+                    TimelineSegment::ToolRound { .. } => {
+                        if let Some(round) = seg.to_tool_round() {
+                            append_claude_assistant_tool_turn(&mut messages, &round.assistant);
+                            append_claude_tool_results(&mut messages, &round.results);
+                        }
+                    }
+                    TimelineSegment::AgentStage { .. } => {}
+                }
+            }
+        } else if let Some(message) = history_turn_to_message(turn) {
             messages.push(message);
         }
     }

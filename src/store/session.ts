@@ -16,7 +16,7 @@ import {
   agentTypeFromComposerMode,
   composerModeFromAgentType,
 } from "../config/chatMode";
-import { useRoleState, type RoleStateOp } from "./roleState";
+import { useRoleState, resolveRoleStateScope, type RoleStateOp } from "./roleState";
 import {
   applyParagraphRangeEdit,
   revertParagraphRangeEdit,
@@ -431,7 +431,7 @@ export const useSession = create<SessionStore>((set, get) => {
         chatMode: composerModeFromAgentType(data.session.agent_type),
       },
     });
-    void useRoleState.getState().loadLatest(id);
+    void useRoleState.getState().loadLatest(id, roleStateScopeForSession(id));
     useReader.getState().bindSession(id);
   },
 
@@ -1058,6 +1058,16 @@ function saveComposerDraft(sessionId: string, composer: ComposerState) {
   });
 }
 
+function roleStateScopeForSession(sessionId: string): string {
+  const state = useSession.getState();
+  const session =
+    state.active?.session.id === sessionId
+      ? state.active.session
+      : state.sessions.find((s) => s.id === sessionId);
+  if (!session) return sessionId;
+  return resolveRoleStateScope(session);
+}
+
 // ─── Per-session streaming buffers ───────────────────────────────────────────
 // Keeps accumulating stream events even when the session isn't active so that
 // switching back to a generating session immediately shows what was produced
@@ -1608,7 +1618,7 @@ function ensureGenerationStreamListener() {
       ) {
         useRoleState
           .getState()
-          .applyOp(sessionId, payload.output as RoleStateOp);
+          .applyOp(roleStateScopeForSession(sessionId), payload.output as RoleStateOp);
       }
       const next: StreamBuffer = { blocks: nextBlocks, requestId };
       streamingBuffers.set(sessionId, next);
@@ -1621,10 +1631,24 @@ function ensureGenerationStreamListener() {
 
   if (!roleStateResetListenerStarted) {
     roleStateResetListenerStarted = true;
-    listen<{ session_id: string }>("role-state://reset", (event) => {
+    listen<{ scope_id?: string; session_id?: string }>("role-state://reset", (event) => {
+      const scopeId = event.payload?.scope_id;
       const sessionId = event.payload?.session_id;
-      if (!sessionId) return;
-      void useRoleState.getState().loadLatest(sessionId);
+      const state = useSession.getState();
+      const activeScope = state.active
+        ? roleStateScopeForSession(state.active.session.id)
+        : null;
+      if (scopeId && activeScope === scopeId && state.active) {
+        void useRoleState
+          .getState()
+          .loadLatest(state.active.session.id, scopeId);
+        return;
+      }
+      if (sessionId && state.activeId === sessionId) {
+        void useRoleState
+          .getState()
+          .loadLatest(sessionId, roleStateScopeForSession(sessionId));
+      }
     }).catch((e) => {
       roleStateResetListenerStarted = false;
       console.warn(e);

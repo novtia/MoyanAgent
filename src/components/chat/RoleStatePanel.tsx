@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useSession } from "../../store/session";
-import { useRoleState } from "../../store/roleState";
+import { resolveRoleStateScope, useRoleState } from "../../store/roleState";
 import { RoleStateCard } from "./RoleStateCard";
 
 interface RoleStatePanelProps {
@@ -11,19 +11,19 @@ interface RoleStatePanelProps {
 
 export function RoleStatePanel({ open }: RoleStatePanelProps) {
   const { t } = useTranslation();
-  const sessionId = useSession((s) => s.active?.session.id ?? null);
+  const session = useSession((s) => s.active?.session ?? null);
+  const sessionId = session?.id ?? null;
+  const scopeId = session ? resolveRoleStateScope(session) : null;
   const loadLatest = useRoleState((s) => s.loadLatest);
-  // Subscribe to the per-session maps so the panel re-renders on every
-  // incremental op; `rolesOf` then derives the ordered, stable list.
-  const rolesBySession = useRoleState((s) => s.rolesBySession);
-  const orderBySession = useRoleState((s) => s.orderBySession);
+  const rolesByScope = useRoleState((s) => s.rolesByScope);
+  const orderByScope = useRoleState((s) => s.orderByScope);
 
   useEffect(() => {
-    if (open && sessionId) void loadLatest(sessionId);
-  }, [open, sessionId, loadLatest]);
+    if (open && sessionId && scopeId) void loadLatest(sessionId, scopeId);
+  }, [open, sessionId, scopeId, loadLatest]);
 
-  const map = sessionId ? rolesBySession[sessionId] : undefined;
-  const order = sessionId ? orderBySession[sessionId] : undefined;
+  const map = scopeId ? rolesByScope[scopeId] : undefined;
+  const order = scopeId ? orderByScope[scopeId] : undefined;
   const roles = map && order ? order.map((id) => map[id]).filter(Boolean) : [];
 
   if (!sessionId) {
@@ -47,8 +47,6 @@ export function RoleStatePanel({ open }: RoleStatePanelProps) {
   return (
     <div className="rs-panel">
       {roles.map((role) => (
-        // Stable role id as key → each card is an independent instance that
-        // only re-renders when its own role reference changes.
         <RoleStateCard key={role.id} role={role} />
       ))}
     </div>

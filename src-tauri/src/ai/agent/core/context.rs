@@ -31,6 +31,10 @@ pub struct ToolUseContext {
     /// `None` for runs not tied to a chat session.
     pub session_id: Option<String>,
 
+    /// Role-state scope id: `project_id` for project sessions, otherwise
+    /// the session id. Set alongside `session_id` for main/sub-agent runs.
+    pub role_state_scope_id: Option<String>,
+
     /// Correlates all token events within one user send / assistant reply turn.
     pub correlation_id: Option<String>,
 
@@ -100,6 +104,7 @@ impl ToolUseContext {
             permission_mode: self.permission_mode,
             cwd: self.cwd.clone(),
             session_id: self.session_id.clone(),
+            role_state_scope_id: self.role_state_scope_id.clone(),
             correlation_id: self.correlation_id.clone(),
             agent_type: self.agent_type.clone(),
             token_logger: self.token_logger.clone(),
@@ -181,6 +186,7 @@ pub struct ToolUseContextBuilder {
     user_context: Option<Arc<UserContext>>,
     parent_system_prompt: Option<String>,
     session_id: Option<String>,
+    role_state_scope_id: Option<String>,
     correlation_id: Option<String>,
     agent_type: Option<String>,
     token_logger: Option<Arc<TokenUsageLogger>>,
@@ -199,6 +205,7 @@ impl ToolUseContextBuilder {
             user_context: None,
             parent_system_prompt: None,
             session_id: None,
+            role_state_scope_id: None,
             correlation_id: None,
             agent_type: None,
             token_logger: None,
@@ -213,6 +220,11 @@ impl ToolUseContextBuilder {
 
     pub fn session_id(mut self, session_id: impl Into<String>) -> Self {
         self.session_id = Some(session_id.into());
+        self
+    }
+
+    pub fn role_state_scope_id(mut self, scope_id: impl Into<String>) -> Self {
+        self.role_state_scope_id = Some(scope_id.into());
         self
     }
 
@@ -265,6 +277,7 @@ impl ToolUseContextBuilder {
             permission_mode: self.permission_mode,
             cwd: self.cwd,
             session_id: self.session_id,
+            role_state_scope_id: self.role_state_scope_id,
             correlation_id: self.correlation_id,
             agent_type: self.agent_type,
             token_logger: self.token_logger,

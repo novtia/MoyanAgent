@@ -83,9 +83,36 @@ fn gemini_url(endpoint: &str, model: &str) -> String {
 }
 
 fn build_body(request: &ChatRequest) -> Value {
+    use crate::ai::chat::TimelineSegment;
     let mut contents: Vec<Value> = Vec::new();
     for turn in &request.history {
-        if let Some(content) = history_turn_to_content(turn) {
+        if turn.role == "assistant" && !turn.timeline.is_empty() {
+            // Replay the prior assistant turn segment-by-segment so tool
+            // history reads as native functionCall / functionResponse parts
+            // rather than a leak-prone plain-text transcript. AgentStage
+            // markers are host-only and dropped.
+            for seg in &turn.timeline {
+                match seg {
+                    TimelineSegment::Text { text } => {
+                        let t = text.trim();
+                        if !t.is_empty() {
+                            contents.push(content_from_parts("model", Some(t), &[]));
+                        }
+                    }
+                    TimelineSegment::ToolRound { .. } => {
+                        if let Some(round) = seg.to_tool_round() {
+                            append_gemini_assistant_tool_turn(&mut contents, &round.assistant);
+                            append_gemini_tool_results(
+                                &mut contents,
+                                &round.assistant,
+                                &round.results,
+                            );
+                        }
+                    }
+                    TimelineSegment::AgentStage { .. } => {}
+                }
+            }
+        } else if let Some(content) = history_turn_to_content(turn) {
             contents.push(content);
         }
     }

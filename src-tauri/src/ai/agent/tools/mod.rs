@@ -39,6 +39,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::ai::agent::core::context::ToolUseContext;
 use crate::ai::agent::core::permission::{PermissionDecision, PermissionRequest};
@@ -232,7 +233,18 @@ impl ToolPool {
             .get(name)
             .ok_or_else(|| AppError::Invalid(format!("unknown tool: {name}")))?;
 
-        tool.validate(&invocation.input)?;
+        let todo_done_id = if name != todo::TOOL_NAME {
+            todo::extract_todo_done_id(&invocation.input)
+        } else {
+            None
+        };
+        let tool_input = if todo_done_id.is_some() {
+            todo::strip_todo_done_id(&invocation.input)
+        } else {
+            invocation.input.clone()
+        };
+
+        tool.validate(&tool_input)?;
 
         match resolver.resolve(request)? {
             PermissionDecision::Allow { .. } => {}
@@ -247,6 +259,226 @@ impl ToolPool {
             }
         }
 
-        tool.execute(invocation).await
+        let stripped_invocation = ToolInvocation {
+            id: invocation.id,
+            input: tool_input,
+            context: invocation.context,
+        };
+
+        let mut result = tool.execute(stripped_invocation).await?;
+
+        if let Some(id) = todo_done_id {
+            if result.is_error {
+                return Ok(result);
+            }
+            let todo_list = self
+                .todo_list
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+                .ok_or_else(|| AppError::Other("TodoList not registered".into()))?;
+            match todo_list.mark_done(id) {
+                Ok(updated) => {
+                    if let Some(obj) = result.content.as_object_mut() {
+                        obj.insert("todo_updated".into(), updated);
+                    } else {
+                        result.content = json!({
+                            "result": result.content,
+                            "todo_updated": updated,
+                        });
+                    }
+                }
+                Err(e) => {
+                    return Ok(ToolResult::error(e.to_string()));
+                }
+            }
+        }
+
+        Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod pool_tests {
+    use super::*;
+    use crate::ai::agent::core::context::ToolUseContextBuilder;
+    use crate::ai::agent::core::permission::{AllowAllResolver, PermissionRequest};
+    use crate::ai::agent::types::{AgentId, MessageId};
+    use std::path::PathBuf;
+
+    struct EchoTool {
+        spec: ToolSpec,
+        fail: bool,
+    }
+
+    impl EchoTool {
+        fn new(fail: bool) -> Self {
+            Self {
+                fail,
+                spec: ToolSpec {
+                    name: "Echo".into(),
+                    description: "echo input".into(),
+                    schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "msg": { "type": "string" }
+                        }
+                    }),
+                    read_only: true,
+                    concurrency_safe: true,
+                },
+            }
+        }
+    }
+
+    impl Tool for EchoTool {
+        fn spec(&self) -> &ToolSpec {
+            &self.spec
+        }
+
+        fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
+            let fail = self.fail;
+            Box::pin(async move {
+                if fail {
+                    return Ok(ToolResult::error("boom"));
+                }
+                Ok(ToolResult::ok(json!({ "echo": invocation.input })))
+            })
+        }
+    }
+
+    fn test_context() -> Arc<ToolUseContext> {
+        ToolUseContextBuilder::new(AgentId::new(), PathBuf::from("."))
+            .build()
+            .0
+    }
+
+    async fn add_todo(pool: &ToolPool, ctx: &Arc<ToolUseContext>, content: &str) -> u64 {
+        let result = pool
+            .execute(
+                todo::TOOL_NAME,
+                ToolInvocation {
+                    id: MessageId("todo-add".into()),
+                    input: json!({
+                        "action": "add",
+                        "content": content
+                    }),
+                    context: ctx.as_ref(),
+                },
+                PermissionRequest {
+                    agent_id: &ctx.agent_id,
+                    tool_name: todo::TOOL_NAME,
+                    input: &json!({"action":"add","content":content}),
+                    mode: ctx.permission_mode,
+                    is_async: false,
+                    is_coordinator_worker: false,
+                },
+                &AllowAllResolver,
+            )
+            .await
+            .unwrap();
+        result.content["added"][0]["id"].as_u64().unwrap()
+    }
+
+    #[tokio::test]
+    async fn todo_done_id_marks_item_done_on_success() {
+        let pool = ToolPool::new();
+        pool.register_todo_list(todo::TodoListTool::new());
+        pool.register(EchoTool::new(false));
+        let ctx = test_context();
+        let id = add_todo(&pool, &ctx, "step one").await;
+
+        let input = json!({ "msg": "hi", "todo_done_id": id });
+        let result = pool
+            .execute(
+                "Echo",
+                ToolInvocation {
+                    id: MessageId("echo-1".into()),
+                    input: input.clone(),
+                    context: ctx.as_ref(),
+                },
+                PermissionRequest {
+                    agent_id: &ctx.agent_id,
+                    tool_name: "Echo",
+                    input: &input,
+                    mode: ctx.permission_mode,
+                    is_async: false,
+                    is_coordinator_worker: false,
+                },
+                &AllowAllResolver,
+            )
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        assert_eq!(result.content["todo_updated"]["id"], id);
+        assert_eq!(result.content["todo_updated"]["status"], "done");
+        assert!(result.content["echo"].get("todo_done_id").is_none());
+    }
+
+    #[tokio::test]
+    async fn todo_done_id_does_not_mark_on_tool_error() {
+        let pool = ToolPool::new();
+        pool.register_todo_list(todo::TodoListTool::new());
+        pool.register(EchoTool::new(true));
+        let ctx = test_context();
+        let id = add_todo(&pool, &ctx, "step one").await;
+
+        let input = json!({ "msg": "hi", "todo_done_id": id });
+        let result = pool
+            .execute(
+                "Echo",
+                ToolInvocation {
+                    id: MessageId("echo-2".into()),
+                    input: input.clone(),
+                    context: ctx.as_ref(),
+                },
+                PermissionRequest {
+                    agent_id: &ctx.agent_id,
+                    tool_name: "Echo",
+                    input: &input,
+                    mode: ctx.permission_mode,
+                    is_async: false,
+                    is_coordinator_worker: false,
+                },
+                &AllowAllResolver,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
+        assert!(result.content.get("todo_updated").is_none());
+    }
+
+    #[tokio::test]
+    async fn todo_done_id_unknown_item_returns_error() {
+        let pool = ToolPool::new();
+        pool.register_todo_list(todo::TodoListTool::new());
+        pool.register(EchoTool::new(false));
+        let ctx = test_context();
+
+        let input = json!({ "msg": "hi", "todo_done_id": 999 });
+        let result = pool
+            .execute(
+                "Echo",
+                ToolInvocation {
+                    id: MessageId("echo-3".into()),
+                    input: input.clone(),
+                    context: ctx.as_ref(),
+                },
+                PermissionRequest {
+                    agent_id: &ctx.agent_id,
+                    tool_name: "Echo",
+                    input: &input,
+                    mode: ctx.permission_mode,
+                    is_async: false,
+                    is_coordinator_worker: false,
+                },
+                &AllowAllResolver,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.is_error);
     }
 }

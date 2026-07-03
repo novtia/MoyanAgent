@@ -55,7 +55,8 @@ Guidelines:
   create documentation files if explicitly requested.
 - If you created a TodoList: do NOT stop until every item is `done` or \
   `cancelled`. While items are `pending` or `in_progress`, keep calling \
-  tools — never finish with only a text summary.";
+  tools with `todo_done_id` on each step — never finish with only a text \
+  summary. Do NOT call TodoList to change task status.";
 
 pub const GENERAL_PURPOSE_WHEN_TO_USE: &str = "\
 General-purpose agent for researching complex questions, searching for code, \

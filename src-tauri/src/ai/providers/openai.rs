@@ -1371,7 +1371,29 @@ fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) -> Value {
         messages.push(json!({ "role": "system", "content": sys }));
     }
     for turn in &request.history {
-        if let Some(message) = history_turn_to_chat_message(turn, allow_image_parts) {
+        if turn.role == "assistant" && !turn.timeline.is_empty() {
+            // Replay the prior assistant turn segment-by-segment so tool
+            // history reads as native assistant{tool_calls} + role:"tool"
+            // messages rather than a leak-prone plain-text transcript.
+            // AgentStage markers are host-only and dropped.
+            for seg in &turn.timeline {
+                match seg {
+                    crate::ai::chat::TimelineSegment::Text { text } => {
+                        let t = text.trim();
+                        if !t.is_empty() {
+                            messages.push(json!({ "role": "assistant", "content": t }));
+                        }
+                    }
+                    crate::ai::chat::TimelineSegment::ToolRound { .. } => {
+                        if let Some(round) = seg.to_tool_round() {
+                            append_openai_assistant_tool_turn(&mut messages, &round.assistant);
+                            append_openai_tool_results(&mut messages, &round.results);
+                        }
+                    }
+                    crate::ai::chat::TimelineSegment::AgentStage { .. } => {}
+                }
+            }
+        } else if let Some(message) = history_turn_to_chat_message(turn, allow_image_parts) {
             messages.push(message);
         }
     }

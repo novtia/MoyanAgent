@@ -227,7 +227,7 @@ const enUS: Resource = {
     noSession: "Open a session first",
     empty: "No character state yet",
     emptyHint:
-      "Add the Role State agent to the Agent flow chain; cards are drawn automatically after the prose is generated.",
+      "Add the Role State agent to the Agent flow chain; cards are drawn automatically after the prose is generated. All sessions in a project share one state board.",
     opCreate: "New role",
     opUpdate: "Updated role",
     opDelete: "Removed role",

@@ -10,10 +10,12 @@
 //! | action   | required fields         | description                              |
 //! |----------|-------------------------|------------------------------------------|
 //! | `add`    | `content`               | Append one or more items (array or str)  |
-//! | `update` | `id`, `content`/`status`| Edit text or status of an existing item  |
 //! | `remove` | `id`                    | Delete an item by id                     |
 //! | `list`   | —                       | Return all current items                 |
 //! | `clear`  | —                       | Delete all items                         |
+//!
+//! Task completion is handled by other tools via `todo_done_id`; this tool
+//! only creates and manages the list itself.
 //!
 //! Each item has:
 //! - `id`      – stable u64 counter, assigned on insert.
@@ -28,9 +30,6 @@ use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, Tool
 use crate::error::{AppError, AppResult};
 
 pub const TOOL_NAME: &str = "TodoList";
-
-/// Valid status values understood by the tool.
-const VALID_STATUSES: &[&str] = &["pending", "in_progress", "done", "cancelled"];
 
 #[derive(Debug, Clone)]
 struct TodoItem {
@@ -121,12 +120,27 @@ impl TodoListTool {
             .collect();
         Some(format!(
             "[SYSTEM] Your task list is NOT complete. {} item(s) remain:\n{}\n\
-             Continue working NOW: use tools to finish each remaining task and \
-             call TodoList `update` to mark each one done. Do NOT stop with a \
-             summary or final reply until every item is `done` or `cancelled`.",
+             Continue working NOW: finish each remaining task using the appropriate \
+             tool and pass `todo_done_id` with the item id when that step succeeds. \
+             Do NOT call TodoList to change status. Do NOT stop with a summary or \
+             final reply until every item is `done` or `cancelled`.",
             incomplete.len(),
             lines.join("\n")
         ))
+    }
+
+    /// Mark a todo item as done. Called by [`super::ToolPool`] when another
+    /// tool completes with `todo_done_id`.
+    pub fn mark_done(&self, id: u64) -> AppResult<Value> {
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| AppError::Other("TodoList: store lock poisoned".into()))?;
+        let item = store.get_mut(id).ok_or_else(|| {
+            AppError::Invalid(format!("TodoList: item id={id} not found"))
+        })?;
+        item.status = "done".into();
+        Ok(item.to_json())
     }
 
     pub fn new() -> Self {
@@ -161,8 +175,9 @@ splitting one action into meaningless micro-tasks.\n\n\
    content: [\"撰写正文\", \"自查字数\"]. Each array element is exactly ONE task. \
    NEVER pass the whole list as one string like \"[\\\"a\\\", \\\"b\\\"]\". \
    Do NOT add more tasks later.\n\
-2. EXECUTE: before starting each task, call `update` → in_progress. \
-   When done, call `update` with `status: done` ONLY — do NOT change `content`. \
+2. EXECUTE: for each task, call the appropriate working tool and pass \
+   `todo_done_id` with that task's id. On success the runtime marks it done \
+   automatically. Do NOT call TodoList to change status. \
    The task title is fixed at creation time.\n\
    Never add, remove, or clear items just because you started or finished a step.\n\n\
 ━━━ DO NOT STOP EARLY ━━━\n\
@@ -171,25 +186,23 @@ Never end your turn with only a text summary while tasks remain — the runtime 
 will reject premature completion and ask you to continue.\n\n\
 Actions:\n\
 • add    – ONE-TIME initialisation only.\n\
-• update – Change status or content of an existing item (id required).\n\
 • list   – Check ids when needed.\n\
 • remove – Only if the user explicitly asks to delete a task.\n\
 • clear  – Only if the user explicitly asks to wipe everything.\n\n\
-Status lifecycle: pending → in_progress → done | cancelled"
+Status lifecycle: pending → done (via `todo_done_id` on working tools) | cancelled"
                     .to_string(),
                 schema: json!({
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["add", "update", "remove", "list", "clear"],
+                            "enum": ["add", "remove", "list", "clear"],
                             "description": "The operation to perform."
                         },
                         "content": {
                             "description": "For 'add': pass multiple tasks as a JSON array of strings, e.g. \
                                 [\"task one\", \"task two\"] — each element is ONE task. \
-                                Do NOT put the whole array inside a single string. \
-                                For 'update': the new text.",
+                                Do NOT put the whole array inside a single string.",
                             "oneOf": [
                                 { "type": "string" },
                                 { "type": "array", "items": { "type": "string" } }
@@ -197,12 +210,7 @@ Status lifecycle: pending → in_progress → done | cancelled"
                         },
                         "id": {
                             "type": "integer",
-                            "description": "Item id (required for 'update' and 'remove')."
-                        },
-                        "status": {
-                            "type": "string",
-                            "enum": ["pending", "in_progress", "done", "cancelled"],
-                            "description": "New status (used with 'update')."
+                            "description": "Item id (required for 'remove')."
                         }
                     },
                     "required": ["action"]
@@ -212,6 +220,36 @@ Status lifecycle: pending → in_progress → done | cancelled"
             },
         }
     }
+}
+
+/// Extract optional `todo_done_id` from a tool input object.
+pub fn extract_todo_done_id(input: &Value) -> Option<u64> {
+    input.get("todo_done_id").and_then(Value::as_u64)
+}
+
+/// Return a copy of `input` with `todo_done_id` removed so individual tools
+/// do not see an unknown field during validation.
+pub fn strip_todo_done_id(input: &Value) -> Value {
+    let mut out = input.clone();
+    if let Some(obj) = out.as_object_mut() {
+        obj.remove("todo_done_id");
+    }
+    out
+}
+
+/// Inject the shared `todo_done_id` property into a tool JSON schema.
+pub fn inject_todo_done_schema(schema: &mut Value) {
+    let Some(props) = schema.get_mut("properties").and_then(|p| p.as_object_mut()) else {
+        return;
+    };
+    props.insert(
+        "todo_done_id".into(),
+        json!({
+            "type": "integer",
+            "description": "When this tool call completes a TodoList step, pass the item id here. \
+                On success the runtime marks it done automatically. Do NOT call TodoList to change status."
+        }),
+    );
 }
 
 /// Expand `add` content into individual task strings.
@@ -299,21 +337,6 @@ impl Tool for TodoListTool {
                     ));
                 }
             }
-            "update" => {
-                if input.get("id").and_then(Value::as_u64).is_none() {
-                    return Err(AppError::Invalid(
-                        "TodoList update: `id` must be a non-negative integer".into(),
-                    ));
-                }
-                if let Some(s) = input.get("status").and_then(Value::as_str) {
-                    if !VALID_STATUSES.contains(&s) {
-                        return Err(AppError::Invalid(format!(
-                            "TodoList update: invalid status {:?}; must be one of {:?}",
-                            s, VALID_STATUSES
-                        )));
-                    }
-                }
-            }
             "remove" => {
                 if input.get("id").and_then(Value::as_u64).is_none() {
                     return Err(AppError::Invalid(
@@ -324,7 +347,7 @@ impl Tool for TodoListTool {
             "list" | "clear" => {}
             other => {
                 return Err(AppError::Invalid(format!(
-                    "TodoList: unknown action {:?}; must be one of add|update|remove|list|clear",
+                    "TodoList: unknown action {:?}; must be one of add|remove|list|clear",
                     other
                 )));
             }
@@ -369,34 +392,6 @@ impl Tool for TodoListTool {
                         );
                     }
                     Ok(ToolResult::ok(result))
-                }
-
-                "update" => {
-                    let id = invocation.input.get("id").and_then(Value::as_u64).unwrap();
-                    let item = store.get_mut(id).ok_or_else(|| {
-                        AppError::Invalid(format!("TodoList update: item id={id} not found"))
-                    })?;
-                    let next_status = invocation
-                        .input
-                        .get("status")
-                        .and_then(Value::as_str)
-                        .unwrap_or(item.status.as_str());
-                    // Task titles are fixed once created; completing must not
-                    // rewrite the title (e.g. to "已完成").
-                    let title_frozen = next_status == "done" || next_status == "cancelled";
-                    if !title_frozen {
-                        if let Some(c) = invocation.input.get("content").and_then(Value::as_str) {
-                            let trimmed = c.trim().to_string();
-                            if !trimmed.is_empty() {
-                                item.content = trimmed;
-                            }
-                        }
-                    }
-                    if let Some(s) = invocation.input.get("status").and_then(Value::as_str) {
-                        item.status = s.to_string();
-                    }
-                    let snapshot = item.to_json();
-                    Ok(ToolResult::ok(json!({ "updated": snapshot })))
                 }
 
                 "remove" => {
@@ -451,6 +446,7 @@ mod tests {
         let msg = tool.incomplete_nudge_message().expect("nudge");
         assert!(msg.contains("NOT complete"));
         assert!(msg.contains("task b"));
+        assert!(msg.contains("todo_done_id"));
     }
 
     #[test]
@@ -465,25 +461,21 @@ mod tests {
     }
 
     #[test]
-    fn done_update_preserves_title() {
+    fn mark_done_preserves_title() {
         let tool = TodoListTool::new();
         let id = {
             let mut store = tool.store.lock().unwrap();
             store.add("重写 P013".into()).id
         };
-        {
-            let mut store = tool.store.lock().unwrap();
-            let item = store.get_mut(id).unwrap();
-            let next_status = "done";
-            let title_frozen = next_status == "done" || next_status == "cancelled";
-            let new_content = "已完成";
-            if !title_frozen {
-                item.content = new_content.into();
-            }
-            item.status = next_status.into();
-            assert_eq!(item.content, "重写 P013");
-            assert_eq!(item.status, "done");
-        }
+        let updated = tool.mark_done(id).unwrap();
+        assert_eq!(updated["content"], "重写 P013");
+        assert_eq!(updated["status"], "done");
+    }
+
+    #[test]
+    fn mark_done_unknown_id_errors() {
+        let tool = TodoListTool::new();
+        assert!(tool.mark_done(999).is_err());
     }
 
     #[test]
@@ -511,5 +503,19 @@ mod tests {
         let (texts, split) = expand_add_contents(raw).unwrap();
         assert!(split);
         assert_eq!(texts.len(), 3);
+    }
+
+    #[test]
+    fn strip_todo_done_id_removes_field() {
+        let input = json!({ "path": "foo.txt", "todo_done_id": 1 });
+        let stripped = strip_todo_done_id(&input);
+        assert!(stripped.get("todo_done_id").is_none());
+        assert_eq!(stripped["path"], "foo.txt");
+    }
+
+    #[test]
+    fn extract_todo_done_id_reads_field() {
+        let input = json!({ "todo_done_id": 42 });
+        assert_eq!(extract_todo_done_id(&input), Some(42));
     }
 }

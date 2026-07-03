@@ -1,22 +1,22 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AssistantBlock } from "../../../types";
-import { replayTodoBlocks, type TodoBlock } from "./utils";
+import { replayTodoState, type TodoBlock } from "./utils";
 import { ThinkingChevronIcon, TodoStatusIcon } from "./icons";
 
 export function TodoMasterView({
-  todoBlocks,
+  toolBlocks,
   isStreaming,
 }: {
-  todoBlocks: TodoBlock[];
+  toolBlocks: TodoBlock[];
   isStreaming: boolean;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
 
   const { items, busy } = useMemo(
-    () => replayTodoBlocks(todoBlocks),
-    [todoBlocks],
+    () => replayTodoState(toolBlocks),
+    [toolBlocks],
   );
 
   const totalDone = items.filter((it) => it.status === "done").length;

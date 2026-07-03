@@ -54,7 +54,7 @@ pub struct AppState {
     /// Per-session-memory extractor. Stateless aside from the last
     /// observed [`SessionMemory`] snapshot.
     pub session_memory: Arc<FsSessionMemoryExtractor>,
-    /// Shared, session-scoped character state board mutated by the
+    /// Shared, project/session-scoped character state board mutated by the
     /// `RoleState` tool and snapshotted per assistant message.
     pub role_states: Arc<RoleStateStore>,
     /// Shared, session-scoped buffer of pending agent file mutations. Drained
@@ -103,6 +103,31 @@ fn clear_generation_abort(state: &AppState, session_id: &str) {
         guard.remove(session_id);
     }
 }
+
+// #region agent log
+fn agent_dbg(location: &str, message: &str, hypothesis: &str, data: serde_json::Value) {
+    use std::io::Write;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("d:/AI/MoyanAgent/debug-2b2c78.log")
+    {
+        let _ = writeln!(
+            f,
+            "{}",
+            serde_json::json!({"sessionId":"2b2c78","hypothesisId":hypothesis,"location":location,"message":message,"data":data,"timestamp":ts})
+        );
+    }
+}
+
+fn agent_dbg_has_marker(s: &str) -> bool {
+    s.contains("已调用工具") || s.contains("[阶段")
+}
+// #endregion
 
 /// Build prior-turn context for a session (oldest first), capped at `max_messages`.
 /// Skips `error`-role messages and any drafts. When `before_ms` is `Some(t)`, only
@@ -154,11 +179,13 @@ fn build_history(
             });
         }
         let thinking_content = message_thinking_for_history(m);
+        let timeline = message_timeline_for_history(m);
         out.push(chat::HistoryTurn {
             role: m.role.clone(),
             text: history_text_for_message(m),
             images: payload,
             thinking_content,
+            timeline,
         });
     }
     Ok(out)
@@ -167,12 +194,13 @@ fn build_history(
 /// Load the current character state board for prompt injection: prefer the
 /// in-memory store, fall back to the latest persisted snapshot.
 fn load_roles_for_prompt(state: &AppState, session_id: &str) -> AppResult<Vec<serde_json::Value>> {
-    let live = state.role_states.snapshot(session_id);
+    let conn = state.conn()?;
+    let scope = crate::data::role_state::resolve_role_state_scope(&conn, session_id)?;
+    let live = state.role_states.snapshot(&scope);
     if !live.is_empty() {
         return Ok(live);
     }
-    let conn = state.conn()?;
-    crate::data::role_state::latest_roles(&conn, session_id)
+    crate::data::role_state::latest_roles(&conn, &scope)
 }
 
 /// Render the role board as a tagged user-meta block appended to history.
@@ -202,6 +230,7 @@ fn append_role_state_history_tail(
         text: Some(format_role_state_history_block(&roles)),
         images: Vec::new(),
         thinking_content: None,
+        timeline: Vec::new(),
     });
     Ok(())
 }
@@ -530,6 +559,22 @@ async fn run_agent_chain(
             Some(on_text_delta.clone())
         };
 
+        // #region agent log
+        agent_dbg(
+            "app/mod.rs:run_agent_chain",
+            "stage start",
+            "B/D",
+            serde_json::json!({
+                "idx": idx,
+                "agent_type": agent_type,
+                "passthrough": passthrough,
+                "streams_text": !passthrough,
+                "prev_len": prev_text.as_deref().map(|s| s.len()).unwrap_or(0),
+                "prev_has_marker": prev_text.as_deref().map(agent_dbg_has_marker).unwrap_or(false),
+            }),
+        );
+        // #endregion
+
         let resp = run_cancellable_generation(
             state,
             session_id,
@@ -544,6 +589,20 @@ async fn run_agent_chain(
         )
         .await?;
 
+        // #region agent log
+        agent_dbg(
+            "app/mod.rs:run_agent_chain",
+            "stage done",
+            "B/E",
+            serde_json::json!({
+                "idx": idx,
+                "agent_type": agent_type,
+                "text_len": resp.text.as_deref().map(|s| s.len()).unwrap_or(0),
+                "text_has_marker": resp.text.as_deref().map(agent_dbg_has_marker).unwrap_or(false),
+                "text_preview": resp.text.as_deref().map(|s| s.chars().take(160).collect::<String>()).unwrap_or_default(),
+            }),
+        );
+        // #endregion
         merged.usage = resp.usage;
         merged.images.extend(resp.images);
         if !passthrough {
@@ -617,6 +676,7 @@ async fn run_cancellable_generation(
                     text: Some(ctx.rendered.clone()),
                     thinking_content: None,
                     images: Vec::new(),
+                    timeline: Vec::new(),
                 }];
                 head.append(&mut request.history);
                 request.history = head;
@@ -654,6 +714,10 @@ async fn run_cancellable_generation(
 
     let query_engine = state.query_engine.clone();
     let task_store = state.task_store.clone();
+    let role_state_scope_id = {
+        let conn = state.conn()?;
+        crate::data::role_state::resolve_role_state_scope(&conn, session_id)?
+    };
 
     let outcome = tokio::select! {
         out = agent::run_agent(RunAgentParams {
@@ -673,6 +737,7 @@ async fn run_cancellable_generation(
             project_cwd,
             abort_signal: Some(abort_signal.clone()),
             session_id: Some(session_id.to_string()),
+            role_state_scope_id: Some(role_state_scope_id),
             correlation_id: correlation_id.map(str::to_string),
             token_logger: Some(state.token_logger.clone()),
         }) => out,
@@ -821,21 +886,61 @@ fn message_blocks(m: &session::Message) -> Option<&Vec<serde_json::Value>> {
         .and_then(|v| v.as_array())
 }
 
-/// Effective assistant/user text for provider history — merges DB `text`
-/// with streamed `text` blocks and a compact tool-call transcript.
-fn history_text_for_message(m: &session::Message) -> Option<String> {
-    let mut parts: Vec<String> = Vec::new();
-    if let Some(t) = m.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        parts.push(t.to_string());
+/// Ordered timeline for a prior assistant turn, used by providers to
+/// replay tool history in the native call/response format instead of a
+/// leaked plain-text transcript. Prefers the persisted `params.timeline`
+/// and falls back to reconstructing it from `params.blocks` for legacy
+/// rows. User turns and turns without tool activity return an empty vec.
+fn message_timeline_for_history(m: &session::Message) -> Vec<chat::TimelineSegment> {
+    if m.role != "assistant" {
+        return Vec::new();
+    }
+    if let Some(params) = m.params.as_ref() {
+        if let Some(tv) = params.get("timeline") {
+            if let Ok(segs) =
+                serde_json::from_value::<Vec<chat::TimelineSegment>>(tv.clone())
+            {
+                if !segs.is_empty() {
+                    return segs;
+                }
+            }
+        }
     }
     if let Some(blocks) = message_blocks(m) {
-        let block_text = concat_block_text(blocks, "text").trim().to_string();
+        return crate::ai::block_timeline::restore_timeline_from_blocks(blocks);
+    }
+    Vec::new()
+}
+
+/// Visible assistant/user reply text for provider history. For assistant
+/// turns this is the timeline's final `Text` segment (the model's actual
+/// reply); tool transcripts are NEVER folded into text anymore. Falls
+/// back to the persisted `text`/block text, always cleaned of any leaked
+/// host tool-log lines so legacy rows don't re-teach the model to echo
+/// them.
+fn history_text_for_message(m: &session::Message) -> Option<String> {
+    use crate::ai::stream_split::strip_leaked_host_tool_log;
+
+    if m.role == "assistant" {
+        let timeline = message_timeline_for_history(m);
+        let summary = crate::ai::block_timeline::timeline_summary_text(&timeline);
+        if !summary.is_empty() {
+            return Some(summary);
+        }
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(t) = m.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let cleaned = strip_leaked_host_tool_log(t);
+        if !cleaned.trim().is_empty() {
+            parts.push(cleaned.trim().to_string());
+        }
+    }
+    if let Some(blocks) = message_blocks(m) {
+        let block_text = strip_leaked_host_tool_log(concat_block_text(blocks, "text").trim());
+        let block_text = block_text.trim().to_string();
         if !block_text.is_empty() && !parts.iter().any(|p| p.contains(&block_text)) {
             parts.push(block_text);
-        }
-        let tool_summary = tool_blocks_history_summary(blocks);
-        if !tool_summary.is_empty() {
-            parts.push(tool_summary);
         }
     }
     if parts.is_empty() {
@@ -875,34 +980,12 @@ fn message_qualifies_for_history(m: &session::Message) -> bool {
         .iter()
         .any(|i| matches!(i.role.as_str(), "input" | "output" | "edited"));
     if m.role == "assistant" {
-        return has_text || has_img || message_thinking_for_history(m).is_some();
+        return has_text
+            || has_img
+            || message_thinking_for_history(m).is_some()
+            || !message_timeline_for_history(m).is_empty();
     }
     has_text || has_img
-}
-
-/// One-line summaries of tool/agent blocks so follow-up turns know what
-/// already ran even though provider history is plain text turns.
-fn tool_blocks_history_summary(blocks: &[serde_json::Value]) -> String {
-    let mut lines: Vec<String> = Vec::new();
-    for b in blocks {
-        match b.get("type").and_then(|v| v.as_str()) {
-            Some("tool_use") => {
-                let tool = b.get("tool").and_then(|v| v.as_str()).unwrap_or("?");
-                let input = b
-                    .get("input")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!({}));
-                lines.push(format!("[已调用工具 {tool}: {input}]"));
-            }
-            Some("agent_stage") => {
-                if let Some(name) = b.get("name").and_then(|v| v.as_str()) {
-                    lines.push(format!("[阶段: {name}]"));
-                }
-            }
-            _ => {}
-        }
-    }
-    lines.join("\n")
 }
 
 /// Persist streamed assistant output before the session is reloaded.
@@ -919,22 +1002,50 @@ fn persist_streamed_assistant_snapshot(
     mut params: serde_json::Value,
     file_snapshots: &FileSnapshotStore,
 ) -> AppResult<()> {
+    use crate::ai::stream_split::strip_leaked_host_tool_log;
+
     session::get(conn, session_id)?;
 
-    let mut text = concat_block_text(blocks, "text");
+    // Scrub any leaked host tool-log lines out of persisted text blocks so
+    // an interrupted / errored partial snapshot can't re-teach the model to
+    // echo them on the next turn.
+    let cleaned_blocks: Vec<serde_json::Value> = blocks
+        .iter()
+        .map(|b| {
+            if b.get("type").and_then(|v| v.as_str()) == Some("text") {
+                if let Some(t) = b.get("content").and_then(|c| c.as_str()) {
+                    let mut nb = b.clone();
+                    if let Some(obj) = nb.as_object_mut() {
+                        obj.insert(
+                            "content".into(),
+                            serde_json::Value::String(strip_leaked_host_tool_log(t)),
+                        );
+                    }
+                    return nb;
+                }
+            }
+            b.clone()
+        })
+        .collect();
+
+    let mut text = concat_block_text(&cleaned_blocks, "text");
     if text.trim().is_empty() {
-        text = fallback_text.unwrap_or("").trim().to_string();
+        text = fallback_text
+            .map(strip_leaked_host_tool_log)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
     } else {
         text = text.trim().to_string();
     }
-    let mut thinking = concat_block_text(blocks, "thinking");
+    let mut thinking = concat_block_text(&cleaned_blocks, "thinking");
     if thinking.trim().is_empty() {
         thinking = fallback_thinking.unwrap_or("").trim().to_string();
     } else {
         thinking = thinking.trim().to_string();
     }
 
-    let has_blocks = !blocks.is_empty();
+    let has_blocks = !cleaned_blocks.is_empty();
     if text.is_empty() && thinking.is_empty() && !has_blocks {
         return Ok(());
     }
@@ -947,9 +1058,16 @@ fn persist_streamed_assistant_snapshot(
             );
         }
         if has_blocks {
+            let timeline =
+                crate::ai::block_timeline::restore_timeline_from_blocks(&cleaned_blocks);
+            if !timeline.is_empty() {
+                if let Ok(tv) = serde_json::to_value(&timeline) {
+                    obj.insert("timeline".into(), tv);
+                }
+            }
             obj.insert(
                 "blocks".into(),
-                serde_json::Value::Array(blocks.to_vec()),
+                serde_json::Value::Array(cleaned_blocks.clone()),
             );
         }
     }
@@ -1071,9 +1189,41 @@ fn stream_text_callback(
     request_message_id: String,
     blocks: StreamBlocks,
 ) -> chat::TextDeltaCallback {
+    // Per-request stateful cleaner: strips any host tool-transcript lines
+    // (`[已调用工具 ...]`, `[阶段: ...]`) a model might echo, holding back
+    // only a trailing fragment that could still become such a marker so
+    // normal prose streams unimpeded. Shared (cloned) across chain stages.
+    let splitter = Arc::new(std::sync::Mutex::new(
+        crate::ai::stream_split::StreamContentSplitter::default(),
+    ));
     Arc::new(move |delta| {
+        // Route visible text through the marker cleaner before it reaches
+        // either the persisted block buffer or the live UI stream.
+        let cleaned_text = delta.text.as_deref().map(|t| {
+            splitter
+                .lock()
+                .map(|mut s| s.push(t))
+                .unwrap_or_else(|_| t.to_string())
+        });
+        // #region agent log
+        if let Some(raw) = delta.text.as_deref() {
+            if agent_dbg_has_marker(raw) {
+                agent_dbg(
+                    "app/mod.rs:stream_text_callback",
+                    "marker text arrived in live provider stream delta",
+                    "A/B/D",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "request_message_id": request_message_id,
+                        "raw_preview": raw.chars().take(200).collect::<String>(),
+                        "cleaned_still_has_marker": cleaned_text.as_deref().map(agent_dbg_has_marker).unwrap_or(false),
+                    }),
+                );
+            }
+        }
+        // #endregion
         if let Ok(mut g) = blocks.lock() {
-            if let Some(t) = delta.text.as_deref() {
+            if let Some(t) = cleaned_text.as_deref() {
                 append_text_delta_block(&mut g, t);
             }
             if let Some(t) = delta.thinking.as_deref() {
@@ -1091,12 +1241,18 @@ fn stream_text_callback(
                 "arguments": tc.arguments,
             })
         });
+        // Suppress an empty text_delta emitted purely because the cleaner
+        // held everything back this chunk (avoids a no-op UI event).
+        let emit_text = match cleaned_text.as_deref() {
+            Some("") => None,
+            other => other.map(|s| s.to_string()),
+        };
         let _ = app.emit(
             "gen://stream",
             serde_json::json!({
                 "session_id": &session_id,
                 "request_message_id": &request_message_id,
-                "text_delta": delta.text,
+                "text_delta": emit_text,
                 "thinking_delta": delta.thinking,
                 "tool_call_delta": tool_call_delta,
             }),
@@ -1431,11 +1587,15 @@ fn delete_session(
 ) -> Result<(), AppError> {
     {
         let conn = state.conn()?;
+        let scope = crate::data::role_state::resolve_role_state_scope(&conn, &id)?;
         session::delete(&conn, &id)?;
-        let _ = crate::data::role_state::clear_session(&conn, &id);
+        // Standalone sessions own their scope; project sessions share scope.
+        if scope == id {
+            let _ = crate::data::role_state::clear_scope(&conn, &scope);
+            state.role_states.clear(&scope);
+        }
         let _ = crate::data::file_snapshot::clear_session(&conn, &id);
     }
-    state.role_states.clear(&id);
     state.file_snapshots.clear(&id);
     state.token_logger.delete_session_log(&id);
     let dir = paths::sessions_dir(&app)?.join(&id);
@@ -1452,10 +1612,11 @@ fn load_session(
     id: String,
 ) -> Result<SessionWithMessagesAbs, AppError> {
     let conn = state.conn()?;
+    let scope = crate::data::role_state::resolve_role_state_scope(&conn, &id)?;
     // Re-hydrate the in-memory role board so the next role-state run sees the
     // persisted truth and the UI can fetch it via `get_role_states`.
-    if let Ok(roles) = crate::data::role_state::latest_roles(&conn, &id) {
-        state.role_states.load(&id, roles);
+    if let Ok(roles) = crate::data::role_state::latest_roles(&conn, &scope) {
+        state.role_states.load(&scope, roles);
     }
     let mut s = session::load_with_messages(&conn, &id)?;
     // Sessions in a project share the project's single agent flow record;
@@ -1476,15 +1637,16 @@ fn get_role_states(
     state: tauri::State<Arc<AppState>>,
     session_id: String,
 ) -> Result<Vec<serde_json::Value>, AppError> {
+    let conn = state.conn()?;
+    let scope = crate::data::role_state::resolve_role_state_scope(&conn, &session_id)?;
     // Prefer the live in-memory board; fall back to the persisted snapshot
-    // when the session hasn't been touched this process lifetime.
-    let live = state.role_states.snapshot(&session_id);
+    // when the scope hasn't been touched this process lifetime.
+    let live = state.role_states.snapshot(&scope);
     if !live.is_empty() {
         return Ok(live);
     }
-    let conn = state.conn()?;
-    let roles = crate::data::role_state::latest_roles(&conn, &session_id)?;
-    state.role_states.load(&session_id, roles.clone());
+    let roles = crate::data::role_state::latest_roles(&conn, &scope)?;
+    state.role_states.load(&scope, roles.clone());
     Ok(roles)
 }
 
@@ -1538,8 +1700,13 @@ fn delete_project(
     state: tauri::State<Arc<AppState>>,
     id: String,
 ) -> Result<(), AppError> {
-    let conn = state.conn()?;
-    project::delete(&conn, &id)
+    {
+        let conn = state.conn()?;
+        let _ = crate::data::role_state::clear_scope(&conn, &id);
+        project::delete(&conn, &id)?;
+    }
+    state.role_states.clear(&id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1558,6 +1725,13 @@ fn assign_session_to_project(
     project_id: Option<String>,
 ) -> Result<(), AppError> {
     let conn = state.conn()?;
+    if let Some(ref pid) = project_id {
+        let _ = crate::data::role_state::reassign_session_scope(&conn, &session_id, pid);
+        // Re-hydrate project scope in memory if we already had session-scoped data.
+        if let Ok(roles) = crate::data::role_state::latest_roles(&conn, pid) {
+            state.role_states.load(pid, roles);
+        }
+    }
     project::assign_session(&conn, &session_id, project_id.as_deref())
 }
 
@@ -1662,9 +1836,10 @@ fn delete_message(
 
     if let Some(sid) = session_id {
         let conn = state.conn()?;
-        if let Ok(roles) = crate::data::role_state::rollback_from_message(&conn, &sid, &id) {
-            state.role_states.load(&sid, roles);
-            emit_role_state_reset(&app, &sid);
+        let scope = crate::data::role_state::resolve_role_state_scope(&conn, &sid)?;
+        if let Ok(roles) = crate::data::role_state::rollback_from_message(&conn, &scope, &id) {
+            state.role_states.load(&scope, roles);
+            emit_role_state_reset(&app, &scope, &sid);
         }
         // Roll the workspace back: restore / delete every file this message (and
         // any later ones) created, updated or removed.
@@ -1700,12 +1875,15 @@ fn apply_file_restore(restore: &crate::data::file_snapshot::FileRestore) {
     }
 }
 
-/// Tell the UI to discard its in-memory role board for a session and re-fetch
+/// Tell the UI to discard its in-memory role board for a scope and re-fetch
 /// the persisted truth (used after a rollback / message deletion).
-fn emit_role_state_reset(app: &AppHandle, session_id: &str) {
+fn emit_role_state_reset(app: &AppHandle, scope_id: &str, session_id: &str) {
     let _ = app.emit(
         "role-state://reset",
-        serde_json::json!({ "session_id": session_id }),
+        serde_json::json!({
+            "scope_id": scope_id,
+            "session_id": session_id,
+        }),
     );
 }
 
@@ -2219,7 +2397,7 @@ fn finalize_generate_assistant_message(
     user_message_id: &str,
     params: &parameters::GenerationParameters,
     mut resp: chat::GenerateResponse,
-    blocks: Vec<serde_json::Value>,
+    mut blocks: Vec<serde_json::Value>,
     role_states: &RoleStateStore,
     file_snapshots: &FileSnapshotStore,
     token_logger: &token_log::TokenUsageLogger,
@@ -2227,9 +2405,55 @@ fn finalize_generate_assistant_message(
     model: &str,
     provider: &str,
 ) -> AppResult<GenerateResult> {
+    use crate::ai::stream_split::strip_leaked_host_tool_log;
+
     resp.images = chat::dedupe_image_results(resp.images);
+
+    // #region agent log
+    let raw_resp_has_marker = resp.text.as_deref().map(agent_dbg_has_marker).unwrap_or(false);
+    let raw_block_has_marker = blocks.iter().any(|b| {
+        b.get("type").and_then(|v| v.as_str()) == Some("text")
+            && b.get("content")
+                .and_then(|c| c.as_str())
+                .map(agent_dbg_has_marker)
+                .unwrap_or(false)
+    });
+    // #endregion
+
+    // Belt-and-suspenders: scrub any leaked host tool-log lines out of the
+    // persisted text blocks and the final reply before they ever hit the DB.
+    for b in &mut blocks {
+        if b.get("type").and_then(|v| v.as_str()) == Some("text") {
+            if let Some(t) = b.get("content").and_then(|c| c.as_str()) {
+                let cleaned = strip_leaked_host_tool_log(t);
+                if let Some(obj) = b.as_object_mut() {
+                    obj.insert("content".into(), serde_json::Value::String(cleaned));
+                }
+            }
+        }
+    }
+    if let Some(t) = resp.text.as_deref() {
+        resp.text = Some(strip_leaked_host_tool_log(t));
+    }
+
     let block_text = concat_block_text(&blocks, "text");
     let block_thinking = concat_block_text(&blocks, "thinking");
+    // #region agent log
+    agent_dbg(
+        "app/mod.rs:finalize_generate_assistant_message",
+        "persisting assistant message",
+        "E",
+        serde_json::json!({
+            "session_id": session_id,
+            "user_message_id": user_message_id,
+            "raw_resp_has_marker": raw_resp_has_marker,
+            "raw_block_has_marker": raw_block_has_marker,
+            "resp_text_has_marker_after_clean": resp.text.as_deref().map(agent_dbg_has_marker).unwrap_or(false),
+            "block_text_has_marker_after_clean": agent_dbg_has_marker(&block_text),
+            "block_text_len": block_text.len(),
+        }),
+    );
+    // #endregion
     if resp
         .text
         .as_ref()
@@ -2259,7 +2483,16 @@ fn finalize_generate_assistant_message(
     let mut assistant_params =
         params.to_assistant_message_params(&resp.usage, resp.thinking_content.as_deref());
     if !blocks.is_empty() {
+        // Persist the structured timeline alongside blocks so future turns
+        // replay tool history in native call/response form instead of a
+        // leak-prone plain-text transcript.
+        let timeline = crate::ai::block_timeline::restore_timeline_from_blocks(&blocks);
         if let Some(obj) = assistant_params.as_object_mut() {
+            if !timeline.is_empty() {
+                if let Ok(tv) = serde_json::to_value(&timeline) {
+                    obj.insert("timeline".into(), tv);
+                }
+            }
             obj.insert("blocks".into(), serde_json::Value::Array(blocks));
         }
     }
@@ -2284,9 +2517,16 @@ fn finalize_generate_assistant_message(
     }
     // Snapshot the character state board against this assistant message so it
     // can be re-hydrated on session open and rolled back on delete/regenerate.
-    let roles = role_states.snapshot(session_id);
+    let scope_id = crate::data::role_state::resolve_role_state_scope(conn, session_id)?;
+    let roles = role_states.snapshot(&scope_id);
     if !roles.is_empty() {
-        let _ = crate::data::role_state::save_snapshot(conn, session_id, &assistant.id, &roles);
+        let _ = crate::data::role_state::save_snapshot(
+            conn,
+            &scope_id,
+            session_id,
+            &assistant.id,
+            &roles,
+        );
     }
 
     // Bind any file mutations captured during this generation to this message
