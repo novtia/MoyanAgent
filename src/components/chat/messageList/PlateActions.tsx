@@ -10,14 +10,23 @@ export function PlateActions({
   showDivider,
 }: PlateActionsProps) {
   const { t } = useTranslation();
+  const isVideo = img.mime.startsWith("video/");
   const downloadAs = async () => {
-    const ext = img.mime === "image/jpeg" ? "jpg" : img.mime === "image/webp" ? "webp" : "png";
+    const ext = isVideo
+      ? img.mime === "video/quicktime"
+        ? "mov"
+        : "mp4"
+      : img.mime === "image/jpeg"
+        ? "jpg"
+        : img.mime === "image/webp"
+          ? "webp"
+          : "png";
     const dest = await save({
       defaultPath: `atelier-${Date.now()}.${ext}`,
-      filters: [{ name: "Image", extensions: [ext] }],
+      filters: [{ name: isVideo ? "Video" : "Image", extensions: [ext] }],
     });
     if (!dest) return;
-    await api.exportImage(img.id, dest as string);
+    await api.exportMedia(img.id, dest as string);
   };
   const copyImage = async () => {
     try {
@@ -46,10 +55,12 @@ export function PlateActions({
         <DownloadIcon />
         <span>{t("message.actionDownload")}</span>
       </button>
-      <button type="button" className="msg-action" onClick={copyImage}>
-        <CopyIcon />
-        <span>{t("message.actionCopyImage")}</span>
-      </button>
+      {!isVideo && (
+        <button type="button" className="msg-action" onClick={copyImage}>
+          <CopyIcon />
+          <span>{t("message.actionCopyImage")}</span>
+        </button>
+      )}
       {showDivider && <span className="divider" aria-hidden />}
     </>
   );

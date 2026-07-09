@@ -133,6 +133,22 @@
   object-fit: cover;
   display: block;
 }
+.attachment-media {
+  display: grid;
+  place-items: center;
+}
+.attachment-media-icon {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-sunk));
+}
+.attachment-media-icon svg {
+  width: 26px;
+  height: 26px;
+}
 .attachment.pending {
   display: flex;
   align-items: center;
@@ -213,6 +229,56 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.composer-reference-url {
+  display: flex;
+  gap: 8px;
+  padding: 4px 2px 8px;
+  border-bottom: 1px dashed var(--line);
+}
+.composer-reference-url input {
+  min-width: 0;
+  flex: 1;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-sunk);
+  color: var(--ink);
+  padding: 0 10px;
+  outline: none;
+}
+.composer-reference-url input:focus {
+  border-color: var(--accent);
+}
+.composer-reference-url button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--ink);
+  padding: 0 12px;
+  cursor: pointer;
+}
+.composer-reference-url button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.composer-file-input {
+  display: none;
+}
+.composer-video-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.composer-video-toggle + .composer-video-toggle {
+  margin-top: 8px;
+}
+.composer-video-toggle input {
+  accent-color: var(--accent);
 }
 
 .composer-textarea {
@@ -297,6 +363,58 @@
   transform: none;
   box-shadow: none;
 }
+.composer-mention.is-media {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-soft));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+}
+.composer-mention.is-media .composer-mention-at,
+.composer-mention.is-media .composer-mention-icon {
+  color: var(--accent);
+}
+.composer-mention.media-image.has-preview {
+  position: relative;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  line-height: 0;
+}
+.composer-mention.media-image.has-preview:hover {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.composer-mention-image {
+  display: block;
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+}
+.composer-mention.media-image.has-preview.composer-mention--static
+  .composer-mention-image {
+  width: 72px;
+  height: 72px;
+}
+.composer-mention.media-image.has-preview .composer-mention-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  color: var(--ink);
+  box-shadow: 0 1px 4px color-mix(in srgb, #000 24%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+.composer-mention.media-image.has-preview:hover .composer-mention-remove,
+.composer-mention.media-image.has-preview:focus-within .composer-mention-remove {
+  opacity: 1;
+  pointer-events: auto;
+}
 /* Static (read-only) chip used when rendering message history in the chat list. */
 .composer-mention--static {
   cursor: default;
@@ -378,6 +496,11 @@
   animation: popover-expand 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   backdrop-filter: blur(8px);
 }
+.composer-mention-popover.is-caret {
+  position: absolute;
+  right: auto;
+  bottom: auto;
+}
 .composer-mention-popover-title {
   padding: 8px 12px;
   font-size: 12px;
@@ -386,9 +509,86 @@
   border-bottom: 1px solid var(--line);
 }
 .composer-mention-popover-body {
+  flex: 1 1 auto;
+  min-height: 0;
   max-height: 340px;
   overflow-y: auto;
   padding: 4px;
+}
+.composer-mention-section + .composer-mention-section {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+.composer-mention-section-title {
+  padding: 5px 8px 4px;
+  color: var(--ink-mute);
+  font-size: 11px;
+  font-weight: 600;
+}
+.composer-mention-media-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.composer-mention-media-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.composer-mention-media-item:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+.composer-mention-media-item > img {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+.composer-mention-media-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-soft));
+  color: var(--accent);
+}
+.composer-mention-media-icon .composer-mention-icon {
+  color: currentColor;
+}
+.composer-mention-media-copy {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.composer-mention-media-copy strong,
+.composer-mention-media-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-mention-media-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.composer-mention-media-copy small {
+  color: var(--ink-mute);
+  font-size: 11px;
 }
 .composer-mention-tree {
   display: flex;

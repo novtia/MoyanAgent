@@ -312,6 +312,7 @@ async fn parse_and_fetch_images(
         if !from_b64.is_empty() {
             return Ok(GenerateResponse {
                 images: from_b64,
+                videos: Vec::new(),
                 text: None,
                 thinking_content: None,
                 usage: TokenUsage::default(),
@@ -346,6 +347,7 @@ async fn parse_and_fetch_images(
 
     Ok(GenerateResponse {
         images,
+        videos: Vec::new(),
         text: None,
         thinking_content: None,
         usage: TokenUsage::default(),

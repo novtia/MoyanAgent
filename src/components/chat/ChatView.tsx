@@ -26,6 +26,9 @@ export function ChatView({
   const { t } = useTranslation();
   const active = useSession((s) => s.active);
   const busy = useSession((s) => s.busy);
+  const generationPhase = useSession((s) =>
+    s.activeId ? s.generationPhaseBySession[s.activeId] : undefined,
+  );
   const remove = useSession((s) => s.remove);
 
   const [moreOpen, setMoreOpen] = useState(false);
@@ -113,10 +116,20 @@ export function ChatView({
             {!isEmpty && (
               <span
                 className={`chat-status ${busy ? "busy" : ""}`}
-                title={busy ? t("chat.statusGenerating") : t("chat.statusReady")}
+                title={
+                  busy && generationPhase === "polling"
+                    ? t("chat.statusPolling")
+                    : busy
+                      ? t("chat.statusGenerating")
+                      : t("chat.statusReady")
+                }
               >
                 <span className="dot" />
-                {busy ? t("chat.statusGenerating") : t("chat.statusReady")}
+                {busy && generationPhase === "polling"
+                  ? t("chat.statusPolling")
+                  : busy
+                    ? t("chat.statusGenerating")
+                    : t("chat.statusReady")}
               </span>
             )}
           </div>

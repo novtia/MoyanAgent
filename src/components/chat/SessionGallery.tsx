@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
 import { srcOf } from "../../api/tauri";
-import { collectSessionGalleryImages } from "../../sessionGallery";
+import { collectSessionGalleryMedia } from "../../sessionGallery";
 import type { ImageRefAbs } from "../../types";
 
 export const ATELIER_DRAG_TYPE = "application/x-atelier-image";
@@ -26,7 +26,7 @@ export function GalleryContent({ open, onPreviewImage }: GalleryContentProps) {
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [innerWidth, setInnerWidth] = useState(0);
 
-  const images = useMemo(() => collectSessionGalleryImages(active), [active]);
+  const media = useMemo(() => collectSessionGalleryMedia(active), [active]);
 
   useLayoutEffect(() => {
     const el = gridRef.current;
@@ -43,14 +43,19 @@ export function GalleryContent({ open, onPreviewImage }: GalleryContentProps) {
   }, []);
 
   const layout = useMemo(() => {
-    if (innerWidth <= 0 || images.length === 0) {
+    if (innerWidth <= 0 || media.length === 0) {
       return { items: [] as Array<{ img: ImageRefAbs; x: number; y: number; w: number; h: number }>, total: 0 };
     }
     const cols = Math.max(1, Math.floor((innerWidth + MASONRY_GAP) / (MASONRY_MIN_COL + MASONRY_GAP)));
     const colW = (innerWidth - MASONRY_GAP * (cols - 1)) / cols;
     const heights = new Array(cols).fill(0);
-    const items = images.map((img) => {
-      const aspect = img.width && img.height && img.width > 0 ? img.height / img.width : 1;
+    const items = media.map((img) => {
+      const aspect =
+        img.width && img.height && img.width > 0
+          ? img.height / img.width
+          : img.mime.startsWith("video/")
+            ? 9 / 16
+            : 1;
       const h = Math.max(40, Math.round(colW * aspect));
       let idx = 0;
       let min = heights[0];
@@ -67,12 +72,16 @@ export function GalleryContent({ open, onPreviewImage }: GalleryContentProps) {
     });
     const total = Math.max(0, ...heights) - MASONRY_GAP;
     return { items, total };
-  }, [images, innerWidth]);
+  }, [media, innerWidth]);
 
   const onTileDragStart = (e: React.DragEvent<HTMLButtonElement>, img: ImageRefAbs) => {
+    if (img.mime.startsWith("video/")) {
+      e.preventDefault();
+      return;
+    }
     if (!e.dataTransfer) return;
     e.dataTransfer.effectAllowed = "copy";
-    const payload = JSON.stringify({ id: img.id, abs_path: img.abs_path });
+    const payload = JSON.stringify({ id: img.id, abs_path: img.abs_path, mime: img.mime });
     e.dataTransfer.setData(ATELIER_DRAG_TYPE, payload);
     e.dataTransfer.setData("text/plain", img.abs_path);
     const imgEl = e.currentTarget.querySelector("img");
@@ -87,7 +96,7 @@ export function GalleryContent({ open, onPreviewImage }: GalleryContentProps) {
 
   return (
     <div className="chat-gallery-grid" ref={gridRef}>
-      {images.length === 0 ? (
+      {media.length === 0 ? (
         <div className="chat-gallery-empty">{t("chat.galleryEmpty")}</div>
       ) : (
         <div className="chat-gallery-canvas" style={{ height: layout.total }}>
@@ -95,21 +104,38 @@ export function GalleryContent({ open, onPreviewImage }: GalleryContentProps) {
             <button
               key={img.id}
               type="button"
-              className={`chat-gallery-tile role-${img.role}`}
+              className={`chat-gallery-tile role-${img.role} ${
+                img.mime.startsWith("video/") ? "is-video" : ""
+              }`}
               style={{ transform: `translate(${x}px, ${y}px)`, width: w, height: h }}
               onClick={() => onPreviewImage(img)}
-              title={img.rel_path}
+              title={img.source_url || img.rel_path}
               tabIndex={open ? 0 : -1}
-              draggable
+              draggable={!img.mime.startsWith("video/")}
               onDragStart={(e) => onTileDragStart(e, img)}
             >
-              <img
-                src={srcOf(img.thumb_abs_path || img.abs_path)}
-                alt=""
-                loading="lazy"
-                decoding="async"
-                draggable={false}
-              />
+              {img.mime.startsWith("video/") ? (
+                <>
+                  <video
+                    src={srcOf(img.abs_path)}
+                    muted
+                    playsInline
+                    preload="metadata"
+                  />
+                  <span className="chat-gallery-video-badge">
+                    <span aria-hidden>▶</span>
+                    {t("chat.galleryVideo")}
+                  </span>
+                </>
+              ) : (
+                <img
+                  src={srcOf(img.thumb_abs_path || img.abs_path)}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  draggable={false}
+                />
+              )}
             </button>
           ))}
         </div>

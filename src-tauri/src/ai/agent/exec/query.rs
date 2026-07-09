@@ -68,6 +68,8 @@ pub struct QueryResult {
     /// Images emitted on the *final* turn (today this is the only place
     /// images come from since image-generation providers are single-turn).
     pub images: Vec<crate::ai::chat::ImageResult>,
+    /// Videos emitted on the final turn by asynchronous video providers.
+    pub videos: Vec<crate::ai::chat::MediaResult>,
 }
 
 /// Async return type used by [`QueryEngine`].

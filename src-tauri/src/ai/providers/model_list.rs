@@ -46,10 +46,8 @@ pub async fn fetch_models(sdk: &str, endpoint: &str, api_key: &str) -> AppResult
         )));
     }
 
-
-    let v: Value = serde_json::from_str(&txt).map_err(|err| {
-        AppError::Upstream(format!("无法解析模型列表响应: {err}"))
-    })?;
+    let v: Value = serde_json::from_str(&txt)
+        .map_err(|err| AppError::Upstream(format!("无法解析模型列表响应: {err}")))?;
     let ids = parse_model_ids(&v);
     if ids.is_empty() {
         return Err(AppError::Upstream(
@@ -77,6 +75,7 @@ fn models_url(sdk: &str, endpoint: &str) -> String {
         "/messages",
         "/images/generations",
         "/images/edits",
+        "/contents/generations/tasks",
         "/completions",
     ];
     for suffix in SUFFIXES {
@@ -112,11 +111,7 @@ fn parse_model_ids(v: &Value) -> Vec<String> {
     out
 }
 
-fn collect_ids(
-    arr: &[Value],
-    out: &mut Vec<String>,
-    seen: &mut std::collections::HashSet<String>,
-) {
+fn collect_ids(arr: &[Value], out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>) {
     for item in arr {
         let raw = item
             .get("id")

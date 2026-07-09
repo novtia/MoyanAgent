@@ -225,6 +225,8 @@ pub struct ImageRef {
     pub rel_path: String,
     pub thumb_rel_path: Option<String>,
     pub mime: String,
+    pub media_role: Option<String>,
+    pub source_url: Option<String>,
     pub width: Option<i64>,
     pub height: Option<i64>,
     pub bytes: Option<i64>,
@@ -405,7 +407,8 @@ pub fn recompute_context_window_used(conn: &DbConn, session_id: &str) -> AppResu
         }
         if let Some(ref p) = msg.params {
             let u = tokens::extract_usage(p);
-            let t = u.last_prompt_tokens
+            let t = u
+                .last_prompt_tokens
                 .filter(|x| *x > 0)
                 .or_else(|| u.total_tokens.filter(|x| *x > 0))
                 .or_else(|| u.prompt_tokens.filter(|x| *x > 0));
@@ -444,12 +447,13 @@ pub fn update_message_params(conn: &DbConn, id: &str, params_json: &str) -> AppR
 
 /// Returns image rel_paths (and thumb rel_paths) that should be cleaned from disk.
 pub fn delete_message(conn: &DbConn, id: &str) -> AppResult<Vec<(String, Option<String>)>> {
-    let session_id: String = conn.query_row(
-        "SELECT session_id FROM messages WHERE id=?1",
-        params![id],
-        |r| r.get(0),
-    )
-    .map_err(|_| AppError::NotFound(format!("message {id}")))?;
+    let session_id: String = conn
+        .query_row(
+            "SELECT session_id FROM messages WHERE id=?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .map_err(|_| AppError::NotFound(format!("message {id}")))?;
     let mut stmt =
         conn.prepare("SELECT rel_path, thumb_path FROM message_images WHERE message_id=?1")?;
     let rows = stmt.query_map(params![id], |r| {
@@ -681,11 +685,44 @@ pub fn insert_image(
     bytes: Option<u64>,
     ord: i64,
 ) -> AppResult<ImageRef> {
+    insert_media(
+        conn,
+        session_id,
+        message_id,
+        role,
+        rel_path,
+        thumb_rel_path,
+        mime,
+        None,
+        None,
+        width,
+        height,
+        bytes,
+        ord,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn insert_media(
+    conn: &DbConn,
+    session_id: &str,
+    message_id: Option<&str>,
+    role: &str,
+    rel_path: &str,
+    thumb_rel_path: Option<&str>,
+    mime: &str,
+    media_role: Option<&str>,
+    source_url: Option<&str>,
+    width: Option<u32>,
+    height: Option<u32>,
+    bytes: Option<u64>,
+    ord: i64,
+) -> AppResult<ImageRef> {
     let id = Ulid::new().to_string();
     let now = now_ms();
     conn.execute(
-        "INSERT INTO message_images(id, message_id, session_id, role, rel_path, thumb_path, mime, width, height, bytes, ord, created_at)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+        "INSERT INTO message_images(id, message_id, session_id, role, rel_path, thumb_path, mime, media_role, source_url, width, height, bytes, ord, created_at)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
         params![
             id,
             message_id,
@@ -694,6 +731,8 @@ pub fn insert_image(
             rel_path,
             thumb_rel_path,
             mime,
+            media_role,
+            source_url,
             width.map(|v| v as i64),
             height.map(|v| v as i64),
             bytes.map(|v| v as i64),
@@ -707,11 +746,21 @@ pub fn insert_image(
         rel_path: rel_path.into(),
         thumb_rel_path: thumb_rel_path.map(|s| s.to_string()),
         mime: mime.into(),
+        media_role: media_role.map(str::to_string),
+        source_url: source_url.map(str::to_string),
         width: width.map(|v| v as i64),
         height: height.map(|v| v as i64),
         bytes: bytes.map(|v| v as i64),
         ord,
     })
+}
+
+pub fn set_image_media_role(conn: &DbConn, id: &str, media_role: Option<&str>) -> AppResult<()> {
+    conn.execute(
+        "UPDATE message_images SET media_role=?1 WHERE id=?2",
+        params![media_role, id],
+    )?;
+    Ok(())
 }
 
 pub fn bind_images_to_message(
@@ -825,7 +874,7 @@ pub fn update_message_input_images(
 
 pub fn get_image(conn: &DbConn, id: &str) -> AppResult<ImageRef> {
     let mut stmt = conn.prepare(
-        "SELECT id, role, rel_path, thumb_path, mime, width, height, bytes, ord
+        "SELECT id, role, rel_path, thumb_path, mime, media_role, source_url, width, height, bytes, ord
          FROM message_images WHERE id=?1",
     )?;
     let mut rows = stmt.query(params![id])?;
@@ -836,10 +885,12 @@ pub fn get_image(conn: &DbConn, id: &str) -> AppResult<ImageRef> {
             rel_path: r.get(2)?,
             thumb_rel_path: r.get(3)?,
             mime: r.get(4)?,
-            width: r.get(5)?,
-            height: r.get(6)?,
-            bytes: r.get(7)?,
-            ord: r.get(8)?,
+            media_role: r.get(5)?,
+            source_url: r.get(6)?,
+            width: r.get(7)?,
+            height: r.get(8)?,
+            bytes: r.get(9)?,
+            ord: r.get(10)?,
         })
     } else {
         Err(AppError::NotFound(format!("image {id}")))
@@ -858,7 +909,7 @@ pub fn image_session_id(conn: &DbConn, id: &str) -> AppResult<String> {
 
 fn load_message_images(conn: &DbConn, message_id: &str) -> AppResult<Vec<ImageRef>> {
     let mut stmt = conn.prepare(
-        "SELECT id, role, rel_path, thumb_path, mime, width, height, bytes, ord
+        "SELECT id, role, rel_path, thumb_path, mime, media_role, source_url, width, height, bytes, ord
          FROM message_images WHERE message_id=?1 ORDER BY ord ASC",
     )?;
     let rows = stmt.query_map(params![message_id], |r| {
@@ -868,10 +919,12 @@ fn load_message_images(conn: &DbConn, message_id: &str) -> AppResult<Vec<ImageRe
             rel_path: r.get(2)?,
             thumb_rel_path: r.get(3)?,
             mime: r.get(4)?,
-            width: r.get(5)?,
-            height: r.get(6)?,
-            bytes: r.get(7)?,
-            ord: r.get(8)?,
+            media_role: r.get(5)?,
+            source_url: r.get(6)?,
+            width: r.get(7)?,
+            height: r.get(8)?,
+            bytes: r.get(9)?,
+            ord: r.get(10)?,
         })
     })?;
     let mut v = Vec::new();

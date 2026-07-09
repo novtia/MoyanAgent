@@ -24,7 +24,7 @@ use crate::ai::agent::core::worktree::WorktreeHandle;
 use crate::ai::agent::exec::query::{QueryEngine, QueryRequest, QueryResult, ToolEventCallback};
 use crate::ai::agent::tools::ToolPool;
 use crate::ai::agent::types::{AgentId, AgentRunMode, QuerySource, TokenUsage};
-use crate::ai::chat::{ChatRequest, ImageResult, TextDeltaCallback};
+use crate::ai::chat::{ChatRequest, ImageResult, MediaResult, TextDeltaCallback};
 use crate::ai::token_log::TokenUsageLogger;
 use crate::error::AppResult;
 
@@ -93,6 +93,7 @@ pub struct RunAgentResult {
     pub usage: TokenUsage,
     pub tool_call_count: u32,
     pub images: Vec<ImageResult>,
+    pub videos: Vec<MediaResult>,
 }
 
 /// Drive a single sub-agent end-to-end.
@@ -126,8 +127,8 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
     let agent_id = AgentId::new();
 
     let mut task = Task::new_local(agent_id.clone(), &definition.agent_type, prompt.clone());
-    task.background = matches!(run_mode, AgentRunMode::Background | AgentRunMode::Fork)
-        || definition.background;
+    task.background =
+        matches!(run_mode, AgentRunMode::Background | AgentRunMode::Fork) || definition.background;
     let task_id = task_store.register(task);
 
     // Optional git-worktree isolation. The handle's `Drop` removes the
@@ -246,6 +247,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
                 usage: qr.usage,
                 tool_call_count: qr.tool_call_count,
                 images: qr.images,
+                videos: qr.videos,
             })
         }
         Err(e) => {
@@ -296,7 +298,10 @@ fn compose_system_prompt(
     let mut out = String::with_capacity(2048);
 
     if matches!(run_mode, AgentRunMode::Fork) {
-        if let Some(parent) = parent_system_prompt.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(parent) = parent_system_prompt
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             out.push_str(parent);
             out.push_str("\n\n---\n\n");
         }

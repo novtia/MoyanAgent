@@ -74,6 +74,15 @@ pub struct ImageResult {
     pub mime: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct MediaResult {
+    pub bytes: Vec<u8>,
+    pub mime: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub duration: Option<f64>,
+}
+
 /// Drop duplicate raster outputs (`bytes` + `mime` identical), preserving first-seen order.
 ///
 /// Gemini / OpenRouter multimodal streams often expose the same image twice: structured
@@ -92,9 +101,23 @@ pub fn dedupe_image_results(images: Vec<ImageResult>) -> Vec<ImageResult> {
     out
 }
 
+pub fn dedupe_media_results(media: Vec<MediaResult>) -> Vec<MediaResult> {
+    let mut out = Vec::with_capacity(media.len());
+    for item in media {
+        let duplicate = out.iter().any(|existing: &MediaResult| {
+            existing.mime == item.mime && existing.bytes == item.bytes
+        });
+        if !duplicate {
+            out.push(item);
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct GenerateResponse {
     pub images: Vec<ImageResult>,
+    pub videos: Vec<MediaResult>,
     pub text: Option<String>,
     /// Model reasoning / extended-thinking text when the provider returns
     /// it separately from the visible assistant reply (OpenAI `reasoning`,
@@ -125,6 +148,8 @@ pub struct ProviderToolCall {
 pub struct AttachmentBytes {
     pub bytes: Vec<u8>,
     pub mime: String,
+    pub media_role: Option<String>,
+    pub source_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]

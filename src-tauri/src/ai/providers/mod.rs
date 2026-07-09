@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 mod ark_images;
+mod ark_video;
 mod claude;
 mod gemini;
 mod grok;
@@ -19,6 +20,7 @@ pub const GEMINI_SDK: &str = "gemini";
 pub const CLAUDE_SDK: &str = "claude";
 pub const GROK_SDK: &str = "grok";
 pub const ARK_IMAGES_SDK: &str = "ark-images";
+pub const ARK_VIDEO_SDK: &str = "ark-video";
 pub const SUPPORTED_SDKS: &[&str] = &[
     OPENAI_SDK,
     OPENAI_RESPONSES_SDK,
@@ -26,6 +28,7 @@ pub const SUPPORTED_SDKS: &[&str] = &[
     CLAUDE_SDK,
     GROK_SDK,
     ARK_IMAGES_SDK,
+    ARK_VIDEO_SDK,
 ];
 
 pub type ProviderFuture<'a> =
@@ -100,6 +103,7 @@ impl Default for ProviderFactory {
             .register(claude::ClaudeProvider::new())
             .register(grok::GrokProvider::new())
             .register(ark_images::ArkImagesProvider::new())
+            .register(ark_video::ArkVideoProvider::new())
     }
 }
 

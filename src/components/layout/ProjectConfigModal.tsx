@@ -6,6 +6,7 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useProject } from "../../store/project";
 import type { Project } from "../../types";
+import { sanitizeFsPath } from "../../utils/sanitizePath";
 import { EMPTY_MODEL_PARAMS } from "../settings/llm/modelServices";
 import { ScopeConfigModal } from "./ScopeConfigModal";
 
@@ -31,14 +32,14 @@ export function ProjectConfigModal({ project, onClose }: ProjectConfigModalProps
         llmParams: { ...EMPTY_MODEL_PARAMS, ...(project.llm_params ?? EMPTY_MODEL_PARAMS) },
       }}
       pathField={{
-        value: project.path,
+        value: project.path ? sanitizeFsPath(project.path) : project.path,
         onBrowse: async () => {
           const result = await openDialog({
             directory: true,
             multiple: false,
             title: "选择项目文件夹",
           });
-          return typeof result === "string" ? result : null;
+          return typeof result === "string" ? sanitizeFsPath(result) : null;
         },
         onSave: async (path) => {
           await updatePath(project.id, path);

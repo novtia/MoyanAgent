@@ -46,6 +46,8 @@ export function CropTool({ target, busy, setBusy, onApplied }: Props) {
         abs_path: result.abs_path,
         thumb_abs_path: result.thumb_abs_path,
         mime: result.mime,
+        media_role: result.media_role,
+        source_url: result.source_url,
         width: result.width,
         height: result.height,
         bytes: result.bytes,

@@ -337,6 +337,11 @@ pub fn response_content(resp: &GenerateResponse) -> Value {
             .iter()
             .map(|i| format!("<image {} bytes, {}>", i.bytes.len(), i.mime))
             .collect::<Vec<_>>(),
+        "videos": resp
+            .videos
+            .iter()
+            .map(|i| format!("<video {} bytes, {}>", i.bytes.len(), i.mime))
+            .collect::<Vec<_>>(),
     })
 }
 

@@ -169,7 +169,12 @@ fn build_body(request: &ChatRequest) -> Value {
 
 fn append_gemini_assistant_tool_turn(contents: &mut Vec<Value>, pending: &PendingAssistantTurn) {
     let mut parts: Vec<Value> = Vec::new();
-    if let Some(text) = pending.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(text) = pending
+        .text
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         parts.push(json!({ "text": text }));
     }
     for tc in &pending.tool_calls {
@@ -302,7 +307,11 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
                 images.push(image);
             }
             if let Some(fc) = part.get("functionCall") {
-                let name = fc.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                let name = fc
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 if name.is_empty() {
                     continue;
                 }
@@ -328,6 +337,7 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
 
     Ok(GenerateResponse {
         images,
+        videos: Vec::new(),
         text: if texts.is_empty() {
             None
         } else {

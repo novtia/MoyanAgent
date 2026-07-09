@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
 import { useSettings } from "../../store/settings";
@@ -11,12 +18,24 @@ import {
   RATIO_PIXEL_HINT,
   shortModelName,
 } from "../../config/generation";
+import {
+  VIDEO_DURATIONS,
+  VIDEO_MODES,
+  VIDEO_RATIOS,
+  VIDEO_RESOLUTIONS,
+  type VideoGenerationMode,
+} from "../../config/videoGeneration";
 import type { AttachmentDraft, ModelServiceModel } from "../../types";
 import {
   ComposerEditor,
+  MentionIcon,
+  mediaMentionDisplayLabel,
+  mediaMentionKindFromMime,
+  mediaMentionLabel,
   normalizeMentionPath,
   isWithinProject,
   type ComposerEditorHandle,
+  type MentionTriggerAnchor,
 } from "./mention";
 import { ComposerFileTree } from "./ComposerFileTree";
 import { READER_FILE_DRAG_TYPE } from "./ReaderFileExplorer";
@@ -26,10 +45,15 @@ function nativeFilePath(file: File) {
   return (file as File & { path?: string }).path || "";
 }
 
-const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|svg)$/i;
+const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i;
+const AUDIO_EXT_RE = /\.(wav|mp3)$/i;
 
 function isImageFile(file: File): boolean {
   return file.type.startsWith("image/") || IMAGE_EXT_RE.test(file.name);
+}
+
+function isAudioFile(file: File): boolean {
+  return file.type.startsWith("audio/") || AUDIO_EXT_RE.test(file.name);
 }
 
 /** Popover uses `bottom: calc(100% + POPOVER_GAP)` — its bottom sits this many px above the anchor box top. */
@@ -71,20 +95,32 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   // doesn't re-render this heavy component. The prompt text itself lives in the
   // isolated `ComposerEditor` leaf below.
   const attachments = useSession((s) => s.composer.attachments);
+  const mentions = useSession((s) => s.composer.mentions);
   const pendingAttachments = useSession((s) => s.composer.pendingAttachments);
   const aspectRatio = useSession((s) => s.composer.aspectRatio);
   const imageSize = useSession((s) => s.composer.imageSize);
+  const videoMode = useSession((s) => s.composer.videoMode);
+  const videoDuration = useSession((s) => s.composer.videoDuration);
+  const videoResolution = useSession((s) => s.composer.videoResolution);
+  const generateAudio = useSession((s) => s.composer.generateAudio);
+  const watermark = useSession((s) => s.composer.watermark);
   const thinkingEnabled = useSession((s) => s.composer.thinkingEnabled);
   const thinkingEffort = useSession((s) => s.composer.thinkingEffort);
   const chatMode = useSession((s) => s.composer.chatMode);
   const promptEmpty = useSession((s) => s.composer.prompt.trim().length === 0);
   const setAspectRatio = useSession((s) => s.setAspectRatio);
   const setImageSize = useSession((s) => s.setImageSize);
+  const setVideoMode = useSession((s) => s.setVideoMode);
+  const setVideoDuration = useSession((s) => s.setVideoDuration);
+  const setVideoResolution = useSession((s) => s.setVideoResolution);
+  const setGenerateAudio = useSession((s) => s.setGenerateAudio);
+  const setWatermark = useSession((s) => s.setWatermark);
   const setThinkingEnabled = useSession((s) => s.setThinkingEnabled);
   const setThinkingEffort = useSession((s) => s.setThinkingEffort);
   const addAttachments = useSession((s) => s.addAttachments);
   const addAttachmentsFromPaths = useSession((s) => s.addAttachmentsFromPaths);
   const addAttachmentFromPath = useSession((s) => s.addAttachmentFromPath);
+  const addReferenceVideoUrl = useSession((s) => s.addReferenceVideoUrl);
   const removeAttachment = useSession((s) => s.removeAttachment);
   const send = useSession((s) => s.send);
   const interrupt = useSession((s) => s.interrupt);
@@ -105,6 +141,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   }, [active, projects]);
 
   const editorRef = useRef<ComposerEditorHandle | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const paramsRef = useRef<HTMLDivElement | null>(null);
   const thinkingRef = useRef<HTMLDivElement | null>(null);
   const modeRef = useRef<HTMLDivElement | null>(null);
@@ -113,13 +150,35 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
 
   const [paramsOpen, setParamsOpen] = useState(false);
   const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionAnchor, setMentionAnchor] =
+    useState<MentionTriggerAnchor | null>(null);
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [modelPopoverMaxPx, setModelPopoverMaxPx] = useState(480);
   const [modelPopoverBelow, setModelPopoverBelow] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [referenceVideoUrl, setReferenceVideoUrl] = useState("");
   const dragDepth = useRef(0);
+  const autoMentionedAttachmentIdsRef = useRef<Set<string>>(new Set());
+  const autoMentionSessionRef = useRef<string | null>(null);
+
+  const closeMentionPanel = useCallback(() => {
+    setMentionOpen(false);
+    setMentionAnchor(null);
+  }, []);
+
+  const onEditorMentionTrigger = useCallback(
+    (anchor: MentionTriggerAnchor | null) => {
+      if (!anchor) {
+        closeMentionPanel();
+        return;
+      }
+      setMentionAnchor(anchor);
+      setMentionOpen(true);
+    },
+    [closeMentionPanel],
+  );
 
   const hasPendingAttachments = pendingAttachments.length > 0;
   const hasAttachments = attachments.length > 0 || hasPendingAttachments;
@@ -144,7 +203,153 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     return model?.capabilities ?? [];
   }, [settings?.model_services, settings?.active_provider_id, settings?.model]);
   const showImageParams = activeCapabilities.includes("image");
+  const showVideoParams = activeCapabilities.includes("video");
+  const supportsMultimodalReference =
+    activeCapabilities.includes("multimodal-ref");
   const showThinking = activeCapabilities.includes("reasoning");
+  const imageAttachmentCount = attachments.filter((a) =>
+    a.mime.startsWith("image/"),
+  ).length;
+  const audioAttachmentCount = attachments.filter((a) =>
+    a.mime.startsWith("audio/"),
+  ).length;
+  const videoAttachmentCount = attachments.filter((a) =>
+    a.mime.startsWith("video/"),
+  ).length;
+  const videoCanSend =
+    videoMode === "text"
+      ? !promptEmpty && attachments.length === 0
+      : videoMode === "first_frame"
+        ? imageAttachmentCount === 1 &&
+          audioAttachmentCount + videoAttachmentCount === 0
+        : videoMode === "first_last"
+          ? imageAttachmentCount === 2 &&
+            audioAttachmentCount + videoAttachmentCount === 0
+          : imageAttachmentCount <= 9 &&
+            audioAttachmentCount <= 3 &&
+            videoAttachmentCount <= 3 &&
+            imageAttachmentCount + videoAttachmentCount >= 1;
+  const videoModeLabel = t(`composer.videoMode.${videoMode}`);
+  const videoDurationLabel =
+    videoDuration === -1
+      ? t("composer.videoDurationAdaptive")
+      : t("composer.videoDurationSeconds", { n: videoDuration });
+
+  const mediaMentionForAttachment = (attachment: AttachmentDraft) => {
+    const kind = mediaMentionKindFromMime(attachment.mime);
+    if (!kind) return null;
+    const sameKindAttachments = attachments.filter(
+      (item) => mediaMentionKindFromMime(item.mime) === kind,
+    );
+    const ordinal = sameKindAttachments.findIndex(
+      (item) => item.image_id === attachment.image_id,
+    );
+    if (ordinal < 0) return null;
+    return mediaMentionLabel(kind, ordinal + 1);
+  };
+
+  const removeComposerAttachment = (attachment: AttachmentDraft) => {
+    const mention = mediaMentionForAttachment(attachment);
+    if (mention) editorRef.current?.removeAllMentions(mention, false);
+    void removeAttachment(attachment.image_id);
+  };
+
+  const prepareVideoModeForUpload = (
+    imageCount: number,
+    audioCount: number,
+  ) => {
+    if (!showVideoParams || videoMode !== "text") return;
+    if (supportsMultimodalReference) {
+      if (imageCount + audioCount > 0) setVideoMode("reference");
+      return;
+    }
+    if (imageCount > 0) {
+      setVideoMode(imageCount >= 2 ? "first_last" : "first_frame");
+    }
+  };
+
+  useEffect(() => {
+    if (showVideoParams) {
+      if (aspectRatio === "auto") setAspectRatio("adaptive");
+      if (
+        videoMode === "reference" &&
+        !supportsMultimodalReference
+      ) {
+        setVideoMode("text");
+        for (const attachment of [...attachments].reverse()) {
+          removeComposerAttachment(attachment);
+        }
+        setReferenceVideoUrl("");
+      }
+      if (!supportsMultimodalReference && videoDuration > 12) {
+        setVideoDuration(5);
+      }
+      if (!supportsMultimodalReference && videoResolution === "4k") {
+        setVideoResolution("720p");
+      }
+    } else {
+      if (showImageParams && aspectRatio === "adaptive") {
+        setAspectRatio("auto");
+      }
+      for (const attachment of [...attachments].reverse()) {
+        if (!attachment.mime.startsWith("image/")) {
+          removeComposerAttachment(attachment);
+        }
+      }
+    }
+  }, [
+    showVideoParams,
+    showImageParams,
+    supportsMultimodalReference,
+    videoMode,
+    videoDuration,
+    videoResolution,
+    aspectRatio,
+  ]);
+
+  useEffect(() => {
+    if (autoMentionSessionRef.current !== activeId) {
+      autoMentionSessionRef.current = activeId;
+      autoMentionedAttachmentIdsRef.current.clear();
+    }
+    const mentionable = showVideoParams
+      ? videoMode === "text" ||
+        (videoMode === "reference" && !supportsMultimodalReference)
+        ? []
+        : attachments
+      : attachments.filter((attachment) =>
+          attachment.mime.startsWith("image/"),
+        );
+
+    const currentIds = new Set(
+      attachments.map((attachment) => attachment.image_id),
+    );
+    for (const id of autoMentionedAttachmentIdsRef.current) {
+      if (!currentIds.has(id)) {
+        autoMentionedAttachmentIdsRef.current.delete(id);
+      }
+    }
+
+    for (const attachment of mentionable) {
+      if (
+        autoMentionedAttachmentIdsRef.current.has(attachment.image_id)
+      ) {
+        continue;
+      }
+      autoMentionedAttachmentIdsRef.current.add(attachment.image_id);
+      const mention = mediaMentionForAttachment(attachment);
+      if (mention && !mentions.includes(mention)) {
+        editorRef.current?.insertMention(mention);
+      }
+    }
+  }, [
+    activeId,
+    attachments,
+    mentions,
+    showVideoParams,
+    supportsMultimodalReference,
+    videoMode,
+  ]);
 
   const thinkingLabel = thinkingEnabled
     ? thinkingEffort.trim() || t("composer.thinkingDefault")
@@ -172,15 +377,32 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       if (!e.clipboardData) return;
+      const activeElement = document.activeElement;
+      if (
+        activeElement instanceof HTMLElement &&
+        activeElement.closest(".bubble-edit")
+      ) {
+        return;
+      }
       const files = Array.from(e.clipboardData.files || []);
       if (files.length) {
         e.preventDefault();
+        editorRef.current?.rememberSelection();
+        prepareVideoModeForUpload(
+          files.filter(isImageFile).length,
+          files.filter(isAudioFile).length,
+        );
         addAttachments(files);
       }
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [addAttachments]);
+  }, [
+    addAttachments,
+    showVideoParams,
+    supportsMultimodalReference,
+    videoMode,
+  ]);
 
   useEffect(() => {
     if (!paramsOpen) return;
@@ -219,12 +441,12 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     if (!mentionOpen) return;
     const onDoc = (e: MouseEvent) => {
       if (mentionRef.current && !mentionRef.current.contains(e.target as Node)) {
-        setMentionOpen(false);
+        closeMentionPanel();
       }
     };
     window.addEventListener("mousedown", onDoc);
     return () => window.removeEventListener("mousedown", onDoc);
-  }, [mentionOpen]);
+  }, [mentionOpen, closeMentionPanel]);
 
   useEffect(() => {
     if (!modelOpen) return;
@@ -308,7 +530,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const onSubmit = async () => {
     if (busy) return;
     if (hasPendingAttachments) return;
-    if (!useSession.getState().composer.prompt.trim()) return;
+    if (!showVideoParams && !useSession.getState().composer.prompt.trim()) return;
     await send();
   };
   const onSendButtonClick = () => {
@@ -318,15 +540,84 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     }
     onSubmit();
   };
-  const toggleMentionPanel = () => {
-    if (!projectRoot || !activeId) {
-      toast.error(t("composer.noProjectForMention"));
-      return;
+  const addReferenceVideo = async () => {
+    const url = referenceVideoUrl.trim();
+    if (!url) return;
+    await addReferenceVideoUrl(url);
+    setReferenceVideoUrl("");
+  };
+  const selectVideoMode = (nextMode: VideoGenerationMode) => {
+    if (hasPendingAttachments || nextMode === videoMode) return;
+    setVideoMode(nextMode);
+
+    const imageIds = attachments
+      .filter((attachment) => attachment.mime.startsWith("image/"))
+      .map((attachment) => attachment.image_id);
+    const keptIds = new Set<string>(
+      nextMode === "first_frame"
+        ? imageIds.slice(0, 1)
+        : nextMode === "first_last"
+          ? imageIds.slice(0, 2)
+          : nextMode === "reference"
+            ? attachments.map((attachment) => attachment.image_id)
+            : [],
+    );
+    const removed = attachments.filter(
+      (attachment) => !keptIds.has(attachment.image_id),
+    );
+    for (const attachment of [...removed].reverse()) {
+      removeComposerAttachment(attachment);
     }
+    if (removed.length > 0) {
+      toast.info(t("composer.modeRemovedAttachments"));
+    }
+    if (nextMode !== "reference") setReferenceVideoUrl("");
+  };
+  const attachmentBadge = (attachment: AttachmentDraft, index: number) => {
+    const mention = mediaMentionForAttachment(attachment);
+    const detail = mention
+      ? `@${mediaMentionDisplayLabel(mention)}`
+      : attachment.mime.split("/").pop();
+    if (!showVideoParams || !attachment.mime.startsWith("image/")) {
+      return detail;
+    }
+    if (videoMode === "first_frame") {
+      return `${t("composer.firstFrameRole")} · ${detail}`;
+    }
+    if (videoMode === "first_last") {
+      return `${t(
+        index === 0 ? "composer.firstFrameRole" : "composer.lastFrameRole",
+      )} · ${detail}`;
+    }
+    return detail;
+  };
+  const attachmentAccept = showVideoParams
+    ? videoMode === "reference" ||
+      (videoMode === "text" && supportsMultimodalReference)
+      ? "image/png,image/jpeg,image/webp,image/bmp,image/gif,image/tiff,audio/wav,audio/mpeg,.mp3"
+      : "image/png,image/jpeg,image/webp,image/bmp,image/gif,image/tiff"
+    : "image/png,image/jpeg,image/webp";
+  const toggleMentionPanel = () => {
+    setMentionAnchor(null);
     setMentionOpen((v) => !v);
   };
   const pickMention = (absPath: string, isDir: boolean) => {
-    editorRef.current?.insertMention(absPath, isDir);
+    if (mentionAnchor) {
+      editorRef.current?.replaceMentionTrigger(absPath, isDir);
+    } else {
+      editorRef.current?.insertMention(absPath, isDir);
+    }
+    closeMentionPanel();
+  };
+  const pickAttachmentMention = (attachment: AttachmentDraft) => {
+    const mention = mediaMentionForAttachment(attachment);
+    if (!mention) return;
+    if (mentionAnchor) {
+      editorRef.current?.replaceMentionTrigger(mention);
+    } else {
+      editorRef.current?.insertMention(mention);
+    }
+    closeMentionPanel();
   };
 
   const hasDragPayload = (e: React.DragEvent) => {
@@ -368,6 +659,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     if (!hasDragPayload(e)) return;
     e.preventDefault();
     e.stopPropagation();
+    editorRef.current?.rememberSelection();
     dragDepth.current = 0;
     setDragOver(false);
 
@@ -376,6 +668,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
       try {
         const parsed = JSON.parse(galleryPayload) as { id?: string; abs_path?: string };
         if (parsed.abs_path) {
+          prepareVideoModeForUpload(1, 0);
           addAttachmentFromPath(parsed.abs_path);
         }
       } catch (err) {
@@ -409,15 +702,34 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     const files = Array.from(e.dataTransfer?.files || []);
     if (!files.length) return;
 
-    const images = files.filter(isImageFile);
-    const others = files.filter((f) => !isImageFile(f));
+    const localVideos = files.filter(
+      (file) => file.type.startsWith("video/") || /\.(mp4|mov)$/i.test(file.name),
+    );
+    if (localVideos.length) {
+      toast.error(t("composer.localVideoUnsupported"));
+    }
+    const attachable = files.filter(
+      (file) =>
+        isImageFile(file) ||
+        (showVideoParams &&
+          (videoMode === "reference" ||
+            (videoMode === "text" && supportsMultimodalReference)) &&
+          isAudioFile(file)),
+    );
+    const others = files.filter(
+      (file) => !attachable.includes(file) && !localVideos.includes(file),
+    );
 
-    if (images.length) {
-      const imgPaths = images.map(nativeFilePath).filter(Boolean);
-      if (imgPaths.length === images.length) {
-        addAttachmentsFromPaths(imgPaths);
+    if (attachable.length) {
+      prepareVideoModeForUpload(
+        attachable.filter(isImageFile).length,
+        attachable.filter(isAudioFile).length,
+      );
+      const paths = attachable.map(nativeFilePath).filter(Boolean);
+      if (paths.length === attachable.length) {
+        addAttachmentsFromPaths(paths);
       } else {
-        addAttachments(images);
+        addAttachments(attachable);
       }
     }
 
@@ -470,32 +782,67 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                 <span className="badge">{t("composer.uploading")}</span>
               </div>
             ))}
-            {attachments.map((a) => (
-              <div className="attachment" key={a.image_id} title={a.rel_path}>
-                <img src={srcOf(a.thumb_abs_path || a.abs_path)} alt="" />
-                <button
-                  type="button"
-                  className="edit"
-                  title={t("composer.editAttachment")}
-                  onClick={() => onEditAttachment(a)}
-                >
-                  <PencilIcon />
-                </button>
+            {attachments.map((a, index) => (
+              <div
+                className={`attachment ${a.mime.startsWith("image/") ? "" : "attachment-media"}`}
+                key={a.image_id}
+                title={a.source_url || a.rel_path}
+              >
+                {a.mime.startsWith("image/") ? (
+                  <img src={srcOf(a.thumb_abs_path || a.abs_path)} alt="" />
+                ) : (
+                  <div className="attachment-media-icon">
+                    <MediaAttachmentIcon kind={a.mime.startsWith("audio/") ? "audio" : "video"} />
+                  </div>
+                )}
+                {a.mime.startsWith("image/") && (
+                  <button
+                    type="button"
+                    className="edit"
+                    title={t("composer.editAttachment")}
+                    onClick={() => onEditAttachment(a)}
+                  >
+                    <PencilIcon />
+                  </button>
+                )}
                 <button
                   type="button"
                   className="remove"
                   title={t("composer.removeAttachment")}
-                  onClick={() => removeAttachment(a.image_id)}
+                  onClick={() => removeComposerAttachment(a)}
                 >
                   ×
                 </button>
                 <span className="badge">
-                  {(a.bytes ?? 0) > 0
-                    ? formatBytes(a.bytes!, t)
-                    : a.mime.replace("image/", "")}
+                  {attachmentBadge(a, index)}
                 </span>
               </div>
             ))}
+          </div>
+        )}
+
+        {showVideoParams && videoMode === "reference" && (
+          <div className="composer-reference-url">
+            <input
+              type="url"
+              value={referenceVideoUrl}
+              onChange={(event) => setReferenceVideoUrl(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void addReferenceVideo();
+                }
+              }}
+              placeholder={t("composer.referenceVideoPlaceholder")}
+              aria-label={t("composer.referenceVideo")}
+            />
+            <button
+              type="button"
+              disabled={!referenceVideoUrl.trim() || videoAttachmentCount >= 3}
+              onClick={() => void addReferenceVideo()}
+            >
+              {t("composer.referenceVideoAdd")}
+            </button>
           </div>
         )}
 
@@ -508,6 +855,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
           }
           onSubmit={onSubmit}
           disabled={busy}
+          onMentionTrigger={onEditorMentionTrigger}
         />
 
         <div className="composer-bar">
@@ -558,24 +906,154 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                 </div>
               )}
             </div>
+            {(showImageParams ||
+              showVideoParams ||
+              activeCapabilities.includes("vision")) && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  className="composer-file-input"
+                  type="file"
+                  accept={attachmentAccept}
+                  multiple
+                  onChange={(event) => {
+                    const files = Array.from(event.currentTarget.files ?? []);
+                    event.currentTarget.value = "";
+                    if (files.length) {
+                      prepareVideoModeForUpload(
+                        files.filter(isImageFile).length,
+                        files.filter(isAudioFile).length,
+                      );
+                      void addAttachments(files);
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="composer-btn composer-add-btn"
+                  title={t("composer.addMedia")}
+                  onMouseDown={() =>
+                    editorRef.current?.rememberSelection()
+                  }
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <PaperclipIcon />
+                </button>
+              </>
+            )}
             <div className="composer-mention-wrap" ref={mentionRef}>
               <button
                 type="button"
                 className={`composer-btn composer-add-btn ${mentionOpen ? "active" : ""}`}
                 title={t("composer.addFileMention")}
+                onMouseDown={() => editorRef.current?.rememberSelection()}
                 onClick={toggleMentionPanel}
               >
                 <AtIcon />
               </button>
-              {mentionOpen && projectRoot && activeId && (
-                <div className="composer-mention-popover" role="dialog" aria-label={t("composer.addFileMention")}>
-                  <div className="composer-mention-popover-title">{t("composer.addFileMention")}</div>
+              {mentionOpen && (
+                <div
+                  className={`composer-mention-popover${
+                    mentionAnchor ? " is-caret" : ""
+                  }`}
+                  role="dialog"
+                  aria-label={t("composer.mentionPickerTitle")}
+                  style={
+                    mentionAnchor
+                      ? {
+                          left: Math.max(
+                            12,
+                            Math.min(
+                              mentionAnchor.left,
+                              window.innerWidth - 332,
+                            ),
+                          ) -
+                            (mentionRef.current?.getBoundingClientRect().left ??
+                              0),
+                          top:
+                            mentionAnchor.bottom +
+                            8 -
+                            (mentionRef.current?.getBoundingClientRect().top ??
+                              0),
+                          bottom: "auto",
+                          maxHeight: Math.max(
+                            72,
+                            window.innerHeight - mentionAnchor.bottom - 12,
+                          ),
+                        }
+                      : undefined
+                  }
+                >
+                  <div className="composer-mention-popover-title">
+                    {t("composer.mentionPickerTitle")}
+                  </div>
                   <div className="composer-mention-popover-body">
-                    <ComposerFileTree
-                      sessionId={activeId}
-                      projectRoot={projectRoot}
-                      onPick={pickMention}
-                    />
+                    <section className="composer-mention-section">
+                      <div className="composer-mention-section-title">
+                        {t("composer.mentionUploadedMedia")}
+                      </div>
+                      {attachments.length > 0 ? (
+                        <div className="composer-mention-media-list">
+                          {attachments.map((attachment) => {
+                            const mention =
+                              mediaMentionForAttachment(attachment);
+                            if (!mention) return null;
+                            const name =
+                              attachment.rel_path.split(/[\\/]/).pop() ||
+                              mediaMentionDisplayLabel(mention);
+                            return (
+                              <button
+                                type="button"
+                                className="composer-mention-media-item"
+                                key={attachment.image_id}
+                                title={name}
+                                onClick={() =>
+                                  pickAttachmentMention(attachment)
+                                }
+                              >
+                                {attachment.mime.startsWith("image/") ? (
+                                  <img
+                                    src={srcOf(
+                                      attachment.thumb_abs_path ||
+                                        attachment.abs_path,
+                                    )}
+                                    alt=""
+                                    draggable={false}
+                                  />
+                                ) : (
+                                  <span className="composer-mention-media-icon">
+                                    <MentionIcon path={mention} />
+                                  </span>
+                                )}
+                                <span className="composer-mention-media-copy">
+                                  <strong>
+                                    @{mediaMentionDisplayLabel(mention)}
+                                  </strong>
+                                  <small>{name}</small>
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="composer-mention-status">
+                          {t("composer.mentionNoUploadedMedia")}
+                        </div>
+                      )}
+                    </section>
+
+                    {projectRoot && activeId && (
+                      <section className="composer-mention-section">
+                        <div className="composer-mention-section-title">
+                          {t("composer.mentionProjectFiles")}
+                        </div>
+                        <ComposerFileTree
+                          sessionId={activeId}
+                          projectRoot={projectRoot}
+                          onPick={pickMention}
+                        />
+                      </section>
+                    )}
                   </div>
                 </div>
               )}
@@ -629,7 +1107,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                 )}
               </div>
             )}
-            {showImageParams && (
+            {(showImageParams || showVideoParams) && (
             <div className="composer-params" ref={paramsRef}>
               <button
                 type="button"
@@ -637,58 +1115,170 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                 onClick={() => setParamsOpen((v) => !v)}
               >
                 <SlidersIcon />
-                <span>{ratioLabel} · {sizeLabel}</span>
+                <span>
+                  {showVideoParams
+                    ? `${videoModeLabel} · ${videoDurationLabel} · ${videoResolution}`
+                    : `${ratioLabel} · ${sizeLabel}`}
+                </span>
                 <CaretIcon />
               </button>
               {paramsOpen && (
                 <div className="params-popover">
-                  <div className="row">
-                    <label className="field-label">{t("composer.paramsRatioLabel")}</label>
-                    <div className="chips ratio-grid">
-                      {ASPECT_RATIOS.map((r) => (
-                        <button
-                          key={r}
-                          type="button"
-                          className={`chip ${aspectRatio === r ? "active" : ""}`}
-                          onClick={() => {
-                            setAspectRatio(r);
-                            update({ default_aspect_ratio: r });
-                          }}
-                        >
-                          {r === "auto" ? t("common.auto") : r}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="hint">
-                      {aspectRatio === "auto"
-                        ? t("composer.ratioHintAuto")
-                        : t("composer.ratioHint", {
-                            ratio: aspectRatio,
-                            pixels:
-                              RATIO_PIXEL_HINT[aspectRatio] || aspectRatio,
-                          })}
-                    </div>
-                  </div>
+                  {showVideoParams ? (
+                    <>
+                      <div className="row">
+                        <label className="field-label">{t("composer.videoModeLabel")}</label>
+                        <div className="chips">
+                          {VIDEO_MODES.filter(
+                            (mode) =>
+                              mode !== "reference" ||
+                              supportsMultimodalReference,
+                          ).map((mode) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              className={`chip ${videoMode === mode ? "active" : ""}`}
+                              onClick={() => selectVideoMode(mode)}
+                              disabled={hasPendingAttachments}
+                            >
+                              {t(`composer.videoMode.${mode}`)}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="hint">
+                          {t(`composer.videoModeHint.${videoMode}`)}
+                        </div>
+                      </div>
+                      <div className="row">
+                        <label className="field-label">{t("composer.paramsRatioLabel")}</label>
+                        <div className="chips ratio-grid">
+                          {VIDEO_RATIOS.map((ratio) => (
+                            <button
+                              key={ratio}
+                              type="button"
+                              className={`chip ${
+                                (aspectRatio === "auto" ? "adaptive" : aspectRatio) === ratio
+                                  ? "active"
+                                  : ""
+                              }`}
+                              onClick={() => setAspectRatio(ratio)}
+                            >
+                              {ratio === "adaptive" ? t("common.auto") : ratio}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="row">
+                        <label className="field-label">{t("composer.videoDurationLabel")}</label>
+                        <div className="chips">
+                          {VIDEO_DURATIONS.filter(
+                            (duration) =>
+                              duration <= 12 ||
+                              duration === -1 ||
+                              supportsMultimodalReference,
+                          ).map((duration) => (
+                            <button
+                              key={duration}
+                              type="button"
+                              className={`chip ${videoDuration === duration ? "active" : ""}`}
+                              onClick={() => setVideoDuration(duration)}
+                            >
+                              {duration === -1
+                                ? t("composer.videoDurationAdaptive")
+                                : `${duration}s`}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="row">
+                        <label className="field-label">{t("composer.videoResolutionLabel")}</label>
+                        <div className="chips">
+                          {VIDEO_RESOLUTIONS.filter(
+                            (resolution) =>
+                              resolution !== "4k" ||
+                              supportsMultimodalReference,
+                          ).map((resolution) => (
+                            <button
+                              key={resolution}
+                              type="button"
+                              className={`chip ${
+                                videoResolution === resolution ? "active" : ""
+                              }`}
+                              onClick={() => setVideoResolution(resolution)}
+                            >
+                              {resolution}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <label className="composer-video-toggle">
+                        <input
+                          type="checkbox"
+                          checked={generateAudio}
+                          onChange={(event) => setGenerateAudio(event.target.checked)}
+                        />
+                        <span>{t("composer.videoGenerateAudio")}</span>
+                      </label>
+                      <label className="composer-video-toggle">
+                        <input
+                          type="checkbox"
+                          checked={watermark}
+                          onChange={(event) => setWatermark(event.target.checked)}
+                        />
+                        <span>{t("composer.videoWatermark")}</span>
+                      </label>
+                    </>
+                  ) : (
+                    <>
+                      <div className="row">
+                        <label className="field-label">{t("composer.paramsRatioLabel")}</label>
+                        <div className="chips ratio-grid">
+                          {ASPECT_RATIOS.map((r) => (
+                            <button
+                              key={r}
+                              type="button"
+                              className={`chip ${aspectRatio === r ? "active" : ""}`}
+                              onClick={() => {
+                                setAspectRatio(r);
+                                update({ default_aspect_ratio: r });
+                              }}
+                            >
+                              {r === "auto" ? t("common.auto") : r}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="hint">
+                          {aspectRatio === "auto"
+                            ? t("composer.ratioHintAuto")
+                            : t("composer.ratioHint", {
+                                ratio: aspectRatio,
+                                pixels:
+                                  RATIO_PIXEL_HINT[aspectRatio] || aspectRatio,
+                              })}
+                        </div>
+                      </div>
 
-                  <div className="row">
-                    <label className="field-label">{t("composer.paramsSizeLabel")}</label>
-                    <div className="chips">
-                      {IMAGE_SIZES.map((s) => (
-                        <button
-                          key={s}
-                          type="button"
-                          className={`chip ${imageSize === s ? "active" : ""}`}
-                          onClick={() => {
-                            setImageSize(s);
-                            update({ default_image_size: s });
-                          }}
-                        >
-                          {s === "auto" ? t("common.auto") : s}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="hint">{t("composer.sizeHint")}</div>
-                  </div>
+                      <div className="row">
+                        <label className="field-label">{t("composer.paramsSizeLabel")}</label>
+                        <div className="chips">
+                          {IMAGE_SIZES.map((s) => (
+                            <button
+                              key={s}
+                              type="button"
+                              className={`chip ${imageSize === s ? "active" : ""}`}
+                              onClick={() => {
+                                setImageSize(s);
+                                update({ default_image_size: s });
+                              }}
+                            >
+                              {s === "auto" ? t("common.auto") : s}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="hint">{t("composer.sizeHint")}</div>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -759,12 +1349,17 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
               className={`send-btn ${busy ? "busy" : ""}`}
               type="button"
               onClick={onSendButtonClick}
-              disabled={!busy && (hasPendingAttachments || promptEmpty)}
+              disabled={
+                !busy &&
+                (hasPendingAttachments || (showVideoParams ? !videoCanSend : promptEmpty))
+              }
               title={
                 busy
                   ? t("composer.sendInterrupt")
                   : hasPendingAttachments
                   ? t("composer.sendUploading")
+                  : showVideoParams
+                  ? t("composer.sendVideo")
                   : hasAttachments
                   ? t("composer.sendEdit")
                   : t("composer.sendGenerate")
@@ -774,6 +1369,8 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                   ? t("composer.sendInterrupt")
                   : hasPendingAttachments
                   ? t("composer.sendUploading")
+                  : showVideoParams
+                  ? t("composer.sendVideo")
                   : hasAttachments
                   ? t("composer.sendEdit")
                   : t("composer.sendGenerate")
@@ -895,12 +1492,6 @@ function ContextRing({ used, limit }: { used: number; limit: number | null }) {
   );
 }
 
-function formatBytes(n: number, t: ReturnType<typeof useTranslation>["t"]) {
-  if (n < 1024) return t("composer.bytesB", { n });
-  if (n < 1024 * 1024) return t("composer.bytesKB", { n: (n / 1024).toFixed(0) });
-  return t("composer.bytesMB", { n: (n / (1024 * 1024)).toFixed(1) });
-}
-
 function LockIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -914,6 +1505,35 @@ function AtIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="4" />
       <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94" />
+    </svg>
+  );
+}
+function PaperclipIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" />
+    </svg>
+  );
+}
+
+function MediaAttachmentIcon({ kind }: { kind: "audio" | "video" }) {
+  return kind === "audio" ? (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M9 18V5l10-2v13" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="16" cy="16" r="3" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m10 9 5 3-5 3Z" />
     </svg>
   );
 }

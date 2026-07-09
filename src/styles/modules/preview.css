@@ -82,6 +82,37 @@
   pointer-events: none;
 }
 
+.video-preview-stage {
+  position: absolute;
+  inset: 72px 72px 94px;
+  display: grid;
+  place-items: center;
+}
+.video-preview-stage video {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  background: #05070a;
+  border-radius: 10px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+}
+.video-preview-error {
+  position: absolute;
+  z-index: 1;
+  padding: 12px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(20, 24, 32, 0.9);
+  color: #fff;
+  cursor: pointer;
+}
+.video-preview-toolbar {
+  min-width: 90px;
+  justify-content: center;
+}
+
 /* ───── floating top chrome ───── */
 .preview-topbar {
   position: absolute;
@@ -423,6 +454,9 @@
 
 /* small viewports — tighten the chrome */
 @media (max-width: 600px) {
+  .video-preview-stage {
+    inset: 58px 8px 78px;
+  }
   .preview-nav {
     width: 40px;
     height: 40px;

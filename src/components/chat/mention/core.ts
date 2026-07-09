@@ -20,7 +20,61 @@ export type MentionSegment =
   | { type: "text"; value: string }
   | { type: "mention"; path: string };
 
-export type MentionIconKind = "folder" | "image" | "code" | "file";
+export type MediaMentionKind = "image" | "audio" | "video";
+export type MentionIconKind =
+  | "folder"
+  | "image"
+  | "audio"
+  | "video"
+  | "code"
+  | "file";
+
+export interface MentionMediaRenderData {
+  previewSrc?: string;
+}
+
+const MEDIA_MENTION_RE = /^(image|音频|视频)(\d+)$/;
+const PLAIN_MEDIA_MENTION_HEAD =
+  /^@(image|音频|视频)(\d+)(?![A-Za-z0-9_\u3400-\u9fff])/;
+
+export function mediaMentionKind(value: string): MediaMentionKind | null {
+  const match = value.match(MEDIA_MENTION_RE);
+  if (!match) return null;
+  if (match[1] === "image") return "image";
+  return match[1] === "音频" ? "audio" : "video";
+}
+
+export function mediaMentionIndex(value: string): number | null {
+  const match = value.match(MEDIA_MENTION_RE);
+  if (!match) return null;
+  const index = Number(match[2]);
+  return Number.isSafeInteger(index) && index > 0 ? index : null;
+}
+
+export function mediaMentionLabel(
+  kind: MediaMentionKind,
+  index: number,
+): string {
+  const prefix = kind === "image" ? "image" : kind === "audio" ? "音频" : "视频";
+  return `${prefix}${Math.max(1, Math.trunc(index))}`;
+}
+
+export function mediaMentionDisplayLabel(value: string): string {
+  const kind = mediaMentionKind(value);
+  const index = mediaMentionIndex(value);
+  if (!kind || !index) return value;
+  const prefix = kind === "image" ? "图片" : kind === "audio" ? "音频" : "视频";
+  return index === 1 ? prefix : `${prefix}${index}`;
+}
+
+export function mediaMentionKindFromMime(
+  mime: string,
+): MediaMentionKind | null {
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("audio/")) return "audio";
+  if (mime.startsWith("video/")) return "video";
+  return null;
+}
 
 const IMAGE_EXT = /^(png|jpe?g|gif|webp|bmp|svg|ico|tiff?|avif)$/;
 const CODE_EXT =
@@ -32,6 +86,10 @@ export const MENTION_ICON_INNER: Record<MentionIconKind, string> = {
     '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   image:
     '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.35-4.35a2 2 0 0 0-2.83 0L3 21"/>',
+  audio:
+    '<path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>',
+  video:
+    '<rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-2v8l-4-2Z"/>',
   code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
   file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
 };
@@ -58,6 +116,8 @@ export function looksLikeDir(absPath: string): boolean {
 
 /** Resolve the icon kind from the path kind / file extension. */
 export function mentionIconKind(absPath: string, isDir?: boolean): MentionIconKind {
+  const mediaKind = mediaMentionKind(absPath);
+  if (mediaKind) return mediaKind;
   if (isDir ?? looksLikeDir(absPath)) return "folder";
   const name = mentionBasename(absPath).toLowerCase();
   const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
@@ -74,6 +134,7 @@ export function mentionIconSvg(absPath: string, isDir?: boolean): string {
 
 /** Serialize one mention path into the `@\"…\"` plain-text form stored in messages. */
 export function serializeMentionPath(path: string): string {
+  if (mediaMentionKind(path)) return `${MENTION_PREFIX}${path}`;
   return `${MENTION_PREFIX}${JSON.stringify(path)}`;
 }
 
@@ -97,6 +158,14 @@ export function parseMentionAt(
     return {
       path: normalizeMentionPath(decodeQuotedMentionPayload(quoted[1])),
       length: quoted[0].length,
+    };
+  }
+
+  const media = rest.match(PLAIN_MEDIA_MENTION_HEAD);
+  if (media) {
+    return {
+      path: `${media[1]}${media[2]}`,
+      length: media[0].length,
     };
   }
 
@@ -157,22 +226,45 @@ export function isWithinProject(path: string, root: string): boolean {
  * Layout: file-type icon, file name, remove button. The full path lives on
  * `dataset.path` (used for serialization), while only the name is displayed.
  */
-export function createMentionNode(absPath: string, isDir?: boolean): HTMLElement {
+export function createMentionNode(
+  absPath: string,
+  isDir?: boolean,
+  media?: MentionMediaRenderData,
+): HTMLElement {
   const chip = document.createElement("span");
-  chip.className = "composer-mention";
+  const mediaKind = mediaMentionKind(absPath);
+  const displayLabel = mediaMentionDisplayLabel(absPath);
+  chip.className = `composer-mention${mediaKind ? ` is-media media-${mediaKind}` : ""}`;
+  if (mediaKind === "image" && media?.previewSrc) {
+    chip.classList.add("has-preview");
+  }
   chip.contentEditable = "false";
   chip.dataset.path = absPath;
-  chip.setAttribute("title", absPath);
+  chip.setAttribute("title", mediaKind ? `@${displayLabel}` : absPath);
 
-  const icon = document.createElement("span");
-  icon.className = "composer-mention-icon";
-  icon.innerHTML = mentionIconSvg(absPath, isDir);
-  chip.appendChild(icon);
+  if (mediaKind === "image" && media?.previewSrc) {
+    const image = document.createElement("img");
+    image.className = "composer-mention-image";
+    image.src = media.previewSrc;
+    image.alt = displayLabel;
+    image.draggable = false;
+    chip.appendChild(image);
+  } else {
+    const at = document.createElement("span");
+    at.className = "composer-mention-at";
+    at.textContent = "@";
+    chip.appendChild(at);
 
-  const label = document.createElement("span");
-  label.className = "composer-mention-label";
-  label.textContent = mentionBasename(absPath);
-  chip.appendChild(label);
+    const icon = document.createElement("span");
+    icon.className = "composer-mention-icon";
+    icon.innerHTML = mentionIconSvg(absPath, isDir);
+    chip.appendChild(icon);
+
+    const label = document.createElement("span");
+    label.className = "composer-mention-label";
+    label.textContent = mediaKind ? displayLabel : mentionBasename(absPath);
+    chip.appendChild(label);
+  }
 
   const remove = document.createElement("button");
   remove.type = "button";
@@ -229,7 +321,11 @@ function appendTextWithBreaks(nodes: Node[], text: string) {
 }
 
 /** Rebuild DOM nodes from plain text, restoring `@<path>` as chips. */
-export function buildMentionNodes(text: string, mentions: string[]): Node[] {
+export function buildMentionNodes(
+  text: string,
+  mentions: string[],
+  mediaByPath: Record<string, MentionMediaRenderData> = {},
+): Node[] {
   const sorted = Array.from(new Set(mentions)).sort((a, b) => b.length - a.length);
   const nodes: Node[] = [];
   let buffer = "";
@@ -245,7 +341,13 @@ export function buildMentionNodes(text: string, mentions: string[]): Node[] {
       const parsed = parseMentionAt(text, i);
       if (parsed) {
         flush();
-        nodes.push(createMentionNode(parsed.path));
+        nodes.push(
+          createMentionNode(
+            parsed.path,
+            undefined,
+            mediaByPath[parsed.path],
+          ),
+        );
         i += parsed.length;
         continue;
       }
@@ -253,7 +355,7 @@ export function buildMentionNodes(text: string, mentions: string[]): Node[] {
       const hit = sorted.find((p) => p && rest.startsWith(serializeMentionPath(p)));
       if (hit) {
         flush();
-        nodes.push(createMentionNode(hit));
+        nodes.push(createMentionNode(hit, undefined, mediaByPath[hit]));
         i += serializeMentionPath(hit).length;
         continue;
       }

@@ -5,6 +5,7 @@ import { ChatView } from "./components/chat/ChatView";
 import { Dropzone } from "./components/media/Dropzone";
 import { ImageEditor } from "./components/editor/ImageEditor";
 import { ImagePreview } from "./components/media/ImagePreview";
+import { VideoPreview } from "./components/media/VideoPreview";
 import { SettingsView } from "./components/settings";
 import type { SettingsTab, ThemeMode } from "./components/settings";
 import { ContextMenuHost } from "./components/context-menu";
@@ -20,7 +21,10 @@ import {
   readStoredThemeMode,
   watchSystemTheme,
 } from "./theme";
-import { collectSessionGalleryImages, indexOfImageInGallery } from "./sessionGallery";
+import {
+  collectSessionGalleryImages,
+  indexOfImageInGallery,
+} from "./sessionGallery";
 import { api } from "./api/tauri";
 import type { AttachmentDraft, ImageRefAbs } from "./types";
 
@@ -54,6 +58,7 @@ export default function App() {
 
   const [editorTarget, setEditorTarget] = useState<AttachmentDraft | null>(null);
   const [preview, setPreview] = useState<{ items: ImageRefAbs[]; index: number } | null>(null);
+  const [videoPreview, setVideoPreview] = useState<ImageRefAbs | null>(null);
   const [route, setRoute] = useState<AppRoute>(() => parseRoute());
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -182,6 +187,10 @@ export default function App() {
               <ChatView
                 onEditAttachment={(a) => setEditorTarget(a)}
                 onPreviewImage={(img: ImageRefAbs) => {
+                  if (img.mime.startsWith("video/")) {
+                    setVideoPreview(img);
+                    return;
+                  }
                   const session = useSession.getState().active;
                   const items = collectSessionGalleryImages(session);
                   const idx = indexOfImageInGallery(items, img);
@@ -219,6 +228,12 @@ export default function App() {
           items={preview.items}
           initialIndex={preview.index}
           onClose={() => setPreview(null)}
+        />
+      )}
+      {videoPreview && (
+        <VideoPreview
+          item={videoPreview}
+          onClose={() => setVideoPreview(null)}
         />
       )}
       <ContextMenuHost />

@@ -520,6 +520,12 @@ fn infer_capabilities(id: &str) -> Vec<String> {
     {
         out.push("image".into());
     }
+    if id.contains("seedance") || id.contains("video-generation") {
+        out.push("video".into());
+        if id.contains("seedance-2") || id.contains("seedance_2") || id.contains("seedance2") {
+            out.push("multimodal-ref".into());
+        }
+    }
     if out.is_empty() {
         out.push("text".into());
     }
@@ -558,7 +564,11 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
         write_kv(conn, KEY_DEFAULT_SIZE, &v)?;
     }
     if let Some(v) = patch.default_thinking_enabled {
-        write_kv(conn, KEY_DEFAULT_THINKING_ENABLED, if v { "true" } else { "false" })?;
+        write_kv(
+            conn,
+            KEY_DEFAULT_THINKING_ENABLED,
+            if v { "true" } else { "false" },
+        )?;
     }
     if let Some(v) = patch.default_thinking_effort {
         write_kv(conn, KEY_DEFAULT_THINKING_EFFORT, &v)?;

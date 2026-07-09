@@ -142,6 +142,10 @@ export const api = {
     invoke<AttachmentDraft>("add_attachment_from_bytes", {
       args: { session_id: sessionId, name, bytes },
     }),
+  addUrlAttachment: (sessionId: string, url: string) =>
+    invoke<AttachmentDraft>("add_url_attachment", {
+      args: { session_id: sessionId, url },
+    }),
   removeAttachmentDraft: (imageId: string) =>
     invoke<void>("remove_attachment_draft", { imageId }),
 
@@ -158,6 +162,13 @@ export const api = {
       image_size: string;
       thinking_enabled?: boolean | null;
       thinking_effort?: string | null;
+      video_mode?: "text" | "first_frame" | "first_last" | "reference";
+      video_duration?: number;
+      video_resolution?: string;
+      generate_audio?: boolean;
+      watermark?: boolean;
+      camera_fixed?: boolean | null;
+      seed?: number | null;
     },
     session?: Session | null,
   ) => {
@@ -178,6 +189,13 @@ export const api = {
       image_size: string;
       thinking_enabled?: boolean | null;
       thinking_effort?: string | null;
+      video_mode?: "text" | "first_frame" | "first_last" | "reference";
+      video_duration?: number;
+      video_resolution?: string;
+      generate_audio?: boolean;
+      watermark?: boolean;
+      camera_fixed?: boolean | null;
+      seed?: number | null;
     },
     session?: Session | null,
   ) => {
@@ -212,6 +230,8 @@ export const api = {
   // export image
   exportImage: (imageId: string, destPath: string) =>
     invoke<void>("export_image", { args: { image_id: imageId, dest_path: destPath } }),
+  exportMedia: (mediaId: string, destPath: string) =>
+    invoke<void>("export_media", { args: { image_id: mediaId, dest_path: destPath } }),
 
   // project / session transfer
   exportProjectsArchive: (projectIds: string[], destPath: string) =>

@@ -9,8 +9,10 @@ use crate::error::AppResult;
 pub type DbPool = Pool<SqliteConnectionManager>;
 pub type DbConn = r2d2::PooledConnection<SqliteConnectionManager>;
 
-const MIGRATION_001: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations/001_init.sql"));
+const MIGRATION_001: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/001_init.sql"
+));
 const MIGRATION_002: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/migrations/002_session_system_prompt.sql"
@@ -86,6 +88,10 @@ const MIGRATION_019: &str = include_str!(concat!(
 const MIGRATION_020: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/migrations/020_role_state_project_scope.sql"
+));
+const MIGRATION_021: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/021_ark_video.sql"
 ));
 
 pub fn open_pool(db_path: &Path) -> AppResult<DbPool> {
@@ -198,6 +204,10 @@ fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
     if cur < 20 {
         conn.execute_batch(MIGRATION_020)?;
         conn.execute("INSERT INTO schema_version(version) VALUES (20)", params![])?;
+    }
+    if cur < 21 {
+        conn.execute_batch(MIGRATION_021)?;
+        conn.execute("INSERT INTO schema_version(version) VALUES (21)", params![])?;
     }
     Ok(())
 }

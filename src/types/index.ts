@@ -25,7 +25,8 @@ export type ModelProviderSdk =
   | "gemini"
   | "claude"
   | "grok"
-  | "ark-images";
+  | "ark-images"
+  | "ark-video";
 
 export interface ModelProvider {
   id: string;
@@ -269,6 +270,8 @@ export interface ImageRefAbs {
   abs_path: string;
   thumb_abs_path: string | null;
   mime: string;
+  media_role: string | null;
+  source_url: string | null;
   width: number | null;
   height: number | null;
   bytes: number | null;
@@ -324,6 +327,19 @@ export interface MessageAbs {
   params: {
     aspect_ratio?: string;
     image_size?: string;
+    video_mode?: "text" | "first_frame" | "first_last" | "reference" | string;
+    video_duration?: number;
+    video_resolution?: string;
+    generate_audio?: boolean;
+    watermark?: boolean;
+    camera_fixed?: boolean;
+    seed?: number;
+    videos?: Array<{
+      mime?: string;
+      width?: number | null;
+      height?: number | null;
+      duration?: number | null;
+    }>;
     thinking_content?: string | null;
     /**
      * Ordered, streamed inline blocks for assistant messages. Newer
@@ -397,6 +413,8 @@ export interface AttachmentDraft {
   abs_path: string;
   thumb_abs_path: string | null;
   mime: string;
+  media_role: string | null;
+  source_url: string | null;
   width: number | null;
   height: number | null;
   bytes: number | null;

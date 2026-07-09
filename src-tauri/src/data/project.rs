@@ -1,12 +1,14 @@
+use crate::data::db::{now_ms, DbConn};
+use crate::data::paths;
+use crate::data::session::{normalize_chain, ChainNode};
+use crate::data::settings::{
+    validate_model_param_settings, ModelParamSettings, DEFAULT_HISTORY_TURNS,
+};
+use crate::error::{AppError, AppResult};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use ulid::Ulid;
-use crate::data::db::{now_ms, DbConn};
-use crate::data::paths;
-use crate::data::session::{normalize_chain, ChainNode};
-use crate::data::settings::{validate_model_param_settings, ModelParamSettings, DEFAULT_HISTORY_TURNS};
-use crate::error::{AppError, AppResult};
 
 fn decode_llm_params(raw: Option<String>) -> ModelParamSettings {
     raw.and_then(|s| serde_json::from_str(&s).ok())
@@ -55,10 +57,11 @@ pub struct Project {
 fn map_project(r: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
     let raw: Option<String> = r.get(6)?;
     let chain_raw: Option<String> = r.get(10)?;
+    let path: Option<String> = r.get(2)?;
     Ok(Project {
         id: r.get(0)?,
         name: r.get(1)?,
-        path: r.get(2)?,
+        path: normalize_optional_project_path(path.as_deref()),
         sort_order: r.get(3)?,
         system_prompt: r.get(4).unwrap_or_default(),
         history_turns: r.get(5).unwrap_or(DEFAULT_HISTORY_TURNS),
@@ -78,10 +81,38 @@ fn blank_projects_root() -> AppResult<PathBuf> {
     paths::blank_projects_root()
 }
 
+/// Strip Windows extended-length / verbatim prefixes (`\\?\C:\...`, `\\?\UNC\...`)
+/// so stored and displayed project paths stay user-readable.
+fn normalize_project_path(path: &str) -> String {
+    let p = path.trim();
+    if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    if let Some(rest) = p.strip_prefix(r"\\?\") {
+        return rest.to_string();
+    }
+    p.to_string()
+}
+
+fn normalize_optional_project_path(path: Option<&str>) -> Option<String> {
+    path.and_then(|p| {
+        let n = normalize_project_path(p);
+        if n.is_empty() {
+            None
+        } else {
+            Some(n)
+        }
+    })
+}
+
 pub fn create(conn: &DbConn, name: &str, path: Option<&str>) -> AppResult<Project> {
     let resolved_path = match path {
-        Some(p) if !p.trim().is_empty() => Some(p.trim().to_string()),
-        _ => Some(allocate_blank_project_dir(name)?.to_string_lossy().into_owned()),
+        Some(p) if !p.trim().is_empty() => Some(normalize_project_path(p)),
+        _ => Some(
+            allocate_blank_project_dir(name)?
+                .to_string_lossy()
+                .into_owned(),
+        ),
     };
     let id = Ulid::new().to_string();
     let now = now_ms();
@@ -118,9 +149,11 @@ fn allocate_blank_project_dir(project_name: &str) -> AppResult<PathBuf> {
     for candidate in unique_dir_candidates(&root, &base) {
         match std::fs::create_dir(&candidate) {
             Ok(()) => {
-                return candidate
-                    .canonicalize()
-                    .map_err(|e| AppError::Other(format!("canonicalize {}: {e}", candidate.display())));
+                let canonical = candidate.canonicalize().map_err(|e| {
+                    AppError::Other(format!("canonicalize {}: {e}", candidate.display()))
+                })?;
+                let display = normalize_project_path(&canonical.to_string_lossy());
+                return Ok(PathBuf::from(display));
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => {
@@ -154,16 +187,12 @@ fn sanitize_folder_name(name: &str) -> String {
     }
 }
 
-fn unique_dir_candidates<'a>(
-    root: &'a Path,
-    base: &'a str,
-) -> impl Iterator<Item = PathBuf> + 'a {
+fn unique_dir_candidates<'a>(root: &'a Path, base: &'a str) -> impl Iterator<Item = PathBuf> + 'a {
     std::iter::once(root.join(base)).chain((2..).map(move |n| root.join(format!("{base}-{n}"))))
 }
 
-pub fn list(conn: &DbConn) -> AppResult<Vec<Project>> {    let sql = format!(
-        "SELECT {SELECT_COLS} FROM projects ORDER BY sort_order ASC, created_at ASC"
-    );
+pub fn list(conn: &DbConn) -> AppResult<Vec<Project>> {
+    let sql = format!("SELECT {SELECT_COLS} FROM projects ORDER BY sort_order ASC, created_at ASC");
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![], map_project)?;
     let mut out = Vec::new();
@@ -199,10 +228,7 @@ pub fn rename(conn: &DbConn, id: &str, name: &str) -> AppResult<()> {
 /// Update a project's working-directory path. An empty / whitespace-only
 /// value clears the path (stored as NULL).
 pub fn set_path(conn: &DbConn, id: &str, path: Option<&str>) -> AppResult<()> {
-    let normalized = match path {
-        Some(p) if !p.trim().is_empty() => Some(p.trim().to_string()),
-        _ => None,
-    };
+    let normalized = normalize_optional_project_path(path);
     let updated = now_ms();
     let n = conn.execute(
         "UPDATE projects SET path=?1, updated_at=?2 WHERE id=?3",

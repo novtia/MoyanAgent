@@ -2,15 +2,18 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::ai::agent::core::context::{AbortHandle, AbortSignal};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
-use crate::ai::agent::core::context::{AbortHandle, AbortSignal};
 
 use crate::ai::agent::config::mcp::McpRegistry;
-use crate::ai::agent::tools::agent_tool::{AgentTool, ChatRequestFactory};
 use crate::ai::agent::exec::engine::ProviderQueryEngine;
 use crate::ai::agent::exec::query::ToolEventCallback;
 use crate::ai::agent::memory::UserContextLoader;
+use crate::ai::agent::tools::agent_tool::{AgentTool, ChatRequestFactory};
+use crate::ai::agent::tools::text_decode::{
+    read_text_file, write_text_file_labeled, ProjectTextFile, TextEncoding,
+};
 use crate::ai::agent::types::MessageEvent;
 use crate::ai::agent::{
     self, AgentRegistry, FileReadTool, FileSnapshotStore, FsSessionMemoryExtractor,
@@ -21,9 +24,6 @@ use crate::ai::agent::{
 use crate::ai::{chat, parameters, router, token_log};
 use crate::data::db::DbPool;
 use crate::data::{custom_agents, db, llm_catalog, paths, project, session, settings};
-use crate::ai::agent::tools::text_decode::{
-    read_text_file, write_text_file_labeled, ProjectTextFile, TextEncoding,
-};
 use crate::error::{AppError, AppResult};
 use crate::media::{editor, images};
 
@@ -84,10 +84,7 @@ fn generation_abort_lock(
 /// Register a session-scoped abort controller and return the matching signal
 /// for the agent run. Repeated cancel clicks call [`AbortHandle::abort`] on the
 /// stored handle until the run finishes and the slot is cleared.
-fn register_generation_abort(
-    state: &AppState,
-    session_id: &str,
-) -> AppResult<AbortSignal> {
+fn register_generation_abort(state: &AppState, session_id: &str) -> AppResult<AbortSignal> {
     let (signal, handle) = AbortSignal::new();
     let mut guard = generation_abort_lock(state)?;
     if guard.contains_key(session_id) {
@@ -168,7 +165,7 @@ fn build_history(
         let mut imgs: Vec<&session::ImageRef> = m
             .images
             .iter()
-            .filter(|i| want_roles.contains(&i.role.as_str()))
+            .filter(|i| want_roles.contains(&i.role.as_str()) && i.mime.starts_with("image/"))
             .collect();
         imgs.sort_by_key(|i| i.ord);
         let mut payload: Vec<chat::AttachmentBytes> = Vec::with_capacity(imgs.len());
@@ -177,6 +174,8 @@ fn build_history(
             payload.push(chat::AttachmentBytes {
                 bytes,
                 mime: img.mime.clone(),
+                media_role: img.media_role.clone(),
+                source_url: img.source_url.clone(),
             });
         }
         let thinking_content = message_thinking_for_history(m);
@@ -246,7 +245,10 @@ fn append_role_state_history_tail(
 /// Returns `Some(path)` when the session belongs to a project that has a
 /// non-empty `path` set; `None` otherwise (plain chat, or project without
 /// a filesystem path).
-pub(crate) fn session_project_cwd(conn: &db::DbConn, session_id: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn session_project_cwd(
+    conn: &db::DbConn,
+    session_id: &str,
+) -> Option<std::path::PathBuf> {
     let sess = session::get(conn, session_id).ok()?;
     let project_id = sess.project_id?;
     let proj = project::get(conn, &project_id).ok()?;
@@ -312,9 +314,8 @@ fn write_project_file(
     let cwd = session_project_cwd(&conn, &session_id);
     let resolved = validate_reader_write_path(&file_path, cwd.as_deref())?;
 
-    write_text_file_labeled(&resolved, &content, encoding.as_deref(), had_bom).map_err(|e| {
-        AppError::Other(format!("write_project_file: write {:?}: {e}", resolved))
-    })?;
+    write_text_file_labeled(&resolved, &content, encoding.as_deref(), had_bom)
+        .map_err(|e| AppError::Other(format!("write_project_file: write {:?}: {e}", resolved)))?;
     Ok(())
 }
 
@@ -347,10 +348,7 @@ struct EffectiveSessionParams {
     pub context_window: Option<i64>,
 }
 
-fn effective_session_params(
-    conn: &db::DbConn,
-    sess: &session::Session,
-) -> EffectiveSessionParams {
+fn effective_session_params(conn: &db::DbConn, sess: &session::Session) -> EffectiveSessionParams {
     if let Some(ref pid) = sess.project_id {
         if let Ok(proj) = project::get(conn, pid) {
             return EffectiveSessionParams {
@@ -606,6 +604,7 @@ async fn run_agent_chain(
         // #endregion
         merged.usage = resp.usage;
         merged.images.extend(resp.images);
+        merged.videos.extend(resp.videos);
         if !passthrough {
             prev_text = resp.text.clone();
             merged.text = resp.text;
@@ -762,6 +761,7 @@ async fn run_cancellable_generation(
     let run = outcome?;
     Ok(chat::GenerateResponse {
         images: run.images,
+        videos: run.videos,
         text: run.final_text,
         thinking_content: run.thinking_content,
         usage: run.usage,
@@ -824,12 +824,10 @@ impl ChatRequestFactory for SettingsChatFactory {
                     if rendered.is_empty() {
                         Vec::new()
                     } else {
-                        vec![agent::Attachment::for_main(
-                            agent::AttachmentKind::Delta {
-                                topic: "user_context".into(),
-                                body: rendered.to_string(),
-                            },
-                        )]
+                        vec![agent::Attachment::for_main(agent::AttachmentKind::Delta {
+                            topic: "user_context".into(),
+                            body: rendered.to_string(),
+                        })]
                     }
                 })
                 .unwrap_or_default()
@@ -877,11 +875,7 @@ fn new_stream_blocks() -> StreamBlocks {
 }
 
 fn snapshot_stream_blocks(blocks: &StreamBlocks) -> Vec<serde_json::Value> {
-    blocks
-        .lock()
-        .ok()
-        .map(|g| g.clone())
-        .unwrap_or_default()
+    blocks.lock().ok().map(|g| g.clone()).unwrap_or_default()
 }
 
 fn concat_block_text(blocks: &[serde_json::Value], block_type: &str) -> String {
@@ -911,9 +905,7 @@ fn message_timeline_for_history(m: &session::Message) -> Vec<chat::TimelineSegme
     }
     if let Some(params) = m.params.as_ref() {
         if let Some(tv) = params.get("timeline") {
-            if let Ok(segs) =
-                serde_json::from_value::<Vec<chat::TimelineSegment>>(tv.clone())
-            {
+            if let Ok(segs) = serde_json::from_value::<Vec<chat::TimelineSegment>>(tv.clone()) {
                 if !segs.is_empty() {
                     return segs;
                 }
@@ -1072,8 +1064,7 @@ fn persist_streamed_assistant_snapshot(
             );
         }
         if has_blocks {
-            let timeline =
-                crate::ai::block_timeline::restore_timeline_from_blocks(&cleaned_blocks);
+            let timeline = crate::ai::block_timeline::restore_timeline_from_blocks(&cleaned_blocks);
             if !timeline.is_empty() {
                 if let Ok(tv) = serde_json::to_value(&timeline) {
                     obj.insert("timeline".into(), tv);
@@ -1184,9 +1175,7 @@ fn record_tool_result_block(
         if let Some(obj) = b.as_object_mut() {
             obj.insert(
                 "status".into(),
-                serde_json::Value::String(
-                    if is_error { "error" } else { "success" }.into(),
-                ),
+                serde_json::Value::String(if is_error { "error" } else { "success" }.into()),
             );
             obj.insert("output".into(), output.clone());
             if is_error {
@@ -1366,9 +1355,7 @@ struct FetchProviderModelsArgs {
 /// Pull the live model catalog a provider advertises via its `/models`
 /// endpoint so the settings dialog can browse and import models.
 #[tauri::command]
-async fn fetch_provider_models(
-    args: FetchProviderModelsArgs,
-) -> Result<Vec<String>, AppError> {
+async fn fetch_provider_models(args: FetchProviderModelsArgs) -> Result<Vec<String>, AppError> {
     crate::ai::providers::model_list::fetch_models(&args.sdk, &args.endpoint, &args.api_key).await
 }
 
@@ -1482,20 +1469,11 @@ fn create_session(
                     .find(|p| p.id == s.active_provider_id)
                     .map(|p| p.sdk.as_str())
                     .unwrap_or("");
-                let cw = llm_catalog::lookup_context_window(
-                    &conn,
-                    &s.active_provider_id,
-                    sdk,
-                    &model,
-                )
-                .ok()
-                .flatten();
-                let _ = session::set_model_and_context(
-                    &conn,
-                    &sess.id,
-                    Some(model.as_str()),
-                    cw,
-                );
+                let cw =
+                    llm_catalog::lookup_context_window(&conn, &s.active_provider_id, sdk, &model)
+                        .ok()
+                        .flatten();
+                let _ = session::set_model_and_context(&conn, &sess.id, Some(model.as_str()), cw);
                 sess.model = Some(model);
                 sess.context_window = cw;
             }
@@ -1562,19 +1540,9 @@ fn set_session_model(
             .find(|p| p.id == s.active_provider_id)
             .map(|p| p.sdk.as_str())
             .unwrap_or("");
-        cw = llm_catalog::lookup_context_window(
-            &conn,
-            &s.active_provider_id,
-            sdk,
-            &args.model,
-        )?;
+        cw = llm_catalog::lookup_context_window(&conn, &s.active_provider_id, sdk, &args.model)?;
     }
-    session::set_model_and_context(
-        &conn,
-        &args.id,
-        Some(args.model.as_str()),
-        cw,
-    )
+    session::set_model_and_context(&conn, &args.id, Some(args.model.as_str()), cw)
 }
 
 #[derive(Debug, Deserialize)]
@@ -1673,9 +1641,7 @@ struct CreateProjectArgs {
 }
 
 #[tauri::command]
-fn list_projects(
-    state: tauri::State<Arc<AppState>>,
-) -> Result<Vec<project::Project>, AppError> {
+fn list_projects(state: tauri::State<Arc<AppState>>) -> Result<Vec<project::Project>, AppError> {
     let conn = state.conn()?;
     project::list(&conn)
 }
@@ -1710,10 +1676,7 @@ fn update_project_path(
 }
 
 #[tauri::command]
-fn delete_project(
-    state: tauri::State<Arc<AppState>>,
-    id: String,
-) -> Result<(), AppError> {
+fn delete_project(state: tauri::State<Arc<AppState>>, id: String) -> Result<(), AppError> {
     {
         let conn = state.conn()?;
         let _ = crate::data::role_state::clear_scope(&conn, &id);
@@ -1919,7 +1882,9 @@ async fn quote_message_as_attachments(
         msg.images.sort_by_key(|i| i.ord);
         let mut out = Vec::new();
         for img in msg.images {
-            if matches!(img.role.as_str(), "input" | "output" | "edited") {
+            if img.mime.starts_with("image/")
+                && matches!(img.role.as_str(), "input" | "output" | "edited")
+            {
                 let d = images::clone_image_as_draft(&app, &conn, &session_id, &img.id)?;
                 out.push(d);
                 if out.len() >= MAX_ATTACH {
@@ -1979,6 +1944,21 @@ async fn add_attachment_from_bytes(
     .map_err(|e| AppError::Other(e.to_string()))?
 }
 
+#[derive(Debug, Deserialize)]
+struct AttachUrlArgs {
+    session_id: String,
+    url: String,
+}
+
+#[tauri::command]
+fn add_url_attachment(
+    state: tauri::State<Arc<AppState>>,
+    args: AttachUrlArgs,
+) -> Result<images::AttachmentDraft, AppError> {
+    let conn = state.conn()?;
+    images::save_url_as_attachment(&conn, &args.session_id, &args.url)
+}
+
 #[tauri::command]
 fn remove_attachment_draft(
     state: tauri::State<Arc<AppState>>,
@@ -1987,8 +1967,10 @@ fn remove_attachment_draft(
 ) -> Result<(), AppError> {
     let conn = state.conn()?;
     let img = session::get_image(&conn, &image_id)?;
-    if let Ok(abs) = paths::abs_from_rel(&app, &img.rel_path) {
-        let _ = std::fs::remove_file(&abs);
+    if !img.rel_path.trim().is_empty() {
+        if let Ok(abs) = paths::abs_from_rel(&app, &img.rel_path) {
+            let _ = std::fs::remove_file(&abs);
+        }
     }
     if let Some(thumb) = &img.thumb_rel_path {
         if let Ok(abs) = paths::abs_from_rel(&app, thumb) {
@@ -2039,10 +2021,7 @@ fn list_agent_tasks(state: tauri::State<Arc<AppState>>) -> Result<Vec<Task>, App
 }
 
 #[tauri::command]
-fn cancel_agent_task(
-    state: tauri::State<Arc<AppState>>,
-    task_id: String,
-) -> Result<(), AppError> {
+fn cancel_agent_task(state: tauri::State<Arc<AppState>>, task_id: String) -> Result<(), AppError> {
     let id = agent::TaskId(task_id);
     state.task_store.set_state(&id, TaskState::Killed);
     // After state transitions, surface the kill to the main loop as a
@@ -2050,9 +2029,9 @@ fn cancel_agent_task(
     if let Some(slot) = state.task_store.get(&id) {
         if let Ok(t) = slot.lock() {
             if let Some(note) = agent::TaskNotification::from_task(&t) {
-                state
-                    .notifications
-                    .push(agent::Attachment::for_main(agent::AttachmentKind::TaskNotification(note)));
+                state.notifications.push(agent::Attachment::for_main(
+                    agent::AttachmentKind::TaskNotification(note),
+                ));
             }
         }
     }
@@ -2394,6 +2373,39 @@ struct GenerateReq {
     thinking_enabled: Option<bool>,
     #[serde(default)]
     thinking_effort: Option<String>,
+    #[serde(default)]
+    video_mode: Option<String>,
+    #[serde(default)]
+    video_duration: Option<i64>,
+    #[serde(default)]
+    video_resolution: Option<String>,
+    #[serde(default)]
+    generate_audio: Option<bool>,
+    #[serde(default)]
+    watermark: Option<bool>,
+    #[serde(default)]
+    camera_fixed: Option<bool>,
+    #[serde(default)]
+    seed: Option<i64>,
+}
+
+fn video_attachment_role(mode: &str, mime: &str, index: usize) -> Option<String> {
+    if mime.starts_with("audio/") {
+        return Some("reference_audio".into());
+    }
+    if mime.starts_with("video/") {
+        return Some("reference_video".into());
+    }
+    if !mime.starts_with("image/") {
+        return None;
+    }
+    match mode {
+        "first_frame" => Some("first_frame".into()),
+        "first_last" if index == 0 => Some("first_frame".into()),
+        "first_last" => Some("last_frame".into()),
+        "reference" => Some("reference_image".into()),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -2422,9 +2434,14 @@ fn finalize_generate_assistant_message(
     use crate::ai::stream_split::strip_leaked_host_tool_log;
 
     resp.images = chat::dedupe_image_results(resp.images);
+    resp.videos = chat::dedupe_media_results(resp.videos);
 
     // #region agent log
-    let raw_resp_has_marker = resp.text.as_deref().map(agent_dbg_has_marker).unwrap_or(false);
+    let raw_resp_has_marker = resp
+        .text
+        .as_deref()
+        .map(agent_dbg_has_marker)
+        .unwrap_or(false);
     let raw_block_has_marker = blocks.iter().any(|b| {
         b.get("type").and_then(|v| v.as_str()) == Some("text")
             && b.get("content")
@@ -2485,17 +2502,28 @@ fn finalize_generate_assistant_message(
         && !block_thinking.trim().is_empty()
     {
         resp.thinking_content = Some(block_thinking.trim().to_string());
-    } else if block_thinking.len()
-        > resp
-            .thinking_content
-            .as_ref()
-            .map(|s| s.len())
-            .unwrap_or(0)
-    {
+    } else if block_thinking.len() > resp.thinking_content.as_ref().map(|s| s.len()).unwrap_or(0) {
         resp.thinking_content = Some(block_thinking.trim().to_string());
     }
     let mut assistant_params =
         params.to_assistant_message_params(&resp.usage, resp.thinking_content.as_deref());
+    if !resp.videos.is_empty() {
+        let metadata = resp
+            .videos
+            .iter()
+            .map(|video| {
+                serde_json::json!({
+                    "mime": video.mime,
+                    "width": video.width,
+                    "height": video.height,
+                    "duration": video.duration,
+                })
+            })
+            .collect::<Vec<_>>();
+        if let Some(obj) = assistant_params.as_object_mut() {
+            obj.insert("videos".into(), serde_json::Value::Array(metadata));
+        }
+    }
     if !blocks.is_empty() {
         // Persist the structured timeline alongside blocks so future turns
         // replay tool history in native call/response form instead of a
@@ -2527,6 +2555,20 @@ fn finalize_generate_assistant_message(
             &img.bytes,
             &img.mime,
             i as i64,
+        )?;
+    }
+    let video_offset = resp.images.len() as i64;
+    for (i, video) in resp.videos.iter().enumerate() {
+        images::write_output_video(
+            app,
+            conn,
+            session_id,
+            &assistant.id,
+            &video.bytes,
+            &video.mime,
+            video.width,
+            video.height,
+            video_offset + i as i64,
         )?;
     }
     // Snapshot the character state board against this assistant message so it
@@ -2584,12 +2626,20 @@ async fn generate_image(
     req: GenerateReq,
 ) -> Result<GenerateResult, AppError> {
     // 1) gather settings + attachment bytes + history synchronously
-    let (chat_request, params, attachment_image_ids, generation_agent, project_cwd, agent_chain, settings_snapshot, session_prompt) = {
+    let (
+        chat_request,
+        params,
+        attachment_image_ids,
+        generation_agent,
+        project_cwd,
+        agent_chain,
+        settings_snapshot,
+        session_prompt,
+    ) = {
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
         let session_config = session::get(&conn, &req.session_id)?;
-        let generation_agent =
-            session::generation_agent_definition_key(&session_config.agent_type);
+        let generation_agent = session::generation_agent_definition_key(&session_config.agent_type);
         let agent_chain = effective_agent_chain(&conn, &session_config);
         let project_cwd = session_project_cwd(&conn, &req.session_id);
         let eff = effective_session_params(&conn, &session_config);
@@ -2606,20 +2656,45 @@ async fn generate_image(
             .filter(|s| !s.is_empty());
         let mut atts: Vec<chat::AttachmentBytes> = Vec::new();
         let mut ids: Vec<String> = Vec::new();
-        for id in &req.attachment_ids {
+        for (index, id) in req.attachment_ids.iter().enumerate() {
             let img = session::get_image(&conn, id)?;
-            let bytes = images::read_image_bytes(&app, &img)?;
+            let bytes = if img.source_url.is_some() {
+                Vec::new()
+            } else {
+                images::read_image_bytes(&app, &img)?
+            };
+            let media_role = req
+                .video_mode
+                .as_deref()
+                .and_then(|mode| video_attachment_role(mode, &img.mime, index))
+                .or_else(|| img.media_role.clone());
+            session::set_image_media_role(&conn, &img.id, media_role.as_deref())?;
             atts.push(chat::AttachmentBytes {
                 bytes,
                 mime: img.mime.clone(),
+                media_role,
+                source_url: img.source_url.clone(),
             });
             ids.push(img.id.clone());
         }
-        let params = parameters::factory().build(
+        let mut params = parameters::factory().build(
             req.aspect_ratio.clone(),
             req.image_size.clone(),
             model_params,
         );
+        if let Some(mode) = req.video_mode.as_ref() {
+            params = params.with_video(
+                mode.clone(),
+                req.video_duration.unwrap_or(5),
+                req.video_resolution
+                    .clone()
+                    .unwrap_or_else(|| "720p".into()),
+                req.generate_audio.unwrap_or(true),
+                req.watermark.unwrap_or(false),
+                req.camera_fixed,
+                req.seed,
+            );
+        }
         let hist = build_history(
             &app,
             &conn,
@@ -2635,9 +2710,19 @@ async fn generate_image(
             hist,
             params.clone(),
         )?;
-        (chat_request, params, ids, generation_agent, project_cwd, agent_chain, s, session_prompt)
+        (
+            chat_request,
+            params,
+            ids,
+            generation_agent,
+            project_cwd,
+            agent_chain,
+            s,
+            session_prompt,
+        )
     };
     let params_json = params.to_message_params_json().to_string();
+    let is_video_generation = chat_request.provider.sdk == crate::ai::providers::ARK_VIDEO_SDK;
 
     // 2) insert user message + bind input attachments
     let user_msg = {
@@ -2692,6 +2777,16 @@ async fn generate_image(
             "message_id": &user_msg.id,
         }),
     );
+    if is_video_generation {
+        let _ = app.emit(
+            "gen://status",
+            serde_json::json!({
+                "phase": "polling",
+                "session_id": &req.session_id,
+                "message_id": &user_msg.id,
+            }),
+        );
+    }
 
     // 3) call the unified chat router
     let stream_blocks = new_stream_blocks();
@@ -2709,7 +2804,10 @@ async fn generate_image(
     );
     let log_model = chat_request.model.clone();
     let log_provider = chat_request.provider.id.clone();
-    let result = match agent_chain.as_ref().filter(|c| !c.is_empty()) {
+    let result = match agent_chain
+        .as_ref()
+        .filter(|chain| !is_video_generation && !chain.is_empty())
+    {
         Some(chain) => {
             run_agent_chain(
                 &state,
@@ -2847,6 +2945,20 @@ struct RegenerateReq {
     thinking_enabled: Option<bool>,
     #[serde(default)]
     thinking_effort: Option<String>,
+    #[serde(default)]
+    video_mode: Option<String>,
+    #[serde(default)]
+    video_duration: Option<i64>,
+    #[serde(default)]
+    video_resolution: Option<String>,
+    #[serde(default)]
+    generate_audio: Option<bool>,
+    #[serde(default)]
+    watermark: Option<bool>,
+    #[serde(default)]
+    camera_fixed: Option<bool>,
+    #[serde(default)]
+    seed: Option<i64>,
 }
 
 #[tauri::command]
@@ -2868,18 +2980,24 @@ async fn regenerate_image(
         }
         m
     };
-    let prompt = user_msg_existing
-        .text
-        .as_deref()
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| AppError::Invalid("user message has no prompt text".into()))?;
+    let prompt = user_msg_existing.text.as_deref().unwrap_or("");
+    if prompt.trim().is_empty() && user_msg_existing.images.is_empty() {
+        return Err(AppError::Invalid("用户消息没有提示词或媒体附件".into()));
+    }
 
-    let (chat_request, params, generation_agent, project_cwd, agent_chain, settings_snapshot, session_prompt) = {
+    let (
+        chat_request,
+        params,
+        generation_agent,
+        project_cwd,
+        agent_chain,
+        settings_snapshot,
+        session_prompt,
+    ) = {
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
         let session_config = session::get(&conn, &req.session_id)?;
-        let generation_agent =
-            session::generation_agent_definition_key(&session_config.agent_type);
+        let generation_agent = session::generation_agent_definition_key(&session_config.agent_type);
         let agent_chain = effective_agent_chain(&conn, &session_config);
         let project_cwd = session_project_cwd(&conn, &req.session_id);
         let eff = effective_session_params(&conn, &session_config);
@@ -2901,18 +3019,43 @@ async fn regenerate_image(
             .filter(|i| i.role == "input")
             .collect();
         input_images.sort_by_key(|i| i.ord);
-        for img in input_images {
-            let bytes = images::read_image_bytes(&app, img)?;
+        for (index, img) in input_images.into_iter().enumerate() {
+            let bytes = if img.source_url.is_some() {
+                Vec::new()
+            } else {
+                images::read_image_bytes(&app, img)?
+            };
+            let media_role = req
+                .video_mode
+                .as_deref()
+                .and_then(|mode| video_attachment_role(mode, &img.mime, index))
+                .or_else(|| img.media_role.clone());
+            session::set_image_media_role(&conn, &img.id, media_role.as_deref())?;
             atts.push(chat::AttachmentBytes {
                 bytes,
                 mime: img.mime.clone(),
+                media_role,
+                source_url: img.source_url.clone(),
             });
         }
-        let params = parameters::factory().build(
+        let mut params = parameters::factory().build(
             req.aspect_ratio.clone(),
             req.image_size.clone(),
             model_params,
         );
+        if let Some(mode) = req.video_mode.as_ref() {
+            params = params.with_video(
+                mode.clone(),
+                req.video_duration.unwrap_or(5),
+                req.video_resolution
+                    .clone()
+                    .unwrap_or_else(|| "720p".into()),
+                req.generate_audio.unwrap_or(true),
+                req.watermark.unwrap_or(false),
+                req.camera_fixed,
+                req.seed,
+            );
+        }
         let params_json = params.to_message_params_json().to_string();
         session::update_message_params(&conn, &req.user_message_id, &params_json)?;
         session::touch(&conn, &req.session_id)?;
@@ -2931,9 +3074,18 @@ async fn regenerate_image(
             hist,
             params.clone(),
         )?;
-        (chat_request, params, generation_agent, project_cwd, agent_chain, s, session_prompt)
+        (
+            chat_request,
+            params,
+            generation_agent,
+            project_cwd,
+            agent_chain,
+            s,
+            session_prompt,
+        )
     };
     let params_json = params.to_message_params_json().to_string();
+    let is_video_generation = chat_request.provider.sdk == crate::ai::providers::ARK_VIDEO_SDK;
 
     let _ = app.emit(
         "gen://status",
@@ -2943,6 +3095,16 @@ async fn regenerate_image(
             "message_id": &req.user_message_id,
         }),
     );
+    if is_video_generation {
+        let _ = app.emit(
+            "gen://status",
+            serde_json::json!({
+                "phase": "polling",
+                "session_id": &req.session_id,
+                "message_id": &req.user_message_id,
+            }),
+        );
+    }
 
     let stream_blocks = new_stream_blocks();
     let on_text_delta = stream_text_callback(
@@ -2959,7 +3121,10 @@ async fn regenerate_image(
     );
     let log_model = chat_request.model.clone();
     let log_provider = chat_request.provider.id.clone();
-    let result = match agent_chain.as_ref().filter(|c| !c.is_empty()) {
+    let result = match agent_chain
+        .as_ref()
+        .filter(|chain| !is_video_generation && !chain.is_empty())
+    {
         Some(chain) => {
             run_agent_chain(
                 &state,
@@ -3081,7 +3246,18 @@ fn sanitize_generated_title(raw: &str) -> String {
         c.is_whitespace()
             || matches!(
                 c,
-                '"' | '\'' | '`' | '「' | '」' | '『' | '』' | '《' | '》' | '。' | '.' | '：' | ':'
+                '"' | '\''
+                    | '`'
+                    | '「'
+                    | '」'
+                    | '『'
+                    | '』'
+                    | '《'
+                    | '》'
+                    | '。'
+                    | '.'
+                    | '：'
+                    | ':'
             )
     });
     trimmed.chars().take(40).collect()
@@ -3186,7 +3362,7 @@ fn reload_message(conn: &db::DbConn, id: &str) -> AppResult<session::Message> {
             images: vec![],
         };
         let mut s = conn.prepare(
-            "SELECT id, role, rel_path, thumb_path, mime, width, height, bytes, ord
+            "SELECT id, role, rel_path, thumb_path, mime, media_role, source_url, width, height, bytes, ord
              FROM message_images WHERE message_id=?1 ORDER BY ord ASC",
         )?;
         let it = s.query_map(rusqlite::params![id], |r| {
@@ -3196,10 +3372,12 @@ fn reload_message(conn: &db::DbConn, id: &str) -> AppResult<session::Message> {
                 rel_path: r.get(2)?,
                 thumb_rel_path: r.get(3)?,
                 mime: r.get(4)?,
-                width: r.get(5)?,
-                height: r.get(6)?,
-                bytes: r.get(7)?,
-                ord: r.get(8)?,
+                media_role: r.get(5)?,
+                source_url: r.get(6)?,
+                width: r.get(7)?,
+                height: r.get(8)?,
+                bytes: r.get(9)?,
+                ord: r.get(10)?,
             })
         })?;
         for x in it {
@@ -3264,6 +3442,15 @@ fn export_image(
     Ok(())
 }
 
+#[tauri::command]
+fn export_media(
+    state: tauri::State<Arc<AppState>>,
+    app: AppHandle,
+    args: ExportArgs,
+) -> Result<(), AppError> {
+    export_image(state, app, args)
+}
+
 // ─── Project / Session Transfer (export + import) ────────────────────────────
 
 #[tauri::command]
@@ -3306,6 +3493,8 @@ struct ImageRefAbs {
     abs_path: String,
     thumb_abs_path: Option<String>,
     mime: String,
+    media_role: Option<String>,
+    source_url: Option<String>,
     width: Option<i64>,
     height: Option<i64>,
     bytes: Option<i64>,
@@ -3330,9 +3519,13 @@ struct SessionWithMessagesAbs {
 }
 
 fn decorate_image(app: &AppHandle, i: session::ImageRef) -> ImageRefAbs {
-    let abs = paths::abs_from_rel(app, &i.rel_path)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let abs = if i.rel_path.trim().is_empty() {
+        String::new()
+    } else {
+        paths::abs_from_rel(app, &i.rel_path)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default()
+    };
     let thumb_abs = i.thumb_rel_path.as_ref().and_then(|r| {
         paths::abs_from_rel(app, r)
             .ok()
@@ -3346,6 +3539,8 @@ fn decorate_image(app: &AppHandle, i: session::ImageRef) -> ImageRefAbs {
         abs_path: abs,
         thumb_abs_path: thumb_abs,
         mime: i.mime,
+        media_role: i.media_role,
+        source_url: i.source_url,
         width: i.width,
         height: i.height,
         bytes: i.bytes,
@@ -3438,9 +3633,10 @@ pub fn run() {
             let permission_resolver: Arc<dyn agent::PermissionResolver> = Arc::new(
                 crate::ai::agent::core::permission::PlanModeResolver::new(agent::AllowAllResolver),
             );
-            let query_engine: Arc<dyn agent::QueryEngine> = Arc::new(
-                ProviderQueryEngine::new(provider_engine.clone(), permission_resolver),
-            );
+            let query_engine: Arc<dyn agent::QueryEngine> = Arc::new(ProviderQueryEngine::new(
+                provider_engine.clone(),
+                permission_resolver,
+            ));
             let agent_tool = AgentTool::new(
                 registry.clone(),
                 tools.clone(),
@@ -3452,10 +3648,7 @@ pub fn run() {
             tools.register(agent_tool);
 
             let logs_dir = paths::token_logs_dir()?;
-            let token_logger = Arc::new(token_log::TokenUsageLogger::new(
-                pool.clone(),
-                logs_dir,
-            ));
+            let token_logger = Arc::new(token_log::TokenUsageLogger::new(pool.clone(), logs_dir));
 
             app.manage(Arc::new(AppState {
                 pool,
@@ -3508,6 +3701,7 @@ pub fn run() {
             quote_message_as_attachments,
             add_attachment_from_path,
             add_attachment_from_bytes,
+            add_url_attachment,
             remove_attachment_draft,
             get_image_abs_path,
             cancel_generation,
@@ -3531,6 +3725,7 @@ pub fn run() {
             save_cancelled_message,
             edit_image,
             export_image,
+            export_media,
             export_projects_archive,
             export_session_archive,
             import_archive,

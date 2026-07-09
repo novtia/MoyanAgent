@@ -107,36 +107,250 @@ fn build_prompt(request: &ChatRequest) -> String {
     if !p.is_empty() {
         parts.push(p.to_string());
     }
-    let mut out = parts.join("\n\n");
-    let ar = request.parameters.aspect_ratio.trim();
-    if !ar.is_empty() && ar != "auto" {
-        out.push_str("\n\n");
-        out.push_str(&format!("（画面比例：{}）", ar));
-    }
-    out
+    parts.join("\n\n")
 }
 
-fn ark_size(parameters: &GenerationParameters) -> String {
-    let s = parameters.image_size.trim();
-    if s.is_empty() || s == "auto" {
-        return "2K".to_string();
+/// Seedream `size`（见 `豆包.md` / BytePlus Image generation API）：
+/// - 方式 1：`宽x高` 精确像素（锁定比例）
+/// - 方式 2：`1K`/`2K`/`3K`/`4K` + prompt 自然语言描述比例
+/// 有 UI 比例时走方式 1，使用文档推荐像素表。
+fn ark_size(model: &str, parameters: &GenerationParameters) -> String {
+    let raw = parameters.image_size.trim();
+    let ar = parameters.aspect_ratio.trim();
+    let family = detect_seedream_family(model);
+    if !ar.is_empty() && !ar.eq_ignore_ascii_case("auto") {
+        let tier = normalize_size_tier(raw, family);
+        if let Some((w, h)) = recommended_pixels(tier, ar) {
+            return format_wxh(clamp_to_family(w, h, family));
+        }
+        if let Some((w, h)) = pixels_from_ratio(tier, ar, family) {
+            return format_wxh(clamp_to_family(w, h, family));
+        }
+        return tier.to_string();
     }
+    if looks_like_wxh(raw) {
+        return raw.to_string();
+    }
+    normalize_size_tier(raw, family).to_string()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SeedreamFamily {
+    /// seedream-5-0-pro：不支持 sequential/stream；size 总像素上限 2048²；宽高需为 16 倍数。
+    Pro,
+    /// seedream-5-0-lite：2K/3K/4K；总像素上限 4096²，下限约 2560×1440。
+    Lite,
+    /// seedream-4-5：2K/4K；总像素同 lite。
+    V45,
+    /// seedream-4-0：1K/2K/4K；总像素上限 4096²，下限 1280×720。
+    V40,
+    /// seedream-3-0-t2i：仅精确像素，默认约 1K。
+    V30,
+    /// Endpoint ID / 未知模型：按 4.0 兼容范围处理。
+    Unknown,
+}
+
+fn detect_seedream_family(model: &str) -> SeedreamFamily {
+    let m = model.to_ascii_lowercase().replace('_', "-");
+    if m.contains("5-0-pro") || m.contains("5.0-pro") || m.contains("seedream-5-pro") {
+        return SeedreamFamily::Pro;
+    }
+    if m.contains("5-0-lite") || m.contains("5.0-lite") || m.contains("seedream-5-lite") {
+        return SeedreamFamily::Lite;
+    }
+    if m.contains("4-5") || m.contains("4.5") {
+        return SeedreamFamily::V45;
+    }
+    if m.contains("4-0") || m.contains("4.0") || m.contains("seedream-4") {
+        return SeedreamFamily::V40;
+    }
+    if m.contains("3-0") || m.contains("3.0") || m.contains("seedream-3") {
+        return SeedreamFamily::V30;
+    }
+    SeedreamFamily::Unknown
+}
+
+fn looks_like_wxh(s: &str) -> bool {
     let upper = s.to_ascii_uppercase();
-    if matches!(upper.as_str(), "1K" | "2K" | "3K" | "4K") {
-        return upper;
+    let mut parts = upper.split('X');
+    let Some(w) = parts.next() else {
+        return false;
+    };
+    let Some(h) = parts.next() else {
+        return false;
+    };
+    parts.next().is_none()
+        && !w.is_empty()
+        && !h.is_empty()
+        && w.chars().all(|c| c.is_ascii_digit())
+        && h.chars().all(|c| c.is_ascii_digit())
+}
+
+fn normalize_size_tier(image_size: &str, family: SeedreamFamily) -> &'static str {
+    let s = image_size.trim();
+    let requested = if s.is_empty() || s.eq_ignore_ascii_case("auto") {
+        "2K"
+    } else {
+        match s.to_ascii_uppercase().as_str() {
+            "1K" => "1K",
+            "2K" => "2K",
+            "3K" => "3K",
+            "4K" => "4K",
+            _ => "2K",
+        }
+    };
+    // 各模型支持的档位不同；不支持时降到最接近的可用档。
+    match family {
+        SeedreamFamily::Pro => match requested {
+            "1K" => "1K",
+            _ => "2K", // pro 方式 2 仅 1K/2K；4K 像素会超其方式 1 上限
+        },
+        SeedreamFamily::Lite => match requested {
+            "1K" => "2K",
+            other => other,
+        },
+        SeedreamFamily::V45 => match requested {
+            "1K" | "3K" => "2K",
+            other => other,
+        },
+        SeedreamFamily::V40 | SeedreamFamily::Unknown => match requested {
+            "3K" => "2K",
+            other => other,
+        },
+        SeedreamFamily::V30 => "1K",
     }
-    s.to_string()
+}
+
+fn parse_ratio(ratio: &str) -> Option<(u32, u32)> {
+    let mut parts = ratio.split(':');
+    let w = parts.next()?.trim().parse::<u32>().ok()?;
+    let h = parts.next()?.trim().parse::<u32>().ok()?;
+    if parts.next().is_some() || w == 0 || h == 0 {
+        return None;
+    }
+    Some((w, h))
+}
+
+fn format_wxh((w, h): (u32, u32)) -> String {
+    format!("{w}x{h}")
+}
+
+/// 文档推荐宽高表（`豆包.md` Seedream-5-0-pro / lite / 4-5 / 4-0）。
+fn recommended_pixels(tier: &str, ratio: &str) -> Option<(u32, u32)> {
+    let r = ratio.trim();
+    let table: &[(&str, u32, u32)] = match tier {
+        "1K" => &[
+            ("1:1", 1024, 1024),
+            ("4:3", 1152, 864),
+            ("3:4", 864, 1152),
+            ("16:9", 1312, 736),
+            ("9:16", 736, 1312),
+            ("3:2", 1248, 832),
+            ("2:3", 832, 1248),
+            ("21:9", 1568, 672),
+        ],
+        "3K" => &[
+            ("1:1", 3072, 3072),
+            ("4:3", 3456, 2592),
+            ("3:4", 2592, 3456),
+            ("16:9", 4096, 2304),
+            ("9:16", 2304, 4096),
+            ("3:2", 3744, 2496),
+            ("2:3", 2496, 3744),
+            ("21:9", 4704, 2016),
+        ],
+        "4K" => &[
+            ("1:1", 4096, 4096),
+            ("4:3", 4704, 3520),
+            ("3:4", 3520, 4704),
+            ("16:9", 5504, 3040),
+            ("9:16", 3040, 5504),
+            ("3:2", 4992, 3328),
+            ("2:3", 3328, 4992),
+            ("21:9", 6240, 2656),
+        ],
+        // 2K（各版本一致）
+        _ => &[
+            ("1:1", 2048, 2048),
+            ("4:3", 2304, 1728),
+            ("3:4", 1728, 2304),
+            ("16:9", 2848, 1600),
+            ("9:16", 1600, 2848),
+            ("3:2", 2496, 1664),
+            ("2:3", 1664, 2496),
+            ("21:9", 3136, 1344),
+        ],
+    };
+    table
+        .iter()
+        .find(|(k, _, _)| k.eq_ignore_ascii_case(r))
+        .map(|(_, w, h)| (*w, *h))
+}
+
+fn family_max_pixels(family: SeedreamFamily) -> u64 {
+    match family {
+        SeedreamFamily::Pro | SeedreamFamily::V30 => 2048u64 * 2048,
+        SeedreamFamily::Lite
+        | SeedreamFamily::V45
+        | SeedreamFamily::V40
+        | SeedreamFamily::Unknown => 4096u64 * 4096,
+    }
+}
+
+fn clamp_to_family(w: u32, h: u32, family: SeedreamFamily) -> (u32, u32) {
+    let max_pixels = family_max_pixels(family);
+    let mut nw = w.max(1);
+    let mut nh = h.max(1);
+    let pixels = (nw as u64) * (nh as u64);
+    if pixels > max_pixels {
+        let scale = (max_pixels as f64 / pixels as f64).sqrt();
+        nw = ((nw as f64) * scale).floor() as u32;
+        nh = ((nh as f64) * scale).floor() as u32;
+    }
+    // pro 要求宽高为 16 的倍数；其余取偶数更稳妥。
+    let align = match family {
+        SeedreamFamily::Pro => 16u32,
+        _ => 2u32,
+    };
+    nw = (nw / align * align).max(align);
+    nh = (nh / align * align).max(align);
+    // 再保证不超总像素
+    while (nw as u64) * (nh as u64) > max_pixels && (nw > align || nh > align) {
+        if nw >= nh && nw > align {
+            nw -= align;
+        } else if nh > align {
+            nh -= align;
+        } else {
+            break;
+        }
+    }
+    (nw, nh)
+}
+
+fn pixels_from_ratio(tier: &str, ratio: &str, family: SeedreamFamily) -> Option<(u32, u32)> {
+    let (rw, rh) = parse_ratio(ratio)?;
+    let area = match tier {
+        "1K" => 1024u64 * 1024,
+        "3K" => 3072u64 * 3072,
+        "4K" => 4096u64 * 4096,
+        _ => 2048u64 * 2048,
+    }
+    .min(family_max_pixels(family)) as f64;
+    let r = rw as f64 / rh as f64;
+    let w = (area * r).sqrt().round() as u32;
+    let h = (area / r).sqrt().round() as u32;
+    Some((w, h))
 }
 
 fn build_body(request: &ChatRequest, prompt: &str) -> Value {
-    // 不传 sequential_image_generation：默认即为单图；部分模型（旧版/代理）不支持该参数会 400。
+    // 不传 sequential_image_generation / stream：
+    // seedream-5-0-pro 不支持这两个参数，传入会 400；默认即为单图、非流式。
     let mut body = json!({
         "model": request.model,
         "prompt": prompt,
-        "size": ark_size(&request.parameters),
+        "size": ark_size(&request.model, &request.parameters),
         "response_format": "url",
         "watermark": false,
-        "stream": false,
     });
     let map = body.as_object_mut().unwrap();
 
@@ -326,6 +540,7 @@ async fn parse_response(
 
     Ok(GenerateResponse {
         images,
+        videos: Vec::new(),
         text: None,
         thinking_content: None,
         usage: TokenUsage::default(),
@@ -389,4 +604,94 @@ async fn fetch_remote_image(
         .to_string();
     let bytes = resp.bytes().await?.to_vec();
     Ok(ImageResult { bytes, mime })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::parameters::GenerationParameters;
+    use crate::data::settings::ModelParamSettings;
+    use serde_json::Map;
+
+    fn params(aspect_ratio: &str, image_size: &str) -> GenerationParameters {
+        GenerationParameters {
+            aspect_ratio: aspect_ratio.into(),
+            image_size: image_size.into(),
+            model: ModelParamSettings::default(),
+            video_mode: None,
+            video_duration: None,
+            video_resolution: None,
+            generate_audio: None,
+            watermark: None,
+            camera_fixed: None,
+            seed: None,
+            custom: Map::new(),
+        }
+    }
+
+    #[test]
+    fn ark_size_auto_ratio_uses_tier() {
+        assert_eq!(
+            ark_size("doubao-seedream-4-0", &params("auto", "auto")),
+            "2K"
+        );
+        assert_eq!(ark_size("doubao-seedream-4-0", &params("auto", "4K")), "4K");
+        assert_eq!(ark_size("doubao-seedream-4-0", &params("", "1K")), "1K");
+        // lite 不支持 1K → 降到 2K
+        assert_eq!(ark_size("seedream-5-0-lite", &params("auto", "1K")), "2K");
+        // 4.5 不支持 3K → 降到 2K
+        assert_eq!(ark_size("seedream-4-5", &params("auto", "3K")), "2K");
+    }
+
+    #[test]
+    fn ark_size_maps_ratio_to_doc_pixels() {
+        assert_eq!(
+            ark_size("seedream-5-0-lite", &params("16:9", "2K")),
+            "2848x1600"
+        );
+        assert_eq!(
+            ark_size("seedream-5-0-lite", &params("9:16", "2K")),
+            "1600x2848"
+        );
+        assert_eq!(
+            ark_size("seedream-5-0-lite", &params("1:1", "2K")),
+            "2048x2048"
+        );
+        assert_eq!(
+            ark_size("seedream-5-0-lite", &params("16:9", "3K")),
+            "4096x2304"
+        );
+        // 4K 用文档表，不是 2K×2
+        assert_eq!(
+            ark_size("seedream-5-0-lite", &params("16:9", "4K")),
+            "5504x3040"
+        );
+        // pro 1K 16:9 用文档表
+        assert_eq!(
+            ark_size("seedream-5-0-pro", &params("16:9", "1K")),
+            "1312x736"
+        );
+    }
+
+    #[test]
+    fn ark_size_passthrough_wxh_when_auto_ratio() {
+        assert_eq!(
+            ark_size("seedream-4-0", &params("auto", "2560x1440")),
+            "2560x1440"
+        );
+    }
+
+    #[test]
+    fn detect_seedream_family_from_model_id() {
+        assert_eq!(
+            detect_seedream_family("doubao-seedream-5-0-pro-250101"),
+            SeedreamFamily::Pro
+        );
+        assert_eq!(
+            detect_seedream_family("seedream-5-0-lite"),
+            SeedreamFamily::Lite
+        );
+        assert_eq!(detect_seedream_family("seedream-4-5"), SeedreamFamily::V45);
+        assert_eq!(detect_seedream_family("seedream-4-0"), SeedreamFamily::V40);
+    }
 }

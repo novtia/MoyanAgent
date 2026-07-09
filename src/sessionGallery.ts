@@ -1,7 +1,9 @@
 import type { ImageRefAbs, SessionWithMessagesAbs } from "./types";
 
-/** Same ordering and dedupe rules as the session gallery sidebar. */
-export function collectSessionGalleryImages(active: SessionWithMessagesAbs | null): ImageRefAbs[] {
+/** Images plus generated video outputs, in message order with content dedupe. */
+export function collectSessionGalleryMedia(
+  active: SessionWithMessagesAbs | null,
+): ImageRefAbs[] {
   if (!active) return [];
   const all: ImageRefAbs[] = [];
   const seenKey = new Set<string>();
@@ -24,16 +26,35 @@ export function collectSessionGalleryImages(active: SessionWithMessagesAbs | nul
   };
   for (let i = 0; i < active.messages.length; i++) {
     const m = active.messages[i];
-    const ins = m.images.filter((x) => x.role === "input");
-    const outs = m.images.filter((x) => x.role === "output" || x.role === "edited");
+    const ins = m.images.filter(
+      (x) => x.role === "input" && x.mime.startsWith("image/"),
+    );
+    const outs = m.images.filter(
+      (x) =>
+        (x.role === "output" || x.role === "edited") &&
+        (x.mime.startsWith("image/") || x.mime.startsWith("video/")),
+    );
     ins.forEach(push);
     outs.forEach(push);
   }
   return all;
 }
 
-export function indexOfImageInGallery(items: ImageRefAbs[], img: ImageRefAbs): number {
+export function collectSessionGalleryImages(
+  active: SessionWithMessagesAbs | null,
+): ImageRefAbs[] {
+  return collectSessionGalleryMedia(active).filter((item) =>
+    item.mime.startsWith("image/"),
+  );
+}
+
+export function indexOfMediaInGallery(
+  items: ImageRefAbs[],
+  img: ImageRefAbs,
+): number {
   const byId = items.findIndex((x) => x.id === img.id);
   if (byId >= 0) return byId;
   return items.findIndex((x) => x.abs_path === img.abs_path);
 }
+
+export const indexOfImageInGallery = indexOfMediaInGallery;

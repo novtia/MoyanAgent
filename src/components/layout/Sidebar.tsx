@@ -8,6 +8,7 @@ import { useSession } from "../../store/session";
 import { useProject } from "../../store/project";
 import { api } from "../../api/tauri";
 import type { Project, SessionSummary } from "../../types";
+import { sanitizeFsPath } from "../../utils/sanitizePath";
 import { openContextMenu } from "../context-menu";
 import { toast, dialog } from "../ui";
 
@@ -172,7 +173,7 @@ function useProjectActions() {
   const handleCreateFromFolder = async () => {
     const result = await openDialog({ directory: true, multiple: false, title: "选择项目文件夹" });
     if (!result) return;
-    const folderPath = result as string;
+    const folderPath = sanitizeFsPath(result as string);
     const parts = folderPath.replace(/\\/g, "/").split("/");
     const folderName = parts[parts.length - 1] || "新项目";
     await createFromFolder(folderName, folderPath);

@@ -66,8 +66,7 @@ pub fn export_projects(
 
     let file = fs::File::create(dest_path)?;
     let mut zip = zip::ZipWriter::new(file);
-    let opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     // manifest.json
     let manifest = Manifest {
@@ -98,7 +97,9 @@ pub fn export_projects(
 
         for msg in messages {
             for img in &msg.images {
-                write_image_to_zip(app, &mut zip, opts, session_id, &img.rel_path)?;
+                if !img.rel_path.trim().is_empty() {
+                    write_image_to_zip(app, &mut zip, opts, session_id, &img.rel_path)?;
+                }
                 if let Some(ref thumb) = img.thumb_rel_path {
                     write_image_to_zip(app, &mut zip, opts, session_id, thumb)?;
                 }
@@ -148,8 +149,7 @@ pub fn export_session(
 
     let file = fs::File::create(dest_path)?;
     let mut zip = zip::ZipWriter::new(file);
-    let opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     let manifest = Manifest {
         version: MANIFEST_VERSION.to_string(),
@@ -180,7 +180,9 @@ pub fn export_session(
 
     for msg in &loaded.messages {
         for img in &msg.images {
-            write_image_to_zip(app, &mut zip, opts, session_id, &img.rel_path)?;
+            if !img.rel_path.trim().is_empty() {
+                write_image_to_zip(app, &mut zip, opts, session_id, &img.rel_path)?;
+            }
             if let Some(ref thumb) = img.thumb_rel_path {
                 write_image_to_zip(app, &mut zip, opts, session_id, thumb)?;
             }
@@ -200,8 +202,8 @@ pub fn import_archive(
     archive_path: &str,
 ) -> AppResult<ImportResult> {
     let file = fs::File::open(archive_path)?;
-    let mut zip = zip::ZipArchive::new(file)
-        .map_err(|e| AppError::Other(format!("open zip: {e}")))?;
+    let mut zip =
+        zip::ZipArchive::new(file).map_err(|e| AppError::Other(format!("open zip: {e}")))?;
 
     // Read manifest
     let manifest: Manifest = {
@@ -210,8 +212,7 @@ pub fn import_archive(
             .map_err(|_| AppError::Invalid("archive missing manifest.json".into()))?;
         let mut s = String::new();
         entry.read_to_string(&mut s)?;
-        serde_json::from_str(&s)
-            .map_err(|e| AppError::Invalid(format!("manifest parse: {e}")))?
+        serde_json::from_str(&s).map_err(|e| AppError::Invalid(format!("manifest parse: {e}")))?
     };
 
     if manifest.version != MANIFEST_VERSION {
@@ -228,8 +229,7 @@ pub fn import_archive(
             .map_err(|_| AppError::Invalid("archive missing data/projects.json".into()))?;
         let mut s = String::new();
         entry.read_to_string(&mut s)?;
-        serde_json::from_str(&s)
-            .map_err(|e| AppError::Invalid(format!("projects parse: {e}")))?
+        serde_json::from_str(&s).map_err(|e| AppError::Invalid(format!("projects parse: {e}")))?
     };
 
     // Read sessions
@@ -239,8 +239,7 @@ pub fn import_archive(
             .map_err(|_| AppError::Invalid("archive missing data/sessions.json".into()))?;
         let mut s = String::new();
         entry.read_to_string(&mut s)?;
-        serde_json::from_str(&s)
-            .map_err(|e| AppError::Invalid(format!("sessions parse: {e}")))?
+        serde_json::from_str(&s).map_err(|e| AppError::Invalid(format!("sessions parse: {e}")))?
     };
 
     // Build ID maps (old → new ULID)
@@ -354,7 +353,10 @@ pub fn import_archive(
         if let Some(messages) = session_messages.get(&s.id) {
             for msg in messages {
                 let new_mid = Ulid::new().to_string();
-                let params_str = msg.params.as_ref().and_then(|v| serde_json::to_string(v).ok());
+                let params_str = msg
+                    .params
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok());
 
                 conn.execute(
                     "INSERT INTO messages(id, session_id, role, text, params_json, created_at)
@@ -378,8 +380,8 @@ pub fn import_archive(
                         .map(|p| remap_session_in_path(p, &s.id, &new_sid));
 
                     conn.execute(
-                        "INSERT INTO message_images(id, message_id, session_id, role, rel_path, thumb_path, mime, width, height, bytes, ord, created_at)
-                         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+                        "INSERT INTO message_images(id, message_id, session_id, role, rel_path, thumb_path, mime, media_role, source_url, width, height, bytes, ord, created_at)
+                         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
                         params![
                             new_iid,
                             new_mid,
@@ -388,6 +390,8 @@ pub fn import_archive(
                             new_rel,
                             new_thumb_rel,
                             img.mime,
+                            img.media_role,
+                            img.source_url,
                             img.width,
                             img.height,
                             img.bytes,
@@ -397,21 +401,9 @@ pub fn import_archive(
                     )?;
 
                     // Extract image to new session dir
-                    extract_image_file(
-                        app,
-                        &image_bytes,
-                        &s.id,
-                        &new_sid,
-                        &img.rel_path,
-                    )?;
+                    extract_image_file(app, &image_bytes, &s.id, &new_sid, &img.rel_path)?;
                     if let Some(ref thumb_rel) = img.thumb_rel_path {
-                        extract_image_file(
-                            app,
-                            &image_bytes,
-                            &s.id,
-                            &new_sid,
-                            thumb_rel,
-                        )?;
+                        extract_image_file(app, &image_bytes, &s.id, &new_sid, thumb_rel)?;
                     }
                 }
 

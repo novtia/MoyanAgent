@@ -17,6 +17,11 @@ export {
   looksLikeDir,
   mentionIconKind,
   mentionIconSvg,
+  mediaMentionKind,
+  mediaMentionIndex,
+  mediaMentionLabel,
+  mediaMentionDisplayLabel,
+  mediaMentionKindFromMime,
   serializeMentionPath,
   parseMentionAt,
   parseMentionSegments,
@@ -28,6 +33,8 @@ export {
   buildMentionNodes,
   moveCaretToEnd,
   type MentionIconKind,
+  type MentionMediaRenderData,
+  type MediaMentionKind,
   type MentionSegment,
 } from "./core";
 export { MentionIcon } from "./MentionIcon";
@@ -37,6 +44,7 @@ export {
   MentionEditor,
   type MentionEditorHandle,
   type MentionEditorProps,
+  type MentionTriggerAnchor,
 } from "./MentionEditor";
 export {
   ComposerEditor,

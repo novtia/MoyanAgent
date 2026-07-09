@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { ImportResult, ModelParamSettings, Project } from "../types";
 import { api } from "../api/tauri";
+import { sanitizeFsPath } from "../utils/sanitizePath";
 
 interface ProjectStore {
   projects: Project[];
@@ -37,7 +38,7 @@ export const useProject = create<ProjectStore>((set, get) => ({
   },
 
   createFromFolder: async (name, path) => {
-    const p = await api.createProject(name, path);
+    const p = await api.createProject(name, sanitizeFsPath(path));
     await get().refreshList();
     return p;
   },
@@ -48,7 +49,8 @@ export const useProject = create<ProjectStore>((set, get) => ({
   },
 
   updatePath: async (id, path) => {
-    await api.updateProjectPath(id, path && path.trim() ? path.trim() : null);
+    const cleaned = path && path.trim() ? sanitizeFsPath(path) : null;
+    await api.updateProjectPath(id, cleaned);
     await get().refreshList();
   },
 

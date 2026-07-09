@@ -146,7 +146,12 @@ fn build_body(request: &ChatRequest) -> Value {
 
 fn append_claude_assistant_tool_turn(messages: &mut Vec<Value>, pending: &PendingAssistantTurn) {
     let mut content: Vec<Value> = Vec::new();
-    if let Some(text) = pending.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(text) = pending
+        .text
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         content.push(json!({ "type": "text", "text": text }));
     }
     for tc in &pending.tool_calls {
@@ -325,6 +330,7 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
 
     Ok(GenerateResponse {
         images: Vec::new(),
+        videos: Vec::new(),
         text,
         thinking_content,
         usage: usage(&v),

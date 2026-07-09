@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
-import { collectSessionGalleryImages } from "../../sessionGallery";
+import { collectSessionGalleryMedia } from "../../sessionGallery";
 import { GalleryContent } from "./SessionGallery";
 import { AgentFlowPanel } from "./AgentFlowPanel";
 import { RoleStatePanel } from "./RoleStatePanel";
@@ -101,7 +101,7 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
   }, [readerOpenSeq]);
 
   const galleryCount = useMemo(
-    () => collectSessionGalleryImages(active).length,
+    () => collectSessionGalleryMedia(active).length,
     [active],
   );
 
@@ -116,7 +116,12 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (
+        e.key === "Escape" &&
+        !document.querySelector(".video-preview-lightbox")
+      ) {
+        onClose();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

@@ -1,12 +1,21 @@
 import { Fragment, type ReactNode } from "react";
-import { parseMentionSegments } from "./core";
+import {
+  parseMentionSegments,
+  type MentionMediaRenderData,
+} from "./core";
 import { MentionChip } from "./MentionChip";
 
 /**
  * Render plain message text, turning serialized `@<absolutePath>` mentions into
  * static reference cards ({@link MentionChip}).
  */
-export function MentionText({ text }: { text: string }): ReactNode {
+export function MentionText({
+  text,
+  mediaByPath = {},
+}: {
+  text: string;
+  mediaByPath?: Record<string, MentionMediaRenderData>;
+}): ReactNode {
   if (!text) return null;
   if (!text.includes("@")) return text;
 
@@ -19,7 +28,11 @@ export function MentionText({ text }: { text: string }): ReactNode {
     seg.type === "text" ? (
       <Fragment key={`t${i}`}>{seg.value}</Fragment>
     ) : (
-      <MentionChip key={`m${i}`} path={seg.path} />
+      <MentionChip
+        key={`m${i}`}
+        path={seg.path}
+        previewSrc={mediaByPath[seg.path]?.previewSrc}
+      />
     ),
   );
 }

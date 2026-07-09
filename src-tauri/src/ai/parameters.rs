@@ -8,6 +8,7 @@ use crate::data::settings::ModelParamSettings;
 pub enum ParameterScope {
     Model,
     Image,
+    Video,
     Custom,
 }
 
@@ -55,6 +56,26 @@ const REGISTERED_PARAMETERS: &[ParameterRegistration] = &[
         scope: ParameterScope::Image,
     },
     ParameterRegistration {
+        key: "video_mode",
+        scope: ParameterScope::Video,
+    },
+    ParameterRegistration {
+        key: "video_duration",
+        scope: ParameterScope::Video,
+    },
+    ParameterRegistration {
+        key: "video_resolution",
+        scope: ParameterScope::Video,
+    },
+    ParameterRegistration {
+        key: "generate_audio",
+        scope: ParameterScope::Video,
+    },
+    ParameterRegistration {
+        key: "watermark",
+        scope: ParameterScope::Video,
+    },
+    ParameterRegistration {
         key: "custom",
         scope: ParameterScope::Custom,
     },
@@ -79,6 +100,13 @@ impl ParameterFactory {
             aspect_ratio,
             image_size,
             model,
+            video_mode: None,
+            video_duration: None,
+            video_resolution: None,
+            generate_audio: None,
+            watermark: None,
+            camera_fixed: None,
+            seed: None,
             custom: Map::new(),
         }
     }
@@ -93,10 +121,38 @@ pub struct GenerationParameters {
     pub aspect_ratio: String,
     pub image_size: String,
     pub model: ModelParamSettings,
+    pub video_mode: Option<String>,
+    pub video_duration: Option<i64>,
+    pub video_resolution: Option<String>,
+    pub generate_audio: Option<bool>,
+    pub watermark: Option<bool>,
+    pub camera_fixed: Option<bool>,
+    pub seed: Option<i64>,
     pub custom: Map<String, Value>,
 }
 
 impl GenerationParameters {
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_video(
+        mut self,
+        mode: String,
+        duration: i64,
+        resolution: String,
+        generate_audio: bool,
+        watermark: bool,
+        camera_fixed: Option<bool>,
+        seed: Option<i64>,
+    ) -> Self {
+        self.video_mode = Some(mode);
+        self.video_duration = Some(duration);
+        self.video_resolution = Some(resolution);
+        self.generate_audio = Some(generate_audio);
+        self.watermark = Some(watermark);
+        self.camera_fixed = camera_fixed;
+        self.seed = seed;
+        self
+    }
+
     pub fn apply_model_params(&self, body: &mut Map<String, Value>) {
         if let Some(v) = self.model.temperature {
             body.insert("temperature".into(), json!(v));
@@ -152,11 +208,7 @@ impl GenerationParameters {
     }
 
     /// Route thinking/reasoning controls to the shape each upstream expects.
-    pub fn apply_thinking_params(
-        &self,
-        body: &mut Map<String, Value>,
-        endpoint: &str,
-    ) {
+    pub fn apply_thinking_params(&self, body: &mut Map<String, Value>, endpoint: &str) {
         if is_openrouter_endpoint(endpoint) {
             self.apply_openrouter_reasoning(body);
             return;
@@ -190,10 +242,31 @@ impl GenerationParameters {
     }
 
     pub fn to_message_params_json(&self) -> Value {
-        json!({
-            "aspect_ratio": self.aspect_ratio,
-            "image_size": self.image_size,
-        })
+        let mut params = Map::new();
+        params.insert("aspect_ratio".into(), json!(self.aspect_ratio));
+        params.insert("image_size".into(), json!(self.image_size));
+        if let Some(value) = self.video_mode.as_ref() {
+            params.insert("video_mode".into(), json!(value));
+        }
+        if let Some(value) = self.video_duration {
+            params.insert("video_duration".into(), json!(value));
+        }
+        if let Some(value) = self.video_resolution.as_ref() {
+            params.insert("video_resolution".into(), json!(value));
+        }
+        if let Some(value) = self.generate_audio {
+            params.insert("generate_audio".into(), json!(value));
+        }
+        if let Some(value) = self.watermark {
+            params.insert("watermark".into(), json!(value));
+        }
+        if let Some(value) = self.camera_fixed {
+            params.insert("camera_fixed".into(), json!(value));
+        }
+        if let Some(value) = self.seed {
+            params.insert("seed".into(), json!(value));
+        }
+        Value::Object(params)
     }
 
     pub fn to_message_params_with_usage(&self, usage: &TokenUsage) -> Value {
@@ -244,9 +317,7 @@ fn is_deepseek_endpoint(endpoint: &str) -> bool {
 
 fn is_volcengine_endpoint(endpoint: &str) -> bool {
     let e = endpoint.trim().to_ascii_lowercase();
-    e.contains("volces.com")
-        || e.contains("volcengine.com")
-        || e.contains("volcengine.cn")
+    e.contains("volces.com") || e.contains("volcengine.com") || e.contains("volcengine.cn")
 }
 
 #[cfg(test)]

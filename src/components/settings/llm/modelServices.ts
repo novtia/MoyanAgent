@@ -51,6 +51,7 @@ export const CAPABILITY_OPTIONS = [
   { id: "web", label: "联网" },
   { id: "reasoning", label: "推理" },
   { id: "image", label: "生图" },
+  { id: "video", label: "生视频" },
   { id: "tools", label: "工具" },
   { id: "text", label: "文本" },
 ] as const;
@@ -138,6 +139,16 @@ export function inferCapabilities(model: string) {
     id.includes("flux")
   ) {
     caps.add("image");
+  }
+  if (id.includes("seedance") || id.includes("video-generation")) {
+    caps.add("video");
+    if (
+      id.includes("seedance-2") ||
+      id.includes("seedance_2") ||
+      id.includes("seedance2")
+    ) {
+      caps.add("multimodal-ref");
+    }
   }
   if (caps.size === 0) caps.add("text");
   return Array.from(caps);

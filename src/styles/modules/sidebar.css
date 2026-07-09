@@ -430,6 +430,20 @@
   overflow: hidden;
   min-height: 0;
 }
+/* Expanded: fixed viewport so long session lists scroll inside the project */
+.project-sessions-wrap.is-expanded .project-sessions-inner {
+  max-height: min(36vh, 260px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.project-sessions-wrap.is-expanded .project-sessions-inner::-webkit-scrollbar {
+  width: 6px;
+}
+.project-sessions-wrap.is-expanded .project-sessions-inner::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
+}
 .project-sessions {
   padding-left: 18px;
   opacity: 0;

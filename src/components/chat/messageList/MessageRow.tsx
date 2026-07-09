@@ -1,5 +1,6 @@
 import {
   memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -14,13 +15,19 @@ import { useProject } from "../../../store/project";
 import { useSession } from "../../../store/session";
 import { ATELIER_DRAG_TYPE } from "../SessionGallery";
 import { READER_FILE_DRAG_TYPE } from "../ReaderFileExplorer";
+import { ComposerFileTree } from "../ComposerFileTree";
 import {
   MentionEditor,
+  MentionIcon,
   MentionText,
   isWithinProject,
+  mediaMentionDisplayLabel,
+  mediaMentionKindFromMime,
+  mediaMentionLabel,
   normalizeMentionPath,
   parseMentionPaths,
   type MentionEditorHandle,
+  type MentionTriggerAnchor,
 } from "../mention";
 import type { AssistantBlock, AttachmentDraft, ImageRefAbs } from "../../../types";
 import { AssistantContent } from "./AssistantContent";
@@ -47,7 +54,25 @@ import {
 function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
   const { t } = useTranslation();
   const inputs = useMemo(() => m.images.filter((i) => i.role === "input"), [m.images]);
+  const inputMediaByPath = useMemo(() => {
+    const counts = { image: 0, audio: 0, video: 0 };
+    const media: Record<string, { previewSrc?: string }> = {};
+    for (const item of inputs) {
+      const kind = mediaMentionKindFromMime(item.mime);
+      if (!kind) continue;
+      counts[kind] += 1;
+      const label = mediaMentionLabel(kind, counts[kind]);
+      media[label] =
+        kind === "image"
+          ? {
+              previewSrc: srcOf(item.thumb_abs_path || item.abs_path),
+            }
+          : {};
+    }
+    return media;
+  }, [inputs]);
   const outputs = m.images.filter((i) => i.role === "output");
+  const hasVideoOutput = outputs.some((item) => item.mime.startsWith("video/"));
   const resendMessage = useSession((s) => s.resendMessage);
   const deleteMessage = useSession((s) => s.deleteMessage);
   const editMessage = useSession((s) => s.editMessage);
@@ -65,7 +90,10 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
   const canEditUser = isUser && (hasText || inputs.length > 0);
   const canEditAssistant = isAssistant && !isStreamingDraft;
   const canEdit = canEditUser || canEditAssistant;
-  const canQuote = hasText || inputs.length > 0 || outputs.length > 0;
+  const canQuote =
+    hasText ||
+    inputs.some((item) => item.mime.startsWith("image/")) ||
+    outputs.some((item) => item.mime.startsWith("image/"));
   const blocks = isAssistant ? m.params?.blocks : undefined;
   const useBlocksRendering = Array.isArray(blocks) && blocks.length > 0;
   const blocksText = useMemo(() => {
@@ -87,18 +115,48 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
       ? m.params.thinking_content.trim()
       : "";
 
-  const MAX_EDIT_IMAGES = 8;
+  const MAX_EDIT_MEDIA =
+    m.params?.video_mode === "text"
+      ? 0
+      : m.params?.video_mode === "first_frame"
+        ? 1
+        : m.params?.video_mode === "first_last"
+          ? 2
+          : m.params?.video_mode === "reference"
+            ? 15
+            : 8;
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(m.text || "");
   const [draftMentions, setDraftMentions] = useState<string[]>([]);
-  const [draftImages, setDraftImages] = useState<ImageRefAbs[]>(inputs);
+  const [draftMedia, setDraftMedia] = useState<ImageRefAbs[]>(inputs);
+  const draftMediaByPath = useMemo(() => {
+    const counts = { image: 0, audio: 0, video: 0 };
+    const media: Record<string, { previewSrc?: string }> = {};
+    for (const item of draftMedia) {
+      const kind = mediaMentionKindFromMime(item.mime);
+      if (!kind) continue;
+      counts[kind] += 1;
+      const label = mediaMentionLabel(kind, counts[kind]);
+      media[label] =
+        kind === "image"
+          ? {
+              previewSrc: srcOf(item.thumb_abs_path || item.abs_path),
+            }
+          : {};
+    }
+    return media;
+  }, [draftMedia]);
+  const [editMentionAnchor, setEditMentionAnchor] =
+    useState<MentionTriggerAnchor | null>(null);
   const [picking, setPicking] = useState(false);
   const [editDragOver, setEditDragOver] = useState(false);
   const editDragDepth = useRef(0);
   const addedDraftIdsRef = useRef<Set<string>>(new Set());
+  const autoMentionedDraftIdsRef = useRef<Set<string>>(new Set());
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const mentionEditorRef = useRef<MentionEditorHandle | null>(null);
+  const editMentionPanelRef = useRef<HTMLDivElement | null>(null);
 
   const projects = useProject((s) => s.projects);
   const projectRoot = useMemo(() => {
@@ -111,6 +169,12 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     setDraft(text);
     setDraftMentions(paths);
   };
+  const onEditMentionTrigger = useCallback(
+    (anchor: MentionTriggerAnchor | null) => {
+      setEditMentionAnchor(anchor);
+    },
+    [],
+  );
 
   // Auto-grow the assistant edit textarea (user edits use the mention editor).
   useLayoutEffect(() => {
@@ -132,6 +196,20 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     ta.style.height = ta.scrollHeight + "px";
   }, [draft, editing]);
 
+  useEffect(() => {
+    if (!editing || !editMentionAnchor) return;
+    const onMouseDown = (event: MouseEvent) => {
+      if (
+        editMentionPanelRef.current &&
+        !editMentionPanelRef.current.contains(event.target as Node)
+      ) {
+        setEditMentionAnchor(null);
+      }
+    };
+    window.addEventListener("mousedown", onMouseDown);
+    return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [editing, editMentionAnchor]);
+
   const cleanupAddedDrafts = async (ids: Iterable<string>) => {
     for (const id of ids) {
       try {
@@ -147,7 +225,11 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     const seed = (m.text || "").trim() || blocksText || "";
     setDraft(seed);
     setDraftMentions(isUser ? parseMentionPaths(seed) : []);
-    setDraftImages(isUser ? inputs : []);
+    setDraftMedia(isUser ? inputs : []);
+    autoMentionedDraftIdsRef.current = new Set(
+      isUser ? inputs.map((item) => item.id) : [],
+    );
+    setEditMentionAnchor(null);
     addedDraftIdsRef.current = new Set();
     setEditing(true);
   };
@@ -156,12 +238,16 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     addedDraftIdsRef.current = new Set();
     setDraft(m.text || "");
     setDraftMentions(isUser ? parseMentionPaths(m.text || "") : []);
-    setDraftImages(isUser ? inputs : []);
+    setDraftMedia(isUser ? inputs : []);
+    autoMentionedDraftIdsRef.current = new Set(
+      isUser ? inputs.map((item) => item.id) : [],
+    );
+    setEditMentionAnchor(null);
     setEditing(false);
     if (orphans.length) await cleanupAddedDrafts(orphans);
   };
 
-  const draftToImageRef = (d: AttachmentDraft): ImageRefAbs => ({
+  const draftToMediaRef = (d: AttachmentDraft): ImageRefAbs => ({
     id: d.image_id,
     role: "input",
     rel_path: d.rel_path,
@@ -169,22 +255,67 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     abs_path: d.abs_path,
     thumb_abs_path: d.thumb_abs_path,
     mime: d.mime,
+    media_role: d.media_role,
+    source_url: d.source_url,
     width: d.width,
     height: d.height,
     bytes: d.bytes,
     ord: 0,
   });
 
+  const canAcceptDraftMedia = (
+    mime: string,
+    current: ImageRefAbs[] = draftMedia,
+  ) => {
+    const mode = m.params?.video_mode;
+    const imageCount = current.filter((item) =>
+      item.mime.startsWith("image/"),
+    ).length;
+    const audioCount = current.filter((item) =>
+      item.mime.startsWith("audio/"),
+    ).length;
+    if (mime.startsWith("video/")) return false;
+    if (mode === "text") return false;
+    if (mode === "first_frame" || mode === "first_last") {
+      return (
+        mime.startsWith("image/") &&
+        imageCount < (mode === "first_frame" ? 1 : 2)
+      );
+    }
+    if (mode === "reference") {
+      if (mime.startsWith("image/")) return imageCount < 9;
+      if (mime.startsWith("audio/")) return audioCount < 3;
+      return false;
+    }
+    return mime.startsWith("image/") && current.length < MAX_EDIT_MEDIA;
+  };
+
+  const mediaMentionForDraft = (item: ImageRefAbs) => {
+    const kind = mediaMentionKindFromMime(item.mime);
+    if (!kind) return null;
+    const ordinal = draftMedia
+      .filter((media) => mediaMentionKindFromMime(media.mime) === kind)
+      .findIndex((media) => media.id === item.id);
+    if (ordinal < 0) return null;
+    return mediaMentionLabel(kind, ordinal + 1);
+  };
+
   const ingestPaths = async (paths: string[]) => {
-    const room = MAX_EDIT_IMAGES - draftImages.length;
+    const room = MAX_EDIT_MEDIA - draftMedia.length;
     if (room <= 0) return;
     const toIngest = paths.slice(0, room);
+    const workingMedia = [...draftMedia];
     for (const p of toIngest) {
       try {
         const d = await api.addAttachmentFromPath(m.session_id, p);
-        const ref = draftToImageRef(d);
+        const ref = draftToMediaRef(d);
+        if (!canAcceptDraftMedia(ref.mime, workingMedia)) {
+          await api.removeAttachmentDraft(ref.id).catch(() => {});
+          continue;
+        }
         addedDraftIdsRef.current.add(ref.id);
-        setDraftImages((arr) => [...arr, ref]);
+        workingMedia.push(ref);
+        setDraftMedia((arr) => [...arr, ref]);
       } catch (e) {
         console.warn(e);
       }
@@ -192,9 +323,10 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
   };
 
   const ingestFiles = async (files: File[]) => {
-    const room = MAX_EDIT_IMAGES - draftImages.length;
+    const room = MAX_EDIT_MEDIA - draftMedia.length;
     if (room <= 0) return;
     const toIngest = files.slice(0, room);
+    const workingMedia = [...draftMedia];
     for (const file of toIngest) {
       try {
         const path = nativeFilePath(file);
@@ -205,36 +337,50 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
               file.name || "image",
               await fileToBytes(file),
             );
-        const ref = draftToImageRef(d);
+        const ref = draftToMediaRef(d);
+        if (!canAcceptDraftMedia(ref.mime, workingMedia)) {
+          await api.removeAttachmentDraft(ref.id).catch(() => {});
+          continue;
+        }
         addedDraftIdsRef.current.add(ref.id);
-        setDraftImages((arr) => [...arr, ref]);
+        workingMedia.push(ref);
+        setDraftMedia((arr) => [...arr, ref]);
       } catch (e) {
         console.warn(e);
       }
     }
   };
 
-  const ingestExistingImage = async (absPath: string) => {
+  const ingestExistingMedia = async (absPath: string) => {
     if (!absPath) return;
-    if (draftImages.length >= MAX_EDIT_IMAGES) return;
+    if (draftMedia.length >= MAX_EDIT_MEDIA) return;
     try {
       const d = await api.addAttachmentFromPath(m.session_id, absPath);
-      const ref = draftToImageRef(d);
+      const ref = draftToMediaRef(d);
+      if (!canAcceptDraftMedia(ref.mime)) {
+        await api.removeAttachmentDraft(ref.id).catch(() => {});
+        return;
+      }
       addedDraftIdsRef.current.add(ref.id);
-      setDraftImages((arr) => [...arr, ref]);
+      setDraftMedia((arr) => [...arr, ref]);
     } catch (e) {
       console.warn(e);
     }
   };
 
-  const addDraftImage = async () => {
+  const addDraftMedia = async () => {
     if (picking) return;
-    if (draftImages.length >= MAX_EDIT_IMAGES) return;
+    if (draftMedia.length >= MAX_EDIT_MEDIA) return;
+    mentionEditorRef.current?.rememberSelection();
     setPicking(true);
     try {
+      const extensions =
+        m.params?.video_mode === "reference"
+          ? ["png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff", "wav", "mp3"]
+          : ["png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff"];
       const selected = await openDialog({
         multiple: true,
-        filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }],
+        filters: [{ name: t("message.editAddMedia"), extensions }],
       });
       const paths = Array.isArray(selected) ? selected : selected ? [selected] : [];
       if (paths.length) await ingestPaths(paths as string[]);
@@ -243,8 +389,15 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     }
   };
 
-  const removeDraftImage = async (id: string) => {
-    setDraftImages((arr) => arr.filter((i) => i.id !== id));
+  const removeDraftMedia = async (id: string, removeMention = true) => {
+    const item = draftMedia.find((media) => media.id === id);
+    if (removeMention && item) {
+      const mention = mediaMentionForDraft(item);
+      if (mention) {
+        mentionEditorRef.current?.removeAllMentions(mention, false);
+      }
+    }
+    setDraftMedia((arr) => arr.filter((media) => media.id !== id));
     if (addedDraftIdsRef.current.has(id)) {
       addedDraftIdsRef.current.delete(id);
       try {
@@ -254,6 +407,24 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
       }
     }
   };
+
+  useEffect(() => {
+    if (!editing || !isUser) return;
+    const currentIds = new Set(draftMedia.map((item) => item.id));
+    for (const id of autoMentionedDraftIdsRef.current) {
+      if (!currentIds.has(id)) {
+        autoMentionedDraftIdsRef.current.delete(id);
+      }
+    }
+    for (const item of draftMedia) {
+      if (autoMentionedDraftIdsRef.current.has(item.id)) continue;
+      autoMentionedDraftIdsRef.current.add(item.id);
+      const mention = mediaMentionForDraft(item);
+      if (mention && !draftMentions.includes(mention)) {
+        mentionEditorRef.current?.insertMention(mention);
+      }
+    }
+  }, [draftMedia, draftMentions, editing, isUser]);
 
   const editHasDragPayload = (e: React.DragEvent) => {
     const types = Array.from(e.dataTransfer?.types || []);
@@ -293,6 +464,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     if (!isUser || !editing || !editHasDragPayload(e)) return;
     e.preventDefault();
     e.stopPropagation();
+    mentionEditorRef.current?.rememberSelection();
     editDragDepth.current = 0;
     setEditDragOver(false);
 
@@ -300,7 +472,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     if (galleryPayload) {
       try {
         const parsed = JSON.parse(galleryPayload) as { abs_path?: string };
-        if (parsed.abs_path) ingestExistingImage(parsed.abs_path);
+        if (parsed.abs_path) ingestExistingMedia(parsed.abs_path);
       } catch (err) {
         console.warn(err);
       }
@@ -331,10 +503,16 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     const files = Array.from(e.dataTransfer?.files || []);
     if (!files.length) return;
 
-    const images = files.filter(isImageFile);
-    const others = files.filter((f) => !isImageFile(f));
+    const media = files.filter(
+      (file) =>
+        isImageFile(file) ||
+        (m.params?.video_mode === "reference" &&
+          (file.type.startsWith("audio/") ||
+            /\.(wav|mp3)$/i.test(file.name))),
+    );
+    const others = files.filter((file) => !media.includes(file));
 
-    if (images.length) ingestFiles(images);
+    if (media.length) ingestFiles(media);
 
     if (others.length) {
       let outside = 0;
@@ -347,7 +525,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     }
   };
 
-  const imageIdsEqual = (a: ImageRefAbs[], b: ImageRefAbs[]) => {
+  const mediaIdsEqual = (a: ImageRefAbs[], b: ImageRefAbs[]) => {
     if (a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) if (a[i].id !== b[i].id) return false;
     return true;
@@ -355,21 +533,23 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
 
   const saveEdit = async () => {
     const next = draft.trim();
-    const imagesChanged = !imageIdsEqual(draftImages, inputs);
-    if (!next && draftImages.length === 0) {
+    const mediaChanged = !mediaIdsEqual(draftMedia, inputs);
+    if (!next && draftMedia.length === 0) {
       await cancelEdit();
       return;
     }
-    if (next === (m.text || "").trim() && !imagesChanged) {
+    if (next === (m.text || "").trim() && !mediaChanged) {
+      setEditMentionAnchor(null);
       setEditing(false);
       return;
     }
     await editMessage(
       m.id,
       next,
-      imagesChanged ? draftImages.map((i) => i.id) : undefined,
+      mediaChanged ? draftMedia.map((item) => item.id) : undefined,
     );
     addedDraftIdsRef.current = new Set();
+    setEditMentionAnchor(null);
     setEditing(false);
   };
   const onResend = async () => {
@@ -384,6 +564,26 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
   const onCopy = () => {
     copyText(m.text || "");
   };
+  const mediaAliasForInput = (item: ImageRefAbs) => {
+    const kind = mediaMentionKindFromMime(item.mime);
+    if (!kind) return null;
+    const ordinal = inputs
+      .filter((input) => mediaMentionKindFromMime(input.mime) === kind)
+      .findIndex((input) => input.id === item.id);
+    return ordinal >= 0 ? mediaMentionLabel(kind, ordinal + 1) : null;
+  };
+  const displayMediaMention = (value: string | null) =>
+    value ? `@${mediaMentionDisplayLabel(value)}` : "";
+  const pickEditMediaMention = (item: ImageRefAbs) => {
+    const mention = mediaMentionForDraft(item);
+    if (!mention) return;
+    mentionEditorRef.current?.replaceMentionTrigger(mention);
+    setEditMentionAnchor(null);
+  };
+  const pickEditFileMention = (absPath: string, isDir: boolean) => {
+    mentionEditorRef.current?.replaceMentionTrigger(absPath, isDir);
+    setEditMentionAnchor(null);
+  };
 
   return (
     <div
@@ -397,7 +597,9 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
               {isStreamingDraft
                 ? t("message.stampGenerating", { time: nowStamp(m.created_at) })
                 : isAssistant
-                ? t("message.stampImage", { time: nowStamp(m.created_at) })
+                ? t(hasVideoOutput ? "message.stampVideo" : "message.stampImage", {
+                    time: nowStamp(m.created_at),
+                  })
                 : t("message.stampFailure", { time: nowStamp(m.created_at) })}
             </span>
           )}
@@ -411,14 +613,42 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
 
           {!editing && inputs.length > 0 && (
             <div className="attached">
-              {inputs.map((img, i) => (
-                <img
-                  key={`in:${img.id}:${i}`}
-                  src={srcOf(img.thumb_abs_path || img.abs_path)}
-                  title={img.rel_path}
-                  onClick={() => onPreviewImage(img)}
-                />
-              ))}
+              {inputs.map((item, i) =>
+                item.mime.startsWith("image/") ? (
+                  <button
+                    type="button"
+                    className="attached-image-card"
+                    key={`in:${item.id}:${i}`}
+                    title={item.rel_path}
+                    onClick={() => onPreviewImage(item)}
+                  >
+                    <img
+                      src={srcOf(item.thumb_abs_path || item.abs_path)}
+                      alt=""
+                    />
+                  </button>
+                ) : item.mime.startsWith("audio/") ? (
+                  <div className="attached-audio" key={`in:${item.id}:${i}`}>
+                    <span>{displayMediaMention(mediaAliasForInput(item))}</span>
+                    <audio controls preload="metadata" src={srcOf(item.abs_path)} />
+                  </div>
+                ) : (
+                  <a
+                    className="attached-video-reference"
+                    key={`in:${item.id}:${i}`}
+                    href={item.source_url || undefined}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={item.source_url || t("message.referenceVideo")}
+                  >
+                    <span className="attached-video-reference-icon" aria-hidden>
+                      ▶
+                    </span>
+                    <span>{displayMediaMention(mediaAliasForInput(item))}</span>
+                    <small>{item.source_url}</small>
+                  </a>
+                ),
+              )}
             </div>
           )}
 
@@ -432,7 +662,14 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
 
           {!editing && showMessageText && !isError && (
             <div className="text">
-              {isUser ? <MentionText text={m.text || ""} /> : m.text}
+              {isUser ? (
+                <MentionText
+                  text={m.text || ""}
+                  mediaByPath={inputMediaByPath}
+                />
+              ) : (
+                m.text
+              )}
             </div>
           )}
           {!editing && isError && <div className="text mono">{m.text}</div>}
@@ -446,26 +683,36 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
               onDragLeave={onEditDragLeave}
               onDrop={onEditDrop}
             >
-              {isUser && (draftImages.length > 0 || picking) && (
+              {isUser && (draftMedia.length > 0 || picking) && (
                 <div className="bubble-edit-images">
-                  {draftImages.map((img, i) => (
+                  {draftMedia.map((item, i) => (
                     <div
-                      className="bubble-edit-image"
-                      key={`draft:${img.id}:${i}`}
-                      title={img.rel_path}
+                      className={`bubble-edit-image ${
+                        item.mime.startsWith("image/")
+                          ? ""
+                          : "bubble-edit-media"
+                      }`}
+                      key={`draft:${item.id}:${i}`}
+                      title={item.source_url || item.rel_path}
                     >
-                      <img
-                        src={srcOf(img.thumb_abs_path || img.abs_path)}
-                        alt=""
-                        draggable={false}
-                      />
+                      {item.mime.startsWith("image/") ? (
+                        <img
+                          src={srcOf(item.thumb_abs_path || item.abs_path)}
+                          alt=""
+                          draggable={false}
+                        />
+                      ) : (
+                        <div className="bubble-edit-media-label">
+                          {displayMediaMention(mediaMentionForDraft(item))}
+                        </div>
+                      )}
                       <button
                         type="button"
                         className="bubble-edit-image-remove"
-                        title={t("message.editRemoveImage")}
-                        onClick={() => removeDraftImage(img.id)}
+                        title={t("message.editRemoveMedia")}
+                        onClick={() => removeDraftMedia(item.id)}
                       >
-                        ?
+                        ×
                       </button>
                     </div>
                   ))}
@@ -473,6 +720,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
               )}
               {isUser ? (
                 <div
+                  ref={editMentionPanelRef}
                   className="bubble-edit-editor-wrap"
                   onKeyDown={(e) => {
                     if (e.key === "Escape") {
@@ -483,6 +731,16 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
                       saveEdit();
                     }
                   }}
+                  onPaste={(event) => {
+                    const files = Array.from(
+                      event.clipboardData.files ?? [],
+                    );
+                    if (files.length) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      void ingestFiles(files);
+                    }
+                  }}
                 >
                   <MentionEditor
                     ref={mentionEditorRef}
@@ -490,9 +748,111 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
                     value={draft}
                     mentions={draftMentions}
                     onChange={onMentionEditorChange}
+                    onMentionTrigger={onEditMentionTrigger}
+                    mediaByPath={draftMediaByPath}
                     placeholder={t("composer.placeholderDefault")}
                     autoFocus
                   />
+                  {editMentionAnchor && (
+                    <div
+                      className="composer-mention-popover is-caret bubble-edit-mention-popover"
+                      role="dialog"
+                      aria-label={t("composer.mentionPickerTitle")}
+                      style={{
+                        left:
+                          Math.max(
+                            12,
+                            Math.min(
+                              editMentionAnchor.left,
+                              window.innerWidth - 332,
+                            ),
+                          ) -
+                          (editMentionPanelRef.current?.getBoundingClientRect()
+                            .left ?? 0),
+                        top:
+                          editMentionAnchor.bottom +
+                          8 -
+                          (editMentionPanelRef.current?.getBoundingClientRect()
+                            .top ?? 0),
+                        bottom: "auto",
+                        maxHeight: Math.max(
+                          72,
+                          window.innerHeight - editMentionAnchor.bottom - 12,
+                        ),
+                      }}
+                    >
+                      <div className="composer-mention-popover-title">
+                        {t("composer.mentionPickerTitle")}
+                      </div>
+                      <div className="composer-mention-popover-body">
+                        <section className="composer-mention-section">
+                          <div className="composer-mention-section-title">
+                            {t("composer.mentionUploadedMedia")}
+                          </div>
+                          {draftMedia.length > 0 ? (
+                            <div className="composer-mention-media-list">
+                              {draftMedia.map((item) => {
+                                const mention = mediaMentionForDraft(item);
+                                if (!mention) return null;
+                                const name =
+                                  item.rel_path.split(/[\\/]/).pop() ||
+                                  mediaMentionDisplayLabel(mention);
+                                return (
+                                  <button
+                                    type="button"
+                                    className="composer-mention-media-item"
+                                    key={item.id}
+                                    title={name}
+                                    onClick={() =>
+                                      pickEditMediaMention(item)
+                                    }
+                                  >
+                                    {item.mime.startsWith("image/") ? (
+                                      <img
+                                        src={srcOf(
+                                          item.thumb_abs_path ||
+                                            item.abs_path,
+                                        )}
+                                        alt=""
+                                        draggable={false}
+                                      />
+                                    ) : (
+                                      <span className="composer-mention-media-icon">
+                                        <MentionIcon path={mention} />
+                                      </span>
+                                    )}
+                                    <span className="composer-mention-media-copy">
+                                      <strong>
+                                        @{mediaMentionDisplayLabel(mention)}
+                                      </strong>
+                                      <small>{name}</small>
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="composer-mention-status">
+                              {t("composer.mentionNoUploadedMedia")}
+                            </div>
+                          )}
+                        </section>
+
+                        {projectRoot && (
+                          <section className="composer-mention-section">
+                            <div className="composer-mention-section-title">
+                              {t("composer.mentionProjectFiles")}
+                            </div>
+                            <ComposerFileTree
+                              sessionId={m.session_id}
+                              projectRoot={projectRoot}
+                              onPick={pickEditFileMention}
+                            />
+                          </section>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <textarea
@@ -516,9 +876,12 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
                   <button
                     type="button"
                     className="bubble-edit-icon-btn"
-                    title={t("message.editAddImage")}
-                    onClick={addDraftImage}
-                    disabled={picking || draftImages.length >= MAX_EDIT_IMAGES}
+                    title={t("message.editAddMedia")}
+                    onMouseDown={() =>
+                      mentionEditorRef.current?.rememberSelection()
+                    }
+                    onClick={addDraftMedia}
+                    disabled={picking || draftMedia.length >= MAX_EDIT_MEDIA}
                   >
                     <PlusIcon />
                   </button>
@@ -539,8 +902,8 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
                   onClick={saveEdit}
                   disabled={
                     (draft.trim() === (m.text || "").trim() &&
-                      imageIdsEqual(draftImages, inputs)) ||
-                    (!draft.trim() && draftImages.length === 0)
+                      mediaIdsEqual(draftMedia, inputs)) ||
+                    (!draft.trim() && draftMedia.length === 0)
                   }
                 >
                   {t("message.editSend")}
@@ -552,13 +915,21 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
           {outputs.length > 0 && (!editing || isAssistant) && (
             <div className="outputs">
               {outputs.map((img, i) => (
-                <div
-                  className="plate"
-                  key={`out:${img.id}:${i}`}
-                  onClick={() => onPreviewImage(img)}
-                >
-                  <img src={srcOf(img.abs_path)} alt="generated" />
-                </div>
+                img.mime.startsWith("video/") ? (
+                  <InlineVideoPlate
+                    key={`out:${img.id}:${i}`}
+                    item={img}
+                    onPreview={() => onPreviewImage(img)}
+                  />
+                ) : (
+                  <div
+                    className="plate"
+                    key={`out:${img.id}:${i}`}
+                    onClick={() => onPreviewImage(img)}
+                  >
+                    <img src={srcOf(img.abs_path)} alt="generated" />
+                  </div>
+                )
               ))}
             </div>
           )}
@@ -597,7 +968,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
                 <span>{t("message.actionEdit")}</span>
               </button>
             )}
-            {isUser && hasText && (
+            {isUser && (hasText || inputs.length > 0) && (
               <button
                 type="button"
                 className="msg-action"
@@ -630,6 +1001,63 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function InlineVideoPlate({
+  item,
+  onPreview,
+}: {
+  item: ImageRefAbs;
+  onPreview: () => void;
+}) {
+  const { t } = useTranslation();
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [aspectRatio, setAspectRatio] = useState(
+    item.width && item.height ? item.width / item.height : 16 / 9,
+  );
+
+  return (
+    <div className="plate video-plate" style={{ aspectRatio }}>
+      {failed ? (
+        <button
+          type="button"
+          className="video-inline-error"
+          onClick={() => {
+            setFailed(false);
+            videoRef.current?.load();
+          }}
+        >
+          {t("message.videoRetry")}
+        </button>
+      ) : null}
+      <video
+        ref={videoRef}
+        controls
+        playsInline
+        preload="metadata"
+        src={srcOf(item.abs_path)}
+        onLoadedMetadata={(event) => {
+          const video = event.currentTarget;
+          if (video.videoWidth > 0 && video.videoHeight > 0) {
+            setAspectRatio(video.videoWidth / video.videoHeight);
+          }
+        }}
+        onError={() => setFailed(true)}
+      />
+      <button
+        type="button"
+        className="video-inline-preview"
+        title={t("message.videoFullscreen")}
+        aria-label={t("message.videoFullscreen")}
+        onClick={onPreview}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
+        </svg>
+      </button>
     </div>
   );
 }

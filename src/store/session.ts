@@ -16,6 +16,7 @@ import {
   agentTypeFromComposerMode,
   composerModeFromAgentType,
 } from "../config/chatMode";
+import type { VideoGenerationMode } from "../config/videoGeneration";
 import { useRoleState, resolveRoleStateScope, type RoleStateOp } from "./roleState";
 import {
   useReader,
@@ -39,6 +40,11 @@ interface ComposerState {
   pendingAttachments: PendingAttachmentDraft[];
   aspectRatio: string;
   imageSize: string;
+  videoMode: VideoGenerationMode;
+  videoDuration: number;
+  videoResolution: string;
+  generateAudio: boolean;
+  watermark: boolean;
   /** Composer thinking toggle (only meaningful for reasoning-capable models). */
   thinkingEnabled: boolean;
   /** Reasoning effort; empty string means provider default (high). */
@@ -87,6 +93,11 @@ interface GenerationStreamPayload {
   } | null;
 }
 
+interface GenerationStatusPayload {
+  session_id: string;
+  phase: "request" | "polling" | "response" | string;
+}
+
 interface ToolUseEventPayload {
   session_id: string;
   request_message_id?: string;
@@ -114,6 +125,7 @@ interface SessionStore {
   active: SessionWithMessagesAbs | null;
   busy: boolean;
   busyBySession: Record<string, boolean>;
+  generationPhaseBySession: Record<string, string>;
   composer: ComposerState;
 
   refreshList: () => Promise<void>;
@@ -134,6 +146,11 @@ interface SessionStore {
   setMentions: (paths: string[]) => void;
   setAspectRatio: (s: string) => void;
   setImageSize: (s: string) => void;
+  setVideoMode: (mode: VideoGenerationMode) => void;
+  setVideoDuration: (duration: number) => void;
+  setVideoResolution: (resolution: string) => void;
+  setGenerateAudio: (enabled: boolean) => void;
+  setWatermark: (enabled: boolean) => void;
   setThinkingEnabled: (on: boolean) => void;
   setThinkingEffort: (effort: string) => void;
   setChatMode: (mode: ComposerChatMode) => Promise<void>;
@@ -141,6 +158,7 @@ interface SessionStore {
   addAttachments: (files: File[]) => Promise<void>;
   addAttachmentsFromPaths: (paths: string[]) => Promise<void>;
   addAttachmentFromPath: (path: string) => Promise<void>;
+  addReferenceVideoUrl: (url: string) => Promise<void>;
   removeAttachment: (imageId: string) => Promise<void>;
   replaceAttachment: (oldId: string, draft: AttachmentDraft) => void;
   clearComposer: () => void;
@@ -155,9 +173,19 @@ interface SessionStore {
   quoteMessage: (m: MessageAbs) => Promise<void>;
 }
 
-const ACCEPT_TYPES = ["image/png", "image/jpeg", "image/webp"];
-const MAX_FILES = 8;
-const MAX_BYTES = 50 * 1024 * 1024;
+const ACCEPT_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/bmp",
+  "image/gif",
+  "image/tiff",
+  "audio/wav",
+  "audio/mpeg",
+];
+const MAX_FILES = 15;
+const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
+const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
 
 function makePendingAttachment(label: string, bytes: number | null = null): PendingAttachmentDraft {
   return {
@@ -171,8 +199,69 @@ function pathLabel(path: string) {
   return path.split(/[\\/]/).pop() || "image";
 }
 
+function stripMediaMentionTokens(text: string) {
+  return text
+    .replace(/@(?:"(?:image|音频|视频)\d+"|(?:image|音频|视频)\d+)/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 function matchesImageRole(role: string) {
   return role === "input" || role === "output" || role === "edited";
+}
+
+function maxBytesForMime(mime: string) {
+  return mime.startsWith("audio/") ? MAX_AUDIO_BYTES : MAX_IMAGE_BYTES;
+}
+
+function uploadMime(file: File) {
+  const declared = file.type.toLowerCase();
+  if (ACCEPT_TYPES.includes(declared)) return declared;
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "png") return "image/png";
+  if (extension === "webp") return "image/webp";
+  if (extension === "bmp") return "image/bmp";
+  if (extension === "gif") return "image/gif";
+  if (extension === "tif" || extension === "tiff") return "image/tiff";
+  if (extension === "wav") return "audio/wav";
+  if (extension === "mp3") return "audio/mpeg";
+  return declared;
+}
+
+function isVideoModel() {
+  return activeModelCapabilities().includes("video");
+}
+
+function resolvedMediaRole(
+  mode: VideoGenerationMode,
+  mime: string,
+  index: number,
+): string | null {
+  if (mime.startsWith("audio/")) return "reference_audio";
+  if (mime.startsWith("video/")) return "reference_video";
+  if (!mime.startsWith("image/")) return null;
+  if (mode === "first_frame") return "first_frame";
+  if (mode === "first_last") return index === 0 ? "first_frame" : "last_frame";
+  if (mode === "reference") return "reference_image";
+  return null;
+}
+
+function validateVideoComposer(composer: ComposerState, prompt: string): boolean {
+  const images = composer.attachments.filter((a) => a.mime.startsWith("image/")).length;
+  const audio = composer.attachments.filter((a) => a.mime.startsWith("audio/")).length;
+  const videos = composer.attachments.filter((a) => a.mime.startsWith("video/")).length;
+  switch (composer.videoMode) {
+    case "text":
+      return !!prompt && images + audio + videos === 0;
+    case "first_frame":
+      return images === 1 && audio + videos === 0;
+    case "first_last":
+      return images === 2 && audio + videos === 0;
+    case "reference":
+      return images <= 9 && audio <= 3 && videos <= 3 && images + videos >= 1;
+  }
 }
 
 async function fileToBytes(f: File): Promise<Uint8Array> {
@@ -299,8 +388,13 @@ export const useSession = create<SessionStore>((set, get) => {
       } else {
         delete busyBySession[sessionId];
       }
+      const generationPhaseBySession = {
+        ...state.generationPhaseBySession,
+      };
+      if (!busy) delete generationPhaseBySession[sessionId];
       return {
         busyBySession,
+        generationPhaseBySession,
         busy: state.activeId ? !!busyBySession[state.activeId] : false,
       };
     });
@@ -369,6 +463,7 @@ export const useSession = create<SessionStore>((set, get) => {
   active: null,
   busy: false,
   busyBySession: {},
+  generationPhaseBySession: {},
   composer: {
     prompt: "",
     mentions: [],
@@ -376,6 +471,11 @@ export const useSession = create<SessionStore>((set, get) => {
     pendingAttachments: [],
     aspectRatio: "auto",
     imageSize: "auto",
+    videoMode: "text",
+    videoDuration: 5,
+    videoResolution: "720p",
+    generateAudio: true,
+    watermark: false,
     thinkingEnabled: false,
     thinkingEffort: "",
     chatMode: "agent",
@@ -427,6 +527,11 @@ export const useSession = create<SessionStore>((set, get) => {
         pendingAttachments: [],
         aspectRatio: draft?.aspectRatio ?? get().composer.aspectRatio,
         imageSize: draft?.imageSize ?? get().composer.imageSize,
+        videoMode: draft?.videoMode ?? get().composer.videoMode,
+        videoDuration: draft?.videoDuration ?? get().composer.videoDuration,
+        videoResolution: draft?.videoResolution ?? get().composer.videoResolution,
+        generateAudio: draft?.generateAudio ?? get().composer.generateAudio,
+        watermark: draft?.watermark ?? get().composer.watermark,
         chatMode: composerModeFromAgentType(data.session.agent_type),
       },
     });
@@ -497,6 +602,15 @@ export const useSession = create<SessionStore>((set, get) => {
   setMentions: (paths) => set({ composer: { ...get().composer, mentions: paths } }),
   setAspectRatio: (s) => set({ composer: { ...get().composer, aspectRatio: s } }),
   setImageSize: (s) => set({ composer: { ...get().composer, imageSize: s } }),
+  setVideoMode: (mode) => set({ composer: { ...get().composer, videoMode: mode } }),
+  setVideoDuration: (duration) =>
+    set({ composer: { ...get().composer, videoDuration: duration } }),
+  setVideoResolution: (resolution) =>
+    set({ composer: { ...get().composer, videoResolution: resolution } }),
+  setGenerateAudio: (enabled) =>
+    set({ composer: { ...get().composer, generateAudio: enabled } }),
+  setWatermark: (enabled) =>
+    set({ composer: { ...get().composer, watermark: enabled } }),
   setThinkingEnabled: (on) =>
     set({ composer: { ...get().composer, thinkingEnabled: on } }),
   setThinkingEffort: (effort) =>
@@ -565,16 +679,41 @@ export const useSession = create<SessionStore>((set, get) => {
     const room = MAX_FILES - cur.attachments.length - cur.pendingAttachments.length;
     const uploads: Array<{ file: File; pending: PendingAttachmentDraft }> = [];
     let rejected = 0;
+    let imageCount = cur.attachments.filter((a) =>
+      a.mime.startsWith("image/"),
+    ).length;
+    let audioCount = cur.attachments.filter((a) =>
+      a.mime.startsWith("audio/"),
+    ).length;
+    const videoModel = isVideoModel();
     for (const f of files) {
       if (uploads.length >= room) {
         rejected++;
         continue;
       }
-      if (!ACCEPT_TYPES.includes(f.type)) {
+      const mime = uploadMime(f);
+      if (!ACCEPT_TYPES.includes(mime)) {
         rejected++;
         continue;
       }
-      if (f.size > MAX_BYTES) {
+      const isImage = mime.startsWith("image/");
+      const isAudio = mime.startsWith("audio/");
+      const invalidForMode = videoModel
+        ? cur.videoMode === "text" ||
+          ((cur.videoMode === "first_frame" ||
+            cur.videoMode === "first_last") &&
+            (!isImage ||
+              imageCount >= (cur.videoMode === "first_frame" ? 1 : 2))) ||
+          (cur.videoMode === "reference" &&
+            ((!isImage && !isAudio) ||
+              (isImage && imageCount >= 9) ||
+              (isAudio && audioCount >= 3)))
+        : !isImage;
+      if (invalidForMode) {
+        rejected++;
+        continue;
+      }
+      if (f.size > maxBytesForMime(mime)) {
         rejected++;
         continue;
       }
@@ -582,6 +721,8 @@ export const useSession = create<SessionStore>((set, get) => {
         file: f,
         pending: makePendingAttachment(f.name || "image", f.size),
       });
+      if (isImage) imageCount += 1;
+      if (isAudio) audioCount += 1;
     }
     if (uploads.length) {
       set({
@@ -645,6 +786,43 @@ export const useSession = create<SessionStore>((set, get) => {
     for (const { path, pending } of uploads) {
       try {
         const d = await api.addAttachmentFromPath(sid, path);
+        const latest = get().composer;
+        const imageCount = latest.attachments.filter((a) =>
+          a.mime.startsWith("image/"),
+        ).length;
+        const audioCount = latest.attachments.filter((a) =>
+          a.mime.startsWith("audio/"),
+        ).length;
+        const isImage = d.mime.startsWith("image/");
+        const isAudio = d.mime.startsWith("audio/");
+        const videoModel = isVideoModel();
+        const invalidForMode =
+          d.mime.startsWith("video/") ||
+          (videoModel
+            ? latest.videoMode === "text" ||
+              ((latest.videoMode === "first_frame" ||
+                latest.videoMode === "first_last") &&
+                (!isImage ||
+                  imageCount >=
+                    (latest.videoMode === "first_frame" ? 1 : 2))) ||
+              (latest.videoMode === "reference" &&
+                ((!isImage && !isAudio) ||
+                  (isImage && imageCount >= 9) ||
+                  (isAudio && audioCount >= 3)))
+            : !isImage);
+        if (invalidForMode) {
+          await api.removeAttachmentDraft(d.image_id).catch(() => {});
+          rejected++;
+          set({
+            composer: {
+              ...get().composer,
+              pendingAttachments: get().composer.pendingAttachments.filter(
+                (p) => p.id !== pending.id,
+              ),
+            },
+          });
+          continue;
+        }
         set({
           composer: {
             ...get().composer,
@@ -672,18 +850,40 @@ export const useSession = create<SessionStore>((set, get) => {
     await get().addAttachmentsFromPaths([path]);
   },
 
+  addReferenceVideoUrl: async (url) => {
+    const normalized = url.trim();
+    if (!normalized || !/^(https?:\/\/|asset:\/\/)/i.test(normalized)) return;
+    const current = get().composer;
+    const videoCount = current.attachments.filter((a) => a.mime.startsWith("video/")).length;
+    if (!isVideoModel() || current.videoMode !== "reference" || videoCount >= 3) return;
+    const sid = await get().ensureActive();
+    try {
+      const draft = await api.addUrlAttachment(sid, normalized);
+      set({
+        composer: {
+          ...get().composer,
+          attachments: [...get().composer.attachments, draft],
+        },
+      });
+    } catch (error) {
+      console.error(error);
+    }
+  },
+
   removeAttachment: async (imageId) => {
+    set({
+      composer: {
+        ...get().composer,
+        attachments: get().composer.attachments.filter(
+          (a) => a.image_id !== imageId,
+        ),
+      },
+    });
     try {
       await api.removeAttachmentDraft(imageId);
     } catch (e) {
       console.warn(e);
     }
-    set({
-      composer: {
-        ...get().composer,
-        attachments: get().composer.attachments.filter((a) => a.image_id !== imageId),
-      },
-    });
   },
 
   replaceAttachment: (oldId, draft) => {
@@ -720,7 +920,7 @@ export const useSession = create<SessionStore>((set, get) => {
     if (!a || m.session_id !== a.session.id) return;
 
     const quotableImages = m.images.filter((img) =>
-      matchesImageRole(img.role),
+      matchesImageRole(img.role) && img.mime.startsWith("image/"),
     );
     const room = MAX_FILES - get().composer.attachments.length - get().composer.pendingAttachments.length;
     const pending = quotableImages
@@ -743,7 +943,7 @@ export const useSession = create<SessionStore>((set, get) => {
       const newAtt = [...cur, ...toAdd];
 
       let prompt = get().composer.prompt;
-      const text = (m.text || "").trim();
+      const text = stripMediaMentionTokens(m.text || "");
       if (text) {
         const quoted = text
           .split("\n")
@@ -815,7 +1015,8 @@ export const useSession = create<SessionStore>((set, get) => {
     const m = a.messages[idx];
     if (m.role !== "user") return;
     const text = (m.text || "").trim();
-    if (!text) return;
+    const videoModel = isVideoModel();
+    if (!text && (!videoModel || m.images.length === 0)) return;
     if (get().busyBySession[sid]) return;
     if (generationFlights.has(sid)) {
       bumpGenerationEpoch(sid);
@@ -851,10 +1052,22 @@ export const useSession = create<SessionStore>((set, get) => {
           {
             session_id: sid,
             user_message_id: messageId,
-            aspect_ratio: c.aspectRatio,
-            image_size: c.imageSize,
+            aspect_ratio: m.params?.aspect_ratio ?? c.aspectRatio,
+            image_size: m.params?.image_size ?? c.imageSize,
             thinking_enabled: thinkingEnabled,
             thinking_effort: thinkingEffort,
+            ...(videoModel
+              ? {
+                  video_mode:
+                    (m.params?.video_mode as VideoGenerationMode | undefined) ??
+                    c.videoMode,
+                  video_duration: m.params?.video_duration ?? c.videoDuration,
+                  video_resolution:
+                    m.params?.video_resolution ?? c.videoResolution,
+                  generate_audio: m.params?.generate_audio ?? c.generateAudio,
+                  watermark: m.params?.watermark ?? c.watermark,
+                }
+              : {}),
           },
           a.session,
         );
@@ -916,7 +1129,8 @@ export const useSession = create<SessionStore>((set, get) => {
   send: async () => {
     const c = get().composer;
     const text = c.prompt.trim();
-    if (!text) return;
+    const videoModel = isVideoModel();
+    if (videoModel ? !validateVideoComposer(c, text) : !text) return;
     if (c.pendingAttachments.length > 0) return;
     const sid = await get().ensureActive();
     if (get().busyBySession[sid]) return;
@@ -929,7 +1143,19 @@ export const useSession = create<SessionStore>((set, get) => {
       session_id: sid,
       role: "user",
       text,
-      params: { aspect_ratio: c.aspectRatio, image_size: c.imageSize },
+      params: {
+        aspect_ratio: c.aspectRatio,
+        image_size: c.imageSize,
+        ...(videoModel
+          ? {
+              video_mode: c.videoMode,
+              video_duration: c.videoDuration,
+              video_resolution: c.videoResolution,
+              generate_audio: c.generateAudio,
+              watermark: c.watermark,
+            }
+          : {}),
+      },
       created_at: Date.now(),
       images: c.attachments.map((a, i) => ({
         id: a.image_id,
@@ -939,6 +1165,10 @@ export const useSession = create<SessionStore>((set, get) => {
         abs_path: a.abs_path,
         thumb_abs_path: a.thumb_abs_path,
         mime: a.mime,
+        media_role: videoModel
+          ? resolvedMediaRole(c.videoMode, a.mime, i)
+          : a.media_role,
+        source_url: a.source_url,
         width: a.width,
         height: a.height,
         bytes: a.bytes,
@@ -982,6 +1212,15 @@ export const useSession = create<SessionStore>((set, get) => {
             image_size: imageSize,
             thinking_enabled: thinkingEnabled,
             thinking_effort: thinkingEffort,
+            ...(videoModel
+              ? {
+                  video_mode: c.videoMode,
+                  video_duration: c.videoDuration,
+                  video_resolution: c.videoResolution,
+                  generate_audio: c.generateAudio,
+                  watermark: c.watermark,
+                }
+              : {}),
           },
           sessionForLog,
         );
@@ -1043,6 +1282,11 @@ interface ComposerDraft {
   attachments: AttachmentDraft[];
   aspectRatio: string;
   imageSize: string;
+  videoMode: VideoGenerationMode;
+  videoDuration: number;
+  videoResolution: string;
+  generateAudio: boolean;
+  watermark: boolean;
 }
 
 const composerDrafts = new Map<string, ComposerDraft>();
@@ -1054,6 +1298,11 @@ function saveComposerDraft(sessionId: string, composer: ComposerState) {
     attachments: composer.attachments,
     aspectRatio: composer.aspectRatio,
     imageSize: composer.imageSize,
+    videoMode: composer.videoMode,
+    videoDuration: composer.videoDuration,
+    videoResolution: composer.videoResolution,
+    generateAudio: composer.generateAudio,
+    watermark: composer.watermark,
   });
 }
 
@@ -1546,11 +1795,29 @@ function freezeStreamingUi(sessionId: string) {
 // ─── Stream listeners ─────────────────────────────────────────────────────────
 
 let generationStreamListenerStarted = false;
+let generationStatusListenerStarted = false;
 let toolEventListenerStarted = false;
 let roleStateResetListenerStarted = false;
 let sessionTitleListenerStarted = false;
 
 function ensureGenerationStreamListener() {
+  if (!generationStatusListenerStarted) {
+    generationStatusListenerStarted = true;
+    listen<GenerationStatusPayload>("gen://status", (event) => {
+      const sessionId = event.payload?.session_id;
+      const phase = event.payload?.phase;
+      if (!sessionId || !phase) return;
+      const state = useSession.getState();
+      const next = { ...state.generationPhaseBySession };
+      if (phase === "response") delete next[sessionId];
+      else next[sessionId] = phase;
+      useSession.setState({ generationPhaseBySession: next });
+    }).catch((error) => {
+      generationStatusListenerStarted = false;
+      console.warn(error);
+    });
+  }
+
   if (!generationStreamListenerStarted) {
     generationStreamListenerStarted = true;
     listen<GenerationStreamPayload>("gen://stream", (event) => {

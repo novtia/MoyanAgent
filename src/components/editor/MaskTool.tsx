@@ -188,6 +188,8 @@ export function MaskTool({ target, busy, setBusy, onApplied }: Props) {
         abs_path: r.abs_path,
         thumb_abs_path: r.thumb_abs_path,
         mime: r.mime,
+        media_role: r.media_role,
+        source_url: r.source_url,
         width: r.width,
         height: r.height,
         bytes: r.bytes,
