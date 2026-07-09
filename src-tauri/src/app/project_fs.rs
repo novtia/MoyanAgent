@@ -9,7 +9,7 @@ use tauri::State;
 use crate::data::db;
 use crate::error::{AppError, AppResult};
 
-use super::{session_project_cwd, validate_reader_write_path, AppState};
+use super::{project_rules, session_project_cwd, validate_reader_write_path, AppState};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,13 +45,23 @@ fn resolve_list_dir(
 }
 
 fn list_dir_entries(dir: &Path) -> AppResult<Vec<ProjectDirEntry>> {
+    // Inside the `.moyan` rules folder, hide the internal manifest so it reads
+    // as a plain folder of rule files.
+    let in_rules_dir = dir
+        .file_name()
+        .map(|n| n == project_rules::RULES_DIR)
+        .unwrap_or(false);
     let mut entries = Vec::new();
     for entry in fs::read_dir(dir).map_err(|e| {
         AppError::Other(format!("list_project_dir: read_dir {:?}: {e}", dir))
     })? {
         let entry = entry.map_err(|e| AppError::Other(format!("list_project_dir: entry: {e}")))?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') {
+        // Hide dotfiles, except the project rules folder itself.
+        if name.starts_with('.') && name != project_rules::RULES_DIR {
+            continue;
+        }
+        if in_rules_dir && name == project_rules::RULES_MANIFEST {
             continue;
         }
         let path = entry.path();

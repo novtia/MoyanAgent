@@ -16,6 +16,7 @@ import type {
   ModelParamSettings,
   Project,
   ProjectDirEntry,
+  ProjectRule,
   ProjectTextFile,
   SessionSearchResult,
   SessionSummary,
@@ -311,6 +312,12 @@ export const api = {
 
   deleteProjectPath: (sessionId: string, path: string) =>
     invoke<void>("delete_project_path", { sessionId, path }),
+
+  listProjectRules: (sessionId: string) =>
+    invoke<ProjectRule[]>("list_project_rules", { sessionId }),
+
+  setProjectRuleEnabled: (sessionId: string, path: string, enabled: boolean) =>
+    invoke<void>("set_project_rule_enabled", { sessionId, path, enabled }),
 
   getTokenUsageSummary: (args?: {
     fromMs?: number | null;

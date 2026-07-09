@@ -64,7 +64,12 @@ export function TodoMasterView({
           {items.map((item) => (
             <li key={item.id} className={`todo-item ${item.status}`}>
               <TodoStatusIcon status={item.status} />
-              <span className="todo-item-content">{item.content}</span>
+              <div className="todo-item-main">
+                <span className="todo-item-content">{item.content}</span>
+                {item.detail && (
+                  <span className="todo-item-detail">{item.detail}</span>
+                )}
+              </div>
               <span className={`todo-item-badge ${item.status}`}>
                 {item.status === "pending"
                   ? t("message.todoStatusPending")

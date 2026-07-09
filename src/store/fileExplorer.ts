@@ -9,11 +9,16 @@ interface Clipboard {
   paths: string[];
 }
 
+/** Name of the project rules folder (relative to the project root). */
+export const RULES_DIR_NAME = ".moyan";
+
 interface FileExplorerStore {
   sessionId: string | null;
   projectRoot: string | null;
   currentDir: string | null;
   entries: ProjectDirEntry[];
+  /** Enabled state per rule file, keyed by lowercased file name (only while inside `.moyan`). */
+  ruleStates: Record<string, boolean>;
   selectedPath: string | null;
   selectedPaths: string[];
   clipboard: Clipboard | null;
@@ -30,6 +35,7 @@ interface FileExplorerStore {
   navigate: (dirPath: string) => Promise<void>;
   navigateUp: () => Promise<void>;
   refresh: () => Promise<void>;
+  toggleRule: (path: string, enabled: boolean) => Promise<void>;
   createDir: (name: string) => Promise<void>;
   createFile: (name: string) => Promise<void>;
   renameEntry: (path: string, newName: string) => Promise<void>;
@@ -74,6 +80,12 @@ function normPath(p: string): string {
   return p.replace(/[/\\]+$/, "").replace(/\\/g, "/").toLowerCase();
 }
 
+/** True when `dir` is the project rules folder (`.moyan`). */
+export function isRulesDir(dir: string | null): boolean {
+  if (!dir) return false;
+  return baseName(dir).toLowerCase() === RULES_DIR_NAME;
+}
+
 function isSamePath(a: string | null, b: string | null): boolean {
   if (!a || !b) return false;
   return normPath(a) === normPath(b);
@@ -114,6 +126,7 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
   projectRoot: null,
   currentDir: null,
   entries: [],
+  ruleStates: {},
   selectedPath: null,
   selectedPaths: [],
   clipboard: null,
@@ -131,6 +144,7 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
       projectRoot: root,
       currentDir: root,
       entries: [],
+      ruleStates: {},
       selectedPath: null,
       selectedPaths: [],
       clipboard: null,
@@ -212,14 +226,43 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const entries = await api.listProjectDir(sessionId, currentDir ?? projectRoot);
-      set({ entries, loading: false });
+      let ruleStates: Record<string, boolean> = {};
+      if (isRulesDir(currentDir ?? projectRoot)) {
+        try {
+          const rules = await api.listProjectRules(sessionId);
+          ruleStates = Object.fromEntries(
+            rules.map((r) => [baseName(r.path).toLowerCase(), r.enabled]),
+          );
+        } catch {
+          ruleStates = {};
+        }
+      }
+      set({ entries, ruleStates, loading: false });
     } catch (err) {
       set({
         entries: [],
+        ruleStates: {},
         loading: false,
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  },
+
+  toggleRule: async (path, enabled) => {
+    const { sessionId } = get();
+    if (!sessionId) return;
+    const key = baseName(path).toLowerCase();
+    set((state) => ({
+      ruleStates: { ...state.ruleStates, [key]: enabled },
+    }));
+    try {
+      await api.setProjectRuleEnabled(sessionId, path, enabled);
+    } catch {
+      set((state) => ({
+        ruleStates: { ...state.ruleStates, [key]: !enabled },
+      }));
+    }
+    await get().refresh();
   },
 
   createDir: async (name) => {

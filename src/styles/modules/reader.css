@@ -1426,6 +1426,54 @@
   background: color-mix(in srgb, var(--accent) 14%, transparent) !important;
 }
 
+/* ───── project rule toggle (.moyan) ───── */
+.reader-files-item.is-rule-disabled .reader-files-item-name,
+.reader-files-item.is-rule-disabled .reader-files-item-icon {
+  opacity: 0.4;
+}
+
+.reader-files-rule-toggle {
+  --toggle-w: 26px;
+  --toggle-h: 15px;
+  flex-shrink: 0;
+  position: relative;
+  display: inline-block;
+  width: var(--toggle-w);
+  height: var(--toggle-h);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 22%, transparent);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.reader-files-view.is-list .reader-files-rule-toggle {
+  margin-left: auto;
+}
+
+.reader-files-rule-toggle.is-on {
+  background: var(--accent);
+}
+
+.reader-files-rule-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(var(--toggle-h) - 4px);
+  height: calc(var(--toggle-h) - 4px);
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+
+.reader-files-rule-toggle.is-on .reader-files-rule-toggle-knob {
+  transform: translateX(calc(var(--toggle-w) - var(--toggle-h)));
+}
+
+.reader-files-rule-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
 .reader-files-view.is-drop-target {
   outline: 2px dashed color-mix(in srgb, var(--accent) 50%, transparent);
   outline-offset: -3px;

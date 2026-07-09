@@ -235,6 +235,13 @@ export interface ProjectDirEntry {
   isDir: boolean;
 }
 
+/** A project rule file under `<projectRoot>/.moyan/*.md`. */
+export interface ProjectRule {
+  name: string;
+  path: string;
+  enabled: boolean;
+}
+
 /** Text file payload from `read_project_file` (encoding preserved for save). */
 export interface ProjectTextFile {
   text: string;

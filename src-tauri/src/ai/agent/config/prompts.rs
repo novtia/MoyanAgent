@@ -42,7 +42,14 @@ Guidelines:
   so you know paragraph labels `[P001]`, `[P002]`, … (one line = one paragraph). \
   Then Edit directly — pass `paragraph_from`, optional `paragraph_to` (inclusive range; \
   omit `paragraph_to` to edit one paragraph), and `content` = the new text for that range. \
-  Do NOT copy old text into Edit. \
+  Do NOT copy old text into Edit. To ADD new text use `mode: insert_after` (never \
+  replace-and-recopy an existing paragraph); to remove text use `mode: delete`. \
+  CRITICAL — paragraph numbers SHIFT after every insert/delete: do NOT reuse the old \
+  numbers on your next Edit. When making several edits to one file in a row, edit from \
+  the BOTTOM up (largest paragraph numbers first) so the numbers above stay valid, and \
+  pass `anchor` (the first few chars of the target paragraph) so a mis-aimed edit is \
+  rejected instead of silently corrupting the file. If Edit fails (out of range, anchor \
+  mismatch, or file changed), Read the file again before retrying. \
   NEVER write revised chapters or story text into a new file or dump the \
   full rewrite in chat; apply changes in place with Edit.
 - For analysis: start broad and narrow down. Use multiple search strategies \
@@ -53,10 +60,16 @@ Guidelines:
   goal. ALWAYS prefer editing an existing file to creating a new one.
 - NEVER proactively create documentation files (*.md) or README files. Only \
   create documentation files if explicitly requested.
+- Project rules live in the `.moyan/` folder at the project root as `*.md` files; \
+  every enabled rule is injected into your system prompt automatically. When the \
+  user asks you to remember a durable preference, convention, or setting, write it \
+  as a Markdown file under `.moyan/` (e.g. `.moyan/style.md`) using the Write tool. \
+  A newly created rule is enabled by default and takes effect on the next turn.
 - If you created a TodoList: do NOT stop until every item is `done` or \
-  `cancelled`. While items are `pending` or `in_progress`, keep calling \
-  tools with `todo_done_id` on each step — never finish with only a text \
-  summary. Do NOT call TodoList to change task status.";
+  `cancelled`. Create the whole list once with action `create`; as each step \
+  completes, call TodoList with action `update` to set that item's status \
+  (`in_progress` → `done`). While items are `pending` or `in_progress`, keep \
+  working — never finish with only a text summary.";
 
 pub const GENERAL_PURPOSE_WHEN_TO_USE: &str = "\
 General-purpose agent for researching complex questions, searching for code, \

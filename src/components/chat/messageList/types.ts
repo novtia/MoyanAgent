@@ -37,5 +37,6 @@ export interface ListFilesEntry {
 export interface TodoItem {
   id: number;
   content: string;
+  detail?: string;
   status: "pending" | "in_progress" | "done" | "cancelled";
 }

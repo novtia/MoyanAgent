@@ -28,6 +28,7 @@ use crate::error::{AppError, AppResult};
 use crate::media::{editor, images};
 
 mod project_fs;
+mod project_rules;
 
 pub struct AppState {
     pub pool: DbPool,
@@ -701,6 +702,19 @@ async fn run_cancellable_generation(
         } else {
             format!("{base}\n\n---\n\n{session_sys}")
         };
+    }
+
+    // Inject enabled project rules (`<projectRoot>/.moyan/*.md`) so they read as
+    // part of the system prompt on every generation.
+    if let Some(cwd) = project_cwd.as_deref() {
+        if let Some(rules) = project_rules::collect_project_rules(cwd) {
+            let base = definition.system_prompt.trim();
+            definition.system_prompt = if base.is_empty() {
+                rules
+            } else {
+                format!("{base}\n\n---\n\n{rules}")
+            };
+        }
     }
 
     let worker = ToolPool::new();
@@ -3528,6 +3542,8 @@ pub fn run() {
             project_fs::rename_project_path,
             project_fs::copy_project_path,
             project_fs::delete_project_path,
+            project_rules::list_project_rules,
+            project_rules::set_project_rule_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

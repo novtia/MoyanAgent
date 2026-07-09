@@ -129,13 +129,13 @@ fn ark_size(parameters: &GenerationParameters) -> String {
 }
 
 fn build_body(request: &ChatRequest, prompt: &str) -> Value {
+    // 不传 sequential_image_generation：默认即为单图；部分模型（旧版/代理）不支持该参数会 400。
     let mut body = json!({
         "model": request.model,
         "prompt": prompt,
         "size": ark_size(&request.parameters),
         "response_format": "url",
         "watermark": false,
-        "sequential_image_generation": "disabled",
         "stream": false,
     });
     let map = body.as_object_mut().unwrap();

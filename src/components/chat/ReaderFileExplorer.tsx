@@ -15,6 +15,7 @@ import { dialog } from "../ui/Dialog";
 import { toast } from "../ui/Toast";
 import {
   baseName,
+  isRulesDir,
   joinPath,
   relativePathSegments,
   useFileExplorer,
@@ -57,6 +58,10 @@ const TEXT_EXTENSIONS = [
 function isReaderTextFile(path: string): boolean {
   const lower = path.toLowerCase();
   return TEXT_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+function isMarkdownFile(name: string): boolean {
+  return name.toLowerCase().endsWith(".md");
 }
 
 function pathSep(path: string): string {
@@ -136,6 +141,7 @@ export function ReaderFileExplorer() {
   const projectRoot = useFileExplorer((s) => s.projectRoot);
   const currentDir = useFileExplorer((s) => s.currentDir);
   const entries = useFileExplorer((s) => s.entries);
+  const ruleStates = useFileExplorer((s) => s.ruleStates);
   const selectedPath = useFileExplorer((s) => s.selectedPath);
   const selectedPaths = useFileExplorer((s) => s.selectedPaths);
   const clipboard = useFileExplorer((s) => s.clipboard);
@@ -151,6 +157,7 @@ export function ReaderFileExplorer() {
   const navigate = useFileExplorer((s) => s.navigate);
   const navigateUp = useFileExplorer((s) => s.navigateUp);
   const refresh = useFileExplorer((s) => s.refresh);
+  const toggleRule = useFileExplorer((s) => s.toggleRule);
   const createDir = useFileExplorer((s) => s.createDir);
   const createFile = useFileExplorer((s) => s.createFile);
   const renameEntry = useFileExplorer((s) => s.renameEntry);
@@ -777,6 +784,8 @@ export function ReaderFileExplorer() {
     return relativePathSegments(projectRoot, currentDir);
   }, [projectRoot, currentDir]);
 
+  const inRulesDir = useMemo(() => isRulesDir(currentDir), [currentDir]);
+
   if (!projectRoot) {
     return (
       <div className="reader-files-explorer is-empty">
@@ -877,6 +886,9 @@ export function ReaderFileExplorer() {
             const selected = selectedPaths.includes(entry.path);
             const isCut = cutPaths.has(entry.path);
             const isDropTarget = dropTarget === entry.path;
+            const isRule = inRulesDir && !entry.isDir && isMarkdownFile(entry.name);
+            const ruleEnabled =
+              ruleStates[entry.name.toLowerCase()] ?? true;
             return (
               <button
                 key={entry.path}
@@ -884,7 +896,7 @@ export function ReaderFileExplorer() {
                 role="listitem"
                 draggable
                 data-path={entry.path}
-                className={`reader-files-item${selected ? " is-selected" : ""}${isCut ? " is-cut" : ""}${isDropTarget ? " is-drop-target" : ""}`}
+                className={`reader-files-item${selected ? " is-selected" : ""}${isCut ? " is-cut" : ""}${isDropTarget ? " is-drop-target" : ""}${isRule && !ruleEnabled ? " is-rule-disabled" : ""}`}
                 onClick={(e) => onItemClick(e, entry)}
                 onContextMenu={(e) => openEntryMenu(e, entry)}
                 onDragStart={(e) => onItemDragStart(e, entry)}
@@ -898,6 +910,37 @@ export function ReaderFileExplorer() {
                   {entry.isDir ? <FolderIcon /> : <FileIcon />}
                 </span>
                 <span className="reader-files-item-name">{entry.name}</span>
+                {isRule ? (
+                  <span
+                    role="switch"
+                    aria-checked={ruleEnabled}
+                    tabIndex={0}
+                    className={`reader-files-rule-toggle${ruleEnabled ? " is-on" : ""}`}
+                    title={
+                      ruleEnabled
+                        ? t("fileExplorer.ruleEnabled")
+                        : t("fileExplorer.ruleDisabled")
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void toggleRule(entry.path, !ruleEnabled);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        void toggleRule(entry.path, !ruleEnabled);
+                      }
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onDragStart={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                  >
+                    <span className="reader-files-rule-toggle-knob" />
+                  </span>
+                ) : null}
               </button>
             );
           })}

@@ -7,20 +7,19 @@
 //!
 //! Supported operations (the `action` field):
 //!
-//! | action   | required fields         | description                              |
-//! |----------|-------------------------|------------------------------------------|
-//! | `add`    | `content`               | Append one or more items (array or str)  |
-//! | `remove` | `id`                    | Delete an item by id                     |
-//! | `list`   | —                       | Return all current items                 |
-//! | `clear`  | —                       | Delete all items                         |
+//! | action   | required fields | description                                  |
+//! |----------|-----------------|----------------------------------------------|
+//! | `create` | `tasks`         | ONE-TIME: create the whole list at once      |
+//! | `update` | `tasks`         | Update the status of one or more items       |
 //!
-//! Task completion is handled by other tools via `todo_done_id`; this tool
-//! only creates and manages the list itself.
+//! The TodoList maintains its own state entirely. Task titles and details
+//! are frozen at creation time; only their `status` can change via `update`.
 //!
 //! Each item has:
-//! - `id`      – stable u64 counter, assigned on insert.
-//! - `content` – plain-text description.
-//! - `status`  – one of `"pending"`, `"in_progress"`, `"done"`, `"cancelled"`.
+//! - `id`     – simple sequential number assigned on creation (1, 2, 3, …).
+//! - `title`  – short task title (immutable).
+//! - `detail` – longer task description (immutable, may be empty).
+//! - `status` – one of `"pending"`, `"in_progress"`, `"done"`, `"cancelled"`.
 
 use std::sync::{Arc, Mutex};
 
@@ -31,10 +30,13 @@ use crate::error::{AppError, AppResult};
 
 pub const TOOL_NAME: &str = "TodoList";
 
+const VALID_STATUSES: [&str; 4] = ["pending", "in_progress", "done", "cancelled"];
+
 #[derive(Debug, Clone)]
 struct TodoItem {
     id: u64,
-    content: String,
+    title: String,
+    detail: String,
     status: String,
 }
 
@@ -42,7 +44,8 @@ impl TodoItem {
     fn to_json(&self) -> Value {
         json!({
             "id": self.id,
-            "content": self.content,
+            "title": self.title,
+            "detail": self.detail,
             "status": self.status,
         })
     }
@@ -51,39 +54,31 @@ impl TodoItem {
 #[derive(Debug, Default)]
 struct TodoStore {
     items: Vec<TodoItem>,
-    next_id: u64,
+    created: bool,
 }
 
 impl TodoStore {
-    fn add(&mut self, content: String) -> &TodoItem {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.items.push(TodoItem {
-            id,
-            content,
-            status: "pending".into(),
-        });
-        self.items.last().unwrap()
+    /// Create the whole list at once. Assigns sequential ids starting at 1.
+    fn create(&mut self, tasks: Vec<(String, String)>) {
+        self.items = tasks
+            .into_iter()
+            .enumerate()
+            .map(|(idx, (title, detail))| TodoItem {
+                id: (idx as u64) + 1,
+                title,
+                detail,
+                status: "pending".into(),
+            })
+            .collect();
+        self.created = true;
     }
 
     fn get_mut(&mut self, id: u64) -> Option<&mut TodoItem> {
         self.items.iter_mut().find(|t| t.id == id)
     }
 
-    fn remove(&mut self, id: u64) -> bool {
-        let before = self.items.len();
-        self.items.retain(|t| t.id != id);
-        self.items.len() < before
-    }
-
     fn list(&self) -> Vec<Value> {
         self.items.iter().map(TodoItem::to_json).collect()
-    }
-
-    fn clear(&mut self) -> usize {
-        let n = self.items.len();
-        self.items.clear();
-        n
     }
 }
 
@@ -116,31 +111,17 @@ impl TodoListTool {
         }
         let lines: Vec<String> = incomplete
             .iter()
-            .map(|t| format!("- [#{}] ({}) {}", t.id, t.status, t.content))
+            .map(|t| format!("- [#{}] ({}) {}", t.id, t.status, t.title))
             .collect();
         Some(format!(
             "[SYSTEM] Your task list is NOT complete. {} item(s) remain:\n{}\n\
              Continue working NOW: finish each remaining task using the appropriate \
-             tool and pass `todo_done_id` with the item id when that step succeeds. \
-             Do NOT call TodoList to change status. Do NOT stop with a summary or \
-             final reply until every item is `done` or `cancelled`.",
+             tool, then call TodoList with action `update` to set that item's status \
+             to `done`. Do NOT stop with a summary or final reply until every item is \
+             `done` or `cancelled`.",
             incomplete.len(),
             lines.join("\n")
         ))
-    }
-
-    /// Mark a todo item as done. Called by [`super::ToolPool`] when another
-    /// tool completes with `todo_done_id`.
-    pub fn mark_done(&self, id: u64) -> AppResult<Value> {
-        let mut store = self
-            .store
-            .lock()
-            .map_err(|_| AppError::Other("TodoList: store lock poisoned".into()))?;
-        let item = store.get_mut(id).ok_or_else(|| {
-            AppError::Invalid(format!("TodoList: item id={id} not found"))
-        })?;
-        item.status = "done".into();
-        Ok(item.to_json())
     }
 
     pub fn new() -> Self {
@@ -149,7 +130,7 @@ impl TodoListTool {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
                 description: "\
-Manage an in-session task list. Follow ALL of these rules strictly.\n\n\
+Manage an in-session task list that tracks its OWN state. Follow ALL rules strictly.\n\n\
 ━━━ WHEN TO USE ━━━\n\
 Only create a TodoList when the user's request involves MULTIPLE DISTINCT PHASES \
 that each require a separate tool call or verification step. \
@@ -170,50 +151,58 @@ GOOD: '撰写正文内容（目标 3 万字）', '自查字数与质量是否达
 Keep the list as short as possible: 2–5 tasks is typical. \
 If you find yourself writing 6+ tasks, reconsider — you are almost certainly \
 splitting one action into meaningless micro-tasks.\n\n\
-━━━ WORKFLOW (two phases only) ━━━\n\
-1. PLAN once: call `add` with ALL tasks as a JSON array at the very start, e.g. \
-   content: [\"撰写正文\", \"自查字数\"]. Each array element is exactly ONE task. \
-   NEVER pass the whole list as one string like \"[\\\"a\\\", \\\"b\\\"]\". \
-   Do NOT add more tasks later.\n\
-2. EXECUTE: for each task, call the appropriate working tool and pass \
-   `todo_done_id` with that task's id. On success the runtime marks it done \
-   automatically. Do NOT call TodoList to change status. \
-   The task title is fixed at creation time.\n\
-   Never add, remove, or clear items just because you started or finished a step.\n\n\
+━━━ WORKFLOW (two actions only) ━━━\n\
+1. CREATE once: call `create` with ALL tasks at the very start. `tasks` is a JSON \
+   array of objects, each { title, detail }. The runtime assigns simple numeric \
+   ids automatically (1, 2, 3, …) — do NOT invent ids. You may only call `create` \
+   ONCE per session; titles and details are then FIXED.\n\
+2. UPDATE status: as work progresses, call `update` with `tasks` as an array of \
+   { id, status } to mark items `in_progress`, `done`, or `cancelled`. \
+   Only the status changes — titles and details are immutable.\n\n\
 ━━━ DO NOT STOP EARLY ━━━\n\
-If ANY item is still `pending` or `in_progress`, you MUST keep calling tools. \
-Never end your turn with only a text summary while tasks remain — the runtime \
-will reject premature completion and ask you to continue.\n\n\
-Actions:\n\
-• add    – ONE-TIME initialisation only.\n\
-• list   – Check ids when needed.\n\
-• remove – Only if the user explicitly asks to delete a task.\n\
-• clear  – Only if the user explicitly asks to wipe everything.\n\n\
-Status lifecycle: pending → done (via `todo_done_id` on working tools) | cancelled"
+If ANY item is still `pending` or `in_progress`, you MUST keep working and then \
+call `update` to advance its status. Never end your turn with only a text summary \
+while tasks remain — the runtime will reject premature completion and ask you to \
+continue.\n\n\
+Status lifecycle: pending → in_progress → done | cancelled"
                     .to_string(),
                 schema: json!({
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["add", "remove", "list", "clear"],
-                            "description": "The operation to perform."
+                            "enum": ["create", "update"],
+                            "description": "The operation to perform. `create` builds the whole list once; `update` changes item status."
                         },
-                        "content": {
-                            "description": "For 'add': pass multiple tasks as a JSON array of strings, e.g. \
-                                [\"task one\", \"task two\"] — each element is ONE task. \
-                                Do NOT put the whole array inside a single string.",
-                            "oneOf": [
-                                { "type": "string" },
-                                { "type": "array", "items": { "type": "string" } }
-                            ]
-                        },
-                        "id": {
-                            "type": "integer",
-                            "description": "Item id (required for 'remove')."
+                        "tasks": {
+                            "type": "array",
+                            "description": "For `create`: array of { title, detail } objects — the runtime assigns numeric ids 1,2,3,…, so do NOT include id. \
+                                For `update`: array of { id, status } objects — only status may change.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {
+                                        "type": "integer",
+                                        "description": "Item id (required for `update`; ignored for `create`)."
+                                    },
+                                    "title": {
+                                        "type": "string",
+                                        "description": "Short task title (required for `create`)."
+                                    },
+                                    "detail": {
+                                        "type": "string",
+                                        "description": "Longer task description (optional for `create`)."
+                                    },
+                                    "status": {
+                                        "type": "string",
+                                        "enum": ["pending", "in_progress", "done", "cancelled"],
+                                        "description": "New status (required for `update`)."
+                                    }
+                                }
+                            }
                         }
                     },
-                    "required": ["action"]
+                    "required": ["action", "tasks"]
                 }),
                 read_only: false,
                 concurrency_safe: false,
@@ -222,100 +211,84 @@ Status lifecycle: pending → done (via `todo_done_id` on working tools) | cance
     }
 }
 
-/// Extract optional `todo_done_id` from a tool input object.
-pub fn extract_todo_done_id(input: &Value) -> Option<u64> {
-    input.get("todo_done_id").and_then(Value::as_u64)
-}
-
-/// Return a copy of `input` with `todo_done_id` removed so individual tools
-/// do not see an unknown field during validation.
-pub fn strip_todo_done_id(input: &Value) -> Value {
-    let mut out = input.clone();
-    if let Some(obj) = out.as_object_mut() {
-        obj.remove("todo_done_id");
+/// Parse the `tasks` array for `create` into `(title, detail)` pairs.
+fn parse_create_tasks(tasks: &Value) -> AppResult<Vec<(String, String)>> {
+    let arr = tasks.as_array().ok_or_else(|| {
+        AppError::Invalid("TodoList create: `tasks` must be an array of objects".into())
+    })?;
+    if arr.is_empty() {
+        return Err(AppError::Invalid(
+            "TodoList create: `tasks` must contain at least one task".into(),
+        ));
     }
-    out
+    let mut out = Vec::with_capacity(arr.len());
+    for (idx, v) in arr.iter().enumerate() {
+        let obj = v.as_object().ok_or_else(|| {
+            AppError::Invalid(format!(
+                "TodoList create: task at index {idx} must be an object with `title`"
+            ))
+        })?;
+        let title = obj
+            .get("title")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::Invalid(format!(
+                    "TodoList create: task at index {idx} is missing a non-empty `title`"
+                ))
+            })?;
+        let detail = obj
+            .get("detail")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        out.push((title.to_string(), detail));
+    }
+    Ok(out)
 }
 
-/// Inject the shared `todo_done_id` property into a tool JSON schema.
-pub fn inject_todo_done_schema(schema: &mut Value) {
-    let Some(props) = schema.get_mut("properties").and_then(|p| p.as_object_mut()) else {
-        return;
-    };
-    props.insert(
-        "todo_done_id".into(),
-        json!({
-            "type": "integer",
-            "description": "When this tool call completes a TodoList step, pass the item id here. \
-                On success the runtime marks it done automatically. Do NOT call TodoList to change status."
-        }),
-    );
-}
-
-/// Expand `add` content into individual task strings.
-///
-/// Returns `(tasks, split_from_string)` where `split_from_string` is true when
-/// a single string that looked like a JSON array was auto-split.
-fn expand_add_contents(content_val: Value) -> AppResult<(Vec<String>, bool)> {
-    match content_val {
-        Value::String(s) => {
-            let texts = parse_task_text(&s);
-            let split = texts.len() > 1 && looks_like_json_array_string(&s);
-            Ok((texts, split))
+/// Parse the `tasks` array for `update` into `(id, status)` pairs.
+fn parse_update_tasks(tasks: &Value) -> AppResult<Vec<(u64, String)>> {
+    let arr = tasks.as_array().ok_or_else(|| {
+        AppError::Invalid("TodoList update: `tasks` must be an array of objects".into())
+    })?;
+    if arr.is_empty() {
+        return Err(AppError::Invalid(
+            "TodoList update: `tasks` must contain at least one item".into(),
+        ));
+    }
+    let mut out = Vec::with_capacity(arr.len());
+    for (idx, v) in arr.iter().enumerate() {
+        let obj = v.as_object().ok_or_else(|| {
+            AppError::Invalid(format!(
+                "TodoList update: task at index {idx} must be an object with `id` and `status`"
+            ))
+        })?;
+        let id = obj.get("id").and_then(Value::as_u64).ok_or_else(|| {
+            AppError::Invalid(format!(
+                "TodoList update: task at index {idx} is missing a valid integer `id`"
+            ))
+        })?;
+        let status = obj
+            .get("status")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                AppError::Invalid(format!(
+                    "TodoList update: task at index {idx} is missing a `status`"
+                ))
+            })?;
+        if !VALID_STATUSES.contains(&status) {
+            return Err(AppError::Invalid(format!(
+                "TodoList update: invalid status {status:?}; must be one of pending|in_progress|done|cancelled"
+            )));
         }
-        Value::Array(arr) => {
-            let mut texts = Vec::new();
-            let mut split_from_string = false;
-            for v in arr {
-                match v {
-                    Value::String(s) => {
-                        let parts = parse_task_text(&s);
-                        if parts.len() > 1 && looks_like_json_array_string(&s) {
-                            split_from_string = true;
-                        }
-                        texts.extend(parts);
-                    }
-                    _ => {}
-                }
-            }
-            Ok((texts, split_from_string))
-        }
-        _ => Err(AppError::Invalid(
-            "TodoList add: `content` must be a string or array of strings".into(),
-        )),
+        out.push((id, status.to_string()));
     }
-}
-
-fn looks_like_json_array_string(s: &str) -> bool {
-    let trimmed = s.trim();
-    trimmed.starts_with('[') && trimmed.ends_with(']')
-}
-
-/// Parse one task string; auto-split when the model stringifies a JSON array.
-fn parse_task_text(s: &str) -> Vec<String> {
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        return Vec::new();
-    }
-
-    if looks_like_json_array_string(trimmed) {
-        if let Ok(Value::Array(arr)) = serde_json::from_str(trimmed) {
-            let mut out = Vec::new();
-            for v in arr {
-                if let Value::String(text) = v {
-                    let t = text.trim();
-                    if !t.is_empty() {
-                        out.push(t.to_string());
-                    }
-                }
-            }
-            if out.len() > 1 {
-                return out;
-            }
-        }
-    }
-
-    vec![trimmed.to_string()]
+    Ok(out)
 }
 
 impl Tool for TodoListTool {
@@ -330,25 +303,15 @@ impl Tool for TodoListTool {
             .ok_or_else(|| AppError::Invalid("TodoList: `action` must be a string".into()))?;
 
         match action {
-            "add" => {
-                if input.get("content").is_none() {
-                    return Err(AppError::Invalid(
-                        "TodoList add: `content` is required".into(),
-                    ));
-                }
+            "create" => {
+                parse_create_tasks(input.get("tasks").unwrap_or(&Value::Null))?;
             }
-            "remove" => {
-                if input.get("id").and_then(Value::as_u64).is_none() {
-                    return Err(AppError::Invalid(
-                        "TodoList remove: `id` must be a non-negative integer".into(),
-                    ));
-                }
+            "update" => {
+                parse_update_tasks(input.get("tasks").unwrap_or(&Value::Null))?;
             }
-            "list" | "clear" => {}
             other => {
                 return Err(AppError::Invalid(format!(
-                    "TodoList: unknown action {:?}; must be one of add|remove|list|clear",
-                    other
+                    "TodoList: unknown action {other:?}; must be one of create|update"
                 )));
             }
         }
@@ -365,61 +328,51 @@ impl Tool for TodoListTool {
                 .unwrap_or("")
                 .to_string();
 
+            let tasks = invocation.input.get("tasks").cloned().unwrap_or(Value::Null);
+
             let mut store = store
                 .lock()
                 .map_err(|_| AppError::Other("TodoList: store lock poisoned".into()))?;
 
             match action.as_str() {
-                "add" => {
-                    let content_val = invocation.input.get("content").cloned().unwrap_or(Value::Null);
-                    let (texts, split_from_string) = expand_add_contents(content_val)?;
-                    if texts.is_empty() {
-                        return Ok(ToolResult::error("TodoList add: no content items provided"));
+                "create" => {
+                    if store.created {
+                        return Ok(ToolResult::error(
+                            "TodoList create: the list was already created. Use action `update` \
+                             to change item status; titles and details are fixed.",
+                        ));
                     }
-                    let mut added = Vec::with_capacity(texts.len());
-                    for text in texts {
-                        let item = store.add(text);
-                        added.push(item.to_json());
-                    }
-                    let mut result = json!({
-                        "added": added,
-                        "total": store.items.len()
-                    });
-                    if split_from_string {
-                        result["note"] = json!(
-                            "Detected a JSON array written as one string; split into separate tasks. \
-                             Pass `content` as a JSON array of strings, not a stringified array."
-                        );
-                    }
-                    Ok(ToolResult::ok(result))
-                }
-
-                "remove" => {
-                    let id = invocation.input.get("id").and_then(Value::as_u64).unwrap();
-                    if store.remove(id) {
-                        Ok(ToolResult::ok(json!({
-                            "removed_id": id,
-                            "total": store.items.len()
-                        })))
-                    } else {
-                        Ok(ToolResult::error(format!(
-                            "TodoList remove: item id={id} not found"
-                        )))
-                    }
-                }
-
-                "list" => {
-                    let items = store.list();
-                    let total = items.len();
+                    let parsed = parse_create_tasks(&tasks)?;
+                    store.create(parsed);
                     Ok(ToolResult::ok(json!({
-                        "items": items,
-                        "total": total
+                        "items": store.list(),
+                        "total": store.items.len()
                     })))
                 }
 
-                "clear" => {
-                    let removed = store.clear();
-                    Ok(ToolResult::ok(json!({ "cleared": removed })))
+                "update" => {
+                    if !store.created {
+                        return Ok(ToolResult::error(
+                            "TodoList update: no list exists yet. Call action `create` first.",
+                        ));
+                    }
+                    let parsed = parse_update_tasks(&tasks)?;
+                    for (id, _) in &parsed {
+                        if store.get_mut(*id).is_none() {
+                            return Ok(ToolResult::error(format!(
+                                "TodoList update: item id={id} not found"
+                            )));
+                        }
+                    }
+                    for (id, status) in parsed {
+                        if let Some(item) = store.get_mut(id) {
+                            item.status = status;
+                        }
+                    }
+                    Ok(ToolResult::ok(json!({
+                        "items": store.list(),
+                        "total": store.items.len()
+                    })))
                 }
 
                 other => Ok(ToolResult::error(format!(
@@ -435,18 +388,68 @@ mod tests {
     use super::*;
 
     #[test]
+    fn create_assigns_sequential_ids() {
+        let mut store = TodoStore::default();
+        store.create(vec![
+            ("撰写正文".into(), "目标 3 万字".into()),
+            ("自查字数".into(), String::new()),
+        ]);
+        assert_eq!(store.items.len(), 2);
+        assert_eq!(store.items[0].id, 1);
+        assert_eq!(store.items[1].id, 2);
+        assert_eq!(store.items[0].title, "撰写正文");
+        assert_eq!(store.items[0].detail, "目标 3 万字");
+        assert_eq!(store.items[0].status, "pending");
+    }
+
+    #[test]
+    fn parse_create_tasks_requires_title() {
+        let tasks = json!([{ "detail": "no title" }]);
+        assert!(parse_create_tasks(&tasks).is_err());
+    }
+
+    #[test]
+    fn parse_create_tasks_ignores_supplied_id() {
+        let tasks = json!([
+            { "id": 99, "title": "任务一", "detail": "详情一" },
+            { "id": 5, "title": "任务二" }
+        ]);
+        let parsed = parse_create_tasks(&tasks).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0], ("任务一".to_string(), "详情一".to_string()));
+        assert_eq!(parsed[1], ("任务二".to_string(), String::new()));
+    }
+
+    #[test]
+    fn parse_update_tasks_validates_status() {
+        let bad = json!([{ "id": 1, "status": "bogus" }]);
+        assert!(parse_update_tasks(&bad).is_err());
+        let good = json!([{ "id": 1, "status": "done" }]);
+        let parsed = parse_update_tasks(&good).unwrap();
+        assert_eq!(parsed, vec![(1u64, "done".to_string())]);
+    }
+
+    #[test]
+    fn parse_update_tasks_requires_id() {
+        let tasks = json!([{ "status": "done" }]);
+        assert!(parse_update_tasks(&tasks).is_err());
+    }
+
+    #[test]
     fn incomplete_nudge_when_items_open() {
         let tool = TodoListTool::new();
         {
             let mut store = tool.store.lock().unwrap();
-            store.add("task a".into());
-            store.add("task b".into());
+            store.create(vec![
+                ("task a".into(), String::new()),
+                ("task b".into(), String::new()),
+            ]);
             store.items[0].status = "done".into();
         }
         let msg = tool.incomplete_nudge_message().expect("nudge");
         assert!(msg.contains("NOT complete"));
         assert!(msg.contains("task b"));
-        assert!(msg.contains("todo_done_id"));
+        assert!(msg.contains("update"));
     }
 
     #[test]
@@ -454,68 +457,20 @@ mod tests {
         let tool = TodoListTool::new();
         {
             let mut store = tool.store.lock().unwrap();
-            let id = store.add("task".into()).id;
-            store.get_mut(id).unwrap().status = "done".into();
+            store.create(vec![("task".into(), String::new())]);
+            store.get_mut(1).unwrap().status = "done".into();
         }
         assert!(tool.incomplete_nudge_message().is_none());
     }
 
     #[test]
-    fn mark_done_preserves_title() {
-        let tool = TodoListTool::new();
-        let id = {
-            let mut store = tool.store.lock().unwrap();
-            store.add("重写 P013".into()).id
-        };
-        let updated = tool.mark_done(id).unwrap();
-        assert_eq!(updated["content"], "重写 P013");
-        assert_eq!(updated["status"], "done");
-    }
-
-    #[test]
-    fn mark_done_unknown_id_errors() {
-        let tool = TodoListTool::new();
-        assert!(tool.mark_done(999).is_err());
-    }
-
-    #[test]
-    fn expand_splits_stringified_json_array() {
-        let raw = r#"["阅读并解析原第九章", "撰写第九章正文", "对正文进行字数估算"]"#;
-        let (texts, split) = expand_add_contents(Value::String(raw.into())).unwrap();
-        assert!(split);
-        assert_eq!(texts.len(), 3);
-        assert_eq!(texts[0], "阅读并解析原第九章");
-    }
-
-    #[test]
-    fn expand_keeps_single_task_string() {
-        let (texts, split) =
-            expand_add_contents(Value::String("撰写第九章正文".into())).unwrap();
-        assert!(!split);
-        assert_eq!(texts, vec!["撰写第九章正文".to_string()]);
-    }
-
-    #[test]
-    fn expand_splits_array_element_that_is_stringified_json_array() {
-        let raw = json!([
-            r#"["任务一", "任务二", "任务三"]"#
-        ]);
-        let (texts, split) = expand_add_contents(raw).unwrap();
-        assert!(split);
-        assert_eq!(texts.len(), 3);
-    }
-
-    #[test]
-    fn strip_todo_done_id_removes_field() {
-        let input = json!({ "path": "foo.txt", "todo_done_id": 1 });
-        let stripped = strip_todo_done_id(&input);
-        assert!(stripped.get("todo_done_id").is_none());
-        assert_eq!(stripped["path"], "foo.txt");
-    }
-
-    #[test]
-    fn extract_todo_done_id_reads_field() {
-        let input = json!({ "todo_done_id": 42 });
-        assert_eq!(extract_todo_done_id(&input), Some(42));
+    fn update_preserves_title_and_detail() {
+        let mut store = TodoStore::default();
+        store.create(vec![("重写 P013".into(), "细节说明".into())]);
+        store.get_mut(1).unwrap().status = "done".into();
+        let item = &store.items[0];
+        assert_eq!(item.title, "重写 P013");
+        assert_eq!(item.detail, "细节说明");
+        assert_eq!(item.status, "done");
     }
 }

@@ -186,6 +186,15 @@ mod tests {
     }
 
     #[test]
+    fn replace_single_paragraph_multiline_no_duplication() {
+        // Regression: replacing "你好。" with "你好。\n新世界。" at its own index
+        // must overwrite in place, never leave the old paragraph behind.
+        let mut paras = vec!["你好。".to_string(), "结尾".to_string()];
+        replace_paragraph_range(&mut paras, 1, 1, "你好。\n新世界。");
+        assert_eq!(paras, vec!["你好。", "新世界。", "结尾"]);
+    }
+
+    #[test]
     fn number_paragraph_range_full_matches_whole_file() {
         let text = "a\n\nb";
         assert_eq!(number_paragraphs(text), number_paragraph_range(text, 1, 3));

@@ -21,7 +21,9 @@ use serde_json::Value;
 
 use crate::ai::agent::tools::paragraph::{number_paragraph_range, paragraph_count};
 use crate::ai::agent::tools::project_path::{self, FILE_REF_DESC};
-use crate::ai::agent::tools::read_receipt::{expand_read_range, MIN_READ_CONTEXT_LINES};
+use crate::ai::agent::tools::read_receipt::{
+    content_hash, expand_read_range, MIN_READ_CONTEXT_LINES,
+};
 use crate::ai::agent::tools::text_decode::detect_and_decode;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
@@ -207,8 +209,11 @@ impl Tool for FileReadTool {
             if let Ok(mut s) = invocation.context.nested_memory_attachment_triggers.lock() {
                 s.insert(canonical.clone());
             }
+            // Record the receipt against the *full* file content hash so a
+            // later Edit can tell whether the file changed out-of-band, even
+            // when this Read only returned a ranged window.
             if let Ok(mut s) = invocation.context.read_file_state.lock() {
-                s.insert(canonical.clone());
+                s.insert(canonical.clone(), content_hash(&text));
             }
 
             Ok(ToolResult::ok(serde_json::json!({

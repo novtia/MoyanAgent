@@ -152,6 +152,69 @@ export function parseEditParagraphRange(
   return { from, to };
 }
 
+/** Edit mutation kind, mirrors the backend `Edit` `mode` field. */
+export type EditMode = "replace" | "insert_after" | "delete";
+
+/** Coerce a tool `mode` value (input or output) to a known {@link EditMode}. */
+export function readEditMode(value: unknown): EditMode {
+  if (value === "insert_after" || value === "insert" || value === "append_after") {
+    return "insert_after";
+  }
+  if (value === "delete" || value === "remove") return "delete";
+  return "replace";
+}
+
+/** Read a 1-based paragraph value from tool input/output (0 allowed here). */
+export function readAppliedParagraph(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return Math.trunc(value);
+  }
+  if (typeof value === "string" && /^\d+$/.test(value)) return parseInt(value, 10);
+  return undefined;
+}
+
+/**
+ * Reconstruct the pre-edit file text from the authoritative post-edit disk
+ * text, given the applied range and the removed `before` snippet the backend
+ * returned. Used so the reader diff's reject/restore stays exact without
+ * replaying the edit against a possibly-stale in-memory tab.
+ */
+export function revertEditOnDisk(
+  diskText: string,
+  mode: EditMode,
+  appliedFrom: number,
+  appliedTo: number,
+  before: string,
+): string {
+  const paras = splitParagraphs(diskText);
+  const beforeParas = splitParagraphs(before);
+
+  if (mode === "insert_after") {
+    if (appliedFrom < 1 || appliedTo < appliedFrom || appliedTo > paras.length) {
+      return diskText;
+    }
+    paras.splice(appliedFrom - 1, appliedTo - appliedFrom + 1);
+    return paras.join("\n");
+  }
+
+  if (mode === "delete") {
+    const at = Math.max(0, Math.min(appliedFrom - 1, paras.length));
+    paras.splice(at, 0, ...(beforeParas.length ? beforeParas : [""]));
+    return paras.join("\n");
+  }
+
+  // replace
+  if (appliedFrom < 1 || appliedTo < appliedFrom || appliedTo > paras.length) {
+    return diskText;
+  }
+  paras.splice(
+    appliedFrom - 1,
+    appliedTo - appliedFrom + 1,
+    ...(beforeParas.length ? beforeParas : [""]),
+  );
+  return paras.join("\n");
+}
+
 /** Text of paragraphs in inclusive 1-based range `[from, to]`. */
 export function paragraphsAtRange(text: string, from: number, to: number): string {
   const paras = splitParagraphs(text);

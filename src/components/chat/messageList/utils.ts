@@ -161,11 +161,20 @@ function parseRawItems(arr: unknown[]): TodoItem[] {
   return arr.flatMap((v) => {
     if (!v || typeof v !== "object") return [];
     const item = v as Record<string, unknown>;
-    if (typeof item.id !== "number" || typeof item.content !== "string") return [];
+    if (typeof item.id !== "number") return [];
+    // Backend field is `title`; older sessions used `content`.
+    const content =
+      typeof item.title === "string"
+        ? item.title
+        : typeof item.content === "string"
+          ? item.content
+          : null;
+    if (content == null) return [];
     return [
       {
         id: item.id as number,
-        content: item.content as string,
+        content,
+        detail: typeof item.detail === "string" ? item.detail : undefined,
         status: (item.status as TodoItem["status"]) ?? "pending",
       },
     ];
@@ -173,10 +182,10 @@ function parseRawItems(arr: unknown[]): TodoItem[] {
 }
 
 /**
- * Replay todo list state from all tool_use blocks in order.
- * TodoList blocks create/manage items; other tools complete items via
- * `todo_done_id` / `output.todo_updated`. Legacy TodoList `update` blocks
- * are still replayed for older sessions.
+ * Replay todo list state from all TodoList tool_use blocks in order.
+ * The TodoList tool maintains its own state: `create` and `update` each
+ * return the full item list, so we replace local state wholesale from the
+ * latest successful block's `items`.
  */
 export function replayTodoState(blocks: TodoBlock[]): {
   items: TodoItem[];
@@ -185,75 +194,10 @@ export function replayTodoState(blocks: TodoBlock[]): {
   let items: TodoItem[] = [];
   let busy = false;
 
-  function applyTodoUpdated(u: Record<string, unknown>) {
-    items = items.map((it) => {
-      if (it.id !== (u.id as number)) return it;
-      const nextStatus =
-        typeof u.status === "string"
-          ? (u.status as TodoItem["status"])
-          : it.status;
-      const titleFrozen = nextStatus === "done" || nextStatus === "cancelled";
-      return {
-        id: it.id,
-        content: titleFrozen
-          ? it.content
-          : typeof u.content === "string"
-            ? u.content
-            : it.content,
-        status: nextStatus,
-      };
-    });
-  }
-
-  function markInProgress(id: number) {
-    items = items.map((it) =>
-      it.id === id ? { ...it, status: "in_progress" as const } : it,
-    );
-  }
-
   for (const block of blocks) {
-    if (block.tool === "TodoList") {
-      if (block.status === "pending") {
-        busy = true;
-        continue;
-      }
-      if (block.status === "error") continue;
-
-      const out =
-        block.output && typeof block.output === "object"
-          ? (block.output as Record<string, unknown>)
-          : {};
-      const inp =
-        block.input && typeof block.input === "object"
-          ? (block.input as Record<string, unknown>)
-          : {};
-      const action = String(inp.action ?? "");
-
-      if (action === "list" && Array.isArray(out.items)) {
-        items = parseRawItems(out.items as unknown[]);
-      } else if (action === "add" && Array.isArray(out.added)) {
-        items = [...items, ...parseRawItems(out.added as unknown[])];
-      } else if (action === "update" && out.updated) {
-        applyTodoUpdated(out.updated as Record<string, unknown>);
-      } else if (action === "remove" && typeof out.removed_id === "number") {
-        items = items.filter((it) => it.id !== out.removed_id);
-      } else if (action === "clear") {
-        items = [];
-      }
-      continue;
-    }
-
-    const inp =
-      block.input && typeof block.input === "object"
-        ? (block.input as Record<string, unknown>)
-        : {};
-    const todoDoneId =
-      typeof inp.todo_done_id === "number" ? inp.todo_done_id : null;
+    if (block.tool !== "TodoList") continue;
 
     if (block.status === "pending") {
-      if (todoDoneId != null) {
-        markInProgress(todoDoneId);
-      }
       busy = true;
       continue;
     }
@@ -263,8 +207,9 @@ export function replayTodoState(blocks: TodoBlock[]): {
       block.output && typeof block.output === "object"
         ? (block.output as Record<string, unknown>)
         : {};
-    if (out.todo_updated && typeof out.todo_updated === "object") {
-      applyTodoUpdated(out.todo_updated as Record<string, unknown>);
+
+    if (Array.isArray(out.items)) {
+      items = parseRawItems(out.items as unknown[]);
     }
   }
 

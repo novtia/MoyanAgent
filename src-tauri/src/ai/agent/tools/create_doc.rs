@@ -17,6 +17,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
+use crate::ai::agent::tools::read_receipt::content_hash;
 use crate::ai::agent::tools::text_decode::normalize_tool_string;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
@@ -55,10 +56,6 @@ impl CreateDocTool {
                             "type": "string",
                             "description": "Document title; also used as the file name."
                         },
-                        "content": {
-                            "type": "string",
-                            "description": "Full document text."
-                        },
                         "doc_type": {
                             "type": "string",
                             "enum": ["md", "txt"],
@@ -69,9 +66,13 @@ impl CreateDocTool {
                             "description": "Optional subfolder within the project. \
                                 Single folder name or breadcrumb, e.g. `notes`, \
                                 `网文测试\\草稿`, `chapters\\01`. Omit to save at project root."
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Full document text. Fill this in LAST, after title/doc_type/folder."
                         }
                     },
-                    "required": ["title", "content", "doc_type"]
+                    "required": ["title", "doc_type", "content"]
                 }),
                 read_only: false,
                 concurrency_safe: false,
@@ -159,10 +160,11 @@ impl Tool for CreateDocTool {
             // joined path if canonicalization fails for any reason.
             let canonical = std::fs::canonicalize(&path).unwrap_or(path);
 
-            // Stamp a read receipt so a follow-up `Edit` on this file works
-            // without a separate `Read` round-trip.
+            // Stamp a read receipt (keyed by the content just written) so a
+            // follow-up `Edit` on this file works without a separate `Read`
+            // round-trip and can still detect later out-of-band changes.
             if let Ok(mut s) = invocation.context.read_file_state.lock() {
-                s.insert(canonical.clone());
+                s.insert(canonical.clone(), content_hash(&content));
             }
 
             let chars = content.chars().filter(|c| !c.is_whitespace()).count();

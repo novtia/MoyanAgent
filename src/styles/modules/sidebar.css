@@ -125,6 +125,60 @@
   color: var(--ink-mute);
 }
 
+/* ─── Active (in-progress) sessions section ─── */
+.side-active-section {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-side);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.side-active-section-header {
+  padding-top: 2px;
+}
+.side-active-dot,
+.side-active-item-dot {
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--green-600, #22c55e);
+}
+.side-active-dot {
+  width: 7px;
+  height: 7px;
+  animation: side-active-pulse 1.4s ease-in-out infinite;
+}
+.side-active-item-dot {
+  width: 6px;
+  height: 6px;
+  animation: side-active-pulse 1.4s ease-in-out infinite;
+}
+.side-active-item {
+  font: inherit;
+  text-align: left;
+  width: 100%;
+}
+.side-active-item .chat-title {
+  color: var(--ink);
+}
+@keyframes side-active-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.7);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .side-active-dot,
+  .side-active-item-dot {
+    animation: none;
+  }
+}
+
 /* ─── Shared small icon button ─── */
 .side-icon-btn {
   display: flex;

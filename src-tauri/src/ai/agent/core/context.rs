@@ -8,7 +8,7 @@
 //! Cheap to share via `Arc`; mutate via inner `Mutex` only where the TS
 //! side does so (file caches, nested memory paths).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -49,10 +49,12 @@ pub struct ToolUseContext {
     /// tasks keep an isolated controller.
     pub abort: AbortSignal,
 
-    /// Files the model has already Read this session. Used by FileReadTool
-    /// to short-circuit unchanged reads, and by attachment rendering to
-    /// avoid duplicate `nested_memory` injections.
-    pub read_file_state: Arc<Mutex<HashSet<PathBuf>>>,
+    /// Files the model has already Read this session, mapped to the content
+    /// hash observed at that read/write. Used by FileReadTool to short-circuit
+    /// unchanged reads, by Edit/Write to enforce the read-first receipt, and by
+    /// Edit to detect that a file was mutated out-of-band (stale receipt) before
+    /// applying paragraph-numbered edits.
+    pub read_file_state: Arc<Mutex<HashMap<PathBuf, u64>>>,
 
     /// Paths that triggered a nested-memory attachment on this turn.
     pub nested_memory_attachment_triggers: Arc<Mutex<HashSet<PathBuf>>>,
@@ -282,7 +284,7 @@ impl ToolUseContextBuilder {
             agent_type: self.agent_type,
             token_logger: self.token_logger,
             abort: signal,
-            read_file_state: Arc::new(Mutex::new(HashSet::new())),
+            read_file_state: Arc::new(Mutex::new(HashMap::new())),
             nested_memory_attachment_triggers: Arc::new(Mutex::new(HashSet::new())),
             loaded_nested_memory_paths: Arc::new(Mutex::new(HashSet::new())),
             user_context: self.user_context,

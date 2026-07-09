@@ -18,14 +18,13 @@ import {
 } from "../config/chatMode";
 import { useRoleState, resolveRoleStateScope, type RoleStateOp } from "./roleState";
 import {
-  applyParagraphRangeEdit,
-  revertParagraphRangeEdit,
   useReader,
   readerDocFromToolOutput,
   stripParagraphLabels,
   resolveToolFilePath,
-  parseEditParagraphRange,
-  paragraphsAtRange,
+  readEditMode,
+  readAppliedParagraph,
+  revertEditOnDisk,
   inferFileType,
 } from "./reader";
 import { useSettings } from "./settings";
@@ -1283,58 +1282,66 @@ async function handleReaderToolComplete(
     const out = (output && typeof output === "object" ? output : {}) as Record<string, unknown>;
     const contentRaw = typeof inp.content === "string" ? inp.content : "";
     const content = normalizeToolContent(contentRaw);
-    const range = parseEditParagraphRange(input);
-    if (range == null) return;
-    const { from: paragraphFrom, to: paragraphTo } = range;
+    const mode = readEditMode(out.mode ?? inp.mode);
 
-    const beforeFromOutput =
-      typeof out.before === "string" ? out.before : undefined;
+    // The applied range (post-shift) tells us where the new/removed text sits
+    // in the authoritative on-disk text. Fall back to the requested range.
+    const appliedFrom =
+      readAppliedParagraph(out.paragraph_from) ??
+      readAppliedParagraph(inp.paragraph_from) ??
+      1;
+    const appliedTo =
+      readAppliedParagraph(out.paragraph_to) ?? appliedFrom;
 
-    let textBefore = existing?.text;
-    if (textBefore == null) {
-      const sessionId = useSession.getState().activeId;
-      if (!sessionId) return;
-      try {
-        const disk = await api.readProjectFile(sessionId, path);
-        textBefore =
-          beforeFromOutput != null
-            ? revertParagraphRangeEdit(
-                disk.text,
-                paragraphFrom,
-                content,
-                beforeFromOutput,
-              ) ?? disk.text
-            : disk.text;
-        reader.openDoc(
-          {
-            path,
-            text: disk.text,
-            fileType: inferFileType(path),
-            encoding: disk.encoding,
-            hadBom: disk.hadBom,
-          },
-          { activate: false },
-        );
-        existing = reader.getTabByPath(path);
-      } catch (e) {
-        console.warn("Edit: failed to load file for reader diff", e);
-        return;
-      }
+    const sessionId = useSession.getState().activeId;
+    if (!sessionId) return;
+
+    // The backend already wrote the edit; read the file back so the reader's
+    // after-text is authoritative (never a stale in-memory replay that could
+    // be auto-saved back over a correct on-disk edit).
+    let diskText: string;
+    let diskEncoding: string | undefined;
+    let diskHadBom: boolean | undefined;
+    try {
+      const disk = await api.readProjectFile(sessionId, path);
+      diskText = disk.text;
+      diskEncoding = disk.encoding;
+      diskHadBom = disk.hadBom;
+    } catch (e) {
+      console.warn("Edit: failed to load file for reader diff", e);
+      return;
     }
 
-    const before =
-      beforeFromOutput ?? paragraphsAtRange(textBefore, paragraphFrom, paragraphTo);
-    const textAfter = applyParagraphRangeEdit(
-      textBefore,
-      paragraphFrom,
-      paragraphTo,
-      content,
+    const textAfter = diskText;
+    const textBefore = revertEditOnDisk(
+      diskText,
+      mode,
+      appliedFrom,
+      appliedTo,
+      "",
     );
-    if (textAfter == null) return;
+
+    if (!existing) {
+      reader.openDoc(
+        {
+          path,
+          text: diskText,
+          fileType: inferFileType(path),
+          encoding: diskEncoding,
+          hadBom: diskHadBom,
+        },
+        { activate: false },
+      );
+      existing = reader.getTabByPath(path);
+    }
+
+    const beforeDisplay = "";
+    const afterDisplay = mode === "delete" ? "" : stripParagraphLabels(content);
+
     reader.appendPendingDiff(path, {
-      before: normalizeDiffText(before),
-      after: normalizeDiffText(stripParagraphLabels(content)),
-      paragraphNumber: paragraphFrom,
+      before: normalizeDiffText(beforeDisplay),
+      after: normalizeDiffText(afterDisplay),
+      paragraphNumber: appliedFrom,
       textBefore,
       textAfter,
     });

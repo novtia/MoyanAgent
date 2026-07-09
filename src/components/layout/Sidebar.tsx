@@ -65,6 +65,9 @@ export function Sidebar({
 
         <div className="side-section">
           <div className="side-section-scroll">
+            {/* ── 进行中会话（动态区域，滚动时固定在顶部）── */}
+            <ActiveSessionsSection onOpenChat={onOpenChat} />
+
             {/* ── 项目区块（有项目时显示）── */}
             {hasProjects && (
               <div className="side-project-section">
@@ -103,6 +106,49 @@ export function Sidebar({
         </button>
       </div>
     </aside>
+  );
+}
+
+// ─── Active (in-progress) sessions section ───────────────────────────────────
+
+interface ActiveSessionsSectionProps {
+  onOpenChat: () => void;
+}
+
+function ActiveSessionsSection({ onOpenChat }: ActiveSessionsSectionProps) {
+  const { t } = useTranslation();
+  const sessions = useSession((s) => s.sessions);
+  const busyBySession = useSession((s) => s.busyBySession);
+  const activeId = useSession((s) => s.activeId);
+  const switchTo = useSession((s) => s.switchTo);
+
+  const busySessions = sessions.filter((s) => busyBySession[s.id]);
+  if (busySessions.length === 0) return null;
+
+  return (
+    <div className="side-active-section">
+      <div className="side-section-header side-active-section-header">
+        <span className="side-active-dot" aria-hidden="true" />
+        <span className="side-section-title-text">{t("sidebar.activeChats")}</span>
+      </div>
+      <div className="chat-list">
+        {busySessions.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            className={`chat-item side-active-item ${activeId === s.id ? "active" : ""}`}
+            title={s.title}
+            onClick={() => {
+              switchTo(s.id);
+              onOpenChat();
+            }}
+          >
+            <span className="side-active-item-dot" aria-hidden="true" />
+            <span className="chat-title">{s.title}</span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
