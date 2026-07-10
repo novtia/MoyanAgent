@@ -52,6 +52,7 @@ export const CAPABILITY_OPTIONS = [
   { id: "reasoning", label: "推理" },
   { id: "image", label: "生图" },
   { id: "video", label: "生视频" },
+  { id: "multimodal-ref", label: "多模态参考" },
   { id: "tools", label: "工具" },
   { id: "text", label: "文本" },
 ] as const;

@@ -447,6 +447,8 @@ const enUS: Resource = {
     editRemoveImage: "Remove image",
     editAddMedia: "Add image or audio",
     editRemoveMedia: "Remove media",
+    videoModeMismatch: "Message media does not match this generation mode: {{hint}}",
+    videoModeMismatchGeneric: "Message media count does not match the generation mode",
     thinkingToggle: "Reasoning",
     thinkingStreaming: "Thinking",
     thinkingHint: "Click to expand or collapse",

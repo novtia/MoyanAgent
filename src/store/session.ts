@@ -248,11 +248,15 @@ function resolvedMediaRole(
   return null;
 }
 
-function validateVideoComposer(composer: ComposerState, prompt: string): boolean {
-  const images = composer.attachments.filter((a) => a.mime.startsWith("image/")).length;
-  const audio = composer.attachments.filter((a) => a.mime.startsWith("audio/")).length;
-  const videos = composer.attachments.filter((a) => a.mime.startsWith("video/")).length;
-  switch (composer.videoMode) {
+function validateVideoModeAttachments(
+  mode: VideoGenerationMode,
+  media: Array<{ mime: string }>,
+  prompt: string,
+): boolean {
+  const images = media.filter((a) => a.mime.startsWith("image/")).length;
+  const audio = media.filter((a) => a.mime.startsWith("audio/")).length;
+  const videos = media.filter((a) => a.mime.startsWith("video/")).length;
+  switch (mode) {
     case "text":
       return !!prompt && images + audio + videos === 0;
     case "first_frame":
@@ -262,6 +266,72 @@ function validateVideoComposer(composer: ComposerState, prompt: string): boolean
     case "reference":
       return images <= 9 && audio <= 3 && videos <= 3 && images + videos >= 1;
   }
+}
+
+/**
+ * If attachments no longer match the recorded mode, pick a compatible
+ * mode when the mapping is unambiguous (e.g. all images removed → text).
+ */
+function coerceVideoModeForMedia(
+  mode: VideoGenerationMode | string | undefined,
+  media: Array<{ mime: string }>,
+  prompt: string,
+): VideoGenerationMode | null {
+  const resolved: VideoGenerationMode =
+    mode === "first_frame" ||
+    mode === "first_last" ||
+    mode === "reference" ||
+    mode === "text"
+      ? mode
+      : "text";
+  if (validateVideoModeAttachments(resolved, media, prompt)) return resolved;
+
+  const images = media.filter((a) => a.mime.startsWith("image/")).length;
+  const audio = media.filter((a) => a.mime.startsWith("audio/")).length;
+  const videos = media.filter((a) => a.mime.startsWith("video/")).length;
+  const total = images + audio + videos;
+
+  if (total === 0 && prompt) return "text";
+  if (images === 1 && audio + videos === 0) return "first_frame";
+  if (images === 2 && audio + videos === 0) return "first_last";
+  if (
+    images <= 9 &&
+    audio <= 3 &&
+    videos <= 3 &&
+    images + videos >= 1
+  ) {
+    return "reference";
+  }
+  return null;
+}
+
+function validateVideoComposer(composer: ComposerState, prompt: string): boolean {
+  return validateVideoModeAttachments(
+    composer.videoMode,
+    composer.attachments,
+    prompt,
+  );
+}
+
+/** True when message media matches its recorded video_mode (or non-video messages). */
+export function messageMatchesVideoMode(message: {
+  text?: string | null;
+  params?: { video_mode?: string } | null;
+  images: Array<{ role: string; mime: string }>;
+}): boolean {
+  const mode = message.params?.video_mode;
+  if (
+    mode !== "text" &&
+    mode !== "first_frame" &&
+    mode !== "first_last" &&
+    mode !== "reference"
+  ) {
+    return true;
+  }
+  const inputs = message.images.filter((i) => i.role === "input");
+  return (
+    coerceVideoModeForMedia(mode, inputs, (message.text || "").trim()) != null
+  );
 }
 
 async function fileToBytes(f: File): Promise<Uint8Array> {
@@ -1044,6 +1114,13 @@ export const useSession = create<SessionStore>((set, get) => {
       canReason && c.thinkingEnabled && c.thinkingEffort.trim()
         ? c.thinkingEffort.trim()
         : null;
+    const inputMedia = m.images.filter((i) => i.role === "input");
+    const recordedMode =
+      (m.params?.video_mode as VideoGenerationMode | undefined) ?? c.videoMode;
+    const effectiveVideoMode = videoModel
+      ? coerceVideoModeForMedia(recordedMode, inputMedia, text)
+      : null;
+    if (videoModel && !effectiveVideoMode) return;
     setSessionBusy(sid, true);
     ensureGenerationStreamListener();
     const run = (async () => {
@@ -1056,11 +1133,9 @@ export const useSession = create<SessionStore>((set, get) => {
             image_size: m.params?.image_size ?? c.imageSize,
             thinking_enabled: thinkingEnabled,
             thinking_effort: thinkingEffort,
-            ...(videoModel
+            ...(videoModel && effectiveVideoMode
               ? {
-                  video_mode:
-                    (m.params?.video_mode as VideoGenerationMode | undefined) ??
-                    c.videoMode,
+                  video_mode: effectiveVideoMode,
                   video_duration: m.params?.video_duration ?? c.videoDuration,
                   video_resolution:
                     m.params?.video_resolution ?? c.videoResolution,

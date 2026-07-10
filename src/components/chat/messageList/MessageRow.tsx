@@ -12,7 +12,10 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, srcOf } from "../../../api/tauri";
 import { dialog, toast } from "../../ui";
 import { useProject } from "../../../store/project";
-import { useSession } from "../../../store/session";
+import {
+  messageMatchesVideoMode,
+  useSession,
+} from "../../../store/session";
 import { ATELIER_DRAG_TYPE } from "../SessionGallery";
 import { READER_FILE_DRAG_TYPE } from "../ReaderFileExplorer";
 import { ComposerFileTree } from "../ComposerFileTree";
@@ -531,6 +534,44 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     return true;
   };
 
+  const videoModeHintKey = (mode: string | undefined) => {
+    if (
+      mode === "text" ||
+      mode === "first_frame" ||
+      mode === "first_last" ||
+      mode === "reference"
+    ) {
+      return `composer.videoModeHint.${mode}` as const;
+    }
+    return null;
+  };
+
+  const draftVideoModeOk = () => {
+    const mode = m.params?.video_mode;
+    if (
+      mode !== "text" &&
+      mode !== "first_frame" &&
+      mode !== "first_last" &&
+      mode !== "reference"
+    ) {
+      return true;
+    }
+    return messageMatchesVideoMode({
+      text: draft,
+      params: { video_mode: mode },
+      images: draftMedia.map((item) => ({ role: "input", mime: item.mime })),
+    });
+  };
+
+  const toastVideoModeMismatch = () => {
+    const hint = videoModeHintKey(m.params?.video_mode);
+    toast.error(
+      hint
+        ? t("message.videoModeMismatch", { hint: t(hint) })
+        : t("message.videoModeMismatchGeneric"),
+    );
+  };
+
   const saveEdit = async () => {
     const next = draft.trim();
     const mediaChanged = !mediaIdsEqual(draftMedia, inputs);
@@ -541,6 +582,10 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     if (next === (m.text || "").trim() && !mediaChanged) {
       setEditMentionAnchor(null);
       setEditing(false);
+      return;
+    }
+    if (!draftVideoModeOk()) {
+      toastVideoModeMismatch();
       return;
     }
     await editMessage(
@@ -554,6 +599,10 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
   };
   const onResend = async () => {
     if (busy) return;
+    if (!messageMatchesVideoMode(m)) {
+      toastVideoModeMismatch();
+      return;
+    }
     await resendMessage(m.id);
   };
   const onDelete = async () => {
@@ -903,7 +952,8 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
                   disabled={
                     (draft.trim() === (m.text || "").trim() &&
                       mediaIdsEqual(draftMedia, inputs)) ||
-                    (!draft.trim() && draftMedia.length === 0)
+                    (!draft.trim() && draftMedia.length === 0) ||
+                    !draftVideoModeOk()
                   }
                 >
                   {t("message.editSend")}
@@ -973,7 +1023,17 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
                 type="button"
                 className="msg-action"
                 onClick={onResend}
-                disabled={busy}
+                disabled={busy || !messageMatchesVideoMode(m)}
+                title={
+                  !messageMatchesVideoMode(m)
+                    ? (() => {
+                        const hint = videoModeHintKey(m.params?.video_mode);
+                        return hint
+                          ? t("message.videoModeMismatch", { hint: t(hint) })
+                          : t("message.videoModeMismatchGeneric");
+                      })()
+                    : undefined
+                }
               >
                 <ResendIcon />
                 <span>{t("message.actionResend")}</span>

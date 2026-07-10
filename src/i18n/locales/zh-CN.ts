@@ -438,6 +438,8 @@ const zhCN = {
     editRemoveImage: "移除图片",
     editAddMedia: "添加图片或音频",
     editRemoveMedia: "移除素材",
+    videoModeMismatch: "当前消息与生成模式不匹配：{{hint}}",
+    videoModeMismatchGeneric: "当前消息的媒体数量与生成模式不匹配",
     thinkingToggle: "推理过程",
     thinkingStreaming: "思考中",
     thinkingHint: "点击展开或收起",
