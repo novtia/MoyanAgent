@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { save } from "@tauri-apps/plugin-dialog";
-import { api, srcOf } from "../../../api/tauri";
+import { api } from "../../../api/tauri";
+import { copyImageFromPath } from "../../../utils/clipboard";
 import type { PlateActionsProps } from "./types";
 import { CopyIcon, DownloadIcon, ZoomIcon } from "./icons";
 
@@ -30,17 +31,7 @@ export function PlateActions({
   };
   const copyImage = async () => {
     try {
-      const url = srcOf(img.abs_path);
-      const blob = await (await fetch(url)).blob();
-      if (
-        navigator.clipboard &&
-        (window as any).ClipboardItem &&
-        ["image/png", "image/jpeg", "image/webp"].includes(blob.type)
-      ) {
-        await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-      } else {
-        throw new Error("clipboard not supported");
-      }
+      await copyImageFromPath(img.abs_path);
     } catch (e) {
       console.warn(e);
     }

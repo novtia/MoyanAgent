@@ -105,21 +105,23 @@ function stripParagraphLabel(s: string): string {
 export function applyParagraphRangeEdit(
   fileText: string,
   paragraphFrom: number,
-  paragraphTo: number,
+  paragraphTo: number | undefined,
   content: string,
 ): string | null {
   const paragraphs = splitParagraphs(fileText);
+  const resolvedTo = paragraphTo ?? paragraphFrom;
   if (
     paragraphFrom < 1 ||
-    paragraphTo < paragraphFrom ||
-    paragraphTo > paragraphs.length
+    paragraphFrom > paragraphs.length ||
+    resolvedTo < paragraphFrom ||
+    resolvedTo > paragraphs.length
   ) {
     return null;
   }
+
   const start = paragraphFrom - 1;
-  const end = paragraphTo - 1;
-  const newParas = splitParagraphs(stripParagraphLabels(content));
-  paragraphs.splice(start, end - start + 1, ...(newParas.length ? newParas : [""]));
+  const newParas = content === "" ? [] : splitParagraphs(stripParagraphLabels(content));
+  paragraphs.splice(start, resolvedTo - start + 1, ...newParas);
   return paragraphs.join("\n");
 }
 
@@ -130,38 +132,76 @@ export function revertParagraphRangeEdit(
   content: string,
   before: string,
 ): string | null {
-  const paragraphs = splitParagraphs(fileText);
-  if (paragraphFrom < 1 || paragraphFrom > paragraphs.length) return null;
+  const paragraphs = fileText === "" ? [] : splitParagraphs(fileText);
+  if (paragraphFrom < 1 || paragraphFrom > paragraphs.length + 1) return null;
   const start = paragraphFrom - 1;
   const oldParas = splitParagraphs(before);
-  const newParas = splitParagraphs(stripParagraphLabels(content));
-  const removeCount = newParas.length || 1;
+  const newParas = content === "" ? [] : splitParagraphs(stripParagraphLabels(content));
+  const removeCount = newParas.length;
   if (start + removeCount > paragraphs.length) return null;
-  paragraphs.splice(start, removeCount, ...(oldParas.length ? oldParas : [""]));
+  paragraphs.splice(start, removeCount, ...oldParas);
   return paragraphs.join("\n");
+}
+
+/**
+ * Parse the Edit `from` spec (number, `"1-9"`, `"1~9"`, `"1,2,3"`) into an
+ * inclusive `{ from, to }` range. Mirrors the backend `parse_paragraph_spec`.
+ */
+export function parseFromSpec(raw: unknown): { from: number; to: number } | undefined {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 1) {
+    const n = Math.trunc(raw);
+    return { from: n, to: n };
+  }
+  if (typeof raw !== "string") return undefined;
+  const s = raw.trim();
+  if (s === "") return undefined;
+
+  for (const sep of ["..", "~", "-"]) {
+    const idx = s.indexOf(sep);
+    if (idx > 0) {
+      const from = parseInt(s.slice(0, idx).trim(), 10);
+      const to = parseInt(s.slice(idx + sep.length).trim(), 10);
+      if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from) {
+        return undefined;
+      }
+      return { from, to };
+    }
+  }
+
+  const nums = s
+    .split(/[,、，]/)
+    .map((p) => p.trim())
+    .filter((p) => p !== "")
+    .map((p) => parseInt(p, 10));
+  if (nums.length === 0 || nums.some((n) => !Number.isInteger(n) || n < 1)) return undefined;
+  nums.sort((a, b) => a - b);
+  const from = nums[0];
+  const to = nums[nums.length - 1];
+  const unique = new Set(nums).size;
+  if (to - from + 1 !== unique) return undefined;
+  return { from, to };
 }
 
 export function parseEditParagraphRange(
   input: unknown,
-): { from: number; to: number } | undefined {
+): { from: number; to?: number } | undefined {
   const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+
+  // New shape: `from` spec plus resolved `replaced_from`/`replaced_to`.
+  const replacedFrom = readToolParagraph(inp.replaced_from);
+  const replacedTo = readToolParagraph(inp.replaced_to);
+  if (replacedFrom != null) {
+    return { from: replacedFrom, to: replacedTo ?? replacedFrom };
+  }
+  const spec = parseFromSpec(inp.from);
+  if (spec != null) return spec;
+
+  // Legacy shape fallback (`paragraph_from`/`paragraph_to`).
   const from = readToolParagraph(inp.paragraph_from);
   if (from == null) return undefined;
-  const to = readToolParagraph(inp.paragraph_to) ?? from;
-  if (to < from) return undefined;
+  const to = readToolParagraph(inp.paragraph_to);
+  if (to != null && to < from) return undefined;
   return { from, to };
-}
-
-/** Edit mutation kind, mirrors the backend `Edit` `mode` field. */
-export type EditMode = "replace" | "insert_after" | "delete";
-
-/** Coerce a tool `mode` value (input or output) to a known {@link EditMode}. */
-export function readEditMode(value: unknown): EditMode {
-  if (value === "insert_after" || value === "insert" || value === "append_after") {
-    return "insert_after";
-  }
-  if (value === "delete" || value === "remove") return "delete";
-  return "replace";
 }
 
 /** Read a 1-based paragraph value from tool input/output (0 allowed here). */
@@ -181,37 +221,22 @@ export function readAppliedParagraph(value: unknown): number | undefined {
  */
 export function revertEditOnDisk(
   diskText: string,
-  mode: EditMode,
   appliedFrom: number,
-  appliedTo: number,
+  replacedTo: number,
+  newParagraphTo: number,
   before: string,
 ): string {
-  const paras = splitParagraphs(diskText);
-  const beforeParas = splitParagraphs(before);
-
-  if (mode === "insert_after") {
-    if (appliedFrom < 1 || appliedTo < appliedFrom || appliedTo > paras.length) {
-      return diskText;
-    }
-    paras.splice(appliedFrom - 1, appliedTo - appliedFrom + 1);
-    return paras.join("\n");
-  }
-
-  if (mode === "delete") {
-    const at = Math.max(0, Math.min(appliedFrom - 1, paras.length));
-    paras.splice(at, 0, ...(beforeParas.length ? beforeParas : [""]));
-    return paras.join("\n");
-  }
-
-  // replace
-  if (appliedFrom < 1 || appliedTo < appliedFrom || appliedTo > paras.length) {
+  const paras = diskText === "" ? [] : splitParagraphs(diskText);
+  const start = appliedFrom - 1;
+  const removeCount =
+    newParagraphTo >= appliedFrom ? newParagraphTo - appliedFrom + 1 : 0;
+  const replacedCount = replacedTo >= appliedFrom ? replacedTo - appliedFrom + 1 : 0;
+  if (start < 0 || start > paras.length || start + removeCount > paras.length) {
     return diskText;
   }
-  paras.splice(
-    appliedFrom - 1,
-    appliedTo - appliedFrom + 1,
-    ...(beforeParas.length ? beforeParas : [""]),
-  );
+  const beforeParas = replacedCount === 0 ? [] : splitParagraphs(before);
+  if (beforeParas.length !== replacedCount) return diskText;
+  paras.splice(start, removeCount, ...beforeParas);
   return paras.join("\n");
 }
 
@@ -223,8 +248,9 @@ export function paragraphsAtRange(text: string, from: number, to: number): strin
 }
 
 /** Format paragraph range label like Read tool output (`P009–P015`). */
-export function formatParagraphRangeLabel(from: number, to: number): string {
+export function formatParagraphRangeLabel(from: number, to?: number): string {
   const pad = (n: number) => String(n).padStart(3, "0");
+  if (to == null) return `[P${pad(from)}–末尾]`;
   if (from === to) return `[P${pad(from)}]`;
   return `[P${pad(from)}–P${pad(to)}]`;
 }
@@ -356,11 +382,19 @@ export function formatReadToolTitle(input: unknown, output: unknown): string {
   return readerFileName(path);
 }
 
-/** Count non-whitespace characters (CJK-aware). */
-export function countChars(text: string): number {
+/**
+ * Unified document word count used throughout the frontend.
+ *
+ * For Chinese-writing workflows, each non-whitespace Unicode character counts
+ * as one word. Display stats are always derived from the normalized text in
+ * the frontend, not from tool-result numeric fields (models may mis-sum them).
+ */
+const UNICODE_WHITESPACE = /^\p{White_Space}$/u;
+
+export function countWords(text: string): number {
   let n = 0;
   for (const ch of text) {
-    if (!/\s/.test(ch)) n += 1;
+    if (!UNICODE_WHITESPACE.test(ch)) n += 1;
   }
   return n;
 }
@@ -385,7 +419,7 @@ function docToTab(doc: ReaderDoc): ReaderFileTab {
     fileType: doc.fileType,
     encoding: doc.encoding ?? DEFAULT_TEXT_ENCODING,
     hadBom: doc.hadBom ?? false,
-    chars: doc.chars ?? countChars(text),
+    chars: countWords(text),
     lines: doc.lines ?? text.split(/\n/).length,
     bytes: doc.bytes,
     truncated: doc.truncated,
@@ -530,7 +564,7 @@ export const useReader = create<ReaderStore>((set, get) => ({
                 fileType: doc.fileType,
                 encoding: doc.encoding ?? t.encoding,
                 hadBom: doc.hadBom ?? t.hadBom,
-                chars: doc.chars ?? countChars(cleanText),
+                chars: countWords(cleanText),
                 lines: doc.lines ?? cleanText.split(/\n/).length,
                 bytes: doc.bytes,
                 truncated: doc.truncated,
@@ -587,7 +621,7 @@ export const useReader = create<ReaderStore>((set, get) => ({
           ? {
               ...t,
               text,
-              chars: countChars(text),
+              chars: countWords(text),
               lines: text.split(/\n/).length,
               dirty: opts?.dirty ?? t.dirty,
               saveError: opts?.dirty ? false : t.saveError,
@@ -622,7 +656,7 @@ export const useReader = create<ReaderStore>((set, get) => ({
               ...t,
               pendingDiffs: [...t.pendingDiffs, block],
               text: block.textAfter,
-              chars: countChars(block.textAfter),
+              chars: countWords(block.textAfter),
               lines: block.textAfter.split(/\n/).length,
               dirty: false,
               saveError: false,
@@ -670,7 +704,7 @@ export const useReader = create<ReaderStore>((set, get) => ({
               ...t,
               pendingDiffs: nextDiffs,
               text: revertText,
-              chars: countChars(revertText),
+              chars: countWords(revertText),
               lines: revertText.split(/\n/).length,
               dirty: false,
               saveError: false,
@@ -717,7 +751,7 @@ export const useReader = create<ReaderStore>((set, get) => ({
               ...t,
               pendingDiffs: [],
               text: revertText,
-              chars: countChars(revertText),
+              chars: countWords(revertText),
               lines: revertText.split(/\n/).length,
               dirty: false,
               saveError: false,
@@ -756,7 +790,9 @@ export function readerDocFromToolOutput(output: unknown): ReaderDoc | null {
         ? o.encoding.trim()
         : DEFAULT_TEXT_ENCODING,
     hadBom: o.had_bom === true || o.hadBom === true,
-    chars: typeof o.chars === "number" ? o.chars : countChars(clean),
+    // Always calculate display stats from the normalized frontend text. Tool
+    // outputs may come from older versions or use a different counting source.
+    chars: countWords(clean),
     lines: typeof o.lines === "number" ? o.lines : clean.split(/\n/).length,
     bytes: typeof o.bytes === "number" ? o.bytes : undefined,
     truncated: o.truncated === true,

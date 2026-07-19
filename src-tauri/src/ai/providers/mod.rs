@@ -14,6 +14,33 @@ mod openai;
 use crate::ai::chat::{ChatRequest, GenerateResponse, TextDeltaCallback};
 use crate::error::{AppError, AppResult};
 
+/// Time we wait for the TCP/TLS connection to be established. Connecting is
+/// bounded regardless of how long the model then thinks.
+const CONNECT_TIMEOUT_SECS: u64 = 60;
+
+/// Idle time before the OS starts sending TCP keepalive probes on an
+/// otherwise-silent connection. This is how we detect a dead server without
+/// imposing any limit on legitimate work.
+const TCP_KEEPALIVE_SECS: u64 = 30;
+
+/// Shared HTTP client for chat/text providers (openai, claude, gemini, ...).
+///
+/// Deliberately sets **no total timeout and no read (idle) timeout**: as long
+/// as the connection to the upstream is alive, generation may run forever, so
+/// even models that think for a very long time are never cut off locally.
+///
+/// Liveness is enforced purely at the transport layer via TCP keepalive: if
+/// the server actually drops the connection, keepalive probes fail and the
+/// socket errors out — which is exactly "we only watch whether the server is
+/// still connected". Only connection establishment is bounded
+/// ([`CONNECT_TIMEOUT_SECS`]).
+pub(crate) fn build_chat_client() -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
+        .tcp_keepalive(std::time::Duration::from_secs(TCP_KEEPALIVE_SECS))
+        .build()
+}
+
 pub const OPENAI_SDK: &str = "openai";
 pub const OPENAI_RESPONSES_SDK: &str = "openai-responses";
 pub const GEMINI_SDK: &str = "gemini";

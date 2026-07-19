@@ -8,8 +8,9 @@
 //! (`ToolUseContext::cwd`), falling back to `~/Documents/moyanagent` when the
 //! session has no project path. Writes are always confined to that project
 //! root — `folder` cannot escape it. The successful result echoes the full text
-//! plus word-count stats so the UI can open the freshly created document in
-//! the reader panel with a single click.
+//! and file metadata so the UI can open the freshly created document in the
+//! reader panel. Word/line counts are omitted from the tool result on purpose —
+//! models tend to sum redundant numeric fields and mis-report totals.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -167,17 +168,11 @@ impl Tool for CreateDocTool {
                 s.insert(canonical.clone(), content_hash(&content));
             }
 
-            let chars = content.chars().filter(|c| !c.is_whitespace()).count();
-            let lines = content.lines().count();
-
             Ok(ToolResult::ok(json!({
                 "path": canonical.to_string_lossy(),
                 "title": title,
                 "doc_type": ext,
                 "folder": folder.map(str::trim).filter(|s| !s.is_empty()),
-                "bytes": content.len(),
-                "chars": chars,
-                "lines": lines,
                 "created": created,
                 "text": content,
             })))
@@ -324,6 +319,10 @@ fn sanitize_file_name(title: &str) -> String {
     }
 }
 
+fn count_words(content: &str) -> usize {
+    content.chars().filter(|c| !c.is_whitespace()).count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,5 +366,11 @@ mod tests {
         assert!(resolve_output_dir(&root, Some("../outside")).is_err());
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn word_count_counts_non_whitespace_unicode_characters() {
+        assert_eq!(count_words("墨言 Agent\n测试"), 9);
+        assert_eq!(count_words(" \t\r\n"), 0);
     }
 }

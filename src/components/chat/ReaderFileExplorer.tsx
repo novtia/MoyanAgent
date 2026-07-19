@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/tauri";
+import { copyText } from "../../utils/clipboard";
 import { openContextMenu } from "../context-menu";
 import { dialog } from "../ui/Dialog";
 import { toast } from "../ui/Toast";
@@ -23,7 +24,7 @@ import {
 import { useProject } from "../../store/project";
 import { useSession } from "../../store/session";
 import {
-  countChars,
+  countWords,
   inferFileType,
   useReader,
 } from "../../store/reader";
@@ -233,7 +234,7 @@ export function ReaderFileExplorer() {
             fileType: inferFileType(entry.path),
             encoding: file.encoding,
             hadBom: file.hadBom,
-            chars: countChars(file.text),
+            chars: countWords(file.text),
             lines: file.text.split("\n").length,
           });
         } catch (err) {
@@ -341,7 +342,7 @@ export function ReaderFileExplorer() {
   const copyPath = useCallback(
     async (path: string) => {
       try {
-        await navigator.clipboard.writeText(path);
+        await copyText(path);
         toast.success(t("fileExplorer.copiedPath"));
       } catch (err) {
         toast.error(t("fileExplorer.copyFailed"), { description: String(err) });

@@ -1,4 +1,4 @@
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { copyText } from "../../../utils/clipboard";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../api/tauri";
@@ -28,7 +28,7 @@ export function SystemSection() {
 
   const copy = async (text: string, key: string) => {
     try {
-      await writeText(text);
+      await copyText(text);
       setCopied(key);
       setTimeout(() => {
         setCopied((current) => (current === key ? null : current));

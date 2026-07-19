@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { srcOf, api } from "../../api/tauri";
+import { copyImageFromPath } from "../../utils/clipboard";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { ImageRefAbs } from "../../types";
 
@@ -357,18 +358,8 @@ export function ImagePreview({ items, initialIndex, onClose }: ImagePreviewProps
 
   const copyImage = async () => {
     try {
-      const url = srcOf(absPath);
-      const blob = await (await fetch(url)).blob();
-      if (
-        navigator.clipboard &&
-        (window as unknown as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem &&
-        ["image/png", "image/jpeg", "image/webp"].includes(blob.type)
-      ) {
-        await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-        showToast("info", t("preview.copied"));
-      } else {
-        throw new Error("clipboard not supported");
-      }
+      await copyImageFromPath(absPath);
+      showToast("info", t("preview.copied"));
     } catch (e) {
       console.warn(e);
       showToast("error", t("preview.copyFailed"));

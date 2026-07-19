@@ -313,7 +313,8 @@ const zhCN = {
       Bash: "执行 shell 命令并返回输出",
       CreateDoc: "按标题/内容/类型创建文档（md 或 txt）",
       Delete: "删除文件（可随消息回滚还原）",
-      Edit: "按段落范围替换（paragraph_from / paragraph_to + content）",
+      Edit:
+        "替换段落（from 支持单段 5、范围 1-9、枚举 1,2,3；content 为空时删除，续写则以末段原文开头再接新内容）",
       Read: "读取本地文本，每行标注段落编号 [P001]…（含空行）",
       ListFiles: "列出目录下的文件与子目录",
       RoleState: "维护角色属性与状态面板",

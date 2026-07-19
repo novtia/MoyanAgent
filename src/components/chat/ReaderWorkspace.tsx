@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useCallback, type CSSProperties } from "r
 import { useTranslation } from "react-i18next";
 import {
   useReader,
-  countChars,
+  countWords,
   readerFileName,
   type ReaderFileTab,
 } from "../../store/reader";
@@ -29,10 +29,7 @@ function ReaderFilePane({ tab }: { tab: ReaderFileTab }) {
   const findScope = useReaderFind((s) => s.scope);
   const findQuery = useReaderFind((s) => s.query);
   const findSearching = useReaderFind((s) => s.searching);
-  const chars = useMemo(
-    () => (typeof tab.chars === "number" ? tab.chars : countChars(tab.text)),
-    [tab.chars, tab.text],
-  );
+  const chars = useMemo(() => countWords(tab.text), [tab.text]);
   const lines = useMemo(
     () => (typeof tab.lines === "number" ? tab.lines : tab.text.split(/\n/).length),
     [tab.lines, tab.text],

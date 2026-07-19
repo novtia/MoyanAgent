@@ -11,7 +11,6 @@ use crate::ai::providers::{ChatProvider, ProviderFuture, OPENAI_RESPONSES_SDK, O
 use crate::ai::{tokens, tokens::TokenUsage};
 use crate::error::{AppError, AppResult};
 
-const UPSTREAM_TIMEOUT_SECS: u64 = 15 * 60;
 const MAX_ATTEMPTS: usize = 3;
 
 /// When `ATELIER_DEBUG_UPSTREAM` is `1` / `true` / `yes`, eprintln request JSON
@@ -131,9 +130,7 @@ async fn generate_chat(
     let provider_label = provider_label(&request);
     let openrouter_compat = is_openrouter_endpoint(&request.provider.endpoint);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(UPSTREAM_TIMEOUT_SECS))
-        .build()?;
+    let client = crate::ai::providers::build_chat_client()?;
 
     let final_txt = if openrouter_compat {
         post_openrouter_chat(&client, &request, &mut body, &provider_label).await?
@@ -160,9 +157,7 @@ async fn generate_chat_stream(
     let provider_label = provider_label(&request);
     let openrouter_compat = is_openrouter_endpoint(&request.provider.endpoint);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(UPSTREAM_TIMEOUT_SECS))
-        .build()?;
+    let client = crate::ai::providers::build_chat_client()?;
 
     if openrouter_compat {
         post_openrouter_chat_stream(&client, &request, &mut body, &provider_label, on_text_delta)
@@ -176,9 +171,7 @@ async fn generate_responses(request: ChatRequest) -> AppResult<GenerateResponse>
     let body = build_responses_body(&request);
     let provider_label = provider_label(&request);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(UPSTREAM_TIMEOUT_SECS))
-        .build()?;
+    let client = crate::ai::providers::build_chat_client()?;
 
     let final_txt = post_with_retries(&client, &request, &body, &provider_label).await?;
     parse_responses_response(&final_txt)
@@ -192,9 +185,7 @@ async fn generate_responses_stream(
     set_streaming(&mut body);
     let provider_label = provider_label(&request);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(UPSTREAM_TIMEOUT_SECS))
-        .build()?;
+    let client = crate::ai::providers::build_chat_client()?;
 
     post_responses_stream_with_retries(&client, &request, &body, &provider_label, on_text_delta)
         .await
@@ -590,7 +581,7 @@ async fn consume_openai_chat_stream(
     let mut sse_debug_emitted = 0u32;
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
+        let chunk = chunk.map_err(stream_read_error)?;
         buffer.extend_from_slice(&chunk);
         while let Some((event_end, sep_len)) = find_sse_event_end(&buffer) {
             let drained: Vec<u8> = buffer.drain(..event_end + sep_len).collect();
@@ -641,7 +632,7 @@ async fn consume_responses_stream(
     let mut sse_debug_emitted = 0u32;
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
+        let chunk = chunk.map_err(stream_read_error)?;
         buffer.extend_from_slice(&chunk);
         while let Some((event_end, sep_len)) = find_sse_event_end(&buffer) {
             let drained: Vec<u8> = buffer.drain(..event_end + sep_len).collect();
@@ -1347,6 +1338,18 @@ fn finalize_stream_response(
         usage,
         tool_calls,
     })
+}
+
+/// Context wrapper for a transport error hit *while consuming* the SSE
+/// response body. reqwest's own message here is usually the opaque
+/// "error decoding response body"; [`crate::error::describe_reqwest_error`]
+/// unfolds the source chain so the real cause (connection reset, unexpected
+/// EOF, idle keepalive failure, ...) is visible in the UI.
+fn stream_read_error(err: reqwest::Error) -> AppError {
+    AppError::Upstream(format!(
+        "connection interrupted while streaming upstream response: {}",
+        crate::error::describe_reqwest_error(&err)
+    ))
 }
 
 fn provider_label(request: &ChatRequest) -> String {

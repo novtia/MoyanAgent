@@ -9,7 +9,6 @@ use crate::ai::providers::{ChatProvider, ProviderFuture, CLAUDE_SDK};
 use crate::ai::tokens::TokenUsage;
 use crate::error::{AppError, AppResult};
 
-const UPSTREAM_TIMEOUT_SECS: u64 = 15 * 60;
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const DEFAULT_MAX_TOKENS: i64 = 4096;
 
@@ -35,9 +34,7 @@ async fn generate(request: ChatRequest) -> AppResult<GenerateResponse> {
     let body = build_body(&request);
     let provider_label = provider_label(&request);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(UPSTREAM_TIMEOUT_SECS))
-        .build()?;
+    let client = crate::ai::providers::build_chat_client()?;
 
     let resp = client
         .post(&request.provider.endpoint)

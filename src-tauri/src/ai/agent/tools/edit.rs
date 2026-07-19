@@ -1,4 +1,4 @@
-//! File-mutation tools: `Write` (overwrite) and `Edit` (paragraph-range edit).
+//! File-mutation tools: `Write` (overwrite) and `Edit` (paragraph-range replace).
 //!
 //! Both refuse to operate on a file that the agent hasn't read first,
 //! using [`crate::ai::agent::core::context::ToolUseContext::read_file_state`]
@@ -9,16 +9,21 @@
 //! The `Read` precondition is skipped for `Write` when the target file
 //! does not yet exist — creating new files is always fine.
 //!
-//! `Edit` is paragraph-number addressed (`[P001]` labels from Read), which is
-//! cheap but fragile: every insert/delete shifts the numbers of the paragraphs
-//! below it. To keep the model from editing the wrong place after such a shift,
-//! `Edit`:
+//! `Edit` has one operation: replace an inclusive paragraph range with new
+//! content. The range comes from a single `from` argument that accepts a
+//! paragraph number (`5`), a range (`"1-9"`, `"1~9"`), or a contiguous
+//! enumeration (`"1,2,3"`). An empty `content` deletes the range (it is just a
+//! replacement with nothing). Appending / continuing prose is expressed as
+//! replacing the LAST paragraph with `content` that begins with that
+//! paragraph's existing text and then continues.
+//!
+//! Paragraph numbers come from the `[P001]` labels returned by Read. Because
+//! edits shift later numbers, `Edit`:
 //!
 //! - verifies the on-disk content still matches the receipt hash recorded at
 //!   the last Read/Write (stale files are rejected, not silently mis-edited);
-//! - optionally verifies an `anchor` snippet against the target paragraph;
-//! - supports `replace` / `insert_after` / `delete` modes so appending no
-//!   longer requires copying an existing paragraph back into `content`.
+//! - updates the read receipt after every successful edit so consecutive edits
+//!   remain safe.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,7 +32,8 @@ use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
 use crate::ai::agent::tools::paragraph::{
-    join_paragraphs, split_agent_paragraphs, split_paragraphs, strip_paragraph_label,
+    join_paragraphs, parse_paragraph_spec, split_agent_paragraphs, split_paragraphs,
+    strip_paragraph_label,
 };
 use crate::ai::agent::tools::project_path::{self, FILE_REF_DESC};
 use crate::ai::agent::tools::read_receipt::{
@@ -41,35 +47,6 @@ use crate::error::{AppError, AppResult};
 
 const WRITE_TOOL: &str = "Write";
 const EDIT_TOOL: &str = "Edit";
-
-/// How an [`FileEditTool`] call mutates the target paragraph range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EditMode {
-    /// Replace `[paragraph_from, paragraph_to]` with `content`.
-    Replace,
-    /// Insert `content` *after* `paragraph_from` (`0` = file start).
-    InsertAfter,
-    /// Delete `[paragraph_from, paragraph_to]` entirely (no empty residue).
-    Delete,
-}
-
-impl EditMode {
-    fn parse(input: &Value) -> Self {
-        match input.get("mode").and_then(Value::as_str) {
-            Some("insert_after") | Some("insert") | Some("append_after") => EditMode::InsertAfter,
-            Some("delete") | Some("remove") => EditMode::Delete,
-            _ => EditMode::Replace,
-        }
-    }
-
-    fn as_str(&self) -> &'static str {
-        match self {
-            EditMode::Replace => "replace",
-            EditMode::InsertAfter => "insert_after",
-            EditMode::Delete => "delete",
-        }
-    }
-}
 
 #[derive(Clone)]
 pub struct FileWriteTool {
@@ -190,15 +167,15 @@ impl FileEditTool {
             snapshots,
             spec: ToolSpec {
                 name: EDIT_TOOL.to_string(),
-                description: "Edit a numbered paragraph range in a file. Read labels lines `[P001]`, …; one line = one paragraph. \
-                    Read the file first, then pass `paragraph_from`, optional `paragraph_to` (defaults to `paragraph_from`), \
-                    `content`, and optional `mode`. \
-                    IMPORTANT: paragraph numbers SHIFT after every insert/delete — do NOT reuse the old numbers. When making several edits \
-                    to one file, edit from the BOTTOM up (largest paragraph numbers first) so earlier numbers stay valid. \
-                    Pass `anchor` (the first few characters of `paragraph_from`) to have the edit verified against the \
-                    current text and rejected if it no longer matches. Modes: `replace` (default) swaps the range for \
-                    `content`; `insert_after` inserts `content` after `paragraph_from` (use 0 for the file start) without \
-                    touching existing text — use this to APPEND, never replace-and-recopy; `delete` removes the range."
+                description: "Replace a numbered paragraph range in a file. Read the file first to get `[P001]`, … \
+                    labels (one line = one paragraph). Pass `path`, `from`, and `content`. `from` locates the \
+                    paragraph(s) to replace: a single number (`5`), a range (`\"1-9\"` or `\"1~9\"`), or a contiguous \
+                    enumeration (`\"1,2,3,4\"`). `content` is the complete replacement text (use \\n between \
+                    paragraphs). To DELETE, pass empty `content`. To CONTINUE/APPEND after the last paragraph, set \
+                    `from` to that last paragraph number and make `content` start with its existing text, then add the \
+                    new prose (e.g. last paragraph is `哦哦哦` → content `哦哦哦。后续新内容`). Do NOT copy other \
+                    unaffected paragraphs into `content`. Paragraph numbers SHIFT after edits; for several edits to \
+                    one file, work from the BOTTOM up."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -207,31 +184,16 @@ impl FileEditTool {
                             "type": "string",
                             "description": FILE_REF_DESC
                         },
-                        "mode": {
-                            "type": "string",
-                            "enum": ["replace", "insert_after", "delete"],
-                            "description": "`replace` (default): swap the range for `content`. `insert_after`: insert `content` after `paragraph_from` (0 = file start); nothing is removed. `delete`: remove the range."
-                        },
-                        "paragraph_from": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "description": "First paragraph to edit (1-based, inclusive). E.g. [P009] → 9. For `insert_after`, this is the paragraph to insert AFTER (0 = insert at the very start)."
-                        },
-                        "paragraph_to": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "description": "Last paragraph to edit (1-based, inclusive). Defaults to `paragraph_from`. Ignored for `insert_after`."
-                        },
-                        "anchor": {
-                            "type": "string",
-                            "description": "Optional. The first few characters (≈8–16) of `paragraph_from` as you last saw it. If it does not match the current text, the edit is rejected — Read the file again before retrying."
+                        "from": {
+                            "type": ["integer", "string"],
+                            "description": "Paragraph(s) to replace (1-based, inclusive). A number like 5, a range like \"1-9\" / \"1~9\", or a contiguous enumeration like \"1,2,3,4\". To continue past the end, set this to the LAST paragraph number and lead `content` with its existing text."
                         },
                         "content": {
                             "type": "string",
-                            "description": "New text. \\n-separated for multiple paragraphs. Required for `replace`/`insert_after`; ignored for `delete`. Empty string in `replace` mode deletes the range. Fill this in LAST, after path/mode/paragraph_from/paragraph_to/anchor."
+                            "description": "Replacement text; use \\n between paragraphs. Empty string deletes the range. When continuing/appending, begin with the last paragraph's existing text then add the new prose. Fill this in LAST, after path/from."
                         }
                     },
-                    "required": ["path", "paragraph_from"]
+                    "required": ["path", "from", "content"]
                 }),
                 read_only: false,
                 concurrency_safe: false,
@@ -247,49 +209,15 @@ impl Tool for FileEditTool {
 
     fn validate(&self, input: &Value) -> AppResult<()> {
         require_nonempty_string(input, "path", EDIT_TOOL)?;
-        let mode = EditMode::parse(input);
-        let from = parse_paragraph(input.get("paragraph_from"), "paragraph_from")?
-            .ok_or_else(|| AppError::Invalid("Edit: `paragraph_from` is required".into()))?;
-        // `insert_after` allows 0 (insert at the very start); every other mode
-        // addresses an existing paragraph and must be >= 1.
-        if from == 0 && mode != EditMode::InsertAfter {
-            return Err(AppError::Invalid(
-                "Edit: `paragraph_from` must be >= 1".into(),
-            ));
-        }
-        if let Some(to) = parse_paragraph(input.get("paragraph_to"), "paragraph_to")? {
-            if to == 0 {
-                return Err(AppError::Invalid(
-                    "Edit: `paragraph_to` must be >= 1".into(),
-                ));
-            }
-            if to < from {
-                return Err(AppError::Invalid(format!(
-                    "Edit: `paragraph_to` ({to}) must be >= `paragraph_from` ({from})"
-                )));
-            }
-        }
-        // `delete` ignores `content`; the other modes need a string when present.
-        if mode != EditMode::Delete && input.get("content").is_some() {
-            require_string(input, "content", EDIT_TOOL)?;
-        }
+        parse_paragraph_spec(input.get("from"))?;
+        require_string(input, "content", EDIT_TOOL)?;
         Ok(())
     }
 
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
             let path = path_arg(&invocation.input, EDIT_TOOL, &invocation.context.cwd)?;
-            let mode = EditMode::parse(&invocation.input);
-            let paragraph_from = parse_paragraph(
-                invocation.input.get("paragraph_from"),
-                "paragraph_from",
-            )?
-            .unwrap_or(0);
-            let paragraph_to = parse_paragraph(
-                invocation.input.get("paragraph_to"),
-                "paragraph_to",
-            )?
-            .unwrap_or(paragraph_from);
+            let range = parse_paragraph_spec(invocation.input.get("from"))?;
             let content = normalize_tool_string(strip_paragraph_label(
                 invocation
                     .input
@@ -297,11 +225,6 @@ impl Tool for FileEditTool {
                     .and_then(Value::as_str)
                     .unwrap_or_default(),
             ));
-            let anchor = invocation
-                .input
-                .get("anchor")
-                .and_then(Value::as_str)
-                .map(|a| normalize_tool_string(strip_paragraph_label(a)));
 
             let stored_hash = lookup_receipt(&invocation.context.read_file_state, &path);
             if stored_hash.is_none() {
@@ -325,83 +248,31 @@ impl Tool for FileEditTool {
                 return Ok(stale_error(&path));
             }
 
-            // Range / bounds validation, mode-aware.
-            match mode {
-                EditMode::InsertAfter => {
-                    // `paragraph_from` is an "insert after" anchor: 0 = start,
-                    // N = after paragraph N. It may equal the paragraph count.
-                    if paragraph_from > total_before {
-                        return Ok(range_error("paragraph_from", paragraph_from, total_before));
-                    }
-                }
-                EditMode::Replace | EditMode::Delete => {
-                    if paragraph_from == 0 || paragraph_from > total_before {
-                        return Ok(range_error("paragraph_from", paragraph_from, total_before));
-                    }
-                    if paragraph_to < paragraph_from || paragraph_to > total_before {
-                        return Ok(range_error("paragraph_to", paragraph_to, total_before));
-                    }
-                }
+            let from = range.from;
+            let to = range.to;
+            if from < 1 || from > total_before || to > total_before {
+                return Ok(range_error(from, to, total_before));
             }
 
-            // Anchor verification (skipped for insert-at-start, which has no
-            // target paragraph).
-            if let Some(anchor) = anchor.as_deref() {
-                let target_idx = match mode {
-                    EditMode::InsertAfter if paragraph_from == 0 => None,
-                    _ => Some(paragraph_from - 1),
-                };
-                if let Some(idx) = target_idx {
-                    if !anchor_matches(&paragraphs[idx], anchor) {
-                        return Ok(anchor_error(&path, paragraph_from));
-                    }
-                }
-            }
+            let from_idx = from - 1;
+            let before = paragraphs[from_idx..to].join("\n");
 
-            // Determine the effective mode: an empty `content` in `replace`
-            // means "delete the range" so no stray blank paragraph is left.
-            let content_is_blank =
-                split_agent_paragraphs(&content).iter().all(|p| p.is_empty());
-            let effective_mode = if mode == EditMode::Replace && content_is_blank {
-                EditMode::Delete
+            let new_paragraph_count = if content.is_empty() {
+                paragraphs.drain(from_idx..to);
+                0
             } else {
-                mode
-            };
-
-            match effective_mode {
-                EditMode::Replace => {
-                    let from_idx = paragraph_from - 1;
-                    let to_idx = paragraph_to - 1;
-                    let new_paras = split_agent_paragraphs(&content);
-                    paragraphs.splice(
-                        from_idx..=to_idx,
-                        if new_paras.is_empty() {
-                            vec![String::new()]
-                        } else {
-                            new_paras
-                        },
-                    );
-                }
-                EditMode::Delete => {
-                    let from_idx = paragraph_from - 1;
-                    let to_idx = paragraph_to - 1;
-                    paragraphs.drain(from_idx..=to_idx);
-                }
-                EditMode::InsertAfter => {
-                    let new_paras = split_agent_paragraphs(&content);
-                    if new_paras.is_empty() || new_paras.iter().all(|p| p.is_empty()) {
-                        return Ok(ToolResult::error(
-                            "Edit: `insert_after` needs non-empty `content`".to_string(),
-                        ));
-                    }
-                    let insert_at = paragraph_from; // 0 = start, N = after paragraph N
-                    for (offset, p) in new_paras.into_iter().enumerate() {
-                        paragraphs.insert(insert_at + offset, p);
-                    }
-                }
+                let new_paragraphs = split_agent_paragraphs(&content);
+                let count = new_paragraphs.len();
+                paragraphs.splice(from_idx..to, new_paragraphs);
+                count
             };
 
             let updated = join_paragraphs(&paragraphs);
+            let new_paragraph_to = if new_paragraph_count == 0 {
+                from - 1
+            } else {
+                from + new_paragraph_count - 1
+            };
 
             // Snapshot the pre-image before mutating for rollback support.
             self.snapshots.record_before(
@@ -418,27 +289,20 @@ impl Tool for FileEditTool {
             Ok(ToolResult::ok(json!({
                 "success": true,
                 "path": path.to_string_lossy(),
-                "paragraph_from": paragraph_from,
-                "paragraph_to": paragraph_to,
+                "from": from,
+                "replaced_from": from,
+                "replaced_to": to,
+                "new_paragraph_to": new_paragraph_to,
+                "total_paragraphs": paragraphs.len(),
+                "before": before,
             })))
         })
     }
 }
 
-/// Does the target paragraph still begin with the model-supplied `anchor`?
-/// Tolerant of leading whitespace and short paragraphs.
-fn anchor_matches(paragraph: &str, anchor: &str) -> bool {
-    let p = strip_paragraph_label(paragraph).trim();
-    let a = anchor.trim();
-    if a.is_empty() {
-        return true;
-    }
-    p.starts_with(a) || a.starts_with(p)
-}
-
-fn range_error(field: &str, value: usize, total: usize) -> ToolResult {
+fn range_error(from: usize, to: usize, total: usize) -> ToolResult {
     ToolResult::error(format!(
-        "Edit: `{field}` {value} out of range (file has {total} paragraphs). Read the file again."
+        "Edit: `from` {from}-{to} out of range (file has {total} paragraphs). Read the file again."
     ))
 }
 
@@ -447,26 +311,6 @@ fn stale_error(path: &Path) -> ToolResult {
         "Edit: {} changed since you last read it — Read the file again before editing.",
         path.display()
     ))
-}
-
-fn anchor_error(path: &Path, paragraph_from: usize) -> ToolResult {
-    ToolResult::error(format!(
-        "Edit: anchor did not match paragraph {paragraph_from} of {} — Read the file again.",
-        path.display()
-    ))
-}
-
-fn parse_paragraph(v: Option<&Value>, key: &str) -> AppResult<Option<usize>> {
-    match v {
-        None => Ok(None),
-        Some(Value::Null) => Ok(None),
-        Some(n) => {
-            let n = n.as_u64().ok_or_else(|| {
-                AppError::Invalid(format!("Edit: `{key}` must be a positive integer"))
-            })?;
-            Ok(Some(n as usize))
-        }
-    }
 }
 
 fn require_nonempty_string(input: &Value, key: &str, tool: &str) -> AppResult<()> {
@@ -533,14 +377,12 @@ mod edit_tests {
         .unwrap();
     }
 
-    async fn run_edit(ctx: &Arc<ToolUseContext>, mut input: Value) -> ToolResult {
+    async fn run_edit(ctx: &Arc<ToolUseContext>, input: Value) -> ToolResult {
         if input.get("path").is_none() {
             panic!("edit test input needs a path");
         }
-        // Ensure serde_json object.
-        let obj = input.as_object_mut().unwrap();
-        obj.entry("mode").or_insert(json!("replace"));
         let tool = FileEditTool::new(Arc::new(FileSnapshotStore::new()));
+        tool.validate(&input).unwrap();
         tool.execute(ToolInvocation {
             id: MessageId("edit".into()),
             input,
@@ -557,103 +399,108 @@ mod edit_tests {
     }
 
     #[tokio::test]
-    async fn replace_first_paragraph_multiline_overwrites_in_place() {
-        let (ctx, name) = seed("你好。\n结尾");
+    async fn replaces_dash_range_with_multiple_paragraphs() {
+        let (ctx, name) = seed("A\nB\nC\nD");
         read_receipt(&ctx, &name).await;
         let res = run_edit(
             &ctx,
-            json!({ "path": name, "paragraph_from": 1, "content": "你好。\n新世界。" }),
+            json!({ "path": name, "from": "2-3", "content": "X\nY\nZ" }),
         )
         .await;
         assert!(!res.is_error, "unexpected error: {:?}", res.content);
-        assert_eq!(disk(&ctx, &name), "你好。\n新世界。\n结尾");
+        assert_eq!(disk(&ctx, &name), "A\nX\nY\nZ\nD");
         assert_eq!(res.content["success"], true);
-        assert_eq!(res.content["paragraph_from"], 1);
+        assert_eq!(res.content["from"], 2);
+        assert_eq!(res.content["replaced_from"], 2);
+        assert_eq!(res.content["replaced_to"], 3);
+        assert_eq!(res.content["new_paragraph_to"], 4);
+        assert_eq!(res.content["total_paragraphs"], 5);
+        assert_eq!(res.content["before"], "B\nC");
     }
 
     #[tokio::test]
-    async fn insert_after_appends_without_touching_existing() {
+    async fn replaces_contiguous_enumeration() {
+        let (ctx, name) = seed("A\nB\nC\nD");
+        read_receipt(&ctx, &name).await;
+        let res = run_edit(
+            &ctx,
+            json!({ "path": name, "from": "1,2,3", "content": "X" }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "X\nD");
+        assert_eq!(res.content["replaced_from"], 1);
+        assert_eq!(res.content["replaced_to"], 3);
+        assert_eq!(res.content["before"], "A\nB\nC");
+    }
+
+    #[tokio::test]
+    async fn integer_from_replaces_exactly_one_paragraph() {
+        let (ctx, name) = seed("A\nB\nC\nD");
+        read_receipt(&ctx, &name).await;
+        let res = run_edit(
+            &ctx,
+            json!({ "path": name, "from": 2, "content": "X" }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "A\nX\nC\nD");
+    }
+
+    #[tokio::test]
+    async fn continue_by_replacing_last_paragraph_with_its_text_plus_new() {
+        let (ctx, name) = seed("A\nB\n哦哦哦");
+        read_receipt(&ctx, &name).await;
+        // Continuation is expressed as replacing the last paragraph (3) with
+        // its existing text followed by the new prose.
+        let res = run_edit(
+            &ctx,
+            json!({ "path": name, "from": 3, "content": "哦哦哦。后续新内容\n再一段" }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "A\nB\n哦哦哦。后续新内容\n再一段");
+        assert_eq!(res.content["new_paragraph_to"], 4);
+        assert_eq!(res.content["before"], "哦哦哦");
+    }
+
+    #[tokio::test]
+    async fn empty_content_deletes_range_without_blank_residue() {
+        let (ctx, name) = seed("A\nB\nC\nD");
+        read_receipt(&ctx, &name).await;
+        let res = run_edit(
+            &ctx,
+            json!({ "path": name, "from": "2-3", "content": "" }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "A\nD");
+        assert_eq!(res.content["new_paragraph_to"], 1);
+        assert_eq!(res.content["before"], "B\nC");
+    }
+
+    #[tokio::test]
+    async fn rejects_non_contiguous_enumeration() {
+        let (ctx, name) = seed("A\nB\nC\nD");
+        read_receipt(&ctx, &name).await;
+        let tool = FileEditTool::new(Arc::new(FileSnapshotStore::new()));
+        let input = json!({ "path": name, "from": "1,3", "content": "X" });
+        assert!(tool.validate(&input).is_err());
+        // Nothing written.
+        assert_eq!(disk(&ctx, &name), "A\nB\nC\nD");
+    }
+
+    #[tokio::test]
+    async fn rejects_out_of_range_paragraph() {
         let (ctx, name) = seed("A\nB");
         read_receipt(&ctx, &name).await;
         let res = run_edit(
             &ctx,
-            json!({ "path": name, "mode": "insert_after", "paragraph_from": 1, "content": "X" }),
-        )
-        .await;
-        assert!(!res.is_error, "unexpected error: {:?}", res.content);
-        assert_eq!(disk(&ctx, &name), "A\nX\nB");
-        assert_eq!(res.content["success"], true);
-        assert_eq!(res.content["paragraph_from"], 1);
-    }
-
-    #[tokio::test]
-    async fn insert_after_zero_prepends_at_start() {
-        let (ctx, name) = seed("A\nB");
-        read_receipt(&ctx, &name).await;
-        let res = run_edit(
-            &ctx,
-            json!({ "path": name, "mode": "insert_after", "paragraph_from": 0, "content": "X\nY" }),
-        )
-        .await;
-        assert!(!res.is_error, "unexpected error: {:?}", res.content);
-        assert_eq!(disk(&ctx, &name), "X\nY\nA\nB");
-    }
-
-    #[tokio::test]
-    async fn delete_removes_range_without_blank_residue() {
-        let (ctx, name) = seed("A\nB\nC");
-        read_receipt(&ctx, &name).await;
-        let res = run_edit(
-            &ctx,
-            json!({ "path": name, "mode": "delete", "paragraph_from": 2, "paragraph_to": 2 }),
-        )
-        .await;
-        assert!(!res.is_error, "unexpected error: {:?}", res.content);
-        assert_eq!(disk(&ctx, &name), "A\nC");
-        assert_eq!(res.content["success"], true);
-    }
-
-    #[tokio::test]
-    async fn replace_with_empty_content_deletes_range() {
-        let (ctx, name) = seed("A\nB\nC");
-        read_receipt(&ctx, &name).await;
-        let res = run_edit(
-            &ctx,
-            json!({ "path": name, "paragraph_from": 2, "content": "" }),
-        )
-        .await;
-        assert!(!res.is_error, "unexpected error: {:?}", res.content);
-        assert_eq!(disk(&ctx, &name), "A\nC");
-        assert_eq!(res.content["success"], true);
-    }
-
-    #[tokio::test]
-    async fn anchor_mismatch_is_rejected() {
-        let (ctx, name) = seed("A\nB\nC\nD\nE");
-        read_receipt(&ctx, &name).await;
-        let res = run_edit(
-            &ctx,
-            json!({ "path": name, "paragraph_from": 2, "content": "Z", "anchor": "totally-wrong" }),
+            json!({ "path": name, "from": 4, "content": "X" }),
         )
         .await;
         assert!(res.is_error);
-        assert!(res.content.get("error").is_some());
-        assert!(res.content.get("window").is_none());
-        // File untouched.
-        assert_eq!(disk(&ctx, &name), "A\nB\nC\nD\nE");
-    }
-
-    #[tokio::test]
-    async fn anchor_match_allows_edit() {
-        let (ctx, name) = seed("你好世界\nB");
-        read_receipt(&ctx, &name).await;
-        let res = run_edit(
-            &ctx,
-            json!({ "path": name, "paragraph_from": 1, "content": "改写", "anchor": "你好" }),
-        )
-        .await;
-        assert!(!res.is_error, "unexpected error: {:?}", res.content);
-        assert_eq!(disk(&ctx, &name), "改写\nB");
+        assert_eq!(disk(&ctx, &name), "A\nB");
     }
 
     #[tokio::test]
@@ -664,7 +511,7 @@ mod edit_tests {
         std::fs::write(ctx.cwd.join(&name), "A\nB\nC\nD\nE").unwrap();
         let res = run_edit(
             &ctx,
-            json!({ "path": name, "paragraph_from": 2, "content": "Z" }),
+            json!({ "path": name, "from": 2, "content": "Z" }),
         )
         .await;
         assert!(res.is_error);
@@ -680,7 +527,7 @@ mod edit_tests {
         // No read_receipt call → no receipt.
         let res = run_edit(
             &ctx,
-            json!({ "path": name, "paragraph_from": 1, "content": "Z" }),
+            json!({ "path": name, "from": 1, "content": "Z" }),
         )
         .await;
         assert!(res.is_error);
@@ -690,16 +537,17 @@ mod edit_tests {
     async fn consecutive_edits_use_refreshed_receipt() {
         let (ctx, name) = seed("A\nB\nC");
         read_receipt(&ctx, &name).await;
+        // Continue by replacing the last paragraph (3) with its text + new.
         let r1 = run_edit(
             &ctx,
-            json!({ "path": name, "mode": "insert_after", "paragraph_from": 3, "content": "D" }),
+            json!({ "path": name, "from": 3, "content": "C\nD" }),
         )
         .await;
         assert!(!r1.is_error, "first edit failed: {:?}", r1.content);
         // Second edit in the same session must not be rejected as stale.
         let r2 = run_edit(
             &ctx,
-            json!({ "path": name, "paragraph_from": 1, "content": "A2" }),
+            json!({ "path": name, "from": 1, "content": "A2" }),
         )
         .await;
         assert!(!r2.is_error, "second edit rejected: {:?}", r2.content);

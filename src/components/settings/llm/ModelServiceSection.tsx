@@ -14,6 +14,7 @@ import type {
   ModelServiceModel,
 } from "../../../types";
 import { api } from "../../../api/tauri";
+import { copyText } from "../../../utils/clipboard";
 import { CheckIcon, CopyIcon } from "../icons";
 import { toast, dialog } from "../../ui";
 import {
@@ -650,7 +651,7 @@ export function ModelServiceSection() {
                     type="button"
                     className="settings-icon-btn"
                     title="复制供应商 ID"
-                    onClick={() => navigator.clipboard?.writeText(selectedProvider.id)}
+                    onClick={() => void copyText(selectedProvider.id)}
                   >
                     <CopyIcon />
                   </button>

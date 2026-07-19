@@ -23,7 +23,6 @@ import {
   readerDocFromToolOutput,
   stripParagraphLabels,
   resolveToolFilePath,
-  readEditMode,
   readAppliedParagraph,
   revertEditOnDisk,
   inferFileType,
@@ -656,8 +655,18 @@ export const useSession = create<SessionStore>((set, get) => {
     if (!id) return;
     try {
       const data = await api.loadSession(id);
+      const state = get();
+      // A settings-only reload (for example, after switching models) can race
+      // with an in-flight stream. Keep the optimistic/streaming rows until the
+      // generation completion path replaces them with the persisted messages.
+      // Also ignore a stale response if the user switched sessions meanwhile.
+      if (state.activeId !== id) return;
+      const preserveLiveMessages =
+        !!state.busyBySession[id] && state.active?.session.id === id;
       set({
-        active: data,
+        active: preserveLiveMessages
+          ? { ...data, messages: state.active!.messages }
+          : data,
         composer: {
           ...get().composer,
           chatMode: composerModeFromAgentType(data.session.agent_type),
@@ -1606,16 +1615,24 @@ async function handleReaderToolComplete(
     const out = (output && typeof output === "object" ? output : {}) as Record<string, unknown>;
     const contentRaw = typeof inp.content === "string" ? inp.content : "";
     const content = normalizeToolContent(contentRaw);
-    const mode = readEditMode(out.mode ?? inp.mode);
 
-    // The applied range (post-shift) tells us where the new/removed text sits
-    // in the authoritative on-disk text. Fall back to the requested range.
+    // The backend returns both the resolved old range and the range occupied by
+    // the replacement in the authoritative post-edit file.
     const appliedFrom =
+      readAppliedParagraph(out.replaced_from) ??
+      readAppliedParagraph(out.from) ??
       readAppliedParagraph(out.paragraph_from) ??
       readAppliedParagraph(inp.paragraph_from) ??
       1;
-    const appliedTo =
-      readAppliedParagraph(out.paragraph_to) ?? appliedFrom;
+    const replacedTo =
+      readAppliedParagraph(out.replaced_to) ??
+      readAppliedParagraph(out.paragraph_to) ??
+      readAppliedParagraph(inp.paragraph_to) ??
+      appliedFrom;
+    const newParagraphTo =
+      readAppliedParagraph(out.new_paragraph_to) ??
+      (content === "" ? appliedFrom - 1 : appliedFrom + content.split("\n").length - 1);
+    const before = typeof out.before === "string" ? out.before : "";
 
     const sessionId = useSession.getState().activeId;
     if (!sessionId) return;
@@ -1639,10 +1656,10 @@ async function handleReaderToolComplete(
     const textAfter = diskText;
     const textBefore = revertEditOnDisk(
       diskText,
-      mode,
       appliedFrom,
-      appliedTo,
-      "",
+      replacedTo,
+      newParagraphTo,
+      before,
     );
 
     if (!existing) {
@@ -1659,8 +1676,8 @@ async function handleReaderToolComplete(
       existing = reader.getTabByPath(path);
     }
 
-    const beforeDisplay = "";
-    const afterDisplay = mode === "delete" ? "" : stripParagraphLabels(content);
+    const beforeDisplay = before;
+    const afterDisplay = stripParagraphLabels(content);
 
     reader.appendPendingDiff(path, {
       before: normalizeDiffText(beforeDisplay),

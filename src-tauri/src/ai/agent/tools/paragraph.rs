@@ -2,7 +2,100 @@
 //!
 //! One line = one paragraph (`\n` separated). Empty lines are empty paragraphs.
 
+use serde_json::Value;
+
+use crate::error::{AppError, AppResult};
+
 pub const PARAGRAPH_SEP: &str = "\n";
+
+/// An inclusive 1-based paragraph range resolved from the `Edit` `from` arg.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParagraphRange {
+    pub from: usize,
+    pub to: usize,
+}
+
+/// Parse the `Edit` `from` argument into an inclusive contiguous range.
+///
+/// Accepts:
+/// - an integer (`5`) or plain-number string (`"5"`) → single paragraph
+/// - a range string (`"1-9"`, `"1~9"`, `"1..9"`) → `[1, 9]`
+/// - a comma / ideographic-comma enumeration (`"1,2,3"`, `"1、2、3"`) →
+///   sorted, deduped, and required to be contiguous (`max - min + 1 == len`).
+///
+/// Non-contiguous enumerations (e.g. `"1,3,5"`) are rejected.
+pub fn parse_paragraph_spec(raw: Option<&Value>) -> AppResult<ParagraphRange> {
+    let raw = raw.ok_or_else(|| AppError::Invalid("Edit: `from` is required".into()))?;
+
+    if let Some(n) = raw.as_u64() {
+        let n = n as usize;
+        return make_range(n, n);
+    }
+
+    let s = raw
+        .as_str()
+        .ok_or_else(|| AppError::Invalid("Edit: `from` must be an integer or a string".into()))?
+        .trim();
+    if s.is_empty() {
+        return Err(AppError::Invalid("Edit: `from` must not be empty".into()));
+    }
+
+    // Range syntax: "1-9", "1~9", "1..9".
+    for sep in ["..", "~", "-"] {
+        if let Some((a, b)) = s.split_once(sep) {
+            let from = parse_index(a)?;
+            let to = parse_index(b)?;
+            return make_range(from, to);
+        }
+    }
+
+    // Enumeration syntax: "1,2,3" or "1、2、3" (also tolerates "，").
+    let parts: Vec<&str> = s
+        .split(|c| c == ',' || c == '、' || c == '，')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
+    if parts.is_empty() {
+        return Err(AppError::Invalid(format!("Edit: cannot parse `from`: {s}")));
+    }
+    if parts.len() == 1 {
+        let n = parse_index(parts[0])?;
+        return make_range(n, n);
+    }
+
+    let mut nums: Vec<usize> = parts
+        .iter()
+        .map(|p| parse_index(p))
+        .collect::<AppResult<Vec<_>>>()?;
+    nums.sort_unstable();
+    nums.dedup();
+    let from = nums[0];
+    let to = nums[nums.len() - 1];
+    if to - from + 1 != nums.len() {
+        return Err(AppError::Invalid(format!(
+            "Edit: `from` enumeration {s} must be contiguous — use a range like {from}-{to} instead"
+        )));
+    }
+    make_range(from, to)
+}
+
+fn parse_index(s: &str) -> AppResult<usize> {
+    s.trim()
+        .parse::<usize>()
+        .map_err(|_| AppError::Invalid(format!("Edit: invalid paragraph number `{}`", s.trim())))
+}
+
+fn make_range(from: usize, to: usize) -> AppResult<ParagraphRange> {
+    if from == 0 {
+        return Err(AppError::Invalid("Edit: paragraph numbers are 1-based".into()));
+    }
+    if to < from {
+        return Err(AppError::Invalid(format!(
+            "Edit: range end {to} must be >= start {from}"
+        )));
+    }
+    Ok(ParagraphRange { from, to })
+}
 
 /// Split file text into paragraphs (one line each).
 pub fn split_paragraphs(text: &str) -> Vec<String> {
@@ -48,53 +141,6 @@ pub fn split_agent_paragraphs(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Insert one or more lines immediately after `after_index`.
-pub fn insert_paragraphs_after(
-    paragraphs: &mut Vec<String>,
-    after_index: usize,
-    content: &str,
-) -> usize {
-    let new_paras = split_agent_paragraphs(content);
-    if new_paras.is_empty() || new_paras.iter().all(|p| p.is_empty()) {
-        return 0;
-    }
-    let insert_at = after_index + 1;
-    for (offset, p) in new_paras.iter().enumerate() {
-        paragraphs.insert(insert_at + offset, p.clone());
-    }
-    new_paras.len()
-}
-
-/// Replace paragraphs in the inclusive 1-based range `[from, to]` with lines from `content`.
-pub fn replace_paragraph_range(
-    paragraphs: &mut Vec<String>,
-    from: usize,
-    to: usize,
-    content: &str,
-) {
-    let from_idx = from.saturating_sub(1);
-    let to_idx = to.saturating_sub(1);
-    if from_idx > to_idx || to_idx >= paragraphs.len() {
-        return;
-    }
-    let new_paras = split_agent_paragraphs(content);
-    paragraphs.splice(from_idx..=to_idx, new_paras);
-}
-
-/// Replace paragraph at `index` with one or more lines from `content`.
-pub fn replace_paragraph_with(paragraphs: &mut Vec<String>, index: usize, content: &str) {
-    let new_paras = split_agent_paragraphs(content);
-    if new_paras.is_empty() {
-        paragraphs[index] = String::new();
-        return;
-    }
-    if new_paras.len() == 1 {
-        paragraphs[index] = new_paras[0].clone();
-        return;
-    }
-    paragraphs.splice(index..=index, new_paras);
-}
-
 /// Strip an optional `[P123]` prefix the model may copy from Read output.
 pub fn strip_paragraph_label(s: &str) -> &str {
     let trimmed = s.trim_start();
@@ -138,28 +184,6 @@ mod tests {
     }
 
     #[test]
-    fn insert_after_paragraph() {
-        let mut paras = vec![
-            "哈哈哈哈哈".into(),
-            "呜呜呜呜".into(),
-            "哦哦哦".into(),
-        ];
-        let n = insert_paragraphs_after(&mut paras, 1, "哈咦咦咦咦\n嚯嚯嚯\n歪歪");
-        assert_eq!(n, 3);
-        assert_eq!(
-            paras,
-            vec![
-                "哈哈哈哈哈",
-                "呜呜呜呜",
-                "哈咦咦咦咦",
-                "嚯嚯嚯",
-                "歪歪",
-                "哦哦哦",
-            ]
-        );
-    }
-
-    #[test]
     fn round_trip_join_split() {
         let parts = vec!["x".into(), String::new(), "y".into()];
         assert_eq!(split_paragraphs(&join_paragraphs(&parts)), parts);
@@ -179,24 +203,62 @@ mod tests {
     }
 
     #[test]
-    fn replace_paragraph_range_multi() {
-        let mut paras = vec!["a".into(), "b".into(), "c".into(), "d".into(), "e".into()];
-        replace_paragraph_range(&mut paras, 2, 4, "X\nY");
-        assert_eq!(paras, vec!["a", "X", "Y", "e"]);
-    }
-
-    #[test]
-    fn replace_single_paragraph_multiline_no_duplication() {
-        // Regression: replacing "你好。" with "你好。\n新世界。" at its own index
-        // must overwrite in place, never leave the old paragraph behind.
-        let mut paras = vec!["你好。".to_string(), "结尾".to_string()];
-        replace_paragraph_range(&mut paras, 1, 1, "你好。\n新世界。");
-        assert_eq!(paras, vec!["你好。", "新世界。", "结尾"]);
-    }
-
-    #[test]
     fn number_paragraph_range_full_matches_whole_file() {
         let text = "a\n\nb";
         assert_eq!(number_paragraphs(text), number_paragraph_range(text, 1, 3));
+    }
+
+    use serde_json::json;
+
+    fn spec(v: serde_json::Value) -> ParagraphRange {
+        parse_paragraph_spec(Some(&v)).unwrap()
+    }
+
+    #[test]
+    fn spec_integer_is_single_paragraph() {
+        assert_eq!(spec(json!(5)), ParagraphRange { from: 5, to: 5 });
+    }
+
+    #[test]
+    fn spec_numeric_string_is_single_paragraph() {
+        assert_eq!(spec(json!("5")), ParagraphRange { from: 5, to: 5 });
+    }
+
+    #[test]
+    fn spec_dash_range() {
+        assert_eq!(spec(json!("1-9")), ParagraphRange { from: 1, to: 9 });
+    }
+
+    #[test]
+    fn spec_tilde_and_dotdot_ranges() {
+        assert_eq!(spec(json!("2~4")), ParagraphRange { from: 2, to: 4 });
+        assert_eq!(spec(json!("2..4")), ParagraphRange { from: 2, to: 4 });
+    }
+
+    #[test]
+    fn spec_contiguous_enumeration() {
+        assert_eq!(spec(json!("1,2,3,4")), ParagraphRange { from: 1, to: 4 });
+        assert_eq!(spec(json!("3、4、5")), ParagraphRange { from: 3, to: 5 });
+    }
+
+    #[test]
+    fn spec_unsorted_but_contiguous_enumeration() {
+        assert_eq!(spec(json!("3,1,2")), ParagraphRange { from: 1, to: 3 });
+    }
+
+    #[test]
+    fn spec_rejects_non_contiguous_enumeration() {
+        assert!(parse_paragraph_spec(Some(&json!("1,3,5"))).is_err());
+    }
+
+    #[test]
+    fn spec_rejects_zero_and_missing() {
+        assert!(parse_paragraph_spec(Some(&json!(0))).is_err());
+        assert!(parse_paragraph_spec(None).is_err());
+    }
+
+    #[test]
+    fn spec_rejects_reversed_range() {
+        assert!(parse_paragraph_spec(Some(&json!("9-1"))).is_err());
     }
 }

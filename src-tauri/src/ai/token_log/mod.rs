@@ -274,6 +274,15 @@ fn extract_tool_metadata(tool_name: &str, input: &Value) -> Option<Value> {
             if let Some(n) = input.get("paragraph_to").and_then(Value::as_i64) {
                 m.insert("paragraph_to".into(), json!(n));
             }
+            match input.get("from") {
+                Some(Value::Number(n)) => {
+                    m.insert("from".into(), json!(n));
+                }
+                Some(Value::String(s)) => {
+                    m.insert("from".into(), json!(s));
+                }
+                _ => {}
+            }
             if m.is_empty() {
                 None
             } else {

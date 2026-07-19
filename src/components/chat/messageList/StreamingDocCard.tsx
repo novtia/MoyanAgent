@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { countChars, formatParagraphRangeLabel, parseEditParagraphRange, readerDocFromToolOutput, resolveToolFilePath, useReader } from "../../../store/reader";
+import {
+  countWords,
+  formatParagraphRangeLabel,
+  parseEditParagraphRange,
+  readerDocFromToolOutput,
+  resolveToolFilePath,
+  useReader,
+} from "../../../store/reader";
 import type { AssistantBlock } from "../../../types";
 import { normalizeToolContent } from "../../../utils/normalizeToolContent";
 import { extractToolErrorMessage } from "./utils";
@@ -22,13 +29,15 @@ export function StreamingDocCard({
     doc_type?: string;
     content?: string;
     path?: string;
-    paragraph_from?: number;
-    paragraph_to?: number;
+    from?: number | string;
   };
   const output = (block.output ?? {}) as {
     title?: string;
     path?: string;
     created?: boolean;
+    from?: number;
+    replaced_from?: number;
+    replaced_to?: number;
   };
 
   const content = useMemo(
@@ -38,7 +47,11 @@ export function StreamingDocCard({
 
   const path = resolveToolFilePath(block.input, block.output);
   const baseName = path ? path.split(/[\\/]/).pop() || path : "";
-  const editRange = isEdit ? parseEditParagraphRange(input) : undefined;
+  const requestedEditRange = isEdit ? parseEditParagraphRange(input) : undefined;
+  const editRange =
+    isEdit && status === "success"
+      ? parseEditParagraphRange({ ...input, ...output }) ?? requestedEditRange
+      : requestedEditRange;
   const paraLabel =
     editRange != null
       ? formatParagraphRangeLabel(editRange.from, editRange.to)
@@ -48,7 +61,7 @@ export function StreamingDocCard({
     : (output.title || input.title || "").trim() ||
       t("message.createDocUntitled");
 
-  const added = useMemo(() => countChars(content), [content]);
+  const added = useMemo(() => countWords(content), [content]);
 
   const readerDoc = useMemo(
     () =>

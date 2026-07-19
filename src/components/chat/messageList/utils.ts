@@ -1,4 +1,5 @@
 import type { AssistantBlock } from "../../../types";
+import { copyText as copyTextToClipboard } from "../../../utils/clipboard";
 import type { ListFilesEntry, MessageTokenUsageData, RpgOption, TodoItem } from "./types";
 
 export type TodoBlock = Extract<AssistantBlock, { type: "tool_use" }>;
@@ -36,9 +37,8 @@ export function nowStamp(ts: number) {
 }
 
 export async function copyText(text: string) {
-  if (!text) return;
   try {
-    await navigator.clipboard.writeText(text);
+    await copyTextToClipboard(text);
   } catch (e) {
     console.warn(e);
   }

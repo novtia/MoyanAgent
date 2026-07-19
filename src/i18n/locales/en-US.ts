@@ -320,7 +320,8 @@ const enUS: Resource = {
       Bash: "Run shell commands and return output",
       CreateDoc: "Create a doc from title/content/type (md or txt)",
       Delete: "Delete a file (rolls back with its message)",
-      Edit: "Replace a paragraph range (`paragraph_from` / `paragraph_to` + `content`)",
+      Edit:
+        "Replace paragraphs (from = 5, 1-9, or 1,2,3; empty content deletes; to continue, start content with the last paragraph's text)",
       Read: "Read a local text file; each line is one numbered paragraph ([P001], …; empty lines included)",
       ListFiles: "List files and subdirectories under a path",
       RoleState: "Maintain character attribute and state cards",
