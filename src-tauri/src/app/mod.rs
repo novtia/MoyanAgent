@@ -1721,6 +1721,57 @@ fn get_role_states(
     Ok(roles)
 }
 
+/// Full-object replace for one role on the board, then persist a manual snapshot.
+#[tauri::command]
+fn update_role_state(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+    role: serde_json::Value,
+) -> Result<serde_json::Value, AppError> {
+    let id = role
+        .get("id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::Invalid("update_role_state: role.id is required".into()))?
+        .to_string();
+    let conn = state.conn()?;
+    let scope = crate::data::role_state::resolve_role_state_scope(&conn, &session_id)?;
+    // Ensure the in-memory board is hydrated before replace (same as get).
+    let live = state.role_states.snapshot(&scope);
+    if live.is_empty() {
+        let roles = crate::data::role_state::latest_roles(&conn, &scope)?;
+        state.role_states.load(&scope, roles);
+    }
+    let updated = state.role_states.replace(&scope, &id, role)?;
+    let board = state.role_states.snapshot(&scope);
+    let message_id = format!("manual-{}", db::now_ms());
+    crate::data::role_state::save_snapshot(&conn, &scope, &session_id, &message_id, &board)?;
+    Ok(updated)
+}
+
+/// Remove one role from the board and persist a snapshot (including empty).
+#[tauri::command]
+fn delete_role_state(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+    id: String,
+) -> Result<serde_json::Value, AppError> {
+    let conn = state.conn()?;
+    let scope = crate::data::role_state::resolve_role_state_scope(&conn, &session_id)?;
+    let live = state.role_states.snapshot(&scope);
+    if live.is_empty() {
+        let roles = crate::data::role_state::latest_roles(&conn, &scope)?;
+        state.role_states.load(&scope, roles);
+    }
+    let removed = state.role_states.delete(&scope, &id)?;
+    // Always snapshot — even `[]` — so get_role_states won't fall back to an
+    // older non-empty DB row after the board was cleared.
+    let board = state.role_states.snapshot(&scope);
+    let message_id = format!("manual-{}", db::now_ms());
+    crate::data::role_state::save_snapshot(&conn, &scope, &session_id, &message_id, &board)?;
+    Ok(serde_json::json!({ "removed": removed }))
+}
+
 // ????????? Projects ?????????
 
 #[derive(Debug, Deserialize)]
@@ -3806,6 +3857,8 @@ pub fn run() {
             set_mcp_servers,
             list_agent_tools,
             get_role_states,
+            update_role_state,
+            delete_role_state,
             extract_session_memory,
             get_token_usage_summary,
             list_token_usage_events,

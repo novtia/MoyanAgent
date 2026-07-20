@@ -169,6 +169,8 @@ interface RoleStateStore {
   applyOp: (scopeId: string, op: RoleStateOp) => void;
   setRoles: (scopeId: string, roles: Role[]) => void;
   loadLatest: (sessionId: string, scopeId: string) => Promise<void>;
+  updateRole: (sessionId: string, scopeId: string, role: Role) => Promise<Role>;
+  deleteRole: (sessionId: string, scopeId: string, id: string) => Promise<boolean>;
   rolesOf: (scopeId: string | null | undefined) => Role[];
 }
 
@@ -228,6 +230,20 @@ export const useRoleState = create<RoleStateStore>((set, get) => ({
     } catch (e) {
       console.warn("[roleState] loadLatest failed", e);
     }
+  },
+
+  updateRole: async (sessionId, scopeId, role) => {
+    const updated = await api.updateRoleState(sessionId, role);
+    get().applyOp(scopeId, { op: "update", id: updated.id, role: updated });
+    return updated;
+  },
+
+  deleteRole: async (sessionId, scopeId, id) => {
+    const result = await api.deleteRoleState(sessionId, id);
+    if (result.removed) {
+      get().applyOp(scopeId, { op: "delete", id });
+    }
+    return result.removed;
   },
 
   rolesOf: (scopeId) => {

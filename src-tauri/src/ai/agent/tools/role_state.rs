@@ -159,7 +159,38 @@ impl RoleStateStore {
         Ok(role.clone())
     }
 
-    fn delete(&self, scope_id: &str, id: &str) -> AppResult<bool> {
+    /// Full-object replace for a role (UI edit). Preserves list order; errors if
+    /// the id is missing from the board.
+    pub fn replace(&self, scope_id: &str, id: &str, role: Value) -> AppResult<Value> {
+        let mut role = match role {
+            Value::Object(m) => m,
+            _ => {
+                return Err(AppError::Invalid(
+                    "RoleState replace: `role` must be an object".into(),
+                ))
+            }
+        };
+        role.insert("id".into(), Value::String(id.to_string()));
+        let role = Value::Object(role);
+
+        let mut g = self
+            .boards
+            .lock()
+            .map_err(|_| AppError::Other("RoleState: store lock poisoned".into()))?;
+        let list = g
+            .get_mut(scope_id)
+            .ok_or_else(|| AppError::Invalid("RoleState replace: no roles for scope".into()))?;
+        let slot = list
+            .iter_mut()
+            .find(|r| role_id(r) == Some(id))
+            .ok_or_else(|| {
+                AppError::Invalid(format!("RoleState replace: unknown role id {id:?}"))
+            })?;
+        *slot = role.clone();
+        Ok(role)
+    }
+
+    pub fn delete(&self, scope_id: &str, id: &str) -> AppResult<bool> {
         let mut g = self
             .boards
             .lock()

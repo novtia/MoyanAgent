@@ -289,6 +289,10 @@ export const api = {
   // role state board
   getRoleStates: (sessionId: string) =>
     invoke<Role[]>("get_role_states", { sessionId }),
+  updateRoleState: (sessionId: string, role: Role) =>
+    invoke<Role>("update_role_state", { sessionId, role }),
+  deleteRoleState: (sessionId: string, id: string) =>
+    invoke<{ removed: boolean }>("delete_role_state", { sessionId, id }),
 
   writeProjectFile: (
     sessionId: string,

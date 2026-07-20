@@ -47,7 +47,7 @@ export function RoleStatePanel({ open }: RoleStatePanelProps) {
   return (
     <div className="rs-panel">
       {roles.map((role) => (
-        <RoleStateCard key={role.id} role={role} />
+        <RoleStateCard key={role.id} role={role} sessionId={sessionId} scopeId={scopeId!} />
       ))}
     </div>
   );

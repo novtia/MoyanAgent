@@ -62,7 +62,8 @@
 
 .rs-card-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 10px;
 }
 
@@ -71,6 +72,39 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  flex: 1;
+}
+
+.rs-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.rs-card-action {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.rs-card-action:hover {
+  color: var(--ink);
+  border-color: var(--ink-mute);
+  background: var(--bg-soft);
+}
+
+.rs-card-action.is-danger:hover {
+  color: var(--rose-500);
+  border-color: var(--rose-500);
+  background: var(--rose-50);
 }
 
 .rs-name {
@@ -404,4 +438,178 @@
 .rs-inline-chip-op {
   font-weight: 600;
   color: var(--ink-2);
+}
+
+/* ── edit modal ── */
+.rs-edit-modal {
+  width: min(560px, 94vw);
+  max-height: 88vh;
+}
+
+.rs-edit-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.rs-edit-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rs-edit-section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+}
+
+.rs-edit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+
+.rs-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.rs-edit-field > span {
+  font-size: 11px;
+  color: var(--ink-mute);
+}
+
+.rs-edit-span2 {
+  grid-column: 1 / -1;
+}
+
+.rs-edit-field input,
+.rs-edit-field select,
+.rs-edit-field textarea,
+.rs-edit-dyn-row input,
+.rs-edit-row-add input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-sunk);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.rs-edit-field textarea {
+  resize: vertical;
+  min-height: 52px;
+  line-height: 1.4;
+}
+
+.rs-edit-field input:focus,
+.rs-edit-field select:focus,
+.rs-edit-field textarea:focus,
+.rs-edit-dyn-row input:focus,
+.rs-edit-row-add input:focus {
+  border-color: color-mix(in srgb, var(--ink) 35%, var(--line));
+  background: var(--bg);
+}
+
+.rs-edit-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 4px;
+}
+
+.rs-edit-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rs-edit-tag-x {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 1px;
+}
+
+.rs-edit-tag-x:hover {
+  color: var(--rose-500);
+}
+
+.rs-edit-row-add {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.rs-edit-row-add .btn {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.rs-edit-dyn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rs-edit-dyn-row {
+  display: grid;
+  grid-template-columns: 1fr 88px auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.rs-edit-meter-row {
+  grid-template-columns: 1fr 72px 72px auto;
+}
+
+.rs-edit-remove {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+
+.rs-edit-remove:hover {
+  color: var(--rose-500);
+  border-color: var(--rose-500);
+}
+
+.rs-edit-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--rose-500);
+}
+
+@media (max-width: 520px) {
+  .rs-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .rs-edit-span2 {
+    grid-column: auto;
+  }
+
+  .rs-edit-dyn-row,
+  .rs-edit-meter-row {
+    grid-template-columns: 1fr;
+  }
 }

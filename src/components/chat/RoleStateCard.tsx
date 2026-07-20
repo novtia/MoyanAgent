@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { dialog } from "../ui";
 import type { Role, RoleGender, RoleMeter, RoleNsfw } from "../../store/roleState";
 import {
   SEMEN_ML_KEYS,
@@ -12,10 +13,14 @@ import {
   resolveSemen,
   semenMl,
   semenText,
+  useRoleState,
 } from "../../store/roleState";
+import { RoleStateEditModal } from "./RoleStateEditModal";
 
 interface RoleStateCardProps {
   role: Role;
+  sessionId: string;
+  scopeId: string;
 }
 
 /** Clamp any model-authored number into a sane 0-100 percentage. */
@@ -395,9 +400,15 @@ function FieldGroup({ data, changed }: { data: Record<string, unknown>; changed:
   );
 }
 
-export const RoleStateCard = memo(function RoleStateCard({ role }: RoleStateCardProps) {
+export const RoleStateCard = memo(function RoleStateCard({
+  role,
+  sessionId,
+  scopeId,
+}: RoleStateCardProps) {
   const { t } = useTranslation();
   const [nsfwOpen, setNsfwOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const deleteRole = useRoleState((s) => s.deleteRole);
 
   const attributes = useMemo(() => {
     const a = role.attributes;
@@ -467,6 +478,20 @@ export const RoleStateCard = memo(function RoleStateCard({ role }: RoleStateCard
   const appearanceChanged = useChangedString(appearance);
   const hasNsfw = role.nsfw && typeof role.nsfw === "object" && Object.keys(role.nsfw).length > 0;
 
+  const onDelete = async () => {
+    const label = role.name || role.id;
+    const ok = await dialog.confirm(t("roleState.deleteConfirm", { name: label }), {
+      type: "danger",
+      confirmLabel: t("roleState.delete"),
+    });
+    if (!ok) return;
+    try {
+      await deleteRole(sessionId, scopeId, role.id);
+    } catch (e) {
+      console.warn("[roleState] delete failed", e);
+    }
+  };
+
   return (
     <article className="rs-card">
       <header className="rs-card-head">
@@ -488,6 +513,14 @@ export const RoleStateCard = memo(function RoleStateCard({ role }: RoleStateCard
               ))}
             </span>
           )}
+        </div>
+        <div className="rs-card-actions">
+          <button type="button" className="rs-card-action" onClick={() => setEditing(true)}>
+            {t("roleState.edit")}
+          </button>
+          <button type="button" className="rs-card-action is-danger" onClick={() => void onDelete()}>
+            {t("roleState.delete")}
+          </button>
         </div>
       </header>
 
@@ -562,6 +595,15 @@ export const RoleStateCard = memo(function RoleStateCard({ role }: RoleStateCard
             <NsfwPanel nsfw={role.nsfw as RoleNsfw} gender={gender} changed={changedNsfw} />
           )}
         </div>
+      )}
+
+      {editing && (
+        <RoleStateEditModal
+          role={role}
+          sessionId={sessionId}
+          scopeId={scopeId}
+          onClose={() => setEditing(false)}
+        />
       )}
     </article>
   );
