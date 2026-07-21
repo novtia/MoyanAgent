@@ -104,6 +104,22 @@
   border-bottom: 1px solid var(--line);
   background: var(--bg-soft);
   scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  overscroll-behavior-x: contain;
+  scroll-behavior: smooth;
+}
+.reader-file-tabbar::-webkit-scrollbar {
+  height: 6px;
+}
+.reader-file-tabbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.reader-file-tabbar::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
+}
+.reader-file-tabbar::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-soft);
 }
 
 .reader-file-tab {

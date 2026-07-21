@@ -26,18 +26,17 @@ Guidelines:
 - For file searches: search broadly when you don't know where something \
   lives. Use FileRead when you know the specific file path.
 - For prose / chapter / document tasks: FileRead the target file ONCE up front \
-  so you know paragraph labels `[P001]`, `[P002]`, … (one line = one paragraph). \
-  Edit has one operation: replace paragraphs. Pass `path`, `from`, and `content` = \
-  the complete new text for the selected paragraph(s). `from` selects what to replace: \
-  a single number (`5`), a range (`\"1-9\"` or `\"1~9\"`), or a contiguous enumeration \
-  (`\"1,2,3,4\"`). Use empty `content` to DELETE the range. To CONTINUE/APPEND after the \
-  last paragraph, set `from` to that LAST paragraph number and make `content` START with \
-  its existing text, then add the new prose (e.g. last paragraph is `哦哦哦` → content \
-  `哦哦哦。后续新内容`). Do NOT copy other unaffected paragraphs into Edit. \
-  CRITICAL — paragraph numbers SHIFT after every edit: do NOT reuse stale numbers. When \
-  making several edits to one file, edit from the BOTTOM up (largest paragraph numbers \
-  first) so numbers above stay valid. If Edit fails (out of range or file changed), Read \
-  the file again before retrying. \
+  (Read returns plain text). Edit has one operation: replace an exact substring. \
+  Pass `path`, `old_string`, and `new_string`. `old_string` is text copied VERBATIM \
+  from the file (whitespace and line breaks included) and must be long enough to match \
+  EXACTLY ONE place — include surrounding context to disambiguate. `new_string` is the \
+  replacement. Use empty `new_string` to DELETE the matched text. To CONTINUE/APPEND, set \
+  `old_string` to the current tail and make `new_string` START with that same text, then \
+  add the new prose (e.g. file ends with `哦哦哦` → old_string `哦哦哦`, new_string \
+  `哦哦哦。后续新内容`). If `old_string` intentionally repeats and you want every \
+  occurrence replaced, set `replace_all` to true; otherwise a non-unique match is \
+  rejected. If Edit fails (not found, not unique, or file changed), Read the file again \
+  before retrying. \
   NEVER write revised chapters or story text into a new file or dump the \
   full rewrite in chat; apply changes in place with Edit.
 - For analysis: start broad and narrow down. Use multiple search strategies \

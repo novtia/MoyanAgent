@@ -19,7 +19,7 @@
 
 use serde_json::Value;
 
-use crate::ai::agent::tools::paragraph::{number_paragraph_range, paragraph_count};
+use crate::ai::agent::tools::paragraph::paragraph_count;
 use crate::ai::agent::tools::project_path::{self, FILE_REF_DESC};
 use crate::ai::agent::tools::read_receipt::{
     content_hash, expand_read_range, MIN_READ_CONTEXT_LINES,
@@ -86,13 +86,14 @@ impl FileReadTool {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
                 description: "Read a text file from the local filesystem. \
-                    Returns file content with each line prefixed by `[P001]`, `[P002]`, … \
-                    (one line = one paragraph). Read the target file once at the start of \
-                    a prose task (full file is fine). Use ranged Read (`paragraph_from`, \
-                    optional `paragraph_to`) ONLY when Edit failed and you need the exact \
-                    snippet — you may request a single paragraph; the system automatically \
-                    expands the returned window to include surrounding context (at least \
-                    20 paragraphs when the file is long enough). Do not re-read before every Edit."
+                    Returns the file's plain text (no line labels), so you can copy exact \
+                    snippets into Edit's `old_string`. Read the target file once at the start \
+                    of a prose task (full file is fine). Use ranged Read (`paragraph_from`, \
+                    optional `paragraph_to`, treated as 1-based line numbers) ONLY when Edit \
+                    failed and you need to re-read the exact text — you may request a single \
+                    line; the system automatically expands the returned window to include \
+                    surrounding context (at least 20 lines when the file is long enough). \
+                    Do not re-read before every Edit."
                     .to_string(),
                 schema: serde_json::json!({
                     "type": "object",
@@ -104,12 +105,12 @@ impl FileReadTool {
                         "paragraph_from": {
                             "type": "integer",
                             "minimum": 1,
-                            "description": "First paragraph to return (1-based, inclusive). Omit to read the full file."
+                            "description": "First line to return (1-based, inclusive). Omit to read the full file."
                         },
                         "paragraph_to": {
                             "type": "integer",
                             "minimum": 1,
-                            "description": "Last paragraph to return (1-based, inclusive). Defaults to `paragraph_from` when omitted."
+                            "description": "Last line to return (1-based, inclusive). Defaults to `paragraph_from` when omitted."
                         }
                     },
                     "required": ["path"]
@@ -186,7 +187,6 @@ impl Tool for FileReadTool {
                     }
                 };
 
-            let numbered = number_paragraph_range(&text, paragraph_from, paragraph_to);
             let slice_text: String = text
                 .split('\n')
                 .enumerate()
@@ -232,7 +232,7 @@ impl Tool for FileReadTool {
                 "min_context_lines": MIN_READ_CONTEXT_LINES,
                 "paragraphs_returned": paragraphs_returned,
                 "ranged": ranged,
-                "text": numbered,
+                "text": slice_text,
             })))
         })
     }

@@ -90,169 +90,33 @@ export function splitParagraphs(text: string): string[] {
   return text.split("\n");
 }
 
-function stripParagraphLabel(s: string): string {
-  const trimmed = s.trimStart();
-  if (!trimmed.startsWith("[P")) return s;
-  const rest = trimmed.slice(2);
-  const closeIdx = rest.indexOf("]");
-  if (closeIdx < 0) return s;
-  const digits = rest.slice(0, closeIdx);
-  if (!/^\d+$/.test(digits)) return s;
-  return rest.slice(closeIdx + 1).trimStart();
-}
-
-/** Apply one Edit tool call to in-memory file text (mirrors backend Edit). */
-export function applyParagraphRangeEdit(
-  fileText: string,
-  paragraphFrom: number,
-  paragraphTo: number | undefined,
-  content: string,
-): string | null {
-  const paragraphs = splitParagraphs(fileText);
-  const resolvedTo = paragraphTo ?? paragraphFrom;
-  if (
-    paragraphFrom < 1 ||
-    paragraphFrom > paragraphs.length ||
-    resolvedTo < paragraphFrom ||
-    resolvedTo > paragraphs.length
-  ) {
-    return null;
-  }
-
-  const start = paragraphFrom - 1;
-  const newParas = content === "" ? [] : splitParagraphs(stripParagraphLabels(content));
-  paragraphs.splice(start, resolvedTo - start + 1, ...newParas);
-  return paragraphs.join("\n");
-}
-
-/** Undo one Edit on in-memory text (inverse of `applyParagraphRangeEdit`). */
-export function revertParagraphRangeEdit(
-  fileText: string,
-  paragraphFrom: number,
-  content: string,
-  before: string,
-): string | null {
-  const paragraphs = fileText === "" ? [] : splitParagraphs(fileText);
-  if (paragraphFrom < 1 || paragraphFrom > paragraphs.length + 1) return null;
-  const start = paragraphFrom - 1;
-  const oldParas = splitParagraphs(before);
-  const newParas = content === "" ? [] : splitParagraphs(stripParagraphLabels(content));
-  const removeCount = newParas.length;
-  if (start + removeCount > paragraphs.length) return null;
-  paragraphs.splice(start, removeCount, ...oldParas);
-  return paragraphs.join("\n");
-}
-
-/**
- * Parse the Edit `from` spec (number, `"1-9"`, `"1~9"`, `"1,2,3"`) into an
- * inclusive `{ from, to }` range. Mirrors the backend `parse_paragraph_spec`.
- */
-export function parseFromSpec(raw: unknown): { from: number; to: number } | undefined {
-  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 1) {
-    const n = Math.trunc(raw);
-    return { from: n, to: n };
-  }
-  if (typeof raw !== "string") return undefined;
-  const s = raw.trim();
-  if (s === "") return undefined;
-
-  for (const sep of ["..", "~", "-"]) {
-    const idx = s.indexOf(sep);
-    if (idx > 0) {
-      const from = parseInt(s.slice(0, idx).trim(), 10);
-      const to = parseInt(s.slice(idx + sep.length).trim(), 10);
-      if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < from) {
-        return undefined;
-      }
-      return { from, to };
-    }
-  }
-
-  const nums = s
-    .split(/[,、，]/)
-    .map((p) => p.trim())
-    .filter((p) => p !== "")
-    .map((p) => parseInt(p, 10));
-  if (nums.length === 0 || nums.some((n) => !Number.isInteger(n) || n < 1)) return undefined;
-  nums.sort((a, b) => a - b);
-  const from = nums[0];
-  const to = nums[nums.length - 1];
-  const unique = new Set(nums).size;
-  if (to - from + 1 !== unique) return undefined;
-  return { from, to };
-}
-
-export function parseEditParagraphRange(
-  input: unknown,
-): { from: number; to?: number } | undefined {
-  const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-
-  // New shape: `from` spec plus resolved `replaced_from`/`replaced_to`.
-  const replacedFrom = readToolParagraph(inp.replaced_from);
-  const replacedTo = readToolParagraph(inp.replaced_to);
-  if (replacedFrom != null) {
-    return { from: replacedFrom, to: replacedTo ?? replacedFrom };
-  }
-  const spec = parseFromSpec(inp.from);
-  if (spec != null) return spec;
-
-  // Legacy shape fallback (`paragraph_from`/`paragraph_to`).
-  const from = readToolParagraph(inp.paragraph_from);
-  if (from == null) return undefined;
-  const to = readToolParagraph(inp.paragraph_to);
-  if (to != null && to < from) return undefined;
-  return { from, to };
-}
-
-/** Read a 1-based paragraph value from tool input/output (0 allowed here). */
-export function readAppliedParagraph(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
-    return Math.trunc(value);
-  }
-  if (typeof value === "string" && /^\d+$/.test(value)) return parseInt(value, 10);
-  return undefined;
-}
-
 /**
  * Reconstruct the pre-edit file text from the authoritative post-edit disk
- * text, given the applied range and the removed `before` snippet the backend
- * returned. Used so the reader diff's reject/restore stays exact without
- * replaying the edit against a possibly-stale in-memory tab.
+ * text and the applied string replacement, so the reader diff's reject/restore
+ * stays exact without replaying against a possibly-stale in-memory tab.
+ *
+ * `matchStart` is the code-point offset of the first match in the file (as
+ * reported by the backend). For a single replacement we splice `oldString`
+ * back in at that offset; for `replaceAll` we swap every `newString`
+ * occurrence back to `oldString`.
  */
-export function revertEditOnDisk(
-  diskText: string,
-  appliedFrom: number,
-  replacedTo: number,
-  newParagraphTo: number,
-  before: string,
+export function revertStringEdit(
+  diskTextAfter: string,
+  oldString: string,
+  newString: string,
+  matchStart: number,
+  replaceAll: boolean,
 ): string {
-  const paras = diskText === "" ? [] : splitParagraphs(diskText);
-  const start = appliedFrom - 1;
-  const removeCount =
-    newParagraphTo >= appliedFrom ? newParagraphTo - appliedFrom + 1 : 0;
-  const replacedCount = replacedTo >= appliedFrom ? replacedTo - appliedFrom + 1 : 0;
-  if (start < 0 || start > paras.length || start + removeCount > paras.length) {
-    return diskText;
+  if (replaceAll) {
+    if (newString === "") return diskTextAfter;
+    return diskTextAfter.split(newString).join(oldString);
   }
-  const beforeParas = replacedCount === 0 ? [] : splitParagraphs(before);
-  if (beforeParas.length !== replacedCount) return diskText;
-  paras.splice(start, removeCount, ...beforeParas);
-  return paras.join("\n");
-}
-
-/** Text of paragraphs in inclusive 1-based range `[from, to]`. */
-export function paragraphsAtRange(text: string, from: number, to: number): string {
-  const paras = splitParagraphs(text);
-  if (from < 1 || to < from || to > paras.length) return "";
-  return paras.slice(from - 1, to).join("\n");
-}
-
-/** Format paragraph range label like Read tool output (`P009–P015`). */
-export function formatParagraphRangeLabel(from: number, to?: number): string {
-  const pad = (n: number) => String(n).padStart(3, "0");
-  if (to == null) return `[P${pad(from)}–末尾]`;
-  if (from === to) return `[P${pad(from)}]`;
-  return `[P${pad(from)}–P${pad(to)}]`;
+  const after = Array.from(diskTextAfter);
+  const newLen = Array.from(newString).length;
+  if (matchStart < 0 || matchStart > after.length) return diskTextAfter;
+  const head = after.slice(0, matchStart).join("");
+  const tail = after.slice(matchStart + newLen).join("");
+  return head + oldString + tail;
 }
 
 /** 1-based paragraph index, matches Edit `paragraph_number`. */

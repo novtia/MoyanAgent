@@ -1,4 +1,4 @@
-//! File-mutation tools: `Write` (overwrite) and `Edit` (paragraph-range replace).
+//! File-mutation tools: `Write` (overwrite) and `Edit` (string replace).
 //!
 //! Both refuse to operate on a file that the agent hasn't read first,
 //! using [`crate::ai::agent::core::context::ToolUseContext::read_file_state`]
@@ -9,16 +9,13 @@
 //! The `Read` precondition is skipped for `Write` when the target file
 //! does not yet exist — creating new files is always fine.
 //!
-//! `Edit` has one operation: replace an inclusive paragraph range with new
-//! content. The range comes from a single `from` argument that accepts a
-//! paragraph number (`5`), a range (`"1-9"`, `"1~9"`), or a contiguous
-//! enumeration (`"1,2,3"`). An empty `content` deletes the range (it is just a
-//! replacement with nothing). Appending / continuing prose is expressed as
-//! replacing the LAST paragraph with `content` that begins with that
-//! paragraph's existing text and then continues.
-//!
-//! Paragraph numbers come from the `[P001]` labels returned by Read. Because
-//! edits shift later numbers, `Edit`:
+//! `Edit` has one operation: find an exact `old_string` in the file and
+//! replace it with `new_string`. `old_string` must be copied verbatim from a
+//! prior Read (Read returns plain, unlabeled text). By default `old_string`
+//! must match exactly once; if it occurs multiple times the edit is rejected
+//! unless `replace_all` is set, in which case every occurrence is replaced. An
+//! empty `new_string` deletes the matched text. Because the match is
+//! content-based (not positional), `Edit`:
 //!
 //! - verifies the on-disk content still matches the receipt hash recorded at
 //!   the last Read/Write (stale files are rejected, not silently mis-edited);
@@ -31,10 +28,6 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
-use crate::ai::agent::tools::paragraph::{
-    join_paragraphs, parse_paragraph_spec, split_agent_paragraphs, split_paragraphs,
-    strip_paragraph_label,
-};
 use crate::ai::agent::tools::project_path::{self, FILE_REF_DESC};
 use crate::ai::agent::tools::read_receipt::{
     content_hash, has_receipt, lookup_receipt, record_receipt,
@@ -167,15 +160,16 @@ impl FileEditTool {
             snapshots,
             spec: ToolSpec {
                 name: EDIT_TOOL.to_string(),
-                description: "Replace a numbered paragraph range in a file. Read the file first to get `[P001]`, … \
-                    labels (one line = one paragraph). Pass `path`, `from`, and `content`. `from` locates the \
-                    paragraph(s) to replace: a single number (`5`), a range (`\"1-9\"` or `\"1~9\"`), or a contiguous \
-                    enumeration (`\"1,2,3,4\"`). `content` is the complete replacement text (use \\n between \
-                    paragraphs). To DELETE, pass empty `content`. To CONTINUE/APPEND after the last paragraph, set \
-                    `from` to that last paragraph number and make `content` start with its existing text, then add the \
-                    new prose (e.g. last paragraph is `哦哦哦` → content `哦哦哦。后续新内容`). Do NOT copy other \
-                    unaffected paragraphs into `content`. Paragraph numbers SHIFT after edits; for several edits to \
-                    one file, work from the BOTTOM up."
+                description: "Replace an exact substring in a file. Read the file first (Read returns plain text). \
+                    Pass `path`, `old_string`, and `new_string`. `old_string` is text copied VERBATIM from the file \
+                    (including whitespace and line breaks) and must be long enough to match EXACTLY ONE place — \
+                    include surrounding context to disambiguate. `new_string` is what replaces it. To DELETE, pass an \
+                    empty `new_string`. To CONTINUE/APPEND after existing prose, set `old_string` to the tail of the \
+                    current text and make `new_string` begin with that same text, then add the new prose (e.g. the \
+                    file ends with `哦哦哦` → old_string `哦哦哦`, new_string `哦哦哦。后续新内容`). If `old_string` \
+                    intentionally appears multiple times and you want to replace every occurrence, set `replace_all` \
+                    to true; otherwise a non-unique match is rejected. If Edit fails (not found, not unique, or file \
+                    changed), Read the file again before retrying."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -184,16 +178,20 @@ impl FileEditTool {
                             "type": "string",
                             "description": FILE_REF_DESC
                         },
-                        "from": {
-                            "type": ["integer", "string"],
-                            "description": "Paragraph(s) to replace (1-based, inclusive). A number like 5, a range like \"1-9\" / \"1~9\", or a contiguous enumeration like \"1,2,3,4\". To continue past the end, set this to the LAST paragraph number and lead `content` with its existing text."
-                        },
-                        "content": {
+                        "old_string": {
                             "type": "string",
-                            "description": "Replacement text; use \\n between paragraphs. Empty string deletes the range. When continuing/appending, begin with the last paragraph's existing text then add the new prose. Fill this in LAST, after path/from."
+                            "description": "Exact text to replace, copied verbatim from the file (whitespace and line breaks included). Must match exactly once unless `replace_all` is true. Include enough surrounding context to be unique."
+                        },
+                        "new_string": {
+                            "type": "string",
+                            "description": "Replacement text. Empty string deletes `old_string`. When continuing/appending, begin with `old_string`'s existing text then add the new prose. Fill this in LAST, after path/old_string."
+                        },
+                        "replace_all": {
+                            "type": "boolean",
+                            "description": "Replace every occurrence of `old_string` instead of requiring a unique match. Defaults to false."
                         }
                     },
-                    "required": ["path", "from", "content"]
+                    "required": ["path", "old_string", "new_string"]
                 }),
                 read_only: false,
                 concurrency_safe: false,
@@ -209,22 +207,46 @@ impl Tool for FileEditTool {
 
     fn validate(&self, input: &Value) -> AppResult<()> {
         require_nonempty_string(input, "path", EDIT_TOOL)?;
-        parse_paragraph_spec(input.get("from"))?;
-        require_string(input, "content", EDIT_TOOL)?;
+        require_nonempty_string(input, "old_string", EDIT_TOOL)?;
+        require_string(input, "new_string", EDIT_TOOL)?;
+        require_optional_bool(input, "replace_all", EDIT_TOOL)?;
         Ok(())
     }
 
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
             let path = path_arg(&invocation.input, EDIT_TOOL, &invocation.context.cwd)?;
-            let range = parse_paragraph_spec(invocation.input.get("from"))?;
-            let content = normalize_tool_string(strip_paragraph_label(
+            let old_string = normalize_tool_string(
                 invocation
                     .input
-                    .get("content")
+                    .get("old_string")
                     .and_then(Value::as_str)
                     .unwrap_or_default(),
-            ));
+            );
+            let new_string = normalize_tool_string(
+                invocation
+                    .input
+                    .get("new_string")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            );
+            let replace_all = invocation
+                .input
+                .get("replace_all")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+
+            if old_string.is_empty() {
+                return Ok(ToolResult::error(
+                    "Edit: `old_string` must be non-empty".to_string(),
+                ));
+            }
+            if old_string == new_string {
+                return Ok(ToolResult::error(
+                    "Edit: `old_string` and `new_string` are identical — nothing to change"
+                        .to_string(),
+                ));
+            }
 
             let stored_hash = lookup_receipt(&invocation.context.read_file_state, &path);
             if stored_hash.is_none() {
@@ -236,42 +258,35 @@ impl Tool for FileEditTool {
 
             let decoded = read_text_file(&path)
                 .map_err(|e| AppError::Other(format!("Edit: read {:?}: {e}", path)))?;
-            let mut paragraphs = split_paragraphs(&decoded.text);
-            let total_before = paragraphs.len();
 
             // Stale-file guard: the on-disk content must still match what the
             // model last saw. If it drifted (user edited in the reader, a
             // rejected diff was written back, etc.), refuse so the model
-            // re-reads instead of editing the wrong paragraph.
+            // re-reads instead of editing the wrong text.
             let disk_hash = content_hash(&decoded.text);
             if stored_hash != Some(disk_hash) {
                 return Ok(stale_error(&path));
             }
 
-            let from = range.from;
-            let to = range.to;
-            if from < 1 || from > total_before || to > total_before {
-                return Ok(range_error(from, to, total_before));
+            let occurrences = decoded.text.matches(&old_string).count();
+            if occurrences == 0 {
+                return Ok(not_found_error(&path));
+            }
+            if occurrences > 1 && !replace_all {
+                return Ok(not_unique_error(occurrences));
             }
 
-            let from_idx = from - 1;
-            let before = paragraphs[from_idx..to].join("\n");
+            let match_start = decoded
+                .text
+                .find(&old_string)
+                .map(|byte_idx| decoded.text[..byte_idx].chars().count())
+                .unwrap_or(0);
 
-            let new_paragraph_count = if content.is_empty() {
-                paragraphs.drain(from_idx..to);
-                0
+            let text_before = decoded.text.clone();
+            let (updated, replaced_count) = if replace_all {
+                (decoded.text.replace(&old_string, &new_string), occurrences)
             } else {
-                let new_paragraphs = split_agent_paragraphs(&content);
-                let count = new_paragraphs.len();
-                paragraphs.splice(from_idx..to, new_paragraphs);
-                count
-            };
-
-            let updated = join_paragraphs(&paragraphs);
-            let new_paragraph_to = if new_paragraph_count == 0 {
-                from - 1
-            } else {
-                from + new_paragraph_count - 1
+                (decoded.text.replacen(&old_string, &new_string, 1), 1)
             };
 
             // Snapshot the pre-image before mutating for rollback support.
@@ -289,20 +304,28 @@ impl Tool for FileEditTool {
             Ok(ToolResult::ok(json!({
                 "success": true,
                 "path": path.to_string_lossy(),
-                "from": from,
-                "replaced_from": from,
-                "replaced_to": to,
-                "new_paragraph_to": new_paragraph_to,
-                "total_paragraphs": paragraphs.len(),
-                "before": before,
+                "old_string": old_string,
+                "new_string": new_string,
+                "replace_all": replace_all,
+                "replaced_count": replaced_count,
+                "match_start": match_start,
+                "text_before": text_before,
+                "text": updated,
             })))
         })
     }
 }
 
-fn range_error(from: usize, to: usize, total: usize) -> ToolResult {
+fn not_found_error(path: &Path) -> ToolResult {
     ToolResult::error(format!(
-        "Edit: `from` {from}-{to} out of range (file has {total} paragraphs). Read the file again."
+        "Edit: `old_string` not found in {}. Read the file again and copy the exact text.",
+        path.display()
+    ))
+}
+
+fn not_unique_error(occurrences: usize) -> ToolResult {
+    ToolResult::error(format!(
+        "Edit: `old_string` matched {occurrences} places — add more surrounding context to make it unique, or set `replace_all` to true."
     ))
 }
 
@@ -330,6 +353,16 @@ fn require_string(input: &Value, key: &str, tool: &str) -> AppResult<()> {
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::Invalid(format!("{tool}: `{key}` must be a string")))?;
     Ok(())
+}
+
+fn require_optional_bool(input: &Value, key: &str, tool: &str) -> AppResult<()> {
+    match input.get(key) {
+        None | Some(Value::Null) => Ok(()),
+        Some(v) if v.is_boolean() => Ok(()),
+        Some(_) => Err(AppError::Invalid(format!(
+            "{tool}: `{key}` must be a boolean"
+        ))),
+    }
 }
 
 fn path_arg(input: &Value, tool: &str, cwd: &Path) -> AppResult<PathBuf> {
@@ -399,48 +432,33 @@ mod edit_tests {
     }
 
     #[tokio::test]
-    async fn replaces_dash_range_with_multiple_paragraphs() {
+    async fn replaces_unique_substring() {
         let (ctx, name) = seed("A\nB\nC\nD");
         read_receipt(&ctx, &name).await;
         let res = run_edit(
             &ctx,
-            json!({ "path": name, "from": "2-3", "content": "X\nY\nZ" }),
+            json!({ "path": name, "old_string": "B\nC", "new_string": "X\nY\nZ" }),
         )
         .await;
         assert!(!res.is_error, "unexpected error: {:?}", res.content);
         assert_eq!(disk(&ctx, &name), "A\nX\nY\nZ\nD");
         assert_eq!(res.content["success"], true);
-        assert_eq!(res.content["from"], 2);
-        assert_eq!(res.content["replaced_from"], 2);
-        assert_eq!(res.content["replaced_to"], 3);
-        assert_eq!(res.content["new_paragraph_to"], 4);
-        assert_eq!(res.content["total_paragraphs"], 5);
-        assert_eq!(res.content["before"], "B\nC");
+        assert_eq!(res.content["old_string"], "B\nC");
+        assert_eq!(res.content["new_string"], "X\nY\nZ");
+        assert_eq!(res.content["replace_all"], false);
+        assert_eq!(res.content["replaced_count"], 1);
+        assert_eq!(res.content["match_start"], 2);
+        assert_eq!(res.content["text_before"], "A\nB\nC\nD");
+        assert_eq!(res.content["text"], "A\nX\nY\nZ\nD");
     }
 
     #[tokio::test]
-    async fn replaces_contiguous_enumeration() {
+    async fn replaces_single_line() {
         let (ctx, name) = seed("A\nB\nC\nD");
         read_receipt(&ctx, &name).await;
         let res = run_edit(
             &ctx,
-            json!({ "path": name, "from": "1,2,3", "content": "X" }),
-        )
-        .await;
-        assert!(!res.is_error, "unexpected error: {:?}", res.content);
-        assert_eq!(disk(&ctx, &name), "X\nD");
-        assert_eq!(res.content["replaced_from"], 1);
-        assert_eq!(res.content["replaced_to"], 3);
-        assert_eq!(res.content["before"], "A\nB\nC");
-    }
-
-    #[tokio::test]
-    async fn integer_from_replaces_exactly_one_paragraph() {
-        let (ctx, name) = seed("A\nB\nC\nD");
-        read_receipt(&ctx, &name).await;
-        let res = run_edit(
-            &ctx,
-            json!({ "path": name, "from": 2, "content": "X" }),
+            json!({ "path": name, "old_string": "B", "new_string": "X" }),
         )
         .await;
         assert!(!res.is_error, "unexpected error: {:?}", res.content);
@@ -448,55 +466,83 @@ mod edit_tests {
     }
 
     #[tokio::test]
-    async fn continue_by_replacing_last_paragraph_with_its_text_plus_new() {
+    async fn continue_by_replacing_tail_with_its_text_plus_new() {
         let (ctx, name) = seed("A\nB\n哦哦哦");
         read_receipt(&ctx, &name).await;
-        // Continuation is expressed as replacing the last paragraph (3) with
-        // its existing text followed by the new prose.
+        // Continuation is expressed as replacing the tail with its existing
+        // text followed by the new prose.
         let res = run_edit(
             &ctx,
-            json!({ "path": name, "from": 3, "content": "哦哦哦。后续新内容\n再一段" }),
+            json!({ "path": name, "old_string": "哦哦哦", "new_string": "哦哦哦。后续新内容\n再一段" }),
         )
         .await;
         assert!(!res.is_error, "unexpected error: {:?}", res.content);
         assert_eq!(disk(&ctx, &name), "A\nB\n哦哦哦。后续新内容\n再一段");
-        assert_eq!(res.content["new_paragraph_to"], 4);
-        assert_eq!(res.content["before"], "哦哦哦");
+        assert_eq!(res.content["old_string"], "哦哦哦");
     }
 
     #[tokio::test]
-    async fn empty_content_deletes_range_without_blank_residue() {
+    async fn empty_new_string_deletes_match() {
         let (ctx, name) = seed("A\nB\nC\nD");
         read_receipt(&ctx, &name).await;
         let res = run_edit(
             &ctx,
-            json!({ "path": name, "from": "2-3", "content": "" }),
+            json!({ "path": name, "old_string": "\nB\nC", "new_string": "" }),
         )
         .await;
         assert!(!res.is_error, "unexpected error: {:?}", res.content);
         assert_eq!(disk(&ctx, &name), "A\nD");
-        assert_eq!(res.content["new_paragraph_to"], 1);
-        assert_eq!(res.content["before"], "B\nC");
+        assert_eq!(res.content["replaced_count"], 1);
     }
 
     #[tokio::test]
-    async fn rejects_non_contiguous_enumeration() {
-        let (ctx, name) = seed("A\nB\nC\nD");
+    async fn rejects_non_unique_match_without_replace_all() {
+        let (ctx, name) = seed("X\nB\nX\nD");
         read_receipt(&ctx, &name).await;
-        let tool = FileEditTool::new(Arc::new(FileSnapshotStore::new()));
-        let input = json!({ "path": name, "from": "1,3", "content": "X" });
-        assert!(tool.validate(&input).is_err());
+        let res = run_edit(
+            &ctx,
+            json!({ "path": name, "old_string": "X", "new_string": "Q" }),
+        )
+        .await;
+        assert!(res.is_error);
         // Nothing written.
-        assert_eq!(disk(&ctx, &name), "A\nB\nC\nD");
+        assert_eq!(disk(&ctx, &name), "X\nB\nX\nD");
     }
 
     #[tokio::test]
-    async fn rejects_out_of_range_paragraph() {
+    async fn replace_all_replaces_every_occurrence() {
+        let (ctx, name) = seed("X\nB\nX\nD");
+        read_receipt(&ctx, &name).await;
+        let res = run_edit(
+            &ctx,
+            json!({ "path": name, "old_string": "X", "new_string": "Q", "replace_all": true }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "Q\nB\nQ\nD");
+        assert_eq!(res.content["replaced_count"], 2);
+    }
+
+    #[tokio::test]
+    async fn rejects_old_string_not_found() {
         let (ctx, name) = seed("A\nB");
         read_receipt(&ctx, &name).await;
         let res = run_edit(
             &ctx,
-            json!({ "path": name, "from": 4, "content": "X" }),
+            json!({ "path": name, "old_string": "ZZZ", "new_string": "X" }),
+        )
+        .await;
+        assert!(res.is_error);
+        assert_eq!(disk(&ctx, &name), "A\nB");
+    }
+
+    #[tokio::test]
+    async fn rejects_identical_old_and_new() {
+        let (ctx, name) = seed("A\nB");
+        read_receipt(&ctx, &name).await;
+        let res = run_edit(
+            &ctx,
+            json!({ "path": name, "old_string": "A", "new_string": "A" }),
         )
         .await;
         assert!(res.is_error);
@@ -511,7 +557,7 @@ mod edit_tests {
         std::fs::write(ctx.cwd.join(&name), "A\nB\nC\nD\nE").unwrap();
         let res = run_edit(
             &ctx,
-            json!({ "path": name, "from": 2, "content": "Z" }),
+            json!({ "path": name, "old_string": "B", "new_string": "Z" }),
         )
         .await;
         assert!(res.is_error);
@@ -527,7 +573,7 @@ mod edit_tests {
         // No read_receipt call → no receipt.
         let res = run_edit(
             &ctx,
-            json!({ "path": name, "from": 1, "content": "Z" }),
+            json!({ "path": name, "old_string": "A", "new_string": "Z" }),
         )
         .await;
         assert!(res.is_error);
@@ -537,17 +583,17 @@ mod edit_tests {
     async fn consecutive_edits_use_refreshed_receipt() {
         let (ctx, name) = seed("A\nB\nC");
         read_receipt(&ctx, &name).await;
-        // Continue by replacing the last paragraph (3) with its text + new.
+        // Continue by replacing the tail with its text + new.
         let r1 = run_edit(
             &ctx,
-            json!({ "path": name, "from": 3, "content": "C\nD" }),
+            json!({ "path": name, "old_string": "C", "new_string": "C\nD" }),
         )
         .await;
         assert!(!r1.is_error, "first edit failed: {:?}", r1.content);
         // Second edit in the same session must not be rejected as stale.
         let r2 = run_edit(
             &ctx,
-            json!({ "path": name, "from": 1, "content": "A2" }),
+            json!({ "path": name, "old_string": "A", "new_string": "A2" }),
         )
         .await;
         assert!(!r2.is_error, "second edit rejected: {:?}", r2.content);

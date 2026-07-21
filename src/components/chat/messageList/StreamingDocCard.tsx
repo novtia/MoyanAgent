@@ -2,8 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   countWords,
-  formatParagraphRangeLabel,
-  parseEditParagraphRange,
   readerDocFromToolOutput,
   resolveToolFilePath,
   useReader,
@@ -29,35 +27,37 @@ export function StreamingDocCard({
     doc_type?: string;
     content?: string;
     path?: string;
-    from?: number | string;
+    old_string?: string;
+    new_string?: string;
+    replace_all?: boolean;
   };
   const output = (block.output ?? {}) as {
     title?: string;
     path?: string;
     created?: boolean;
-    from?: number;
-    replaced_from?: number;
-    replaced_to?: number;
+    old_string?: string;
+    new_string?: string;
+    replace_all?: boolean;
+    replaced_count?: number;
   };
 
+  // For Edit the detail/word-count reflects the replacement text (`new_string`);
+  // for CreateDoc it is the written `content`.
   const content = useMemo(
-    () => normalizeToolContent(input.content ?? ""),
-    [input.content],
+    () =>
+      normalizeToolContent(
+        isEdit ? (input.new_string ?? "") : (input.content ?? ""),
+      ),
+    [isEdit, input.new_string, input.content],
   );
 
   const path = resolveToolFilePath(block.input, block.output);
   const baseName = path ? path.split(/[\\/]/).pop() || path : "";
-  const requestedEditRange = isEdit ? parseEditParagraphRange(input) : undefined;
-  const editRange =
-    isEdit && status === "success"
-      ? parseEditParagraphRange({ ...input, ...output }) ?? requestedEditRange
-      : requestedEditRange;
-  const paraLabel =
-    editRange != null
-      ? formatParagraphRangeLabel(editRange.from, editRange.to)
-      : "";
+  const replaceAll = output.replace_all === true || input.replace_all === true;
   const summary = isEdit
-    ? [baseName || t("message.streamDocEditUntitled"), paraLabel].filter(Boolean).join(" · ")
+    ? [baseName || t("message.streamDocEditUntitled"), replaceAll ? "×N" : ""]
+        .filter(Boolean)
+        .join(" · ")
     : (output.title || input.title || "").trim() ||
       t("message.createDocUntitled");
 

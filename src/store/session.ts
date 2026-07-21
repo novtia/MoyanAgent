@@ -23,8 +23,7 @@ import {
   readerDocFromToolOutput,
   stripParagraphLabels,
   resolveToolFilePath,
-  readAppliedParagraph,
-  revertEditOnDisk,
+  revertStringEdit,
   inferFileType,
 } from "./reader";
 import { useSettings } from "./settings";
@@ -1613,26 +1612,27 @@ async function handleReaderToolComplete(
   if (tool === "Edit") {
     const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
     const out = (output && typeof output === "object" ? output : {}) as Record<string, unknown>;
-    const contentRaw = typeof inp.content === "string" ? inp.content : "";
-    const content = normalizeToolContent(contentRaw);
 
-    // The backend returns both the resolved old range and the range occupied by
-    // the replacement in the authoritative post-edit file.
-    const appliedFrom =
-      readAppliedParagraph(out.replaced_from) ??
-      readAppliedParagraph(out.from) ??
-      readAppliedParagraph(out.paragraph_from) ??
-      readAppliedParagraph(inp.paragraph_from) ??
-      1;
-    const replacedTo =
-      readAppliedParagraph(out.replaced_to) ??
-      readAppliedParagraph(out.paragraph_to) ??
-      readAppliedParagraph(inp.paragraph_to) ??
-      appliedFrom;
-    const newParagraphTo =
-      readAppliedParagraph(out.new_paragraph_to) ??
-      (content === "" ? appliedFrom - 1 : appliedFrom + content.split("\n").length - 1);
-    const before = typeof out.before === "string" ? out.before : "";
+    // Backend returns the exact strings it matched/replaced (already
+    // normalized), plus the match offset and full pre/post-edit text.
+    const oldString = normalizeToolContent(
+      typeof out.old_string === "string"
+        ? out.old_string
+        : typeof inp.old_string === "string"
+          ? inp.old_string
+          : "",
+    );
+    const newString = normalizeToolContent(
+      typeof out.new_string === "string"
+        ? out.new_string
+        : typeof inp.new_string === "string"
+          ? inp.new_string
+          : "",
+    );
+    const replaceAll =
+      out.replace_all === true || inp.replace_all === true;
+    const matchStart =
+      typeof out.match_start === "number" ? out.match_start : 0;
 
     const sessionId = useSession.getState().activeId;
     if (!sessionId) return;
@@ -1654,13 +1654,12 @@ async function handleReaderToolComplete(
     }
 
     const textAfter = diskText;
-    const textBefore = revertEditOnDisk(
-      diskText,
-      appliedFrom,
-      replacedTo,
-      newParagraphTo,
-      before,
-    );
+    // Prefer the backend's authoritative pre-edit snapshot; fall back to
+    // reconstructing it from the disk text and the applied replacement.
+    const textBefore =
+      typeof out.text_before === "string"
+        ? out.text_before
+        : revertStringEdit(diskText, oldString, newString, matchStart, replaceAll);
 
     if (!existing) {
       reader.openDoc(
@@ -1676,13 +1675,9 @@ async function handleReaderToolComplete(
       existing = reader.getTabByPath(path);
     }
 
-    const beforeDisplay = before;
-    const afterDisplay = stripParagraphLabels(content);
-
     reader.appendPendingDiff(path, {
-      before: normalizeDiffText(beforeDisplay),
-      after: normalizeDiffText(afterDisplay),
-      paragraphNumber: appliedFrom,
+      before: normalizeDiffText(oldString),
+      after: normalizeDiffText(newString),
       textBefore,
       textAfter,
     });

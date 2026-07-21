@@ -1,4 +1,11 @@
-import { useMemo, useState, useEffect, useCallback, type CSSProperties } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  useEffect,
+  useCallback,
+  type CSSProperties,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   useReader,
@@ -111,8 +118,35 @@ export function ReaderWorkspace() {
   const closeTab = useReader((s) => s.closeTab);
 
   const activeTab = tabs.find((tb) => tb.id === activeTabId) ?? null;
+  const tabbarRef = useRef<HTMLDivElement | null>(null);
 
   useReaderFindShortcuts(tabs.length > 0);
+
+  // Translate vertical mouse-wheel gestures into horizontal scrolling so the
+  // file title bar can be traversed without a horizontal wheel / shift key.
+  // A native non-passive listener is required for preventDefault to take hold.
+  useEffect(() => {
+    const el = tabbarRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY === 0) return;
+      if (el.scrollWidth <= el.clientWidth) return;
+      // Leave horizontal-intent gestures (trackpads) to the browser.
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [tabs.length]);
+
+  // Keep the active tab visible when it changes or new tabs push it off-screen.
+  useEffect(() => {
+    const el = tabbarRef.current;
+    if (!el) return;
+    const active = el.querySelector<HTMLElement>(".reader-file-tab.is-active");
+    active?.scrollIntoView({ inline: "nearest", block: "nearest" });
+  }, [activeTabId, tabs.length]);
 
   if (tabs.length === 0) {
     return (
@@ -127,7 +161,12 @@ export function ReaderWorkspace() {
 
   return (
     <div className="reader-workspace">
-      <div className="reader-file-tabbar" role="tablist" aria-label={t("reader.fileTabs")}>
+      <div
+        ref={tabbarRef}
+        className="reader-file-tabbar"
+        role="tablist"
+        aria-label={t("reader.fileTabs")}
+      >
         {tabs.map((tb) => {
           const name = readerFileName(tb.path);
           const isActive = tb.id === activeTabId;
