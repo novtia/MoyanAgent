@@ -38,7 +38,7 @@ import {
   type MentionTriggerAnchor,
 } from "./mention";
 import { ComposerFileTree } from "./ComposerFileTree";
-import { READER_FILE_DRAG_TYPE } from "./ReaderFileExplorer";
+import { READER_FILE_DRAG_TYPE } from "../../utils/readerDrag";
 import { ATELIER_DRAG_TYPE } from "./SessionGallery";
 
 function nativeFilePath(file: File) {

@@ -228,7 +228,7 @@ import { dialog, toast } from "../../ui";
 import { useProject } from "../../../store/project";
 import { useSession } from "../../../store/session";
 import { ATELIER_DRAG_TYPE } from "../SessionGallery";
-import { READER_FILE_DRAG_TYPE } from "../ReaderFileExplorer";
+import { READER_FILE_DRAG_TYPE } from "../../../utils/readerDrag";
 import {
   MentionEditor,
   MentionText,

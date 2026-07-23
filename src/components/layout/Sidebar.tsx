@@ -64,11 +64,11 @@ export function Sidebar({
           {!hasProjects && <ProjectNavItem />}
         </nav>
 
+        {/* ── 进行中会话（固定卡片，始终显示在导航下方，不随列表滚动）── */}
+        <ActiveSessionsSection onOpenChat={onOpenChat} />
+
         <div className="side-section">
           <div className="side-section-scroll">
-            {/* ── 进行中会话（动态区域，滚动时固定在顶部）── */}
-            <ActiveSessionsSection onOpenChat={onOpenChat} />
-
             {/* ── 项目区块（有项目时显示）── */}
             {hasProjects && (
               <div className="side-project-section">
@@ -120,11 +120,21 @@ function ActiveSessionsSection({ onOpenChat }: ActiveSessionsSectionProps) {
   const { t } = useTranslation();
   const sessions = useSession((s) => s.sessions);
   const busyBySession = useSession((s) => s.busyBySession);
+  const finishedBySession = useSession((s) => s.finishedBySession);
   const activeId = useSession((s) => s.activeId);
   const switchTo = useSession((s) => s.switchTo);
+  const dismissFinished = useSession((s) => s.dismissFinished);
 
   const busySessions = sessions.filter((s) => busyBySession[s.id]);
-  if (busySessions.length === 0) return null;
+  const finishedSessions = sessions.filter(
+    (s) => finishedBySession[s.id] && !busyBySession[s.id],
+  );
+  if (busySessions.length === 0 && finishedSessions.length === 0) return null;
+
+  const openSession = (id: string) => {
+    switchTo(id);
+    onOpenChat();
+  };
 
   return (
     <div className="side-active-section">
@@ -139,13 +149,43 @@ function ActiveSessionsSection({ onOpenChat }: ActiveSessionsSectionProps) {
             type="button"
             className={`chat-item side-active-item ${activeId === s.id ? "active" : ""}`}
             title={s.title}
-            onClick={() => {
-              switchTo(s.id);
-              onOpenChat();
-            }}
+            onClick={() => openSession(s.id)}
           >
             <span className="side-active-item-dot" aria-hidden="true" />
             <span className="chat-title">{s.title}</span>
+          </button>
+        ))}
+        {finishedSessions.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            className="chat-item side-active-item side-active-item--done"
+            title={s.title}
+            onClick={() => openSession(s.id)}
+          >
+            <span className="side-active-done-icon" aria-hidden="true">
+              <CheckIcon />
+            </span>
+            <span className="chat-title">{s.title}</span>
+            <span
+              role="button"
+              tabIndex={0}
+              className="side-active-dismiss"
+              title={t("sidebar.dismissFinished")}
+              onClick={(e) => {
+                e.stopPropagation();
+                dismissFinished(s.id);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  dismissFinished(s.id);
+                }
+              }}
+            >
+              <CloseIcon />
+            </span>
           </button>
         ))}
       </div>
@@ -636,6 +676,20 @@ function ImportIcon() {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="17 8 12 3 7 8" />
       <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+  );
+}
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 6 6 18M6 6l12 12" />
     </svg>
   );
 }

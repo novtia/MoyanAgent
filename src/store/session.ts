@@ -145,6 +145,12 @@ interface SessionStore {
   active: SessionWithMessagesAbs | null;
   busy: boolean;
   busyBySession: Record<string, boolean>;
+  /**
+   * Sessions whose generation finished in the background (while the user was
+   * viewing another session). Kept as a "task complete" reminder in the
+   * sidebar until the user opens the session or dismisses the card.
+   */
+  finishedBySession: Record<string, boolean>;
   generationPhaseBySession: Record<string, string>;
   composer: ComposerState;
 
@@ -161,6 +167,8 @@ interface SessionStore {
   remove: (id: string) => Promise<void>;
   ensureActive: () => Promise<string>;
   reloadActiveSession: () => Promise<void>;
+  /** Clear a session's background "task complete" reminder. */
+  dismissFinished: (id: string) => void;
 
   setPrompt: (s: string) => void;
   setMentions: (paths: string[]) => void;
@@ -505,8 +513,11 @@ export const useSession = create<SessionStore>((set, get) => {
   const setSessionBusy = (sessionId: string, busy: boolean) => {
     set((state) => {
       const busyBySession = { ...state.busyBySession };
+      const finishedBySession = { ...state.finishedBySession };
       if (busy) {
         busyBySession[sessionId] = true;
+        // A new run supersedes any lingering "task complete" reminder.
+        delete finishedBySession[sessionId];
       } else {
         delete busyBySession[sessionId];
       }
@@ -516,10 +527,18 @@ export const useSession = create<SessionStore>((set, get) => {
       if (!busy) delete generationPhaseBySession[sessionId];
       return {
         busyBySession,
+        finishedBySession,
         generationPhaseBySession,
         busy: state.activeId ? !!busyBySession[state.activeId] : false,
       };
     });
+  };
+
+  /** Flag a session's generation as finished in the background (reminder). */
+  const markSessionFinished = (sessionId: string) => {
+    set((state) => ({
+      finishedBySession: { ...state.finishedBySession, [sessionId]: true },
+    }));
   };
 
   const updateActiveSession = (
@@ -585,6 +604,7 @@ export const useSession = create<SessionStore>((set, get) => {
   active: null,
   busy: false,
   busyBySession: {},
+  finishedBySession: {},
   generationPhaseBySession: {},
   composer: {
     prompt: "",
@@ -624,6 +644,15 @@ export const useSession = create<SessionStore>((set, get) => {
 
     const data = await api.loadSession(id);
     const isBusy = !!get().busyBySession[id];
+
+    // Opening a session acknowledges any background "task complete" reminder.
+    if (get().finishedBySession[id]) {
+      set((state) => {
+        const finishedBySession = { ...state.finishedBySession };
+        delete finishedBySession[id];
+        return { finishedBySession };
+      });
+    }
 
     // If this session is still generating, restore any buffered streaming
     // content that accumulated while the user was viewing another session.
@@ -730,6 +759,15 @@ export const useSession = create<SessionStore>((set, get) => {
     } catch (e) {
       console.warn(e);
     }
+  },
+
+  dismissFinished: (id) => {
+    set((state) => {
+      if (!state.finishedBySession[id]) return state;
+      const finishedBySession = { ...state.finishedBySession };
+      delete finishedBySession[id];
+      return { finishedBySession };
+    });
   },
 
   setPrompt: (s) => set({ composer: { ...get().composer, prompt: s } }),
@@ -1254,9 +1292,14 @@ export const useSession = create<SessionStore>((set, get) => {
         await reloadActiveSessionIfViewing(sid);
         await get().refreshList();
       } finally {
+        const wasCancelled = cancellingSessions.has(sid);
         cancellingSessions.delete(sid);
         if (epoch === getGenerationEpoch(sid)) {
+          // Only remind when the run finished in the background: not user-
+          // cancelled, and the user had already left this session.
+          const remindInBackground = !wasCancelled && get().activeId !== sid;
           setSessionBusy(sid, false);
+          if (remindInBackground) markSessionFinished(sid);
         }
       }
     })();
@@ -1406,9 +1449,14 @@ export const useSession = create<SessionStore>((set, get) => {
         await reloadActiveSessionIfViewing(sid);
         await get().refreshList();
       } finally {
+        const wasCancelled = cancellingSessions.has(sid);
         cancellingSessions.delete(sid);
         if (epoch === getGenerationEpoch(sid)) {
+          // Only remind when the run finished in the background: not user-
+          // cancelled, and the user had already left this session.
+          const remindInBackground = !wasCancelled && get().activeId !== sid;
           setSessionBusy(sid, false);
+          if (remindInBackground) markSessionFinished(sid);
         }
       }
     })();

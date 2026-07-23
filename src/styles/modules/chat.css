@@ -472,19 +472,22 @@
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 0 4px 0 10px;
+  padding: 0 4px 0 8px;
   border-radius: 8px;
-  border: 1px solid transparent;
   background: transparent;
   color: var(--ink-mute);
   white-space: nowrap;
   flex-shrink: 0;
   max-width: 180px;
+  transition: background 0.12s ease, color 0.12s ease;
 }
+/* Selected = simple grey rounded card, no border or accent color. */
 .right-panel-tab.is-active {
   background: var(--bg-sunk);
-  border-color: var(--line);
   color: var(--ink-1);
+}
+.right-panel-tab:hover:not(.is-active) {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
 }
 .right-panel-tab-label {
   display: inline-flex;
@@ -492,7 +495,7 @@
   gap: 6px;
   background: none;
   border: none;
-  padding: 7px 2px;
+  padding: 6px 2px;
   font-size: 12px;
   font-weight: 500;
   color: inherit;
@@ -500,6 +503,16 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.right-panel-tab-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  line-height: 0;
+}
+.right-panel-tab-label > svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
 }
 .right-panel-tab-count {
   font-size: 10px;
@@ -509,6 +522,7 @@
   color: var(--ink-mute);
   font-variant-numeric: tabular-nums;
 }
+/* Close button stays hidden until the tab is hovered. */
 .right-panel-tab-close {
   display: inline-flex;
   align-items: center;
@@ -522,19 +536,43 @@
   color: var(--ink-mute);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.12s ease, background 0.12s ease;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
-.right-panel-tab:hover .right-panel-tab-close,
-.right-panel-tab.is-active .right-panel-tab-close {
+.right-panel-tab:hover .right-panel-tab-close {
   opacity: 1;
 }
+/* Right-side highlight when the close button itself is hovered. */
 .right-panel-tab-close:hover {
-  background: var(--line);
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
   color: var(--ink-1);
 }
 .right-panel-tab-close svg {
   width: 12px;
   height: 12px;
+}
+.right-panel-tab-scroll {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  align-self: center;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.right-panel-tab-scroll:hover {
+  background: var(--line);
+  color: var(--ink-1);
+}
+.right-panel-tab-scroll svg {
+  width: 16px;
+  height: 16px;
 }
 .right-panel-tabbar-actions {
   display: flex;

@@ -126,14 +126,18 @@
 }
 
 /* ─── Active (in-progress) sessions section ─── */
+/* Pinned card directly under the nav: always visible (does not scroll with the
+   session list). Rendered as an inset card narrower than the sidebar (right
+   gutter), with a background deeper than the sidebar so it reads as a distinct
+   surface. */
 .side-active-section {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--bg-side);
-  margin-bottom: 6px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+  background: var(--bg-sunk);
+  margin: 6px 8px 2px 0;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-1);
 }
 .side-active-section-header {
   padding-top: 2px;
@@ -162,6 +166,48 @@
 .side-active-item .chat-title {
   color: var(--ink);
 }
+
+/* ─── Finished (background "task complete") item ─── */
+.side-active-done-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  color: var(--green-600, #22c55e);
+}
+.side-active-done-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.side-active-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  border-radius: 4px;
+  color: var(--ink-mute);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.side-active-item--done:hover .side-active-dismiss,
+.side-active-dismiss:focus-visible {
+  opacity: 1;
+}
+.side-active-dismiss:hover {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+.side-active-dismiss svg {
+  width: 12px;
+  height: 12px;
+}
+
 @keyframes side-active-pulse {
   0%, 100% {
     opacity: 1;
