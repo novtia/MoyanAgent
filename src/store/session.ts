@@ -27,6 +27,7 @@ import {
   inferFileType,
 } from "./reader";
 import { useSettings } from "./settings";
+import { useProject } from "./project";
 import { normalizeDiffText } from "../utils/inlineDiff";
 import { normalizeToolContent } from "../utils/normalizeToolContent";
 
@@ -51,17 +52,38 @@ interface ComposerState {
 }
 
 /**
- * Capabilities of the currently active model (global active provider + model).
- * Used to decide whether per-request thinking params should be forwarded.
+ * Look up a model's capabilities by provider + model id, falling back to a
+ * search across all providers when the provider id is unknown (e.g. a session
+ * whose provider hasn't been backfilled yet).
+ */
+export function modelCapabilities(
+  providerId: string | null | undefined,
+  modelId: string | null | undefined,
+): string[] {
+  const settings = useSettings.getState().settings;
+  if (!settings || !modelId) return [];
+  const byProvider = settings.model_services
+    ?.find((p) => p.id === providerId)
+    ?.models?.find((m) => m.id === modelId);
+  if (byProvider) return byProvider.capabilities ?? [];
+  for (const p of settings.model_services ?? []) {
+    const m = p.models?.find((mm) => mm.id === modelId);
+    if (m) return m.capabilities ?? [];
+  }
+  return [];
+}
+
+/**
+ * Capabilities of the currently active session's model (its own provider +
+ * model), falling back to the global default when no session is active.
  */
 function activeModelCapabilities(): string[] {
   const settings = useSettings.getState().settings;
   if (!settings) return [];
-  const provider = settings.model_services?.find(
-    (p) => p.id === settings.active_provider_id,
-  );
-  const model = provider?.models?.find((m) => m.id === settings.model);
-  return model?.capabilities ?? [];
+  const active = useSession.getState().active;
+  const providerId = active?.session.provider_id ?? settings.active_provider_id;
+  const modelId = active?.session.model ?? settings.model;
+  return modelCapabilities(providerId, modelId);
 }
 
 interface PendingAttachmentDraft {
@@ -151,6 +173,12 @@ interface SessionStore {
   setWatermark: (enabled: boolean) => void;
   setThinkingEnabled: (on: boolean) => void;
   setThinkingEffort: (effort: string) => void;
+  /**
+   * Persist the composer's current thinking toggle into the given session's
+   * own `llm_params` so thinking is self-owned per session. No-op when the
+   * session is not the active one or the value is unchanged.
+   */
+  persistComposerThinking: (sessionId: string) => Promise<void>;
   setChatMode: (mode: ComposerChatMode) => Promise<void>;
   setAgentChain: (chain: ChainEntry[]) => Promise<void>;
   addAttachments: (files: File[]) => Promise<void>;
@@ -230,6 +258,32 @@ function uploadMime(file: File) {
 
 function isVideoModel() {
   return activeModelCapabilities().includes("video");
+}
+
+/**
+ * The parameters actually applied to a session's generation. For project
+ * sessions the project shares its sampling params / prompt / history with all
+ * its sessions (so the session's own values are overridden), while `thinking`
+ * stays session-owned. Mirrors the backend `effective_session_params` so the
+ * request log reflects what is really sent.
+ */
+function effectiveSessionForLog(session: SessionWithMessagesAbs["session"]) {
+  if (!session.project_id) return session;
+  const proj = useProject
+    .getState()
+    .projects.find((p) => p.id === session.project_id);
+  if (!proj) return session;
+  return {
+    ...session,
+    system_prompt: proj.system_prompt,
+    history_turns: proj.history_turns,
+    context_window: proj.context_window ?? session.context_window,
+    llm_params: {
+      ...proj.llm_params,
+      thinking_enabled: session.llm_params?.thinking_enabled ?? null,
+      thinking_effort: session.llm_params?.thinking_effort ?? null,
+    },
+  };
 }
 
 function resolvedMediaRole(
@@ -600,6 +654,8 @@ export const useSession = create<SessionStore>((set, get) => {
         videoResolution: draft?.videoResolution ?? get().composer.videoResolution,
         generateAudio: draft?.generateAudio ?? get().composer.generateAudio,
         watermark: draft?.watermark ?? get().composer.watermark,
+        thinkingEnabled: data.session.llm_params?.thinking_enabled ?? false,
+        thinkingEffort: data.session.llm_params?.thinking_effort ?? "",
         chatMode: composerModeFromAgentType(data.session.agent_type),
       },
     });
@@ -693,6 +749,41 @@ export const useSession = create<SessionStore>((set, get) => {
     set({ composer: { ...get().composer, thinkingEnabled: on } }),
   setThinkingEffort: (effort) =>
     set({ composer: { ...get().composer, thinkingEffort: effort } }),
+
+  persistComposerThinking: async (sessionId) => {
+    const a = get().active;
+    if (!a || a.session.id !== sessionId) return;
+    const c = get().composer;
+    const canReason = activeModelCapabilities().includes("reasoning");
+    const enabled = canReason ? c.thinkingEnabled : false;
+    const effort =
+      canReason && c.thinkingEnabled && c.thinkingEffort.trim()
+        ? c.thinkingEffort.trim()
+        : null;
+    const cur = a.session.llm_params;
+    if ((cur.thinking_enabled ?? false) === enabled && (cur.thinking_effort ?? null) === effort) {
+      return;
+    }
+    const llm: ModelParamSettings = {
+      ...cur,
+      thinking_enabled: enabled,
+      thinking_effort: effort,
+    };
+    try {
+      await api.updateSessionConfig(
+        sessionId,
+        a.session.system_prompt,
+        a.session.history_turns,
+        llm,
+      );
+      const now = get().active;
+      if (now && now.session.id === sessionId) {
+        set({ active: { ...now, session: { ...now.session, llm_params: llm } } });
+      }
+    } catch (e) {
+      console.warn(e);
+    }
+  },
 
   setChatMode: async (mode) => {
     const id = get().activeId;
@@ -1116,17 +1207,13 @@ export const useSession = create<SessionStore>((set, get) => {
     const epoch = getGenerationEpoch(sid);
 
     const c = get().composer;
-    const canReason = activeModelCapabilities().includes("reasoning");
-    const thinkingEnabled = canReason ? c.thinkingEnabled : null;
-    const thinkingEffort =
-      canReason && c.thinkingEnabled && c.thinkingEffort.trim()
-        ? c.thinkingEffort.trim()
-        : null;
+    await get().persistComposerThinking(sid);
     const inputMedia = m.images.filter((i) => i.role === "input");
-    const recordedMode =
-      (m.params?.video_mode as VideoGenerationMode | undefined) ?? c.videoMode;
+    // Always use the LATEST composer/session params on resend — never the
+    // parameters recorded on the original message. If the user changed anything
+    // in the composer, the resend must reflect it.
     const effectiveVideoMode = videoModel
-      ? coerceVideoModeForMedia(recordedMode, inputMedia, text)
+      ? coerceVideoModeForMedia(c.videoMode, inputMedia, text)
       : null;
     if (videoModel && !effectiveVideoMode) return;
     setSessionBusy(sid, true);
@@ -1137,22 +1224,19 @@ export const useSession = create<SessionStore>((set, get) => {
           {
             session_id: sid,
             user_message_id: messageId,
-            aspect_ratio: m.params?.aspect_ratio ?? c.aspectRatio,
-            image_size: m.params?.image_size ?? c.imageSize,
-            thinking_enabled: thinkingEnabled,
-            thinking_effort: thinkingEffort,
+            aspect_ratio: c.aspectRatio,
+            image_size: c.imageSize,
             ...(videoModel && effectiveVideoMode
               ? {
                   video_mode: effectiveVideoMode,
-                  video_duration: m.params?.video_duration ?? c.videoDuration,
-                  video_resolution:
-                    m.params?.video_resolution ?? c.videoResolution,
-                  generate_audio: m.params?.generate_audio ?? c.generateAudio,
-                  watermark: m.params?.watermark ?? c.watermark,
+                  video_duration: c.videoDuration,
+                  video_resolution: c.videoResolution,
+                  generate_audio: c.generateAudio,
+                  watermark: c.watermark,
                 }
               : {}),
           },
-          a.session,
+          effectiveSessionForLog(a.session),
         );
         if (epoch !== getGenerationEpoch(sid)) return;
         await reloadActiveSessionIfViewing(sid);
@@ -1262,12 +1346,7 @@ export const useSession = create<SessionStore>((set, get) => {
     const attachmentIds = c.attachments.map((a) => a.image_id);
     const aspectRatio = c.aspectRatio;
     const imageSize = c.imageSize;
-    const canReason = activeModelCapabilities().includes("reasoning");
-    const thinkingEnabled = canReason ? c.thinkingEnabled : null;
-    const thinkingEffort =
-      canReason && c.thinkingEnabled && c.thinkingEffort.trim()
-        ? c.thinkingEffort.trim()
-        : null;
+    await get().persistComposerThinking(sid);
 
     updateActiveSession(sid, (active) => ({
       ...active,
@@ -1285,7 +1364,9 @@ export const useSession = create<SessionStore>((set, get) => {
       try {
         const active = get().active;
         const sessionForLog =
-          active && active.session.id === sid ? active.session : null;
+          active && active.session.id === sid
+            ? effectiveSessionForLog(active.session)
+            : null;
         await api.generateImage(
           {
             session_id: sid,
@@ -1293,8 +1374,6 @@ export const useSession = create<SessionStore>((set, get) => {
             attachment_ids: attachmentIds,
             aspect_ratio: aspectRatio,
             image_size: imageSize,
-            thinking_enabled: thinkingEnabled,
-            thinking_effort: thinkingEffort,
             ...(videoModel
               ? {
                   video_mode: c.videoMode,

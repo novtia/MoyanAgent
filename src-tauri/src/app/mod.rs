@@ -417,10 +417,16 @@ struct EffectiveSessionParams {
 fn effective_session_params(conn: &db::DbConn, sess: &session::Session) -> EffectiveSessionParams {
     if let Some(ref pid) = sess.project_id {
         if let Ok(proj) = project::get(conn, pid) {
+            // Projects share sampling params across their sessions, but the
+            // thinking toggle is a per-session composer control (not part of the
+            // project config UI), so it must stay session-owned even here.
+            let mut llm = proj.llm_params;
+            llm.thinking_enabled = sess.llm_params.thinking_enabled;
+            llm.thinking_effort = sess.llm_params.thinking_effort.clone();
             return EffectiveSessionParams {
                 system_prompt: proj.system_prompt,
                 history_turns: proj.history_turns,
-                llm_params: proj.llm_params,
+                llm_params: llm,
                 context_window: proj.context_window.or(sess.context_window),
             };
         }
@@ -431,6 +437,85 @@ fn effective_session_params(conn: &db::DbConn, sess: &session::Session) -> Effec
         llm_params: sess.llm_params.clone(),
         context_window: sess.context_window,
     }
+}
+
+/// Single, unified source of every parameter a generation call needs.
+///
+/// Bundles the session's resolved model identity (provider + model) together
+/// with its effective sampling / prompt / history config, so all generation
+/// entry points take their parameters from one place instead of mixing global
+/// settings (for model/provider) with per-session config (for the rest).
+struct ResolvedGeneration {
+    provider: settings::ModelProvider,
+    model: String,
+    system_prompt: String,
+    history_turns: i64,
+    llm_params: settings::ModelParamSettings,
+    #[allow(dead_code)]
+    context_window: Option<i64>,
+}
+
+/// Resolve every generation parameter for a session, sourcing model + provider
+/// from the session itself and falling back to the global default only when the
+/// session has not been initialised yet. When a fallback happens the resolved
+/// identity is written back to the session so it becomes self-owned.
+fn resolve_session_generation(
+    conn: &db::DbConn,
+    settings: &settings::Settings,
+    sess: &session::Session,
+) -> AppResult<ResolvedGeneration> {
+    let eff = effective_session_params(conn, sess);
+
+    // Prefer the session's own provider when it still exists and is enabled;
+    // otherwise fall back to the global active provider (new-session default).
+    let session_provider = sess.provider_id.as_ref().and_then(|pid| {
+        settings
+            .model_services
+            .iter()
+            .find(|p| &p.id == pid && p.enabled)
+    });
+    let provider = match session_provider {
+        Some(p) => p.clone(),
+        None => settings::active_provider(settings)
+            .cloned()
+            .ok_or_else(|| AppError::Config("no enabled model provider configured".into()))?,
+    };
+
+    // Prefer the session's own model, else the global default model.
+    let model = sess
+        .model
+        .as_ref()
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| settings.model.trim().to_string());
+
+    // Lazily persist the resolved identity so legacy / uninitialised sessions
+    // start owning their own model + provider from now on.
+    let provider_changed = sess.provider_id.as_deref() != Some(provider.id.as_str());
+    let model_changed = sess.model.as_deref().map(str::trim) != Some(model.as_str());
+    if (provider_changed || model_changed) && !model.is_empty() && !provider.id.is_empty() {
+        let cw = sess.context_window.or_else(|| {
+            llm_catalog::lookup_context_window(conn, &provider.id, &provider.sdk, &model)
+                .ok()
+                .flatten()
+        });
+        let _ = session::set_provider_model_and_context(
+            conn,
+            &sess.id,
+            Some(provider.id.as_str()),
+            Some(model.as_str()),
+            cw,
+        );
+    }
+
+    Ok(ResolvedGeneration {
+        provider,
+        model,
+        system_prompt: eff.system_prompt,
+        history_turns: eff.history_turns,
+        llm_params: eff.llm_params,
+        context_window: eff.context_window,
+    })
 }
 
 /// Resolve the agent flow chain that should drive a session's generation.
@@ -563,7 +648,8 @@ async fn run_agent_chain(
     main_agent: &str,
     user_prompt: &str,
     base_request: chat::ChatRequest,
-    settings: &settings::Settings,
+    provider: &settings::ModelProvider,
+    model: &str,
     session_prompt: &str,
     params: &parameters::GenerationParameters,
     project_cwd: Option<std::path::PathBuf>,
@@ -598,7 +684,8 @@ async fn run_agent_chain(
         } else {
             let wrapped = build_chain_stage_prompt(user_prompt, prev_text.as_deref().unwrap_or(""));
             let r = router::build_chat_request(
-                settings,
+                provider,
+                model,
                 wrapped.clone(),
                 Vec::new(),
                 session_prompt.to_string(),
@@ -831,10 +918,16 @@ impl ChatRequestFactory for SettingsChatFactory {
         let conn = self.pool.get()?;
         let settings = settings::read(&conn)?;
 
+        // Spawned sub-agents follow the global default model/provider.
+        let provider = settings::active_provider(&settings)
+            .cloned()
+            .ok_or_else(|| AppError::Config("no enabled model provider configured".into()))?;
+
         // Runner overwrites `system_prompt` with `definition.system_prompt`
         // plus env-details + critical reminder, so leave it empty here.
         let chat = crate::ai::router::build_chat_request(
-            &settings,
+            &provider,
+            &settings.model,
             prompt.to_string(),
             Vec::new(),
             String::new(),
@@ -1519,26 +1612,47 @@ fn create_session(
     let conn = state.conn()?;
     let mut sess = session::create(&conn, args.title, args.model)?;
 
-    // Auto-apply the active model and its catalog context-window when no
-    // explicit model was provided.  Mirrors the behaviour of `set_session_model`
-    // so users never have to re-select the same model just to initialise stats.
-    if sess.model.is_none() {
-        if let Ok(s) = settings::read(&conn) {
+    if let Ok(s) = settings::read(&conn) {
+        // Inherit the global default model + provider (the "new-session
+        // template") and its catalog context-window when no explicit model was
+        // provided, so each session owns its own model identity from the start.
+        if sess.model.is_none() {
             let model = s.model.trim().to_string();
             if !model.is_empty() {
-                let sdk = s
-                    .model_services
-                    .iter()
-                    .find(|p| p.id == s.active_provider_id)
-                    .map(|p| p.sdk.as_str())
-                    .unwrap_or("");
-                let cw =
-                    llm_catalog::lookup_context_window(&conn, &s.active_provider_id, sdk, &model)
-                        .ok()
-                        .flatten();
-                let _ = session::set_model_and_context(&conn, &sess.id, Some(model.as_str()), cw);
+                let provider = settings::active_provider(&s);
+                let provider_id = provider.map(|p| p.id.clone()).unwrap_or_default();
+                let sdk = provider.map(|p| p.sdk.as_str()).unwrap_or("");
+                let cw = llm_catalog::lookup_context_window(&conn, &provider_id, sdk, &model)
+                    .ok()
+                    .flatten();
+                let _ = session::set_provider_model_and_context(
+                    &conn,
+                    &sess.id,
+                    Some(provider_id.as_str()),
+                    Some(model.as_str()),
+                    cw,
+                );
+                sess.provider_id = Some(provider_id);
                 sess.model = Some(model);
                 sess.context_window = cw;
+            }
+        }
+
+        // Seed the composer thinking default into the session's own llm_params
+        // so thinking is self-owned per session from creation onward.
+        if s.default_thinking_enabled || !s.default_thinking_effort.trim().is_empty() {
+            let mut llm = sess.llm_params.clone();
+            llm.thinking_enabled = Some(s.default_thinking_enabled);
+            let effort = s.default_thinking_effort.trim();
+            llm.thinking_effort = if effort.is_empty() {
+                None
+            } else {
+                Some(effort.to_string())
+            };
+            if session::update_config(&conn, &sess.id, &sess.system_prompt, sess.history_turns, &llm)
+                .is_ok()
+            {
+                sess.llm_params = llm;
             }
         }
     }
@@ -1585,6 +1699,10 @@ fn update_session_config(
 struct SetSessionModelArgs {
     id: String,
     model: String,
+    /// Provider the model belongs to. Empty/absent falls back to the global
+    /// active provider (legacy callers).
+    #[serde(default)]
+    provider_id: Option<String>,
     context_window: Option<i64>,
 }
 
@@ -1594,18 +1712,32 @@ fn set_session_model(
     args: SetSessionModelArgs,
 ) -> Result<(), AppError> {
     let conn = state.conn()?;
+    let s = settings::read(&conn)?;
+    // Resolve the provider this model belongs to: explicit arg wins, else the
+    // global active provider (keeps legacy callers working).
+    let provider_id = args
+        .provider_id
+        .as_ref()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| s.active_provider_id.clone());
     let mut cw = args.context_window;
     if cw.is_none() {
-        let s = settings::read(&conn)?;
         let sdk = s
             .model_services
             .iter()
-            .find(|p| p.id == s.active_provider_id)
+            .find(|p| p.id == provider_id)
             .map(|p| p.sdk.as_str())
             .unwrap_or("");
-        cw = llm_catalog::lookup_context_window(&conn, &s.active_provider_id, sdk, &args.model)?;
+        cw = llm_catalog::lookup_context_window(&conn, &provider_id, sdk, &args.model)?;
     }
-    session::set_model_and_context(&conn, &args.id, Some(args.model.as_str()), cw)
+    session::set_provider_model_and_context(
+        &conn,
+        &args.id,
+        Some(provider_id.as_str()),
+        Some(args.model.as_str()),
+        cw,
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -2484,10 +2616,6 @@ struct GenerateReq {
     aspect_ratio: String,
     image_size: String,
     #[serde(default)]
-    thinking_enabled: Option<bool>,
-    #[serde(default)]
-    thinking_effort: Option<String>,
-    #[serde(default)]
     video_mode: Option<String>,
     #[serde(default)]
     video_duration: Option<i64>,
@@ -2721,6 +2849,8 @@ async fn generate_image(
         agent_chain,
         settings_snapshot,
         session_prompt,
+        resolved_provider,
+        resolved_model,
     ) = {
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
@@ -2728,18 +2858,13 @@ async fn generate_image(
         let generation_agent = session::generation_agent_definition_key(&session_config.agent_type);
         let agent_chain = effective_agent_chain(&conn, &session_config);
         let project_cwd = session_project_cwd(&conn, &req.session_id);
-        let eff = effective_session_params(&conn, &session_config);
-        let session_prompt = eff.system_prompt;
-        let history_turns = eff.history_turns;
-        // Thinking is now driven by the composer (per-request) rather than
-        // session/project config: override any stored llm_params thinking values.
-        let mut model_params = eff.llm_params;
-        model_params.thinking_enabled = req.thinking_enabled;
-        model_params.thinking_effort = req
-            .thinking_effort
-            .as_ref()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+        // Unified parameter source: model + provider + prompt + sampling +
+        // thinking all come from the session (falling back to the global
+        // default only for uninitialised sessions).
+        let resolved = resolve_session_generation(&conn, &s, &session_config)?;
+        let session_prompt = resolved.system_prompt.clone();
+        let history_turns = resolved.history_turns;
+        let model_params = resolved.llm_params.clone();
         let mut atts: Vec<chat::AttachmentBytes> = Vec::new();
         let mut ids: Vec<String> = Vec::new();
         for (index, id) in req.attachment_ids.iter().enumerate() {
@@ -2789,7 +2914,8 @@ async fn generate_image(
             history_turns.max(0) as usize,
         )?;
         let chat_request = router::build_chat_request(
-            &s,
+            &resolved.provider,
+            &resolved.model,
             req.prompt.clone(),
             atts,
             session_prompt.clone(),
@@ -2805,6 +2931,8 @@ async fn generate_image(
             agent_chain,
             s,
             session_prompt,
+            resolved.provider,
+            resolved.model,
         )
     };
     let params_json = params.to_message_params_json().to_string();
@@ -2934,7 +3062,8 @@ async fn generate_image(
                 generation_agent,
                 &req.prompt,
                 chat_request,
-                &settings_snapshot,
+                &resolved_provider,
+                &resolved_model,
                 &session_prompt,
                 &params,
                 project_cwd,
@@ -3068,10 +3197,6 @@ struct RegenerateReq {
     aspect_ratio: String,
     image_size: String,
     #[serde(default)]
-    thinking_enabled: Option<bool>,
-    #[serde(default)]
-    thinking_effort: Option<String>,
-    #[serde(default)]
     video_mode: Option<String>,
     #[serde(default)]
     video_duration: Option<i64>,
@@ -3117,8 +3242,9 @@ async fn regenerate_image(
         generation_agent,
         project_cwd,
         agent_chain,
-        settings_snapshot,
         session_prompt,
+        resolved_provider,
+        resolved_model,
     ) = {
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
@@ -3126,18 +3252,13 @@ async fn regenerate_image(
         let generation_agent = session::generation_agent_definition_key(&session_config.agent_type);
         let agent_chain = effective_agent_chain(&conn, &session_config);
         let project_cwd = session_project_cwd(&conn, &req.session_id);
-        let eff = effective_session_params(&conn, &session_config);
-        let session_prompt = eff.system_prompt;
-        let history_turns = eff.history_turns;
-        // Thinking is now driven by the composer (per-request) rather than
-        // session/project config: override any stored llm_params thinking values.
-        let mut model_params = eff.llm_params;
-        model_params.thinking_enabled = req.thinking_enabled;
-        model_params.thinking_effort = req
-            .thinking_effort
-            .as_ref()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
+        // Unified parameter source: model + provider + prompt + sampling +
+        // thinking all come from the session (falling back to the global
+        // default only for uninitialised sessions).
+        let resolved = resolve_session_generation(&conn, &s, &session_config)?;
+        let session_prompt = resolved.system_prompt.clone();
+        let history_turns = resolved.history_turns;
+        let model_params = resolved.llm_params.clone();
         let mut atts: Vec<chat::AttachmentBytes> = Vec::new();
         let mut input_images: Vec<&session::ImageRef> = user_msg_existing
             .images
@@ -3193,7 +3314,8 @@ async fn regenerate_image(
             history_turns.max(0) as usize,
         )?;
         let chat_request = router::build_chat_request(
-            &s,
+            &resolved.provider,
+            &resolved.model,
             prompt.to_string(),
             atts,
             session_prompt.clone(),
@@ -3206,8 +3328,9 @@ async fn regenerate_image(
             generation_agent,
             project_cwd,
             agent_chain,
-            s,
             session_prompt,
+            resolved.provider,
+            resolved.model,
         )
     };
     let params_json = params.to_message_params_json().to_string();
@@ -3294,7 +3417,8 @@ async fn regenerate_image(
                 generation_agent,
                 prompt,
                 chat_request,
-                &settings_snapshot,
+                &resolved_provider,
+                &resolved_model,
                 &session_prompt,
                 &params,
                 project_cwd,

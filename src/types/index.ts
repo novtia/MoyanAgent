@@ -155,6 +155,8 @@ export interface Session {
   id: string;
   title: string;
   model: string | null;
+  /** Model provider (service) this session uses; null follows the global default. */
+  provider_id: string | null;
   system_prompt: string;
   history_turns: number;
   llm_params: ModelParamSettings;
@@ -239,6 +241,7 @@ export interface SessionSummary {
   id: string;
   title: string;
   model: string | null;
+  provider_id: string | null;
   system_prompt: string;
   history_turns: number;
   llm_params: ModelParamSettings;

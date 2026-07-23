@@ -10,27 +10,30 @@
 use crate::ai::chat::{AttachmentBytes, ChatRequest, HistoryTurn, ProviderConfig};
 use crate::ai::parameters::GenerationParameters;
 use crate::ai::providers;
-use crate::data::settings;
+use crate::data::settings::ModelProvider;
 use crate::error::{AppError, AppResult};
 
+/// Assemble a [`ChatRequest`] from an already-resolved provider + model.
+///
+/// The provider and model are resolved per-session upstream (see
+/// `resolve_session_generation`), so this function no longer reads the global
+/// settings for model identity.
 pub fn build_chat_request(
-    settings: &settings::Settings,
+    provider: &ModelProvider,
+    model: &str,
     prompt: String,
     attachments: Vec<AttachmentBytes>,
     system_prompt: String,
     history: Vec<HistoryTurn>,
     parameters: GenerationParameters,
 ) -> AppResult<ChatRequest> {
-    let provider = settings::active_provider(settings)
-        .ok_or_else(|| AppError::Config("no enabled model provider configured".into()))?;
-
     if provider.api_key.trim().is_empty() {
         return Err(AppError::Config("missing provider API key".into()));
     }
     if provider.endpoint.trim().is_empty() {
         return Err(AppError::Config("missing provider endpoint".into()));
     }
-    if settings.model.trim().is_empty() {
+    if model.trim().is_empty() {
         return Err(AppError::Config("missing active model".into()));
     }
 
@@ -42,7 +45,7 @@ pub fn build_chat_request(
             endpoint: provider.endpoint.clone(),
             api_key: provider.api_key.clone(),
         },
-        model: settings.model.clone(),
+        model: model.to_string(),
         prompt,
         attachments,
         system_prompt,

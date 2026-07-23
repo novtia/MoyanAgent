@@ -87,9 +87,14 @@ export const api = {
     invoke<void>("update_session_config", {
       args: { id, systemPrompt, historyTurns, llmParams },
     }),
-  setSessionModel: (id: string, model: string, contextWindow: number | null) =>
+  setSessionModel: (
+    id: string,
+    model: string,
+    contextWindow: number | null,
+    providerId?: string | null,
+  ) =>
     invoke<void>("set_session_model", {
-      args: { id, model, contextWindow },
+      args: { id, model, contextWindow, providerId: providerId ?? null },
     }),
   setSessionAgentType: (id: string, agentType: string) =>
     invoke<void>("set_session_agent_type", {
@@ -167,8 +172,6 @@ export const api = {
       attachment_ids: string[];
       aspect_ratio: string;
       image_size: string;
-      thinking_enabled?: boolean | null;
-      thinking_effort?: string | null;
       video_mode?: "text" | "first_frame" | "first_last" | "reference";
       video_duration?: number;
       video_resolution?: string;
@@ -194,8 +197,6 @@ export const api = {
       user_message_id: string;
       aspect_ratio: string;
       image_size: string;
-      thinking_enabled?: boolean | null;
-      thinking_effort?: string | null;
       video_mode?: "text" | "first_frame" | "first_last" | "reference";
       video_duration?: number;
       video_resolution?: string;

@@ -150,6 +150,9 @@ pub struct Session {
     pub id: String,
     pub title: String,
     pub model: Option<String>,
+    /// Which model provider (service) this session uses. `None` means unset /
+    /// follow the global default until resolved.
+    pub provider_id: Option<String>,
     pub system_prompt: String,
     pub history_turns: i64,
     pub llm_params: ModelParamSettings,
@@ -185,6 +188,7 @@ pub struct SessionSummary {
     pub id: String,
     pub title: String,
     pub model: Option<String>,
+    pub provider_id: Option<String>,
     pub system_prompt: String,
     pub history_turns: i64,
     pub llm_params: ModelParamSettings,
@@ -201,6 +205,7 @@ pub struct SessionSearchResult {
     pub id: String,
     pub title: String,
     pub model: Option<String>,
+    pub provider_id: Option<String>,
     pub system_prompt: String,
     pub history_turns: i64,
     pub llm_params: ModelParamSettings,
@@ -262,6 +267,7 @@ pub fn create(conn: &DbConn, title: Option<String>, model: Option<String>) -> Ap
         id,
         title,
         model,
+        provider_id: None,
         system_prompt: String::new(),
         history_turns: DEFAULT_HISTORY_TURNS,
         llm_params: ModelParamSettings::default(),
@@ -359,18 +365,22 @@ pub fn update_config(
     Ok(())
 }
 
-/// Persist the chat model id and its catalog context-window limit for this session.
-pub fn set_model_and_context(
+/// Persist the full model identity (provider + model) and context-window for a
+/// session. Used so each session fully owns which service and model it targets,
+/// independent of the global default.
+pub fn set_provider_model_and_context(
     conn: &DbConn,
     id: &str,
+    provider_id: Option<&str>,
     model: Option<&str>,
     context_window: Option<i64>,
 ) -> AppResult<()> {
+    let trimmed_provider = provider_id.map(str::trim).filter(|s| !s.is_empty());
     let trimmed_model = model.map(str::trim).filter(|s| !s.is_empty());
     let updated = now_ms();
     let n = conn.execute(
-        "UPDATE sessions SET model=?1, context_window=?2, updated_at=?3 WHERE id=?4",
-        params![trimmed_model, context_window, updated, id],
+        "UPDATE sessions SET provider_id=?1, model=?2, context_window=?3, updated_at=?4 WHERE id=?5",
+        params![trimmed_provider, trimmed_model, context_window, updated, id],
     )?;
     if n == 0 {
         return Err(AppError::NotFound(format!("session {id}")));
@@ -481,7 +491,7 @@ pub fn list(conn: &DbConn) -> AppResult<Vec<SessionSummary>> {
     let mut stmt = conn.prepare(
         "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.context_window, s.context_window_used, s.agent_type, s.updated_at,
             (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt,
-            s.project_id
+            s.project_id, s.provider_id
          FROM sessions s
          ORDER BY s.updated_at DESC",
     )?;
@@ -491,6 +501,7 @@ pub fn list(conn: &DbConn) -> AppResult<Vec<SessionSummary>> {
             id: r.get(0)?,
             title: r.get(1)?,
             model: r.get(2)?,
+            provider_id: r.get(12)?,
             system_prompt: r.get(3)?,
             history_turns: r.get(4)?,
             llm_params: decode_llm_params(raw),
@@ -530,7 +541,8 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
                 (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt,
                 s.project_id,
                 NULL AS match_message_id, NULL AS match_role, NULL AS match_text,
-                NULL AS match_created_at, 0 AS match_count, 0 AS title_match
+                NULL AS match_created_at, 0 AS match_count, 0 AS title_match,
+                s.provider_id
              FROM sessions s
              ORDER BY s.updated_at DESC
              LIMIT ?1",
@@ -562,7 +574,8 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
              ORDER BY mm.created_at DESC LIMIT 1) AS match_created_at,
             (SELECT COUNT(*) FROM messages mc
              WHERE mc.session_id = s.id AND COALESCE(mc.text, '') LIKE ?1 ESCAPE '\\') AS match_count,
-            CASE WHEN s.title LIKE ?1 ESCAPE '\\' THEN 1 ELSE 0 END AS title_match
+            CASE WHEN s.title LIKE ?1 ESCAPE '\\' THEN 1 ELSE 0 END AS title_match,
+            s.provider_id
          FROM sessions s
          WHERE s.title LIKE ?1 ESCAPE '\\'
             OR EXISTS (
@@ -589,6 +602,7 @@ fn map_search_result(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSearchR
         id: row.get(0)?,
         title: row.get(1)?,
         model: row.get(2)?,
+        provider_id: row.get(18)?,
         system_prompt: row.get(3)?,
         history_turns: row.get(4)?,
         llm_params: decode_llm_params(raw),
@@ -609,7 +623,7 @@ fn map_search_result(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSearchR
 
 pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, model, system_prompt, history_turns, llm_params, context_window, context_window_used, agent_type, project_id, created_at, updated_at, agent_chain FROM sessions WHERE id=?1",
+        "SELECT id, title, model, system_prompt, history_turns, llm_params, context_window, context_window_used, agent_type, project_id, created_at, updated_at, agent_chain, provider_id FROM sessions WHERE id=?1",
     )?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
@@ -619,6 +633,7 @@ pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
             id: row.get(0)?,
             title: row.get(1)?,
             model: row.get(2)?,
+            provider_id: row.get(13)?,
             system_prompt: row.get(3)?,
             history_turns: row.get(4)?,
             llm_params: decode_llm_params(raw),

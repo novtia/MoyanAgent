@@ -7,7 +7,7 @@ import {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useSession } from "../../store/session";
+import { useSession, modelCapabilities } from "../../store/session";
 import { useSettings } from "../../store/settings";
 import { useProject } from "../../store/project";
 import { api, srcOf } from "../../api/tauri";
@@ -117,6 +117,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const setWatermark = useSession((s) => s.setWatermark);
   const setThinkingEnabled = useSession((s) => s.setThinkingEnabled);
   const setThinkingEffort = useSession((s) => s.setThinkingEffort);
+  const persistComposerThinking = useSession((s) => s.persistComposerThinking);
   const addAttachments = useSession((s) => s.addAttachments);
   const addAttachmentsFromPaths = useSession((s) => s.addAttachmentsFromPaths);
   const addAttachmentFromPath = useSession((s) => s.addAttachmentFromPath);
@@ -190,18 +191,22 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
       ),
     [settings?.model_services],
   );
-  const modelName = shortModelName(settings?.model);
+  const modelName = shortModelName(active?.session.model ?? settings?.model);
   const modelLabel = modelName.length > 12 ? `${modelName.slice(0, 12)}…` : modelName;
   const ratioLabel = aspectRatio === "auto" ? t("composer.ratioAuto") : aspectRatio;
   const sizeLabel = imageSize === "auto" ? t("composer.sizeAuto") : imageSize;
 
   const activeCapabilities = useMemo(() => {
-    const provider = (settings?.model_services ?? []).find(
-      (p) => p.id === settings?.active_provider_id,
-    );
-    const model = provider?.models?.find((m) => m.id === settings?.model);
-    return model?.capabilities ?? [];
-  }, [settings?.model_services, settings?.active_provider_id, settings?.model]);
+    const providerId = active?.session.provider_id ?? settings?.active_provider_id;
+    const modelId = active?.session.model ?? settings?.model;
+    return modelCapabilities(providerId, modelId);
+  }, [
+    settings?.model_services,
+    settings?.active_provider_id,
+    settings?.model,
+    active?.session.provider_id,
+    active?.session.model,
+  ]);
   const showImageParams = activeCapabilities.includes("image");
   const showVideoParams = activeCapabilities.includes("video");
   const supportsMultimodalReference =
@@ -358,10 +363,9 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const applyThinking = (enabled: boolean, effort: string) => {
     setThinkingEnabled(enabled);
     setThinkingEffort(effort);
-    void update({
-      default_thinking_enabled: enabled,
-      default_thinking_effort: effort,
-    });
+    if (activeId) {
+      void persistComposerThinking(activeId);
+    }
     setThinkingOpen(false);
   };
 
@@ -510,15 +514,16 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const pickModel = async (providerId: string, model: ModelServiceModel) => {
     setModelOpen(false);
     const modelId = model.id;
-    if (
-      providerId !== settings?.active_provider_id ||
-      modelId !== settings?.model
-    ) {
-      await update({ active_provider_id: providerId, model: modelId });
-    }
+    // Model selection is per-session: persist to the active session only, not
+    // the global default.
     if (activeId) {
       try {
-        await api.setSessionModel(activeId, modelId, model.context_window ?? null);
+        await api.setSessionModel(
+          activeId,
+          modelId,
+          model.context_window ?? null,
+          providerId,
+        );
         await refreshList();
         await reloadActiveSession();
       } catch (e) {
@@ -1319,9 +1324,14 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                             <div className="model-popover-list">
                               {provider.models.map((modelRow) => {
                                 const m = modelRow.id;
+                                const sessionProviderId =
+                                  active?.session.provider_id ??
+                                  settings?.active_provider_id;
+                                const sessionModelId =
+                                  active?.session.model ?? settings?.model;
                                 const isActive =
-                                  provider.id === settings?.active_provider_id &&
-                                  m === settings?.model;
+                                  provider.id === sessionProviderId &&
+                                  m === sessionModelId;
                                 return (
                                   <button
                                     key={`${provider.id}:${m}`}
