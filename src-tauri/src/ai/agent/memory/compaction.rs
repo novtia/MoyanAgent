@@ -92,28 +92,6 @@ pub async fn compact(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "(empty summary)".into());
 
-    // #region agent log
-    {
-        use std::io::Write;
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("d:/AI/MoyanAgent/debug-2b2c78.log")
-        {
-            let has_marker = summary.contains("已调用工具") || summary.contains("[阶段");
-            let _ = writeln!(
-                f,
-                "{}",
-                serde_json::json!({"sessionId":"2b2c78","hypothesisId":"C","location":"memory/compaction.rs:compact","message":"compaction summary produced","data":{"has_marker":has_marker,"summary_preview":summary.chars().take(200).collect::<String>()},"timestamp":ts})
-            );
-        }
-    }
-    // #endregion
-
     let meta = HistoryTurn {
         role: "user".to_string(),
         text: Some(format!("<compacted_summary>\n{summary}\n</compacted_summary>")),

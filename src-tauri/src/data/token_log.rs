@@ -293,23 +293,6 @@ pub fn rollback_scope_for_message(
     }))
 }
 
-pub fn should_drop_event(event: &TokenUsageEvent, scope: &TokenLogRollbackScope) -> bool {
-    if event.created_at >= scope.pivot_created_at {
-        return true;
-    }
-    if let Some(ref cid) = event.correlation_id {
-        if scope.user_message_ids.contains(cid) {
-            return true;
-        }
-    }
-    if let Some(ref mid) = event.message_id {
-        if scope.assistant_message_ids.contains(mid) {
-            return true;
-        }
-    }
-    false
-}
-
 pub fn list_events(conn: &DbConn, filter: &TokenUsageListFilter) -> AppResult<Vec<TokenUsageEvent>> {
     let limit = filter.limit.clamp(1, 500);
     let offset = filter.offset.max(0);

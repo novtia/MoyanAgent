@@ -3,6 +3,7 @@ import { TAB_TITLE_KEYS } from "./constants";
 import { AppearanceSection } from "./appearance/AppearanceSection";
 import { DefaultModelSection } from "./default/DefaultModelSection";
 import { LlmSection } from "./llm/LlmSection";
+import { WebSearchSection } from "./search/WebSearchSection";
 import { SettingsSide } from "./SettingsSide";
 import { SystemSection } from "./system/SystemSection";
 import type { SettingsViewProps } from "./types";
@@ -36,6 +37,7 @@ export function SettingsView({
           )}
           {activeTab === "llm" && <LlmSection />}
           {activeTab === "default" && <DefaultModelSection />}
+          {activeTab === "search" && <WebSearchSection />}
           {activeTab === "system" && <SystemSection />}
         </div>
       </div>

@@ -26,6 +26,7 @@ import type {
   Session,
   Settings,
   SettingsPatch,
+  WebSearchOutcome,
 } from "../types";
 
 /** Per-session fields the backend merges into generation (debug log only). */
@@ -51,6 +52,11 @@ export const api = {
     invoke<string[]>("fetch_provider_models", {
       args: { sdk, endpoint, apiKey },
     }),
+  webSearch: (query: string, maxResults?: number) =>
+    invoke<WebSearchOutcome>("web_search", {
+      query,
+      maxResults: maxResults ?? null,
+    }),
 
   // app info
   getAppInfo: () =>
@@ -61,6 +67,7 @@ export const api = {
       sessions_dir: string;
     }>("get_app_info"),
   openPath: (path: string) => invoke<void>("open_path", { path }),
+  openUrl: (url: string) => invoke<void>("open_url", { url }),
   toggleDevtools: () => invoke<void>("toggle_devtools"),
 
   // sessions

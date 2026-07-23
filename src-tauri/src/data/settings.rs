@@ -22,6 +22,11 @@ pub const KEY_MAX_TOKENS: &str = "max_tokens";
 pub const KEY_FREQ_PENALTY: &str = "frequency_penalty";
 pub const KEY_PRES_PENALTY: &str = "presence_penalty";
 pub const KEY_HISTORY_TURNS: &str = "history_turns";
+pub const KEY_WEB_SEARCH_ENABLED: &str = "web_search_enabled";
+pub const KEY_WEB_SEARCH_BACKEND: &str = "web_search_backend";
+pub const KEY_WEB_SEARCH_LOCAL_ENGINE: &str = "web_search_local_engine";
+pub const KEY_WEB_SEARCH_MAX_RESULTS: &str = "web_search_max_results";
+pub const KEY_WEB_SEARCH_PROVIDERS: &str = "web_search_providers";
 
 pub const DEFAULT_HISTORY_TURNS: i64 = 10;
 
@@ -136,6 +141,37 @@ pub struct Settings {
     /// Number of prior messages (user + assistant, oldest dropped first)
     /// to include as multi-turn context. 0 disables history.
     pub history_turns: i64,
+    /// Master switch for the web-search tools/command.
+    #[serde(default = "default_web_search_enabled")]
+    pub web_search_enabled: bool,
+    /// Active search backend: `local` or an API provider kind.
+    #[serde(default = "default_web_search_backend")]
+    pub web_search_backend: String,
+    /// Engine used by the local scraper: `duckduckgo` | `bing`.
+    #[serde(default = "default_web_search_local_engine")]
+    pub web_search_local_engine: String,
+    /// Default number of hits to return.
+    #[serde(default = "default_web_search_max_results")]
+    pub web_search_max_results: i64,
+    /// Configured API search providers.
+    #[serde(default)]
+    pub web_search_providers: Vec<crate::ai::search::WebSearchProviderConfig>,
+}
+
+fn default_web_search_enabled() -> bool {
+    true
+}
+
+fn default_web_search_backend() -> String {
+    "local".into()
+}
+
+fn default_web_search_local_engine() -> String {
+    "duckduckgo".into()
+}
+
+fn default_web_search_max_results() -> i64 {
+    crate::ai::search::DEFAULT_MAX_RESULTS
 }
 
 impl Default for Settings {
@@ -159,6 +195,11 @@ impl Default for Settings {
             frequency_penalty: None,
             presence_penalty: None,
             history_turns: DEFAULT_HISTORY_TURNS,
+            web_search_enabled: default_web_search_enabled(),
+            web_search_backend: default_web_search_backend(),
+            web_search_local_engine: default_web_search_local_engine(),
+            web_search_max_results: default_web_search_max_results(),
+            web_search_providers: Vec::new(),
         }
     }
 }
@@ -218,6 +259,16 @@ pub struct SettingsPatch {
     pub presence_penalty: Patchable<f64>,
     #[serde(default)]
     pub history_turns: Option<i64>,
+    #[serde(default)]
+    pub web_search_enabled: Option<bool>,
+    #[serde(default)]
+    pub web_search_backend: Option<String>,
+    #[serde(default)]
+    pub web_search_local_engine: Option<String>,
+    #[serde(default)]
+    pub web_search_max_results: Option<i64>,
+    #[serde(default)]
+    pub web_search_providers: Option<Vec<crate::ai::search::WebSearchProviderConfig>>,
 }
 
 pub fn read(conn: &DbConn) -> AppResult<Settings> {
@@ -256,6 +307,30 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             KEY_HISTORY_TURNS => {
                 if let Some(n) = parse_optional_i64(&v) {
                     s.history_turns = n.max(0);
+                }
+            }
+            KEY_WEB_SEARCH_ENABLED => s.web_search_enabled = v == "true" || v == "1",
+            KEY_WEB_SEARCH_BACKEND => {
+                if !v.trim().is_empty() {
+                    s.web_search_backend = v;
+                }
+            }
+            KEY_WEB_SEARCH_LOCAL_ENGINE => {
+                if !v.trim().is_empty() {
+                    s.web_search_local_engine = v;
+                }
+            }
+            KEY_WEB_SEARCH_MAX_RESULTS => {
+                if let Some(n) = parse_optional_i64(&v) {
+                    s.web_search_max_results =
+                        n.clamp(1, crate::ai::search::MAX_RESULTS_CAP);
+                }
+            }
+            KEY_WEB_SEARCH_PROVIDERS => {
+                if let Ok(list) =
+                    serde_json::from_str::<Vec<crate::ai::search::WebSearchProviderConfig>>(&v)
+                {
+                    s.web_search_providers = list;
                 }
             }
             _ => {}
@@ -597,7 +672,69 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
         }
         write_kv(conn, KEY_HISTORY_TURNS, &n.to_string())?;
     }
+    if let Some(v) = patch.web_search_enabled {
+        write_kv(
+            conn,
+            KEY_WEB_SEARCH_ENABLED,
+            if v { "true" } else { "false" },
+        )?;
+    }
+    if let Some(v) = patch.web_search_backend {
+        write_kv(conn, KEY_WEB_SEARCH_BACKEND, &v)?;
+    }
+    if let Some(v) = patch.web_search_local_engine {
+        write_kv(conn, KEY_WEB_SEARCH_LOCAL_ENGINE, &v)?;
+    }
+    if let Some(n) = patch.web_search_max_results {
+        let n = n.clamp(1, crate::ai::search::MAX_RESULTS_CAP);
+        write_kv(conn, KEY_WEB_SEARCH_MAX_RESULTS, &n.to_string())?;
+    }
+    if let Some(v) = patch.web_search_providers {
+        let json = serde_json::to_string(&v).map_err(|e| AppError::Invalid(e.to_string()))?;
+        write_kv(conn, KEY_WEB_SEARCH_PROVIDERS, &json)?;
+    }
     read(conn)
+}
+
+/// Read only the web-search configuration (a subset of [`Settings`]) without
+/// the heavier provider-catalog merge in [`read`]. Used by the search tools
+/// and command so they always see live settings.
+pub fn read_web_search_config(conn: &DbConn) -> AppResult<crate::ai::search::WebSearchConfig> {
+    let mut cfg = crate::ai::search::WebSearchConfig::default();
+    let mut stmt = conn.prepare("SELECT key, value FROM settings")?;
+    let rows = stmt.query_map(params![], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })?;
+    for r in rows {
+        let (k, v) = r?;
+        match k.as_str() {
+            KEY_WEB_SEARCH_ENABLED => cfg.enabled = v == "true" || v == "1",
+            KEY_WEB_SEARCH_BACKEND => {
+                if !v.trim().is_empty() {
+                    cfg.backend = v;
+                }
+            }
+            KEY_WEB_SEARCH_LOCAL_ENGINE => {
+                if !v.trim().is_empty() {
+                    cfg.local_engine = v;
+                }
+            }
+            KEY_WEB_SEARCH_MAX_RESULTS => {
+                if let Some(n) = parse_optional_i64(&v) {
+                    cfg.max_results = n.clamp(1, crate::ai::search::MAX_RESULTS_CAP);
+                }
+            }
+            KEY_WEB_SEARCH_PROVIDERS => {
+                if let Ok(list) =
+                    serde_json::from_str::<Vec<crate::ai::search::WebSearchProviderConfig>>(&v)
+                {
+                    cfg.providers = list;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(cfg)
 }
 
 fn parse_optional_f64(v: &str) -> Option<f64> {

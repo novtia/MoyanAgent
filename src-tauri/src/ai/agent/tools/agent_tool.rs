@@ -241,7 +241,8 @@ impl AgentTool {
             session_id: parent_ctx.and_then(|c| c.session_id.clone()),
             role_state_scope_id: parent_ctx.and_then(|c| c.role_state_scope_id.clone()),
             correlation_id: parent_ctx.and_then(|c| c.correlation_id.clone()),
-            token_logger: parent_ctx.and_then(|c| c.token_logger.clone()),
+            token_stats: parent_ctx.and_then(|c| c.token_stats.clone()),
+            session_logger: parent_ctx.and_then(|c| c.session_logger.clone()),
         })
         .await?;
 

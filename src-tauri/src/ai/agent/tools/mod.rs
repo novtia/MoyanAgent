@@ -32,6 +32,8 @@ pub mod role_state;
 pub mod rpg_choice;
 pub mod text_decode;
 pub mod todo;
+pub mod web_fetch;
+pub mod web_search;
 
 use std::collections::HashMap;
 use std::future::Future;

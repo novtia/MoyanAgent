@@ -11,6 +11,7 @@ import type { SettingsTab, ThemeMode } from "./components/settings";
 import { ContextMenuHost } from "./components/context-menu";
 import { ToastHost, DialogHost } from "./components/ui";
 import { SearchDialog } from "./components/search/SearchDialog";
+import { WebSearchDialog } from "./components/search/WebSearchDialog";
 import { TitleBar } from "./components/layout/TitleBar";
 import { useSettings } from "./store/settings";
 import { useSession } from "./store/session";
@@ -32,7 +33,13 @@ type AppRoute =
   | { view: "chat" }
   | { view: "settings"; tab: SettingsTab };
 
-const SETTINGS_TABS: SettingsTab[] = ["appearance", "llm", "default", "system"];
+const SETTINGS_TABS: SettingsTab[] = [
+  "appearance",
+  "llm",
+  "default",
+  "search",
+  "system",
+];
 
 function parseRoute(): AppRoute {
   const [, view, tab] = window.location.hash.match(/^#\/([^/]+)\/?([^/]*)?/) || [];
@@ -63,6 +70,7 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [webSearchOpen, setWebSearchOpen] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -101,7 +109,11 @@ export default function App() {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setSearchOpen(true);
+        if (event.shiftKey) {
+          setWebSearchOpen(true);
+        } else {
+          setSearchOpen(true);
+        }
         return;
       }
       if (event.key === "F12") {
@@ -212,6 +224,10 @@ export default function App() {
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
         onOpenChat={openChat}
+      />
+      <WebSearchDialog
+        open={webSearchOpen}
+        onClose={() => setWebSearchOpen(false)}
       />
       {editorTarget && (
         <ImageEditor

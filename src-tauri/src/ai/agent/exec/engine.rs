@@ -275,16 +275,26 @@ impl QueryEngine for ProviderQueryEngine {
                 }
                 // Accumulate billing tokens across all tool-call rounds.
                 accumulate_usage(&mut usage, &response.usage);
-                if let Some(logger) = context.token_logger.as_ref() {
-                    logger.log_api_call(ApiCallLog {
-                        ctx: log_context(context.as_ref()),
-                        model: chat.model.clone(),
-                        provider: chat.provider.id.clone(),
-                        turn_index: turn_count,
-                        usage: response.usage.clone(),
-                        request: crate::ai::token_log::request_content(&chat),
-                        response: crate::ai::token_log::response_content(&response),
-                    });
+                if context.token_stats.is_some() || context.session_logger.is_some() {
+                    let ctx = log_context(context.as_ref());
+                    if let Some(stats) = context.token_stats.as_ref() {
+                        stats.log_api_call(ApiCallLog {
+                            ctx: ctx.clone(),
+                            model: chat.model.clone(),
+                            provider: chat.provider.id.clone(),
+                            turn_index: turn_count,
+                            usage: response.usage.clone(),
+                        });
+                    }
+                    if let Some(logger) = context.session_logger.as_ref() {
+                        logger.log_assistant_turn(
+                            &ctx,
+                            turn_count,
+                            &chat.model,
+                            &chat.provider.id,
+                            &response,
+                        );
+                    }
                 }
                 final_images = response.images.clone();
                 final_videos = response.videos.clone();
@@ -391,13 +401,24 @@ impl QueryEngine for ProviderQueryEngine {
                         is_error: result.is_error,
                     });
 
-                    if let Some(logger) = context.token_logger.as_ref() {
-                        logger.log_tool_call(ToolCallLog {
-                            ctx: log_context(context.as_ref()),
-                            tool_name: req.tool_name.clone(),
-                            result: result.clone(),
-                            input: req.input.clone(),
-                        });
+                    if context.token_stats.is_some() || context.session_logger.is_some() {
+                        let ctx = log_context(context.as_ref());
+                        if let Some(stats) = context.token_stats.as_ref() {
+                            stats.log_tool_call(ToolCallLog {
+                                ctx: ctx.clone(),
+                                tool_name: req.tool_name.clone(),
+                                result: result.clone(),
+                                input: req.input.clone(),
+                            });
+                        }
+                        if let Some(logger) = context.session_logger.as_ref() {
+                            logger.log_tool_call(
+                                &ctx,
+                                &req.tool_name,
+                                &req.input,
+                                &result,
+                            );
+                        }
                     }
 
                     let result_event = MessageEvent::ToolResult {

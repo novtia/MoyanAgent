@@ -17,7 +17,8 @@ use tokio::sync::watch;
 use crate::ai::agent::memory::UserContext;
 use crate::ai::agent::core::permission::PermissionMode;
 use crate::ai::agent::types::{AgentId, MessageRole, QuerySource};
-use crate::ai::token_log::TokenUsageLogger;
+use crate::ai::session_log::SessionLogger;
+use crate::ai::token_log::TokenStatsRecorder;
 
 /// Snapshot of the runtime context attached to every tool invocation.
 pub struct ToolUseContext {
@@ -41,8 +42,12 @@ pub struct ToolUseContext {
     /// Agent definition type driving this run (e.g. `general-purpose`).
     pub agent_type: Option<String>,
 
-    /// Structured token usage logger; `None` disables telemetry for this run.
-    pub token_logger: Option<Arc<TokenUsageLogger>>,
+    /// Token usage statistics recorder (SQLite); `None` disables telemetry.
+    pub token_stats: Option<Arc<TokenStatsRecorder>>,
+
+    /// Session content logger (per-session JSON files for debugging);
+    /// `None` disables content logging for this run.
+    pub session_logger: Option<Arc<SessionLogger>>,
 
     /// Cancellation. Sub-agents typically have *child* signals so that
     /// killing a parent agent also tears down its workers, but background
@@ -109,7 +114,8 @@ impl ToolUseContext {
             role_state_scope_id: self.role_state_scope_id.clone(),
             correlation_id: self.correlation_id.clone(),
             agent_type: self.agent_type.clone(),
-            token_logger: self.token_logger.clone(),
+            token_stats: self.token_stats.clone(),
+            session_logger: self.session_logger.clone(),
             abort: self.abort.child(),
             read_file_state: Arc::new(Mutex::new(read_clone)),
             nested_memory_attachment_triggers: Arc::new(Mutex::new(HashSet::new())),
@@ -191,7 +197,8 @@ pub struct ToolUseContextBuilder {
     role_state_scope_id: Option<String>,
     correlation_id: Option<String>,
     agent_type: Option<String>,
-    token_logger: Option<Arc<TokenUsageLogger>>,
+    token_stats: Option<Arc<TokenStatsRecorder>>,
+    session_logger: Option<Arc<SessionLogger>>,
     /// When set, the built context shares this cancellation controller
     /// (used by the main session so `cancel_generation` can stop in-flight work).
     abort_signal: Option<AbortSignal>,
@@ -210,7 +217,8 @@ impl ToolUseContextBuilder {
             role_state_scope_id: None,
             correlation_id: None,
             agent_type: None,
-            token_logger: None,
+            token_stats: None,
+            session_logger: None,
             abort_signal: None,
         }
     }
@@ -240,8 +248,13 @@ impl ToolUseContextBuilder {
         self
     }
 
-    pub fn token_logger(mut self, logger: Arc<TokenUsageLogger>) -> Self {
-        self.token_logger = Some(logger);
+    pub fn token_stats(mut self, recorder: Arc<TokenStatsRecorder>) -> Self {
+        self.token_stats = Some(recorder);
+        self
+    }
+
+    pub fn session_logger(mut self, logger: Arc<SessionLogger>) -> Self {
+        self.session_logger = Some(logger);
         self
     }
 
@@ -282,7 +295,8 @@ impl ToolUseContextBuilder {
             role_state_scope_id: self.role_state_scope_id,
             correlation_id: self.correlation_id,
             agent_type: self.agent_type,
-            token_logger: self.token_logger,
+            token_stats: self.token_stats,
+            session_logger: self.session_logger,
             abort: signal,
             read_file_state: Arc::new(Mutex::new(HashMap::new())),
             nested_memory_attachment_triggers: Arc::new(Mutex::new(HashSet::new())),

@@ -85,6 +85,44 @@ export interface Settings {
   frequency_penalty: number | null;
   presence_penalty: number | null;
   history_turns: number;
+  /** Master switch for the web-search tools/command. */
+  web_search_enabled: boolean;
+  /** Active search backend: `local` or an API provider kind. */
+  web_search_backend: string;
+  /** Engine used by the local scraper: `duckduckgo` | `bing`. */
+  web_search_local_engine: string;
+  /** Default number of hits to return. */
+  web_search_max_results: number;
+  /** Configured API search providers. */
+  web_search_providers: WebSearchProviderConfig[];
+}
+
+/** Backend selector values for web search. */
+export type WebSearchBackend = "local" | "tavily" | "serper" | "bing";
+
+/** Credentials/config for one API search provider (persisted in settings). */
+export interface WebSearchProviderConfig {
+  id: string;
+  kind: string;
+  api_key: string;
+  endpoint?: string;
+  enabled?: boolean;
+}
+
+/** A single web-search result row. */
+export interface WebSearchHit {
+  title: string;
+  url: string;
+  snippet: string;
+  published?: string | null;
+  source: string;
+}
+
+/** Full outcome of a `web_search` command call. */
+export interface WebSearchOutcome {
+  backend: string;
+  query: string;
+  hits: WebSearchHit[];
 }
 
 export interface SettingsPatch {
@@ -106,6 +144,11 @@ export interface SettingsPatch {
   frequency_penalty?: number | null;
   presence_penalty?: number | null;
   history_turns?: number;
+  web_search_enabled?: boolean;
+  web_search_backend?: string;
+  web_search_local_engine?: string;
+  web_search_max_results?: number;
+  web_search_providers?: WebSearchProviderConfig[];
 }
 
 export interface Session {

@@ -551,6 +551,7 @@ const enUS: Resource = {
     tabAppearance: "Appearance",
     tabLlm: "Model services",
     tabDefault: "Default model",
+    tabSearch: "Web search",
     tabSystem: "System",
     default: {
       quickModelTitle: "Quick model",
@@ -558,6 +559,34 @@ const enUS: Resource = {
         "Model used for lightweight tasks such as renaming session titles. A title is generated automatically after the first message in a new session.",
       quickModelNone: "Not set",
       quickModelEmpty: "Add and enable a model in Model services first.",
+    },
+    search: {
+      enableTitle: "Enable web search",
+      enableDesc:
+        "When on, the model can call the WebSearch / WebFetch tools, and you can search manually in chat.",
+      backendTitle: "Search source",
+      backendDesc:
+        "Choose local scraping (no key required) or an API provider.",
+      backendLocal: "Local (scrape a search engine)",
+      localEngineTitle: "Local engine",
+      localEngineDesc: "Which search engine the local scraper uses.",
+      maxResultsTitle: "Default result count",
+      maxResultsDesc: "Maximum results returned per search (1–20).",
+      providersTitle: "API providers",
+      providersDesc:
+        "Configure a provider key to select it above. Keys are stored on this machine only.",
+      apiKeyLabel: "API key",
+      apiKeyPlaceholder: "Paste API key",
+      endpointPlaceholder: "Custom endpoint (optional)",
+      keyHint: "Keys are stored locally in SQLite and never leave this machine.",
+      title: "Web search",
+      inputPlaceholder: "Type a search query…",
+      searchAction: "Search",
+      searching: "Searching…",
+      empty: "No results",
+      insert: "Insert into composer",
+      openLink: "Open link",
+      error: "Search failed",
     },
     appearance: {
       themeTitle: "Theme",

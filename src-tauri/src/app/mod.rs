@@ -21,7 +21,7 @@ use crate::ai::agent::{
     RoleStateTool, RunAgentParams, StaticMcpRegistry, Task, TaskState, TaskStore, ToolPool,
     UserContextConfig,
 };
-use crate::ai::{chat, parameters, router, token_log};
+use crate::ai::{chat, parameters, router, session_log, token_log};
 use crate::data::db::DbPool;
 use crate::data::{custom_agents, db, llm_catalog, paths, project, session, settings};
 use crate::error::{AppError, AppResult};
@@ -62,8 +62,10 @@ pub struct AppState {
     /// per assistant message into `file_snapshots` for delete/regenerate
     /// rollback of created / updated / deleted files.
     pub file_snapshots: Arc<FileSnapshotStore>,
-    /// Structured token usage logger (JSONL + SQLite).
-    pub token_logger: Arc<token_log::TokenUsageLogger>,
+    /// Token usage statistics recorder (SQLite only, for analytics/billing).
+    pub token_stats: Arc<token_log::TokenStatsRecorder>,
+    /// Session content logger (per-session JSON files, for debugging).
+    pub session_logger: Arc<session_log::SessionLogger>,
 }
 
 impl AppState {
@@ -101,31 +103,6 @@ fn clear_generation_abort(state: &AppState, session_id: &str) {
         guard.remove(session_id);
     }
 }
-
-// #region agent log
-fn agent_dbg(location: &str, message: &str, hypothesis: &str, data: serde_json::Value) {
-    use std::io::Write;
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open("d:/AI/MoyanAgent/debug-2b2c78.log")
-    {
-        let _ = writeln!(
-            f,
-            "{}",
-            serde_json::json!({"sessionId":"2b2c78","hypothesisId":hypothesis,"location":location,"message":message,"data":data,"timestamp":ts})
-        );
-    }
-}
-
-fn agent_dbg_has_marker(s: &str) -> bool {
-    s.contains("已调用工具") || s.contains("[阶段")
-}
-// #endregion
 
 /// Build prior-turn context for a session (oldest first), capped at `max_messages`.
 /// Skips `error`-role messages and any drafts. When `before_ms` is `Some(t)`, only
@@ -647,22 +624,6 @@ async fn run_agent_chain(
             Some(on_text_delta.clone())
         };
 
-        // #region agent log
-        agent_dbg(
-            "app/mod.rs:run_agent_chain",
-            "stage start",
-            "B/D",
-            serde_json::json!({
-                "idx": idx,
-                "agent_type": agent_type,
-                "passthrough": passthrough,
-                "streams_text": !passthrough,
-                "prev_len": prev_text.as_deref().map(|s| s.len()).unwrap_or(0),
-                "prev_has_marker": prev_text.as_deref().map(agent_dbg_has_marker).unwrap_or(false),
-            }),
-        );
-        // #endregion
-
         let resp = run_cancellable_generation(
             state,
             session_id,
@@ -677,20 +638,6 @@ async fn run_agent_chain(
         )
         .await?;
 
-        // #region agent log
-        agent_dbg(
-            "app/mod.rs:run_agent_chain",
-            "stage done",
-            "B/E",
-            serde_json::json!({
-                "idx": idx,
-                "agent_type": agent_type,
-                "text_len": resp.text.as_deref().map(|s| s.len()).unwrap_or(0),
-                "text_has_marker": resp.text.as_deref().map(agent_dbg_has_marker).unwrap_or(false),
-                "text_preview": resp.text.as_deref().map(|s| s.chars().take(160).collect::<String>()).unwrap_or_default(),
-            }),
-        );
-        // #endregion
         merged.usage = resp.usage;
         merged.images.extend(resp.images);
         merged.videos.extend(resp.videos);
@@ -841,7 +788,8 @@ async fn run_cancellable_generation(
             session_id: Some(session_id.to_string()),
             role_state_scope_id: Some(role_state_scope_id),
             correlation_id: correlation_id.map(str::to_string),
-            token_logger: Some(state.token_logger.clone()),
+            token_stats: Some(state.token_stats.clone()),
+            session_logger: Some(state.session_logger.clone()),
         }) => out,
         _ = abort_signal.wait_aborted() => Err(AppError::Canceled),
     };
@@ -1297,23 +1245,6 @@ fn stream_text_callback(
                 .map(|mut s| s.push(t))
                 .unwrap_or_else(|_| t.to_string())
         });
-        // #region agent log
-        if let Some(raw) = delta.text.as_deref() {
-            if agent_dbg_has_marker(raw) {
-                agent_dbg(
-                    "app/mod.rs:stream_text_callback",
-                    "marker text arrived in live provider stream delta",
-                    "A/B/D",
-                    serde_json::json!({
-                        "session_id": session_id,
-                        "request_message_id": request_message_id,
-                        "raw_preview": raw.chars().take(200).collect::<String>(),
-                        "cleaned_still_has_marker": cleaned_text.as_deref().map(agent_dbg_has_marker).unwrap_or(false),
-                    }),
-                );
-            }
-        }
-        // #endregion
         if let Ok(mut g) = blocks.lock() {
             if let Some(t) = cleaned_text.as_deref() {
                 append_text_delta_block(&mut g, t);
@@ -1448,6 +1379,26 @@ async fn fetch_provider_models(args: FetchProviderModelsArgs) -> Result<Vec<Stri
     crate::ai::providers::model_list::fetch_models(&args.sdk, &args.endpoint, &args.api_key).await
 }
 
+/// Run a web search through the configured backend. Used by the manual search
+/// UI; the agent uses the `WebSearch` tool which shares the same engine.
+#[tauri::command]
+async fn web_search(
+    state: tauri::State<'_, Arc<AppState>>,
+    query: String,
+    max_results: Option<i64>,
+) -> Result<crate::ai::search::SearchOutcome, AppError> {
+    let config = {
+        let conn = state.conn()?;
+        settings::read_web_search_config(&conn)?
+    };
+    let max_results = crate::ai::search::clamp_max_results(max_results, config.max_results);
+    crate::ai::search::run_search(
+        &config,
+        crate::ai::search::SearchQuery { query, max_results },
+    )
+    .await
+}
+
 // ????????? App info ?????????
 
 #[derive(Debug, Serialize)]
@@ -1488,6 +1439,29 @@ fn open_path(path: String) -> Result<(), AppError> {
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open").arg(&path).spawn()?;
+    }
+    Ok(())
+}
+
+/// Open an absolute http(s) URL in the user's default browser.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), AppError> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return Err(AppError::Invalid("url must be an http(s) URL".into()));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // `explorer <url>` reliably hands off to the default browser.
+        std::process::Command::new("explorer").arg(trimmed).spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open").arg(trimmed).spawn()?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open").arg(trimmed).spawn()?;
     }
     Ok(())
 }
@@ -1668,7 +1642,7 @@ fn delete_session(
         let _ = crate::data::file_snapshot::clear_session(&conn, &id);
     }
     state.file_snapshots.clear(&id);
-    state.token_logger.delete_session_log(&id);
+    state.session_logger.delete_session_log(&id);
     let dir = paths::sessions_dir(&app)?.join(&id);
     if dir.exists() {
         let _ = std::fs::remove_dir_all(&dir);
@@ -1932,8 +1906,8 @@ fn delete_message(
     if let Some(ref sid) = session_id {
         let conn = state.conn()?;
         state
-            .token_logger
-            .rollback_jsonl_from_message(&conn, sid, &id);
+            .session_logger
+            .rollback_from_message(&conn, sid, &id);
     }
 
     let paths = {
@@ -2566,7 +2540,8 @@ fn finalize_generate_assistant_message(
     mut blocks: Vec<serde_json::Value>,
     role_states: &RoleStateStore,
     file_snapshots: &FileSnapshotStore,
-    token_logger: &token_log::TokenUsageLogger,
+    token_stats: &token_log::TokenStatsRecorder,
+    session_logger: &session_log::SessionLogger,
     agent_type: &str,
     model: &str,
     provider: &str,
@@ -2575,21 +2550,6 @@ fn finalize_generate_assistant_message(
 
     resp.images = chat::dedupe_image_results(resp.images);
     resp.videos = chat::dedupe_media_results(resp.videos);
-
-    // #region agent log
-    let raw_resp_has_marker = resp
-        .text
-        .as_deref()
-        .map(agent_dbg_has_marker)
-        .unwrap_or(false);
-    let raw_block_has_marker = blocks.iter().any(|b| {
-        b.get("type").and_then(|v| v.as_str()) == Some("text")
-            && b.get("content")
-                .and_then(|c| c.as_str())
-                .map(agent_dbg_has_marker)
-                .unwrap_or(false)
-    });
-    // #endregion
 
     // Belt-and-suspenders: scrub any leaked host tool-log lines out of the
     // persisted text blocks and the final reply before they ever hit the DB.
@@ -2609,22 +2569,6 @@ fn finalize_generate_assistant_message(
 
     let block_text = concat_block_text(&blocks, "text");
     let block_thinking = concat_block_text(&blocks, "thinking");
-    // #region agent log
-    agent_dbg(
-        "app/mod.rs:finalize_generate_assistant_message",
-        "persisting assistant message",
-        "E",
-        serde_json::json!({
-            "session_id": session_id,
-            "user_message_id": user_message_id,
-            "raw_resp_has_marker": raw_resp_has_marker,
-            "raw_block_has_marker": raw_block_has_marker,
-            "resp_text_has_marker_after_clean": resp.text.as_deref().map(agent_dbg_has_marker).unwrap_or(false),
-            "block_text_has_marker_after_clean": agent_dbg_has_marker(&block_text),
-            "block_text_len": block_text.len(),
-        }),
-    );
-    // #endregion
     if resp
         .text
         .as_ref()
@@ -2737,18 +2681,20 @@ fn finalize_generate_assistant_message(
         );
     }
 
-    token_logger.log_turn_summary(token_log::TurnSummaryLog {
-        ctx: token_log::LogContext {
-            session_id: Some(session_id.to_string()),
-            correlation_id: Some(user_message_id.to_string()),
-            agent_id: None,
-            agent_type: Some(agent_type.to_string()),
-        },
+    let summary_ctx = token_log::LogContext {
+        session_id: Some(session_id.to_string()),
+        correlation_id: Some(user_message_id.to_string()),
+        agent_id: None,
+        agent_type: Some(agent_type.to_string()),
+    };
+    token_stats.log_turn_summary(token_log::TurnSummaryLog {
+        ctx: summary_ctx.clone(),
         message_id: assistant.id.clone(),
         model: model.to_string(),
         provider: provider.to_string(),
         usage: resp.usage.clone(),
     });
+    session_logger.log_turn_summary(&summary_ctx, &assistant.id, model, provider, &resp.usage);
 
     let user_full = reload_message(conn, user_message_id)?;
     let assistant_full = reload_message(conn, &assistant.id)?;
@@ -2877,6 +2823,36 @@ async fn generate_image(
         session::bind_images_to_message(&conn, &m.id, &attachment_image_ids)?;
         m
     };
+
+    // Session content log: snapshot the effective settings + the user turn
+    // at the start of every generation, for debugging.
+    {
+        let log_ctx = token_log::LogContext {
+            session_id: Some(req.session_id.clone()),
+            correlation_id: Some(user_msg.id.clone()),
+            agent_id: None,
+            agent_type: Some(generation_agent.to_string()),
+        };
+        state.session_logger.log_settings(
+            &log_ctx,
+            serde_json::json!({
+                "system_prompt": session_prompt,
+                "model": chat_request.model,
+                "provider": chat_request.provider.id,
+                "agent_type": generation_agent,
+                "agent_chain": serde_json::to_value(&agent_chain).unwrap_or(serde_json::Value::Null),
+                "generation_params": serde_json::from_str::<serde_json::Value>(&params_json)
+                    .unwrap_or(serde_json::Value::Null),
+            }),
+        );
+        let attachments = attachment_image_ids
+            .iter()
+            .map(|id| serde_json::json!({ "image_id": id }))
+            .collect();
+        state
+            .session_logger
+            .log_user_message(&log_ctx, &req.prompt, attachments);
+    }
 
     // ensure session title reflects first prompt
     {
@@ -3009,7 +2985,8 @@ async fn generate_image(
                 blocks,
                 &state.role_states,
                 &state.file_snapshots,
-                &state.token_logger,
+                &state.token_stats,
+                &state.session_logger,
                 generation_agent,
                 &log_model,
                 &log_provider,
@@ -3029,6 +3006,15 @@ async fn generate_image(
                 &state.file_snapshots,
             )?;
             let msg_text = format!("{}", e);
+            state.session_logger.log_error(
+                &token_log::LogContext {
+                    session_id: Some(req.session_id.clone()),
+                    correlation_id: Some(user_msg.id.clone()),
+                    agent_id: None,
+                    agent_type: Some(generation_agent.to_string()),
+                },
+                &msg_text,
+            );
             let err_msg = session::insert_message(
                 &conn,
                 &req.session_id,
@@ -3227,6 +3213,39 @@ async fn regenerate_image(
     let params_json = params.to_message_params_json().to_string();
     let is_video_generation = chat_request.provider.sdk == crate::ai::providers::ARK_VIDEO_SDK;
 
+    // Session content log: snapshot the effective settings + the (re-run)
+    // user turn at the start of every regeneration, for debugging.
+    {
+        let log_ctx = token_log::LogContext {
+            session_id: Some(req.session_id.clone()),
+            correlation_id: Some(req.user_message_id.clone()),
+            agent_id: None,
+            agent_type: Some(generation_agent.to_string()),
+        };
+        state.session_logger.log_settings(
+            &log_ctx,
+            serde_json::json!({
+                "system_prompt": session_prompt,
+                "model": chat_request.model,
+                "provider": chat_request.provider.id,
+                "agent_type": generation_agent,
+                "agent_chain": serde_json::to_value(&agent_chain).unwrap_or(serde_json::Value::Null),
+                "generation_params": serde_json::from_str::<serde_json::Value>(&params_json)
+                    .unwrap_or(serde_json::Value::Null),
+                "regenerate": true,
+            }),
+        );
+        let attachments = user_msg_existing
+            .images
+            .iter()
+            .filter(|i| i.role == "input")
+            .map(|i| serde_json::json!({ "image_id": i.id }))
+            .collect();
+        state
+            .session_logger
+            .log_user_message(&log_ctx, prompt, attachments);
+    }
+
     let _ = app.emit(
         "gen://status",
         serde_json::json!({
@@ -3325,7 +3344,8 @@ async fn regenerate_image(
                 blocks,
                 &state.role_states,
                 &state.file_snapshots,
-                &state.token_logger,
+                &state.token_stats,
+                &state.session_logger,
                 generation_agent,
                 &log_model,
                 &log_provider,
@@ -3345,6 +3365,15 @@ async fn regenerate_image(
                 &state.file_snapshots,
             )?;
             let msg_text = format!("{}", e);
+            state.session_logger.log_error(
+                &token_log::LogContext {
+                    session_id: Some(req.session_id.clone()),
+                    correlation_id: Some(req.user_message_id.clone()),
+                    agent_id: None,
+                    agent_type: Some(generation_agent.to_string()),
+                },
+                &msg_text,
+            );
             let err_msg = session::insert_message(
                 &conn,
                 &req.session_id,
@@ -3759,6 +3788,10 @@ pub fn run() {
             let role_states = Arc::new(RoleStateStore::new());
             tools.register(RoleStateTool::new(role_states.clone()));
             tools.register(crate::ai::agent::tools::rpg_choice::RpgChoiceTool::new());
+            tools.register(crate::ai::agent::tools::web_search::WebSearchTool::new(
+                Arc::new(pool.clone()),
+            ));
+            tools.register(crate::ai::agent::tools::web_fetch::WebFetchTool::new());
 
             // Build the agent-callable `Agent` tool. The chat factory
             // lets it materialise a sub-agent `ChatRequest` from the
@@ -3788,7 +3821,8 @@ pub fn run() {
             tools.register(agent_tool);
 
             let logs_dir = paths::token_logs_dir()?;
-            let token_logger = Arc::new(token_log::TokenUsageLogger::new(pool.clone(), logs_dir));
+            let token_stats = Arc::new(token_log::TokenStatsRecorder::new(pool.clone()));
+            let session_logger = Arc::new(session_log::SessionLogger::new(logs_dir));
 
             app.manage(Arc::new(AppState {
                 pool,
@@ -3804,7 +3838,8 @@ pub fn run() {
                 session_memory: Arc::new(FsSessionMemoryExtractor::new()),
                 role_states,
                 file_snapshots,
-                token_logger,
+                token_stats,
+                session_logger,
             }));
             Ok(())
         })
@@ -3813,8 +3848,10 @@ pub fn run() {
             update_settings,
             get_llm_model_catalog,
             fetch_provider_models,
+            web_search,
             get_app_info,
             open_path,
+            open_url,
             toggle_devtools,
             list_sessions,
             search_sessions,
