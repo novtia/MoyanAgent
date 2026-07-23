@@ -48,11 +48,19 @@ export interface ReaderFileTab {
   saveError?: boolean;
 }
 
+/** Path rewrite emitted when project files are renamed/moved (for UI chrome sync). */
+export type ReaderPathOp =
+  | { type: "remap"; from: string; to: string }
+  | { type: "close"; paths: string[] };
+
 interface ReaderStore {
   sessionId: string | null;
   tabs: ReaderFileTab[];
   activeTabId: string | null;
   openSeq: number;
+  /** Bumps whenever open file paths are remapped or closed due to FS ops. */
+  pathSeq: number;
+  lastPathOps: ReaderPathOp[];
   bindSession: (sessionId: string | null) => void;
   openDoc: (doc: ReaderDoc, opts?: { activate?: boolean }) => void;
   closeTab: (id: string) => void;
@@ -71,6 +79,12 @@ interface ReaderStore {
   confirmAllDiffs: (path: string) => void;
   rejectAllDiffs: (path: string) => { revertText: string } | null;
   getTabByPath: (path: string) => ReaderFileTab | undefined;
+  /** Rename/move a file or folder: update open tabs whose path equals or is under `from`. */
+  remapPath: (from: string, to: string) => void;
+  /** Batch rename/move (single pathSeq bump so UI consumers see every op). */
+  remapPaths: (pairs: { from: string; to: string }[]) => void;
+  /** Close open tabs for deleted files/folders (exact path or nested under). */
+  closeByPaths: (paths: string[]) => void;
   clear: () => void;
 }
 
@@ -384,11 +398,73 @@ function findTabIndex(tabs: ReaderFileTab[], path: string): number {
   return tabs.findIndex((t) => normalizeReaderPath(t.path) === key);
 }
 
+function pathSep(path: string): string {
+  return path.includes("\\") ? "\\" : "/";
+}
+
+/**
+ * If `path` equals `from` or is nested under it, return the path with that
+ * prefix replaced by `to`. Otherwise null.
+ */
+export function rewritePathPrefix(path: string, from: string, to: string): string | null {
+  if (!path || !from || !to) return null;
+  const normPath = normalizeReaderPath(path);
+  const normFrom = normalizeReaderPath(from);
+  if (!normPath || !normFrom) return null;
+  if (normPath !== normFrom && !normPath.startsWith(`${normFrom}/`)) return null;
+
+  const pathSan = sanitizeReaderPath(path);
+  const fromSan = sanitizeReaderPath(from);
+  const toSan = sanitizeReaderPath(to);
+  let suffix = "";
+  if (
+    pathSan.length >= fromSan.length &&
+    normalizeReaderPath(pathSan.slice(0, fromSan.length)) === normFrom
+  ) {
+    suffix = pathSan.slice(fromSan.length);
+  } else {
+    suffix = normPath.slice(normFrom.length).replace(/\//g, pathSep(toSan));
+  }
+  if (!suffix) return toSan;
+  const sep = pathSep(toSan);
+  const base = toSan.replace(/[/\\]+$/, "");
+  const rest = suffix.replace(/^[/\\]+/, "");
+  return rest ? `${base}${sep}${rest}` : base;
+}
+
+function pathMatchesOrUnder(path: string, root: string): boolean {
+  const p = normalizeReaderPath(path);
+  const r = normalizeReaderPath(root);
+  if (!p || !r) return false;
+  return p === r || p.startsWith(`${r}/`);
+}
+
+/** Apply FS path ops to a list of panel/file paths (null paths pass through). */
+export function applyReaderPathOpsToPath(
+  path: string | null | undefined,
+  ops: ReaderPathOp[],
+): string | null | undefined {
+  if (path == null) return path;
+  let next: string | null = path;
+  for (const op of ops) {
+    if (next == null) return null;
+    if (op.type === "close") {
+      if (op.paths.some((root) => pathMatchesOrUnder(next!, root))) return null;
+      continue;
+    }
+    const rewritten = rewritePathPrefix(next, op.from, op.to);
+    if (rewritten != null) next = rewritten;
+  }
+  return next;
+}
+
 export const useReader = create<ReaderStore>((set, get) => ({
   sessionId: null,
   tabs: [],
   activeTabId: null,
   openSeq: 0,
+  pathSeq: 0,
+  lastPathOps: [],
 
   bindSession: (sessionId) => {
     const loaded = loadPersisted(sessionId);
@@ -396,6 +472,7 @@ export const useReader = create<ReaderStore>((set, get) => ({
       sessionId,
       tabs: loaded.tabs,
       activeTabId: loaded.activeTabId,
+      lastPathOps: [],
     });
   },
 
@@ -632,8 +709,99 @@ export const useReader = create<ReaderStore>((set, get) => ({
     return idx >= 0 ? get().tabs[idx] : undefined;
   },
 
+  remapPath: (from, to) => {
+    get().remapPaths([{ from, to }]);
+  },
+
+  remapPaths: (pairs) => {
+    const ops = pairs
+      .filter(
+        (p) =>
+          !!p.from &&
+          !!p.to &&
+          normalizeReaderPath(p.from) !== normalizeReaderPath(p.to),
+      )
+      .map((p) => ({ type: "remap" as const, from: p.from, to: p.to }));
+    if (ops.length === 0) return;
+    set((s) => {
+      let changed = false;
+      let tabs = s.tabs;
+      /** Tab ids whose path was rewritten (exact file or under a renamed folder). */
+      const touchedIds = new Set<string>();
+      for (const op of ops) {
+        const seen = new Set<string>();
+        const next: ReaderFileTab[] = [];
+        for (const tab of tabs) {
+          const rewritten = rewritePathPrefix(tab.path, op.from, op.to);
+          if (rewritten == null) {
+            next.push(tab);
+            seen.add(normalizeReaderPath(tab.path));
+            continue;
+          }
+          changed = true;
+          const key = normalizeReaderPath(rewritten);
+          // Destination already open: drop the old-path tab (close old, keep new).
+          if (seen.has(key)) {
+            const kept = next.find((t) => normalizeReaderPath(t.path) === key);
+            if (kept) touchedIds.add(kept.id);
+            continue;
+          }
+          seen.add(key);
+          touchedIds.add(tab.id);
+          next.push({
+            ...tab,
+            path: rewritten,
+            fileType: inferFileType(rewritten),
+          });
+        }
+        tabs = next;
+      }
+      if (!changed) return s;
+      // Prefer activating a rewritten tab so the panel opens the new path.
+      let activeTabId = s.activeTabId;
+      if (!activeTabId || !tabs.some((t) => t.id === activeTabId)) {
+        activeTabId =
+          tabs.find((t) => touchedIds.has(t.id))?.id ?? tabs[0]?.id ?? null;
+      } else if (!touchedIds.has(activeTabId)) {
+        const touched = tabs.find((t) => touchedIds.has(t.id));
+        if (touched) activeTabId = touched.id;
+      }
+      persistTabs(s.sessionId, tabs, activeTabId);
+      return {
+        tabs,
+        activeTabId,
+        // openSeq forces the right-panel chrome to open/focus the new path.
+        openSeq: s.openSeq + 1,
+        pathSeq: s.pathSeq + 1,
+        lastPathOps: ops,
+      };
+    });
+  },
+
+  closeByPaths: (paths) => {
+    const roots = paths.map((p) => p.trim()).filter(Boolean);
+    if (roots.length === 0) return;
+    set((s) => {
+      const tabs = s.tabs.filter(
+        (t) => !roots.some((root) => pathMatchesOrUnder(t.path, root)),
+      );
+      if (tabs.length === s.tabs.length) return s;
+      let activeTabId = s.activeTabId;
+      if (activeTabId && !tabs.some((t) => t.id === activeTabId)) {
+        activeTabId = tabs[0]?.id ?? null;
+      }
+      persistTabs(s.sessionId, tabs, activeTabId);
+      return {
+        tabs,
+        activeTabId,
+        pathSeq: s.pathSeq + 1,
+        lastPathOps: [{ type: "close", paths: roots }],
+      };
+    });
+  },
+
   clear: () => {
-    set({ tabs: [], activeTabId: null });
+    set({ tabs: [], activeTabId: null, lastPathOps: [] });
   },
 }));
 

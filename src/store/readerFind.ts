@@ -97,6 +97,7 @@ interface ReaderFindStore {
   nextMatch: () => void;
   prevMatch: () => void;
   goToFile: (path: string) => void;
+  goToMatch: (index: number) => void;
   replaceCurrent: () => Promise<void>;
   replaceAll: () => Promise<void>;
   getActiveMatch: () => ReaderFindMatch | null;
@@ -303,7 +304,7 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
   },
 
   refreshMatches: async () => {
-    const { query, matchCase, scope, open } = get();
+    const { query, matchCase, scope, open, matchIndex: prevIndex } = get();
     if (!open) return;
     const sessionId = useReader.getState().sessionId;
     set({ searching: true });
@@ -311,9 +312,15 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
       const projectRoot = scope === "all" && sessionId ? resolveProjectRoot() : null;
       const targets = await buildSearchTargets(scope, sessionId, projectRoot);
       const matches = buildMatches(targets, query, matchCase);
+      // Keep selection when possible; otherwise land on the first hit.
+      let matchIndex = -1;
+      if (matches.length > 0) {
+        matchIndex =
+          prevIndex >= 0 && prevIndex < matches.length ? prevIndex : 0;
+      }
       set({
         matches,
-        matchIndex: -1,
+        matchIndex,
         searching: false,
       });
     } catch {
@@ -345,6 +352,13 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
     if (idx < 0) return;
     set({ matchIndex: idx });
     activateMatch(matches[idx] ?? null);
+  },
+
+  goToMatch: (index) => {
+    const { matches } = get();
+    if (index < 0 || index >= matches.length) return;
+    set({ matchIndex: index });
+    activateMatch(matches[index] ?? null);
   },
 
   getActiveMatch: () => {

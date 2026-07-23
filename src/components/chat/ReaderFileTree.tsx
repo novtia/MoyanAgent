@@ -18,7 +18,7 @@ import { dialog } from "../ui/Dialog";
 import { toast } from "../ui/Toast";
 import { useProject } from "../../store/project";
 import { useSession } from "../../store/session";
-import { normalizeReaderPath } from "../../store/reader";
+import { normalizeReaderPath, useReader } from "../../store/reader";
 import {
   useFileExplorer,
   baseName,
@@ -343,7 +343,9 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
     });
     if (!name?.trim() || name.trim() === entry.name) return;
     try {
-      await api.renameProjectPath(tree.sessionId, entry.path, siblingPath(entry.path, name.trim()));
+      const to = siblingPath(entry.path, name.trim());
+      await api.renameProjectPath(tree.sessionId, entry.path, to);
+      useReader.getState().remapPath(entry.path, to);
       toast.success(t("fileExplorer.renamed"));
       tree.refresh();
     } catch (err) {
@@ -363,6 +365,7 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
     if (!ok) return;
     try {
       await api.deleteProjectPath(tree.sessionId, entry.path);
+      useReader.getState().closeByPaths([entry.path]);
       toast.success(t("fileExplorer.deleted"));
       tree.refresh();
     } catch (err) {
@@ -564,14 +567,17 @@ async function pasteInto(
 ) {
   if (!clipboard || clipboard.paths.length === 0) return;
   try {
+    const remaps: { from: string; to: string }[] = [];
     for (const from of clipboard.paths) {
       const target = joinPath(dir, baseName(from));
       if (clipboard.mode === "cut") {
         await api.renameProjectPath(sessionId, from, target);
+        remaps.push({ from, to: target });
       } else {
         await api.copyProjectPath(sessionId, from, target);
       }
     }
+    if (remaps.length > 0) useReader.getState().remapPaths(remaps);
     if (clipboard.mode === "cut") setClipboard(null);
     toast.success(t("fileExplorer.pasted"));
     refresh();

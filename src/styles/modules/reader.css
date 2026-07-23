@@ -1355,150 +1355,48 @@
   outline-offset: 2px;
 }
 
-/* ───── reader find / replace bar ───── */
+/* ───── reader find / replace bar (modern stacked panel) ───── */
 
 .reader-find-bar {
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
-  box-shadow: var(--shadow-pop);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 12px;
+  padding: 12px 12px 14px;
+  min-width: 0;
+  color: var(--ink);
 }
 
-.reader-find-row {
+.reader-find-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  flex-wrap: wrap;
   min-width: 0;
+  padding-bottom: 2px;
 }
 
-.reader-find-row--replace {
-  padding-top: 2px;
-}
-
-.reader-find-scope {
-  display: inline-flex;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  overflow: hidden;
-  flex: 0 0 auto;
-}
-
-.reader-find-scope-btn {
-  border: none;
-  background: var(--bg);
-  color: var(--ink-mute);
-  font-size: 11px;
-  padding: 4px 8px;
-  cursor: pointer;
-}
-
-.reader-find-scope-btn.is-active {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+.reader-find-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   color: var(--ink);
-}
-
-.reader-find-scope-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.reader-find-field {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1 1 140px;
-  min-width: 120px;
-}
-
-.reader-find-field--replace {
-  flex: 1 1 200px;
-}
-
-.reader-find-label {
-  font-size: 11px;
-  color: var(--ink-mute);
-  white-space: nowrap;
-}
-
-.reader-find-input {
-  flex: 1 1 auto;
   min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--ink);
-  font-size: 12px;
-  padding: 4px 8px;
-}
-
-.reader-find-input:focus {
-  outline: none;
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--line));
-}
-
-.reader-find-check {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--ink-mute);
-  white-space: nowrap;
-  flex: 0 0 auto;
-}
-
-.reader-find-nav {
-  display: inline-flex;
-  gap: 4px;
-  flex: 0 0 auto;
-}
-
-.reader-find-btn,
-.reader-find-action {
-  border: 1px solid var(--line);
-  background: var(--bg);
-  color: var(--ink);
-  font-size: 11px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.reader-find-btn:disabled,
-.reader-find-action:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.reader-find-btn:hover:not(:disabled),
-.reader-find-action:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--ink) 20%, var(--line));
-}
-
-.reader-find-status {
-  font-size: 11px;
-  color: var(--ink-mute);
-  white-space: nowrap;
-  flex: 0 0 auto;
-  min-width: 56px;
 }
 
 .reader-find-close {
   border: none;
-  background: none;
+  background: transparent;
   color: var(--ink-mute);
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
+  margin: -2px -4px -2px 0;
+  border-radius: 7px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   flex: 0 0 auto;
-  margin-left: auto;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .reader-find-close svg {
@@ -1508,53 +1406,351 @@
 
 .reader-find-close:hover {
   color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
-.reader-find-location {
+.reader-find-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.reader-find-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+}
+
+.reader-find-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.reader-find-input-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-soft) 72%, var(--bg));
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.reader-find-input-wrap:hover {
+  border-color: color-mix(in srgb, var(--ink-mute) 30%, var(--line));
+}
+
+.reader-find-input-wrap:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: var(--bg);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.reader-find-input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0 56px 0 10px;
+  border: none;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.3;
+  outline: none;
+  box-shadow: none;
+}
+
+.reader-find-input-wrap--plain .reader-find-input {
+  padding-right: 10px;
+}
+
+.reader-find-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.reader-find-input::placeholder {
+  color: var(--ink-mute);
+  font-size: 12.5px;
+}
+
+.reader-find-count {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   font-size: 11px;
   color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
   white-space: nowrap;
+  max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.reader-find-disabled {
-  font-size: 11px;
+.reader-find-count--empty {
   color: var(--rose-500);
-  margin: 0;
 }
 
-.reader-find-file-panel {
-  border-top: 1px solid var(--line);
-  padding-top: 6px;
+.reader-find-nav {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  padding: 1px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-soft) 72%, var(--bg));
+}
+
+.reader-find-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-mute);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.reader-find-nav-btn:hover:not(:disabled) {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.reader-find-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.reader-find-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.reader-find-scope {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--ink) 5%, var(--bg-soft));
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  flex: 0 0 auto;
+}
+
+.reader-find-scope-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink-mute);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.reader-find-scope-btn.is-active {
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}
+
+.reader-find-scope-btn:hover:not(:disabled):not(.is-active) {
+  color: var(--ink);
+}
+
+.reader-find-scope-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.reader-find-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--ink-soft, var(--ink-mute));
+  cursor: pointer;
+  user-select: none;
+  flex: 0 0 auto;
+}
+
+.reader-find-check input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+}
+
+.reader-find-check-box {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--ink-mute) 45%, var(--line));
+  background: color-mix(in srgb, var(--bg) 70%, var(--bg-soft));
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.reader-find-check input:checked + .reader-find-check-box {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.reader-find-check input:checked + .reader-find-check-box::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border-right: 1.8px solid var(--bg);
+  border-bottom: 1.8px solid var(--bg);
+  transform: rotate(45deg);
+}
+
+.reader-find-check input:disabled + .reader-find-check-box {
+  opacity: 0.45;
+}
+
+.reader-find-check-text {
+  line-height: 1.2;
+}
+
+.reader-find-replace-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
   min-width: 0;
 }
 
+.reader-find-replace-row .reader-find-input-wrap {
+  flex: 1 1 auto;
+}
+
+.reader-find-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.reader-find-btn {
+  height: 30px;
+  padding: 0 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.reader-find-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.reader-find-btn--secondary {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--bg-soft) 72%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--ink-mute) 30%, var(--line));
+}
+
+.reader-find-btn--secondary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 5%, var(--bg-soft));
+  border-color: color-mix(in srgb, var(--ink-mute) 45%, var(--line));
+}
+
+.reader-find-btn--primary {
+  color: var(--bg);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  box-shadow: var(--shadow-1);
+}
+
+.reader-find-btn--primary:hover:not(:disabled) {
+  background: var(--accent-soft, var(--accent));
+  border-color: var(--accent-soft, var(--accent));
+}
+
+.reader-find-disabled {
+  font-size: 11.5px;
+  color: var(--rose-500);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.reader-find-file-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 85%, transparent);
+}
+
 .reader-find-file-panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
+  font-weight: 500;
   color: var(--ink-mute);
-  padding: 0 2px;
+  letter-spacing: 0.03em;
+  padding: 2px 2px 0;
+}
+
+.reader-find-file-panel-meta {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
 }
 
 .reader-find-file-empty {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ink-mute);
   margin: 0;
-  padding: 4px 2px 2px;
+  padding: 10px 4px;
 }
 
 .reader-find-file-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 120px;
+  max-height: 160px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong, var(--line)) transparent;
 }
 
 .reader-find-file-item {
@@ -1562,25 +1758,27 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   border: 1px solid transparent;
-  border-radius: 6px;
-  background: var(--bg-soft);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-soft) 88%, var(--bg));
   color: var(--ink);
-  font-size: 11px;
-  padding: 5px 8px;
+  font-size: 12px;
+  padding: 7px 10px;
   cursor: pointer;
   text-align: left;
   min-width: 0;
+  transition: background 0.12s ease, border-color 0.12s ease;
 }
 
 .reader-find-file-item:hover:not(:disabled) {
-  border-color: var(--line-strong);
+  border-color: color-mix(in srgb, var(--line-strong, var(--line)) 80%, transparent);
+  background: color-mix(in srgb, var(--ink) 4%, var(--bg-soft));
 }
 
 .reader-find-file-item.is-active {
-  border-color: var(--ink);
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg));
 }
 
 .reader-find-file-item:disabled {
@@ -1594,12 +1792,53 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 500;
 }
 
 .reader-find-file-count {
   flex: 0 0 auto;
   color: var(--ink-mute);
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+.reader-find-match-item {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  padding: 8px 10px;
+}
+
+.reader-find-match-line {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.reader-find-match-snippet {
+  display: block;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--ink-soft, var(--ink));
+}
+
+.reader-find-match-hit {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--amber-400, #f5b942) 55%, transparent);
+  color: var(--ink);
+  font-style: normal;
+  font-weight: 600;
+}
+
+.reader-find-match-item.is-active .reader-find-match-hit {
+  background: color-mix(in srgb, var(--amber-400, #f5b942) 72%, transparent);
 }
 
 /* ───── search panel (find/replace hosted in the right pane) ───── */
@@ -1615,11 +1854,9 @@
 .reader-search-pane .reader-find-bar {
   flex: 1 1 auto;
   min-height: 0;
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-  background: transparent;
   overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong, var(--line)) transparent;
 }
 
 .reader-search-pane .reader-find-file-panel {

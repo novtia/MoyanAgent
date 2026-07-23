@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { ProjectDirEntry } from "../types";
 import { api } from "../api/tauri";
+import { useReader } from "./reader";
 
 export type ClipboardMode = "copy" | "cut";
 
@@ -286,6 +287,7 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
     if (!sessionId) return;
     const to = siblingPath(path, newName);
     await api.renameProjectPath(sessionId, path, to);
+    useReader.getState().remapPath(path, to);
     const { selectedPath, selectedPaths } = get();
     set({
       selectedPath: selectedPath === path ? to : selectedPath,
@@ -304,6 +306,7 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
     for (const path of paths) {
       await api.deleteProjectPath(sessionId, path);
     }
+    useReader.getState().closeByPaths(paths);
     const removed = new Set(paths.map((p) => normPath(p)));
     const { selectedPath, selectedPaths, clipboard } = get();
     set({
@@ -345,13 +348,16 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
     const { sessionId } = get();
     if (!sessionId || paths.length === 0) return 0;
     let moved = 0;
+    const remaps: { from: string; to: string }[] = [];
     for (const from of paths) {
       if (isSamePath(parentDir(from), toDir)) continue;
       if (isWithin(from, toDir)) continue;
       const target = joinPath(toDir, baseName(from));
       await api.renameProjectPath(sessionId, from, target);
+      remaps.push({ from, to: target });
       moved += 1;
     }
+    if (remaps.length > 0) useReader.getState().remapPaths(remaps);
     set({ selectedPath: null, selectedPaths: [] });
     if (moved > 0) await get().refresh();
     return moved;
@@ -363,6 +369,7 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
     const intoCurrent = isSamePath(dir, currentDir);
     const existing = new Set(intoCurrent ? entries.map((e) => e.name) : []);
     const pasted: string[] = [];
+    const remaps: { from: string; to: string }[] = [];
     for (const from of clipboard.paths) {
       const name = baseName(from);
       if (clipboard.mode === "cut") {
@@ -372,6 +379,7 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
         existing.add(finalName);
         const target = joinPath(dir, finalName);
         await api.renameProjectPath(sessionId, from, target);
+        remaps.push({ from, to: target });
         pasted.push(target);
       } else {
         if (isWithin(from, dir) && !intoCurrent) continue;
@@ -382,6 +390,7 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
         pasted.push(target);
       }
     }
+    if (remaps.length > 0) useReader.getState().remapPaths(remaps);
     set({
       clipboard: clipboard.mode === "cut" ? null : clipboard,
       selectedPath: null,
