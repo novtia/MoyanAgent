@@ -5,7 +5,7 @@
   max-width: min(320px, calc(100vw - 16px));
   padding: 6px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   box-shadow:
     0 1px 2px color-mix(in srgb, var(--ink) 4%, transparent),

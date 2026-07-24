@@ -6,7 +6,7 @@
   width: 360px;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius);
   box-shadow: var(--shadow-card);
   padding: 14px;
   z-index: 60;
@@ -251,5 +251,5 @@ input.field-input--mono {
 }
 .chip.active {
   color: var(--bg);
-  background: var(--ink);
+  background: var(--accent);
 }

@@ -52,7 +52,7 @@
   padding: 9px 11px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
@@ -74,7 +74,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-soft);
   border: 1px solid var(--line);
   color: var(--ink-soft);
@@ -85,8 +85,8 @@
   height: 15px;
 }
 .config-modal-nav-item.active .config-modal-nav-icon {
-  background: var(--ink);
-  border-color: var(--ink);
+  background: var(--accent);
+  border-color: var(--accent);
   color: var(--bg);
 }
 .config-modal-nav-text {
@@ -273,8 +273,8 @@
   pointer-events: none;
 }
 .cfg-switch--on {
-  background: var(--ink);
-  border-color: var(--ink);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 .cfg-switch--on .cfg-switch-thumb {
   transform: translateX(18px);
@@ -317,7 +317,7 @@
   align-items: center;
   gap: 6px;
   padding: 7px 16px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid color-mix(in srgb, var(--rose-500) 45%, var(--line));
   background: color-mix(in srgb, var(--rose-500) 8%, var(--bg));
   color: var(--rose-500);

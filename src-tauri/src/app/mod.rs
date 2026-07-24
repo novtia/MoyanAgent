@@ -27,6 +27,7 @@ use crate::data::{custom_agents, db, llm_catalog, paths, project, session, setti
 use crate::error::{AppError, AppResult};
 use crate::media::{editor, images};
 
+mod clipboard;
 mod project_fs;
 mod project_rules;
 
@@ -3977,6 +3978,7 @@ pub fn run() {
             open_path,
             open_url,
             toggle_devtools,
+            clipboard::clipboard_write_text,
             list_sessions,
             search_sessions,
             create_session,

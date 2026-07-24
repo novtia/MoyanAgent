@@ -12,7 +12,7 @@
 }
 .modal {
   background: var(--bg);
-  border-radius: 14px;
+  border-radius: var(--radius);
   box-shadow: 0 30px 80px -20px rgba(11, 18, 32, 0.4);
   width: min(960px, 92vw);
   max-height: 90vh;
@@ -42,7 +42,7 @@
   border: 1px solid var(--line);
   color: var(--ink-soft);
   padding: 5px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   font-family: inherit;
   font-size: 12px;
@@ -88,9 +88,9 @@
   background: var(--bg-hover);
 }
 .btn.primary {
-  background: var(--ink);
+  background: var(--accent);
   color: #fff;
-  border-color: var(--ink);
+  border-color: var(--accent);
 }
 .btn.primary:hover {
   background: var(--accent-soft);

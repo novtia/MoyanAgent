@@ -75,11 +75,11 @@
 
 .msg {
   display: flex;
-  margin-bottom: 18px;
+  margin-bottom: var(--msg-list-gap, 18px);
   animation: rise 0.32s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .msg.is-focused .bubble {
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue-500) 22%, transparent);
 }
 @keyframes rise {
   from {
@@ -140,7 +140,7 @@
   gap: 6px;
   background: transparent;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   color: var(--ink-soft);
   cursor: pointer;
   padding: 5px 10px;
@@ -242,7 +242,7 @@
   font-family: inherit;
   font-size: 13px;
   font-weight: 500;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
@@ -253,7 +253,7 @@
   background: var(--bg-hover);
 }
 .bubble-edit-btn.primary {
-  background: var(--ink);
+  background: var(--accent);
   color: #fff;
 }
 .bubble-edit-btn.primary:hover:not(:disabled) {
@@ -272,7 +272,7 @@
   background: transparent;
   border: 1px solid var(--line);
   color: var(--ink-soft);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -311,7 +311,7 @@
   position: relative;
   width: 72px;
   height: 72px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   border: 1px solid var(--line);
   background: var(--bg-sunk);
@@ -364,12 +364,12 @@
 .bubble-edit.drag-over {
   outline: 2px dashed var(--ink);
   outline-offset: 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
 }
 .bubble {
-  max-width: min(640px, 90%);
-  padding: 10px 14px;
-  border-radius: 14px;
+  max-width: min(var(--chat-content-width), 100%);
+  padding: var(--msg-bubble-padding-y, 10px) var(--msg-bubble-padding-x, 14px);
+  border-radius: var(--radius);
   font-family: var(--chat-font-family, inherit);
   font-size: var(--chat-font-size, 14px);
   line-height: var(--chat-line-height, 1.6);
@@ -377,7 +377,7 @@
 .msg.user .bubble {
   background: var(--bg-sunk);
   color: var(--ink);
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: var(--radius-sm);
 }
 .msg.user .bubble .composer-mention--static {
   vertical-align: middle;
@@ -570,7 +570,7 @@
   width: 100%;
   margin: 6px 0;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--bg-soft);
   overflow: hidden;
   transition: border-color 0.14s ease, background 0.14s ease;
@@ -906,7 +906,7 @@
   align-items: baseline;
   gap: 8px;
   padding: 4px 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   font-size: 13px;
   line-height: 1.5;
   transition: background 0.1s ease;
@@ -1040,7 +1040,7 @@
   width: 84px;
   height: 84px;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   display: block;
   cursor: zoom-in;
@@ -1059,7 +1059,7 @@
   display: block;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: #fff;
 }
@@ -1140,7 +1140,7 @@
   display: inline-block;
   max-width: 100%;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius);
   overflow: hidden;
   background: var(--bg-sunk);
   line-height: 0;
@@ -1191,7 +1191,7 @@
   display: grid;
   place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: rgba(7, 9, 14, 0.72);
   color: #fff;
   cursor: pointer;
@@ -1262,7 +1262,7 @@
   margin: 8px 0;
   padding: 12px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--bg-soft);
 }
 .rpg-choice-prompt {
@@ -1285,7 +1285,7 @@
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--ink);
   font-size: 13.5px;

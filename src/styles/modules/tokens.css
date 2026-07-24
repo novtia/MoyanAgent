@@ -36,6 +36,8 @@
   --radius: 14px;
   --radius-sm: 8px;
   --radius-lg: 22px;
+  --radius-xs: 6px;
+  --radius-md: 10px;
 
   --shadow-1: 0 1px 0 rgba(15, 23, 42, 0.03), 0 1px 2px rgba(15, 23, 42, 0.04);
   --shadow-2: 0 4px 16px -6px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
@@ -45,11 +47,16 @@
   --ease-pop: cubic-bezier(0.16, 1, 0.3, 1);
 
   --titlebar-height: 32px;
+  --sidebar-width: 220px;
   --chat-content-width: 760px;
   --chat-gallery-width: 320px;
   --composer-card-padding-x: 14px;
   --composer-textarea-padding-x: 4px;
   --chat-content-padding-x: calc(1px + var(--composer-card-padding-x) + var(--composer-textarea-padding-x));
+  --msg-list-gap: 18px;
+  --msg-bubble-padding-y: 14px;
+  --msg-bubble-padding-x: 18px;
+  --density-scale: 1;
 
   /* Unified form field tokens — used by all <input>, <textarea>, <select>
      and any custom editable surface (chat rename, bubble edit, etc.) */
@@ -60,7 +67,7 @@
   --field-border-focus: var(--ink);
   --field-focus-ring: 0 0 0 3px var(--bg-sunk);
   --field-radius: var(--radius-sm);
-  --field-radius-sm: 6px;
+  --field-radius-sm: var(--radius-xs);
   --field-padding-y: 8px;
   --field-padding-x: 11px;
   --field-padding-y-sm: 4px;
@@ -119,4 +126,37 @@
   --field-border-focus: #f3f5f7;
   --field-focus-ring: 0 0 0 3px rgba(243, 245, 247, 0.1);
   --field-error: #ff7a91;
+}
+
+/* ───── density / radius data attributes ───── */
+:root[data-density="compact"] {
+  --density-scale: 0.88;
+  --sidebar-width: 200px;
+  --field-padding-y: 6px;
+  --field-padding-x: 9px;
+  --field-padding-y-sm: 3px;
+  --field-padding-x-sm: 6px;
+  --field-padding-y-lg: 8px;
+  --field-padding-x-lg: 10px;
+  --field-font-size: 12.5px;
+  --composer-card-padding-x: 12px;
+  --msg-list-gap: 12px;
+  --msg-bubble-padding-y: 10px;
+  --msg-bubble-padding-x: 14px;
+}
+
+:root[data-density="spacious"] {
+  --density-scale: 1.12;
+  --sidebar-width: 240px;
+  --field-padding-y: 10px;
+  --field-padding-x: 13px;
+  --field-padding-y-sm: 5px;
+  --field-padding-x-sm: 10px;
+  --field-padding-y-lg: 12px;
+  --field-padding-x-lg: 14px;
+  --field-font-size: 13.5px;
+  --composer-card-padding-x: 16px;
+  --msg-list-gap: 24px;
+  --msg-bubble-padding-y: 16px;
+  --msg-bubble-padding-x: 20px;
 }

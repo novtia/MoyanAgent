@@ -32,8 +32,8 @@
 .dropzone-icon {
   width: 56px;
   height: 56px;
-  border-radius: 14px;
-  background: var(--ink);
+  border-radius: var(--radius);
+  background: var(--accent);
   color: #fff;
   display: flex;
   align-items: center;

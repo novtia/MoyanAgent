@@ -16,7 +16,16 @@ body,
   overflow: hidden;
 }
 body {
-  font-family: 'Instrument Sans', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: var(
+    --app-font-family,
+    'Instrument Sans',
+    'Noto Sans SC',
+    'PingFang SC',
+    'Microsoft YaHei',
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif
+  );
   color: var(--ink);
   background: var(--bg);
   overflow: hidden;

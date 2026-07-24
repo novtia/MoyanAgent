@@ -63,7 +63,7 @@
   background: transparent;
   color: var(--ink-2);
   font-size: 13px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   text-align: left;
   width: 100%;
@@ -265,7 +265,7 @@
 .side-nav-project-row {
   display: flex;
   align-items: center;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   position: relative;
 }
 .side-nav-project-row:hover {
@@ -304,7 +304,7 @@
   z-index: 200;
   background: var(--bg-float, var(--bg-side));
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
   min-width: 168px;
   padding: 4px;
@@ -390,7 +390,7 @@
   align-items: center;
   gap: 3px;
   padding: 5px 6px 5px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   user-select: none;
   transition: background 0.1s;

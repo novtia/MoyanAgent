@@ -35,6 +35,9 @@ encoding_rs = "0.8"
 chardetng = "0.1"
 scraper = "0.20"
 
+[target.'cfg(windows)'.dependencies]
+clipboard-win = "5"
+
 [features]
 default = ["custom-protocol", "devtools"]
 custom-protocol = ["tauri/custom-protocol"]

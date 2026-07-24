@@ -95,7 +95,7 @@
   padding: 4px;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   box-shadow: var(--shadow-2);
   z-index: 120;
 }
@@ -104,7 +104,7 @@
   width: 100%;
   padding: 7px 12px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-2);
   font-size: 12px;
@@ -183,7 +183,7 @@
 .stage {
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: 220px 1fr;
+  grid-template-columns: var(--sidebar-width) 1fr;
   grid-template-rows: minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;

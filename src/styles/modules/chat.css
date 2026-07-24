@@ -76,7 +76,7 @@
   background: transparent;
   border: none;
   color: var(--ink-soft);
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -107,7 +107,7 @@
   min-width: 160px;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-card);
   padding: 6px;
   z-index: 60;
@@ -157,7 +157,7 @@
   width: 264px;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius);
   box-shadow: var(--shadow-card);
   padding: 14px;
   z-index: 60;
@@ -186,7 +186,7 @@
   font-weight: 500;
   cursor: pointer;
   padding: 2px 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
 }
 .chat-font-reset:hover {
   background: var(--bg-sunk);
@@ -215,7 +215,7 @@
   height: 32px;
   padding: 0 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--ink-1);
   font-size: 12px;
@@ -235,7 +235,7 @@
   height: 30px;
   padding: 2px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   cursor: pointer;
 }
@@ -243,7 +243,7 @@
   flex: 1;
   height: 30px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--ink-2);
   font-size: 12px;
@@ -378,7 +378,7 @@
   display: block;
   margin: 0;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--bg-sunk);
   padding: 0;
@@ -473,7 +473,7 @@
   align-items: center;
   gap: 2px;
   padding: 0 4px 0 8px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-mute);
   white-space: nowrap;
@@ -560,7 +560,7 @@
   height: 28px;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--ink-mute);
   cursor: pointer;
@@ -616,7 +616,7 @@
   gap: 12px;
   padding: 14px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--bg-sunk);
   text-align: left;
   cursor: pointer;
@@ -632,7 +632,7 @@
   justify-content: center;
   width: 38px;
   height: 38px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--blue-500);
   flex-shrink: 0;
@@ -704,7 +704,7 @@
   gap: 8px;
   padding: 8px 8px 8px 10px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--bg-sunk);
 }
 .agent-flow-item.is-main {
@@ -717,7 +717,7 @@
   justify-content: center;
   width: 20px;
   height: 20px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   background: var(--blue-500);
   color: #fff;
   font-size: 11px;
@@ -773,7 +773,7 @@
   height: 32px;
   padding: 0 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--ink-1);
   font-size: 12px;
@@ -803,7 +803,7 @@
   font-weight: 500;
   cursor: pointer;
   padding: 2px 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   text-transform: none;
   letter-spacing: 0;
 }
@@ -816,7 +816,7 @@
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--bg-sunk);
 }
 .agent-flow-modal {
@@ -855,7 +855,7 @@
 .agent-flow-field input,
 .agent-flow-field textarea {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--ink-1);
   font-size: 12px;
@@ -881,7 +881,7 @@
 }
 .agent-flow-tools-toggle {
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   background: var(--bg);
   color: var(--ink-1);
   font-size: 11px;
@@ -901,7 +901,7 @@
   gap: 6px;
   padding: 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   max-height: 160px;
   overflow-y: auto;
@@ -983,7 +983,7 @@
   line-height: 1.5;
   color: var(--ink-mute);
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--blue-500) 8%, transparent);
 }
 .agent-flow-modal-foot-spacer {
@@ -1003,7 +1003,7 @@
   gap: 8px;
   padding: 8px 8px 8px 10px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 .agent-flow-custom-meta {
   flex: 1;
@@ -1052,7 +1052,7 @@
   height: 28px;
   padding: 0 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--bg-sunk);
   color: var(--ink);
   font-size: 12px;
@@ -1106,7 +1106,7 @@
   display: flex;
   align-items: center;
   border: 1px solid var(--line-strong);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--bg);
   box-shadow: var(--shadow-1, 0 1px 3px rgba(0, 0, 0, 0.12));
   cursor: grab;
@@ -1167,7 +1167,7 @@
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   background: none;
   color: var(--ink-mute);
   cursor: pointer;
@@ -1195,7 +1195,7 @@
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   background: none;
   cursor: pointer;
   transition: background 0.12s ease, color 0.12s ease;
@@ -1303,7 +1303,7 @@
   right: 10px;
   bottom: 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--bg) 86%, transparent);
   overflow: hidden;
   cursor: pointer;
@@ -1329,7 +1329,7 @@
   min-width: 132px;
   padding: 4px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   box-shadow: var(--shadow-2);
   display: flex;
@@ -1357,7 +1357,7 @@
   border: none;
   background: none;
   padding: 7px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   font-size: 12px;
   color: var(--ink);
   cursor: pointer;

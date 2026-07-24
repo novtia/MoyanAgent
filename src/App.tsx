@@ -22,6 +22,7 @@ import {
   readStoredThemeMode,
   watchSystemTheme,
 } from "./theme";
+import { applyAppearance, useAppearance } from "./store/appearance";
 import {
   collectSessionGalleryImages,
   indexOfImageInGallery,
@@ -126,9 +127,14 @@ export default function App() {
   useLayoutEffect(() => {
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
     applyThemeMode(themeMode);
+    // Re-derive accent palette after theme resolves (light/dark soft mixes differ).
+    applyAppearance(useAppearance.getState());
 
     if (themeMode !== "system") return;
-    return watchSystemTheme(() => applyThemeMode("system"));
+    return watchSystemTheme(() => {
+      applyThemeMode("system");
+      applyAppearance(useAppearance.getState());
+    });
   }, [themeMode]);
 
   useEffect(() => {
