@@ -689,6 +689,8 @@ const zhCN = {
       paramInvalid: "无效数值，已忽略",
     },
     system: {
+      notifySoundTitle: "提示音",
+      notifySoundDesc: "AI 回复完成时播放提示音",
       infoTitle: "应用信息",
       infoDesc: "本机版本与运行时信息",
       version: "版本",

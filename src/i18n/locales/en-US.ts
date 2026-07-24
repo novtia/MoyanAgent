@@ -706,6 +706,8 @@ const enUS: Resource = {
       paramInvalid: "Invalid number, ignored",
     },
     system: {
+      notifySoundTitle: "Notification sound",
+      notifySoundDesc: "Play a chime when the assistant finishes replying",
       infoTitle: "App info",
       infoDesc: "Version and runtime on this device",
       version: "Version",

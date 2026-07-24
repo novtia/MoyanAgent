@@ -28,6 +28,7 @@ import {
 } from "./reader";
 import { useSettings } from "./settings";
 import { useProject } from "./project";
+import { playNotifySound } from "./notifySound";
 import { normalizeDiffText } from "../utils/inlineDiff";
 import { normalizeToolContent } from "../utils/normalizeToolContent";
 import {
@@ -1446,6 +1447,7 @@ export const useSession = create<SessionStore>((set, get) => {
           const remindInBackground = !wasCancelled && get().activeId !== sid;
           setSessionBusy(sid, false);
           if (remindInBackground) markSessionFinished(sid);
+          if (!wasCancelled) playNotifySound();
         }
       }
     })();
@@ -1610,6 +1612,7 @@ export const useSession = create<SessionStore>((set, get) => {
           const remindInBackground = !wasCancelled && get().activeId !== sid;
           setSessionBusy(sid, false);
           if (remindInBackground) markSessionFinished(sid);
+          if (!wasCancelled) playNotifySound();
         }
       }
     })();

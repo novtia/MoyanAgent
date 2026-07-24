@@ -2,11 +2,14 @@ import { copyText } from "../../../utils/clipboard";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../api/tauri";
+import { useNotifySound } from "../../../store/notifySound";
 import type { AppInfo } from "../types";
 import { PathRow } from "./PathRow";
 
 export function SystemSection() {
   const { t } = useTranslation();
+  const notifySoundEnabled = useNotifySound((s) => s.enabled);
+  const setNotifySoundEnabled = useNotifySound((s) => s.setEnabled);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
@@ -44,6 +47,30 @@ export function SystemSection() {
 
   return (
     <>
+      <div className="settings-card">
+        <div className="settings-card-head">
+          <div>
+            <div className="settings-card-title">
+              {t("settings.system.notifySoundTitle")}
+            </div>
+            <div className="settings-card-desc">
+              {t("settings.system.notifySoundDesc")}
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={notifySoundEnabled}
+            aria-label={t("settings.system.notifySoundTitle")}
+            title={t("settings.system.notifySoundTitle")}
+            className={`cfg-switch ${notifySoundEnabled ? "cfg-switch--on" : ""}`}
+            onClick={() => setNotifySoundEnabled(!notifySoundEnabled)}
+          >
+            <span className="cfg-switch-thumb" />
+          </button>
+        </div>
+      </div>
+
       <div className="settings-card">
         <div className="settings-card-title">{t("settings.system.infoTitle")}</div>
         <div className="settings-card-desc">{t("settings.system.infoDesc")}</div>
