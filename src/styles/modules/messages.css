@@ -1256,66 +1256,66 @@
   }
 }
 
-/* ───── RpgChoice: branching action options ───── */
-.rpg-choice {
+/* ───── AskUser history card (all questions listed) ───── */
+.ask-user-card {
   width: 100%;
   margin: 8px 0;
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg-soft);
-}
-.rpg-choice-prompt {
-  margin-bottom: 10px;
-  font-size: 13.5px;
-  line-height: 1.55;
   color: var(--ink-soft);
-  white-space: pre-wrap;
-}
-.rpg-choice-options {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
-.rpg-choice-option {
-  appearance: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--bg);
-  color: var(--ink);
-  font-size: 13.5px;
-  line-height: 1.4;
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.14s ease, background 0.14s ease,
-    transform 0.08s ease;
+.ask-user-card.is-pending {
+  border-style: dashed;
 }
-.rpg-choice-option:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+.ask-user-card-item {
+  min-width: 0;
 }
-.rpg-choice-option:active {
-  transform: translateY(1px);
+.ask-user-card-item + .ask-user-card-item {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
-.rpg-choice-index {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--bg-sunk);
-  color: var(--ink-mute);
-  font-family: 'JetBrains Mono', monospace;
+.ask-user-card-meta {
+  margin-bottom: 4px;
+}
+.ask-user-card-count {
   font-size: 11px;
-  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-mute);
 }
-.rpg-choice-label {
-  flex: 1 1 auto;
+.ask-user-card-prompt {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: pre-wrap;
 }
+.ask-user-card-answer {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.ask-user-card-answer-mark {
+  flex: 0 0 auto;
+  width: 1em;
+  margin-top: 1px;
+  color: var(--accent);
+  font-size: 12px;
+}
+.ask-user-card.is-pending .ask-user-card-answer-mark,
+.ask-user-card:not(.is-answered) .ask-user-card-answer-mark {
+  color: var(--ink-mute);
+}
+.ask-user-card-answer-text {
+  min-width: 0;
+  white-space: pre-wrap;
+}
+
+

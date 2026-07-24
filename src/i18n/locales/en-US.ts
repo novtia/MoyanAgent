@@ -366,7 +366,7 @@ const enUS: Resource = {
       Read: "Read a local text file; each line is one numbered paragraph ([P001], …; empty lines included)",
       ListFiles: "List files and subdirectories under a path",
       RoleState: "Maintain character attribute and state cards",
-      RpgChoice: "Present story branch options for the player",
+      AskUser: "Ask the user one or more clarifying questions",
       TodoList: "Manage a multi-phase task list",
       Write: "Write or create a local file",
     },

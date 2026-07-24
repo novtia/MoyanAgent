@@ -1,6 +1,6 @@
 import type { AssistantBlock } from "../../../types";
 import { copyText as copyTextToClipboard } from "../../../utils/clipboard";
-import type { ListFilesEntry, MessageTokenUsageData, RpgOption, TodoItem } from "./types";
+import type { ListFilesEntry, MessageTokenUsageData, TodoItem } from "./types";
 
 export type TodoBlock = Extract<AssistantBlock, { type: "tool_use" }>;
 
@@ -132,29 +132,6 @@ export function parseListFilesEntries(entries: unknown[]): ListFilesEntry[] {
     parsed.push({ name: o.name, kind, children, paragraphs });
   }
   return parsed;
-}
-
-export function parseRpgChoiceInput(input: unknown): {
-  prompt: string;
-  options: RpgOption[];
-} {
-  const obj =
-    input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-  const prompt = typeof obj.prompt === "string" ? obj.prompt : "";
-  const rawOptions = Array.isArray(obj.options) ? obj.options : [];
-  const options: RpgOption[] = rawOptions.flatMap((v) => {
-    if (!v || typeof v !== "object") return [];
-    const o = v as Record<string, unknown>;
-    if (typeof o.label !== "string" || !o.label.trim()) return [];
-    return [
-      {
-        id: typeof o.id === "string" ? o.id : undefined,
-        label: o.label,
-        text: typeof o.text === "string" ? o.text : undefined,
-      },
-    ];
-  });
-  return { prompt, options };
 }
 
 function parseRawItems(arr: unknown[]): TodoItem[] {

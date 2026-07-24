@@ -1146,3 +1146,106 @@
 .send-btn.busy:hover .send-stop-icon {
   display: block;
 }
+
+/* ───── AskUser question strip (inside composer-card) ───── */
+.composer-ask-user {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 10px;
+  margin: 0 0 2px;
+  border-bottom: 1px solid var(--line);
+}
+.composer-ask-user-nav {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.composer-ask-user-nav-btn {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin-top: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.composer-ask-user-nav-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--ink);
+  background: var(--accent-soft);
+}
+.composer-ask-user-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.composer-ask-user-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.composer-ask-user-count {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--ink-mute);
+  margin-bottom: 4px;
+}
+.composer-ask-user-prompt {
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+.composer-ask-user-options {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 8px;
+}
+.composer-ask-user-option {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
+  padding: 5px 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  line-height: 1.35;
+  cursor: pointer;
+  text-align: left;
+}
+.composer-ask-user-option:hover {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink);
+}
+.composer-ask-user-option.selected {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink);
+}
+.composer-ask-user-mark {
+  flex: 0 0 auto;
+  width: 1em;
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+.composer-ask-user-option.selected .composer-ask-user-mark {
+  color: var(--accent);
+}
+.composer-ask-user-label {
+  min-width: 0;
+  white-space: normal;
+}
+

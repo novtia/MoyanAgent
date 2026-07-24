@@ -20,12 +20,6 @@ export interface PlateActionsProps {
   showDivider?: boolean;
 }
 
-export interface RpgOption {
-  id?: string;
-  label: string;
-  text?: string;
-}
-
 export interface ListFilesEntry {
   name: string;
   kind: string;

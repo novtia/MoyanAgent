@@ -37,7 +37,12 @@ import {
   type ComposerEditorHandle,
   type MentionTriggerAnchor,
 } from "./mention";
+import { ComposerAskUserBar } from "./ComposerAskUserBar";
 import { ComposerFileTree } from "./ComposerFileTree";
+import {
+  firstUnansweredAskUserIndex,
+  flushAskUserPrompt,
+} from "./askUser";
 import { READER_FILE_DRAG_TYPE } from "../../utils/readerDrag";
 import { ATELIER_DRAG_TYPE } from "./rightPanel/gallery";
 
@@ -126,6 +131,14 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const send = useSession((s) => s.send);
   const interrupt = useSession((s) => s.interrupt);
   const busy = useSession((s) => s.busy);
+  const pendingAskUser = useSession((s) => s.pendingAskUser);
+  const answeringAskUser = !!pendingAskUser;
+  const askUserCanSend = useSession((s) => {
+    const pending = s.pendingAskUser;
+    if (!pending) return false;
+    const flushed = flushAskUserPrompt(pending, s.composer.prompt);
+    return firstUnansweredAskUserIndex(flushed) < 0;
+  });
   const active = useSession((s) => s.active);
   const activeId = useSession((s) => s.activeId);
   const refreshList = useSession((s) => s.refreshList);
@@ -533,13 +546,17 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   };
 
   const onSubmit = async () => {
-    if (busy) return;
+    if (busy && !answeringAskUser) return;
     if (hasPendingAttachments) return;
+    if (answeringAskUser) {
+      await send();
+      return;
+    }
     if (!showVideoParams && !useSession.getState().composer.prompt.trim()) return;
     await send();
   };
   const onSendButtonClick = () => {
-    if (busy) {
+    if (busy && !answeringAskUser) {
       interrupt();
       return;
     }
@@ -851,15 +868,19 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
           </div>
         )}
 
+        <ComposerAskUserBar />
+
         <ComposerEditor
           ref={editorRef}
           placeholder={
-            hasAttachments
+            answeringAskUser
+              ? "自定义回答（可选，留空则使用所选选项）"
+              : hasAttachments
               ? t("composer.placeholderWithAttachments")
               : t("composer.placeholderDefault")
           }
           onSubmit={onSubmit}
-          disabled={busy}
+          disabled={busy && !answeringAskUser}
           onMentionTrigger={onEditorMentionTrigger}
         />
 
@@ -1356,15 +1377,19 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
               </div>
             </div>
             <button
-              className={`send-btn ${busy ? "busy" : ""}`}
+              className={`send-btn ${busy && !answeringAskUser ? "busy" : ""}`}
               type="button"
               onClick={onSendButtonClick}
               disabled={
-                !busy &&
-                (hasPendingAttachments || (showVideoParams ? !videoCanSend : promptEmpty))
+                answeringAskUser
+                  ? hasPendingAttachments || !askUserCanSend
+                  : !busy &&
+                    (hasPendingAttachments || (showVideoParams ? !videoCanSend : promptEmpty))
               }
               title={
-                busy
+                answeringAskUser
+                  ? t("composer.sendGenerate")
+                  : busy
                   ? t("composer.sendInterrupt")
                   : hasPendingAttachments
                   ? t("composer.sendUploading")
@@ -1375,7 +1400,9 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                   : t("composer.sendGenerate")
               }
               aria-label={
-                busy
+                answeringAskUser
+                  ? t("composer.sendGenerate")
+                  : busy
                   ? t("composer.sendInterrupt")
                   : hasPendingAttachments
                   ? t("composer.sendUploading")
@@ -1386,7 +1413,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                   : t("composer.sendGenerate")
               }
             >
-              {busy ? (
+              {busy && !answeringAskUser ? (
                 <>
                   <span className="send-spinner" aria-hidden />
                   <StopIcon />

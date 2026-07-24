@@ -30,6 +30,17 @@ import { useSettings } from "./settings";
 import { useProject } from "./project";
 import { normalizeDiffText } from "../utils/inlineDiff";
 import { normalizeToolContent } from "../utils/normalizeToolContent";
+import {
+  type PendingAskUser,
+  askUserAnswerText,
+  askUserCustomText,
+  firstUnansweredAskUserIndex,
+  flushAskUserPrompt,
+  formatAskUserItems,
+  formatAskUserReply,
+  parseAskUserInput,
+  questionKey,
+} from "../components/chat/askUser";
 
 interface ComposerState {
   prompt: string;
@@ -153,6 +164,8 @@ interface SessionStore {
   finishedBySession: Record<string, boolean>;
   generationPhaseBySession: Record<string, string>;
   composer: ComposerState;
+  /** Active session's pending AskUser questionnaire (null if none / other session). */
+  pendingAskUser: PendingAskUser | null;
 
   refreshList: () => Promise<void>;
   createNew: () => Promise<string>;
@@ -197,6 +210,15 @@ interface SessionStore {
   replaceAttachment: (oldId: string, draft: AttachmentDraft) => void;
   clearComposer: () => void;
 
+  setAskUserIndex: (index: number) => void;
+  /** Select an option for the active question (does not fill the composer). */
+  setAskUserAnswer: (optionKey: string, optionText: string) => void;
+  /** Clear the selected option for the active question (custom text kept). */
+  clearAskUserAnswer: () => void;
+  clearPendingAskUser: () => void;
+  /** Submit AskUser answers and resume the blocked agent loop (does not start a new send). */
+  answerPendingAskUser: () => Promise<void>;
+
   send: () => Promise<void>;
   interrupt: () => void;
   resendMessage: (messageId: string) => Promise<void>;
@@ -220,6 +242,9 @@ const ACCEPT_TYPES = [
 const MAX_FILES = 15;
 const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
+
+/** Per-session AskUser questionnaires (survives session switches). */
+const askUserPendingBySession = new Map<string, PendingAskUser>();
 
 function makePendingAttachment(label: string, bytes: number | null = null): PendingAttachmentDraft {
   return {
@@ -622,6 +647,7 @@ export const useSession = create<SessionStore>((set, get) => {
     thinkingEffort: "",
     chatMode: "agent",
   },
+  pendingAskUser: null,
 
   refreshList: async () => {
     const list = await api.listSessions();
@@ -640,6 +666,11 @@ export const useSession = create<SessionStore>((set, get) => {
     const currentId = get().activeId;
     if (currentId && currentId !== id) {
       saveComposerDraft(currentId, get().composer);
+      const pending = get().pendingAskUser;
+      if (pending && pending.sessionId === currentId) {
+        const flushed = flushAskUserPrompt(pending, get().composer.prompt);
+        askUserPendingBySession.set(currentId, flushed);
+      }
     }
 
     const data = await api.loadSession(id);
@@ -666,13 +697,19 @@ export const useSession = create<SessionStore>((set, get) => {
 
     // Restore draft for the target session, falling back to empty defaults.
     const draft = composerDrafts.get(id);
+    const pendingAsk = askUserPendingBySession.get(id) ?? null;
+    const askCustom =
+      pendingAsk != null
+        ? askUserCustomText(pendingAsk, pendingAsk.activeIndex)
+        : null;
     set({
       activeId: id,
       active: { ...data, messages: messagesWithBuffer },
       busy: isBusy,
+      pendingAskUser: pendingAsk,
       composer: {
         ...get().composer,
-        prompt: draft?.prompt ?? "",
+        prompt: askCustom ?? draft?.prompt ?? "",
         mentions: draft?.mentions ?? [],
         attachments: draft?.attachments ?? [],
         pendingAttachments: [],
@@ -722,8 +759,10 @@ export const useSession = create<SessionStore>((set, get) => {
 
   remove: async (id) => {
     await api.deleteSession(id);
+    askUserPendingBySession.delete(id);
+    composerDrafts.delete(id);
     if (get().activeId === id) {
-      set({ activeId: null, active: null, busy: false });
+      set({ activeId: null, active: null, busy: false, pendingAskUser: null });
     }
     await get().refreshList();
   },
@@ -1116,6 +1155,113 @@ export const useSession = create<SessionStore>((set, get) => {
     });
   },
 
+  setAskUserIndex: (index) => {
+    const pending = get().pendingAskUser;
+    if (!pending) return;
+    if (index < 0 || index >= pending.questions.length) return;
+    if (index === pending.activeIndex) return;
+    const flushed = flushAskUserPrompt(pending, get().composer.prompt);
+    const next: PendingAskUser = { ...flushed, activeIndex: index };
+    askUserPendingBySession.set(next.sessionId, next);
+    set({
+      pendingAskUser: next,
+      composer: {
+        ...get().composer,
+        // Input is custom-only — never restore option text into the editor.
+        prompt: askUserCustomText(next, index),
+      },
+    });
+  },
+
+  setAskUserAnswer: (optionKey, optionText) => {
+    const pending = get().pendingAskUser;
+    if (!pending) return;
+    const q = pending.questions[pending.activeIndex];
+    if (!q) return;
+    const key = questionKey(q, pending.activeIndex);
+    const next: PendingAskUser = {
+      ...pending,
+      answers: {
+        ...pending.answers,
+        [key]: {
+          optionKey,
+          optionText,
+          // Selecting an option clears custom input for this question.
+          custom: "",
+        },
+      },
+    };
+    askUserPendingBySession.set(next.sessionId, next);
+    set({
+      pendingAskUser: next,
+      // Do not fill the composer — keep it empty for optional custom reply.
+      composer: { ...get().composer, prompt: "" },
+    });
+  },
+
+  clearAskUserAnswer: () => {
+    const pending = get().pendingAskUser;
+    if (!pending) return;
+    const q = pending.questions[pending.activeIndex];
+    if (!q) return;
+    const key = questionKey(q, pending.activeIndex);
+    const prev = pending.answers[key];
+    const custom = prev?.custom ?? get().composer.prompt;
+    const nextAnswers = { ...pending.answers };
+    if (custom.trim()) {
+      nextAnswers[key] = { custom };
+    } else {
+      delete nextAnswers[key];
+    }
+    const next: PendingAskUser = { ...pending, answers: nextAnswers };
+    askUserPendingBySession.set(next.sessionId, next);
+    set({ pendingAskUser: next });
+  },
+
+  clearPendingAskUser: () => {
+    const pending = get().pendingAskUser;
+    if (pending) askUserPendingBySession.delete(pending.sessionId);
+    set({ pendingAskUser: null });
+  },
+
+  answerPendingAskUser: async () => {
+    const c = get().composer;
+    let pending = get().pendingAskUser;
+    if (!pending) return;
+    const activeId = get().activeId;
+    if (activeId && pending.sessionId !== activeId) return;
+
+    pending = flushAskUserPrompt(pending, c.prompt);
+    askUserPendingBySession.set(pending.sessionId, pending);
+    set({ pendingAskUser: pending });
+
+    const unfinished = firstUnansweredAskUserIndex(pending);
+    if (unfinished >= 0) {
+      if (unfinished !== pending.activeIndex) {
+        get().setAskUserIndex(unfinished);
+      }
+      return;
+    }
+
+    const answer = formatAskUserReply(pending).trim();
+    if (!answer) return;
+    const items = formatAskUserItems(pending);
+    const promptId = pending.blockId;
+
+    askUserPendingBySession.delete(pending.sessionId);
+    set({
+      pendingAskUser: null,
+      composer: { ...get().composer, prompt: "", mentions: [] },
+    });
+    composerDrafts.delete(pending.sessionId);
+
+    try {
+      await api.answerAskUser(promptId, answer, items);
+    } catch (e) {
+      console.warn("[atelier] answer_ask_user failed", e);
+    }
+  },
+
   appendMessages: (msgs) => {
     const a = get().active;
     if (!a) return;
@@ -1337,6 +1483,13 @@ export const useSession = create<SessionStore>((set, get) => {
   },
 
   send: async () => {
+    // AskUser blocks the in-flight generation — answer it instead of starting
+    // a new user turn.
+    if (get().pendingAskUser) {
+      await get().answerPendingAskUser();
+      return;
+    }
+
     const c = get().composer;
     const text = c.prompt.trim();
     const videoModel = isVideoModel();
@@ -1475,6 +1628,11 @@ export const useSession = create<SessionStore>((set, get) => {
     // Stop accepting stream deltas and release the send button immediately.
     setSessionBusy(sid, false);
     freezeStreamingUi(sid);
+    // Drop any in-flight AskUser questionnaire for this session.
+    askUserPendingBySession.delete(sid);
+    if (get().pendingAskUser?.sessionId === sid) {
+      set({ pendingAskUser: null });
+    }
     void api.cancelGeneration(sid).catch((e) => {
       console.warn("[atelier] cancel_generation failed", e);
     });
@@ -1823,6 +1981,32 @@ async function handleReaderToolComplete(
   }
 }
 
+function activatePendingAskUser(
+  sessionId: string,
+  blockId: string,
+  input: unknown,
+) {
+  const questions = parseAskUserInput(input);
+  if (questions.length === 0) return;
+  const pending: PendingAskUser = {
+    sessionId,
+    blockId,
+    questions,
+    activeIndex: 0,
+    answers: {},
+  };
+  askUserPendingBySession.set(sessionId, pending);
+  const state = useSession.getState();
+  if (state.activeId !== sessionId) return;
+  setTimeout(() => {
+    useSession.setState({
+      pendingAskUser: pending,
+      composer: { ...useSession.getState().composer, prompt: "" },
+    });
+    window.dispatchEvent(new CustomEvent("atelier:focus-composer"));
+  }, 0);
+}
+
 function applyToolEvent(
   blocks: AssistantBlock[],
   event: ToolEventPayload,
@@ -1867,6 +2051,9 @@ function applyToolEvent(
           status: "pending",
           streaming: false,
         };
+        if (sessionId && event.tool === "AskUser") {
+          activatePendingAskUser(sessionId, event.id, input);
+        }
         return;
       }
     }
@@ -1877,6 +2064,9 @@ function applyToolEvent(
       input: event.input,
       status: "pending",
     });
+    if (sessionId && event.tool === "AskUser") {
+      activatePendingAskUser(sessionId, event.id, event.input);
+    }
     return;
   }
   for (let i = blocks.length - 1; i >= 0; i--) {
@@ -1890,6 +2080,16 @@ function applyToolEvent(
       };
       if (!event.is_error) {
         void handleReaderToolComplete(b.tool, b.input, event.output, event.is_error);
+      }
+      if (b.tool === "AskUser" && sessionId) {
+        askUserPendingBySession.delete(sessionId);
+        const state = useSession.getState();
+        if (
+          state.pendingAskUser?.sessionId === sessionId &&
+          state.pendingAskUser.blockId === event.id
+        ) {
+          useSession.setState({ pendingAskUser: null });
+        }
       }
       return;
     }

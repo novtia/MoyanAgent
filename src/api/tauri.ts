@@ -218,6 +218,15 @@ export const api = {
   },
   cancelGeneration: (sessionId: string) =>
     invoke<void>("cancel_generation", { sessionId }),
+  /** Wake a blocked AskUser tool; `promptId` is the tool_use call id. */
+  answerAskUser: (
+    promptId: string,
+    answer: string,
+    items: Array<{ prompt: string; answer: string }> = [],
+  ) =>
+    invoke<boolean>("answer_ask_user", {
+      args: { promptId, answer, items },
+    }),
   saveCancelledMessage: (
     sessionId: string,
     text: string,

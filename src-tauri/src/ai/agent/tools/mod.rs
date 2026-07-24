@@ -18,6 +18,7 @@
 //! - [`agent_tool`]  the `Agent` meta-tool that spawns sub-agents
 
 pub mod agent_tool;
+pub mod ask_user;
 pub mod bash;
 pub mod create_doc;
 pub mod delete;
@@ -27,9 +28,9 @@ pub mod grep;
 pub mod list_files;
 pub mod paragraph;
 pub mod project_path;
+pub mod prompt_registry;
 pub mod read_receipt;
 pub mod role_state;
-pub mod rpg_choice;
 pub mod text_decode;
 pub mod todo;
 pub mod web_fetch;

@@ -59,6 +59,8 @@ pub struct AppState {
     /// Shared, project/session-scoped character state board mutated by the
     /// `RoleState` tool and snapshotted per assistant message.
     pub role_states: Arc<RoleStateStore>,
+    /// AskUser human-in-the-loop wait table (tool + `answer_ask_user` command).
+    pub prompt_registry: Arc<crate::ai::agent::tools::prompt_registry::PromptRegistry>,
     /// Shared, session-scoped buffer of pending agent file mutations. Drained
     /// per assistant message into `file_snapshots` for delete/regenerate
     /// rollback of created / updated / deleted files.
@@ -2260,6 +2262,42 @@ fn cancel_generation(
     Ok(())
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AnswerAskUserItem {
+    prompt: String,
+    answer: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AnswerAskUserArgs {
+    prompt_id: String,
+    answer: String,
+    #[serde(default)]
+    items: Vec<AnswerAskUserItem>,
+}
+
+/// Wake a blocked AskUser tool so the in-flight agent loop continues.
+#[tauri::command]
+fn answer_ask_user(
+    state: tauri::State<Arc<AppState>>,
+    args: AnswerAskUserArgs,
+) -> Result<bool, AppError> {
+    let answer = crate::ai::agent::tools::prompt_registry::PromptAnswer {
+        answer: args.answer,
+        items: args
+            .items
+            .into_iter()
+            .map(|i| crate::ai::agent::tools::prompt_registry::PromptAnswerItem {
+                prompt: i.prompt,
+                answer: i.answer,
+            })
+            .collect(),
+    };
+    Ok(state.prompt_registry.answer(&args.prompt_id, answer))
+}
+
 // ????????? Agent task commands ?????????
 
 #[tauri::command]
@@ -3912,7 +3950,11 @@ pub fn run() {
             tools.register_todo_list(crate::ai::agent::tools::todo::TodoListTool::new());
             let role_states = Arc::new(RoleStateStore::new());
             tools.register(RoleStateTool::new(role_states.clone()));
-            tools.register(crate::ai::agent::tools::rpg_choice::RpgChoiceTool::new());
+            let prompt_registry =
+                Arc::new(crate::ai::agent::tools::prompt_registry::PromptRegistry::new());
+            tools.register(crate::ai::agent::tools::ask_user::AskUserTool::new(
+                prompt_registry.clone(),
+            ));
             tools.register(crate::ai::agent::tools::web_search::WebSearchTool::new(
                 Arc::new(pool.clone()),
             ));
@@ -3962,6 +4004,7 @@ pub fn run() {
                 tools,
                 session_memory: Arc::new(FsSessionMemoryExtractor::new()),
                 role_states,
+                prompt_registry,
                 file_snapshots,
                 token_stats,
                 session_logger,
@@ -4008,6 +4051,7 @@ pub fn run() {
             remove_attachment_draft,
             get_image_abs_path,
             cancel_generation,
+            answer_ask_user,
             list_agent_tasks,
             cancel_agent_task,
             list_agents,

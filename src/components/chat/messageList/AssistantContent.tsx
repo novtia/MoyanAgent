@@ -4,7 +4,7 @@ import { AgentStageDivider } from "./AgentStageDivider";
 import { DeleteDocCard } from "./DeleteDocCard";
 import { ReadToolCard } from "./ReadToolCard";
 import { RoleStateChip } from "./RoleStateChip";
-import { RpgChoiceCard } from "./RpgChoiceCard";
+import { AskUserChip } from "./AskUserChip";
 import { StreamingDocCard } from "./StreamingDocCard";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { TodoMasterView } from "./TodoMasterView";
@@ -95,10 +95,9 @@ export function AssistantContent({
         if (block.tool === "RoleState") {
           return <RoleStateChip key={`role:${block.id}:${i}`} block={block} />;
         }
-        // RpgChoice renders as clickable option buttons; picking one inserts
-        // the option's text into the composer input box.
-        if (block.tool === "RpgChoice") {
-          return <RpgChoiceCard key={`rpg:${block.id}:${i}`} block={block} />;
+        // AskUser: card with question + selected answer; multi-Q via ◀▶.
+        if (block.tool === "AskUser") {
+          return <AskUserChip key={`ask:${block.id}:${i}`} block={block} />;
         }
         // CreateDoc renders as a dedicated document card; clicking it opens
         // the freshly created file in the reader panel.

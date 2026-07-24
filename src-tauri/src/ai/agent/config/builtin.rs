@@ -145,14 +145,13 @@ fn role_state() -> AgentDefinition {
 
 fn rpg() -> AgentDefinition {
     // Option-generator stage. Designed to sit AFTER the main writer in an
-    // agent flow chain: it reads the upstream prose and emits the next set of
-    // branching choices through the `RpgChoice` tool ONLY. It writes NO story
-    // text of its own — the upstream prose passes through unchanged
-    // (`passthrough_output`), and clicking an option fills the player's input
-    // box with that action.
+    // agent flow chain: it reads the upstream prose and asks the player for
+    // the next branching action via `AskUser` ONLY. It writes NO story text
+    // of its own — the upstream prose passes through unchanged
+    // (`passthrough_output`).
     let mut d = AgentDefinition::builtin(AGENT_RPG, prompts::RPG_PROMPT);
     d.when_to_use = prompts::RPG_WHEN_TO_USE.into();
-    d.tools = vec!["RpgChoice".into()];
+    d.tools = vec!["AskUser".into()];
     d.omit_claude_md = true;
     d.passthrough_output = true;
     d

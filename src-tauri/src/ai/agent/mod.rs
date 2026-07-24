@@ -96,7 +96,6 @@ mod re_exports {
     pub use super::tools::fs::FileReadTool;
     pub use super::tools::grep::GrepTool;
     pub use super::tools::role_state::{RoleStateStore, RoleStateTool};
-    pub use super::tools::rpg_choice::RpgChoiceTool;
     pub use super::tools::todo::TodoListTool;
     pub use super::tools::{Tool, ToolInvocation, ToolPool, ToolResult, ToolSpec};
     // core
