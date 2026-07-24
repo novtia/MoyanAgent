@@ -40,7 +40,8 @@ export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) 
   const projects = useProject((s) => s.projects);
   const clipboard = useFileExplorer((s) => s.clipboard);
   const setClipboard = useFileExplorer((s) => s.setClipboard);
-  const [refreshNonce, setRefreshNonce] = useState(0);
+  const refreshNonce = useFileExplorer((s) => s.treeVersion);
+  const bumpTree = useFileExplorer((s) => s.bumpTree);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   const root = useMemo(() => {
@@ -49,7 +50,7 @@ export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) 
     return project?.path?.trim() || null;
   }, [projectId, projects]);
 
-  const refresh = useCallback(() => setRefreshNonce((n) => n + 1), []);
+  const refresh = useCallback(() => bumpTree(), [bumpTree]);
   const expand = useCallback((dir: string) => {
     setExpanded((prev) => {
       if (prev.has(dir)) return prev;

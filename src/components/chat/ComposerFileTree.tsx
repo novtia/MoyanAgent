@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/tauri";
+import { useFileExplorer } from "../../store/fileExplorer";
 import type { ProjectDirEntry } from "../../types";
 
 export interface ComposerFileTreeProps {
@@ -27,6 +28,7 @@ interface TreeLevelProps {
 
 function TreeLevel({ sessionId, dirPath, depth, onPick }: TreeLevelProps) {
   const { t } = useTranslation();
+  const treeVersion = useFileExplorer((s) => s.treeVersion);
   const [entries, setEntries] = useState<ProjectDirEntry[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +54,7 @@ function TreeLevel({ sessionId, dirPath, depth, onPick }: TreeLevelProps) {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, dirPath]);
+  }, [sessionId, dirPath, treeVersion]);
 
   const indent = 8 + depth * 14;
 

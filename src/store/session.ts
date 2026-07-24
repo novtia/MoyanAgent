@@ -26,6 +26,7 @@ import {
   revertStringEdit,
   inferFileType,
 } from "./reader";
+import { useFileExplorer } from "./fileExplorer";
 import { useSettings } from "./settings";
 import { useProject } from "./project";
 import { playNotifySound } from "./notifySound";
@@ -1877,6 +1878,8 @@ function applyStreamingToolCallDelta(
 /**
  * Sync reader panel state when an agent file tool completes.
  */
+const FS_TREE_TOOLS = new Set(["CreateDoc", "Write", "Edit", "Delete", "Bash"]);
+
 async function handleReaderToolComplete(
   tool: string,
   input: unknown,
@@ -1884,12 +1887,20 @@ async function handleReaderToolComplete(
   isError: boolean | undefined,
 ) {
   if (isError) return;
+  if (FS_TREE_TOOLS.has(tool)) {
+    useFileExplorer.getState().bumpTree();
+  }
   const o = (output && typeof output === "object" ? output : {}) as Record<string, unknown>;
   const path = resolveToolFilePath(input, output);
 
   if (tool === "CreateDoc") {
     const doc = readerDocFromToolOutput(output);
     if (doc) useReader.getState().openDoc(doc);
+    return;
+  }
+
+  if (tool === "Delete" && path) {
+    useReader.getState().closeByPaths([path]);
     return;
   }
 

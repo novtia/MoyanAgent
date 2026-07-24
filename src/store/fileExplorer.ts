@@ -25,6 +25,9 @@ interface FileExplorerStore {
   clipboard: Clipboard | null;
   loading: boolean;
   error: string | null;
+  /** Bumped when project files change so file trees re-list. */
+  treeVersion: number;
+  bumpTree: () => void;
   bindSession: (sessionId: string | null, projectRoot: string | null) => void;
   setSelection: (path: string | null) => void;
   setSelectedPaths: (paths: string[]) => void;
@@ -133,6 +136,9 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
   clipboard: null,
   loading: false,
   error: null,
+  treeVersion: 0,
+
+  bumpTree: () => set((s) => ({ treeVersion: s.treeVersion + 1 })),
 
   bindSession: (sessionId, projectRoot) => {
     const root = projectRoot?.trim() ? projectRoot.trim() : null;
@@ -238,7 +244,12 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
           ruleStates = {};
         }
       }
-      set({ entries, ruleStates, loading: false });
+      set((s) => ({
+        entries,
+        ruleStates,
+        loading: false,
+        treeVersion: s.treeVersion + 1,
+      }));
     } catch (err) {
       set({
         entries: [],
