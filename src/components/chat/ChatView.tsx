@@ -6,7 +6,7 @@ import { dialog } from "../ui";
 import { MessageList } from "./messageList";
 import { Composer } from "./Composer";
 import { EmptyChat } from "./EmptyChat";
-import { RightPanel } from "./RightPanel";
+import { RightPanel } from "./rightPanel";
 import { ChatFontPanel } from "./ChatFontPanel";
 import type { AttachmentDraft, ImageRefAbs } from "../../types";
 

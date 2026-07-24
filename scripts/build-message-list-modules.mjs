@@ -227,7 +227,7 @@ import { api, srcOf } from "../../../api/tauri";
 import { dialog, toast } from "../../ui";
 import { useProject } from "../../../store/project";
 import { useSession } from "../../../store/session";
-import { ATELIER_DRAG_TYPE } from "../SessionGallery";
+import { ATELIER_DRAG_TYPE } from "../rightPanel/gallery";
 import { READER_FILE_DRAG_TYPE } from "../../../utils/readerDrag";
 import {
   MentionEditor,

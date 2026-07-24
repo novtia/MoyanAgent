@@ -39,7 +39,7 @@ import {
 } from "./mention";
 import { ComposerFileTree } from "./ComposerFileTree";
 import { READER_FILE_DRAG_TYPE } from "../../utils/readerDrag";
-import { ATELIER_DRAG_TYPE } from "./SessionGallery";
+import { ATELIER_DRAG_TYPE } from "./rightPanel/gallery";
 
 function nativeFilePath(file: File) {
   return (file as File & { path?: string }).path || "";
