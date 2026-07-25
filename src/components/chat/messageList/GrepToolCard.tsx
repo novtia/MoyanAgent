@@ -1,13 +1,14 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { AssistantBlock } from "../../../types";
+import { sanitizeFsPath } from "../../../utils/sanitizePath";
 import { parseGrepOutput } from "./parsers";
 import { ToolGlyph } from "./toolIcons";
 import { extractToolErrorMessage } from "./utils";
 
 function fileName(path: string): string {
   if (!path) return "";
-  const cleaned = path.replace(/^\\\\\?\\/, "");
+  const cleaned = sanitizeFsPath(path);
   const parts = cleaned.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] || cleaned;
 }
@@ -43,7 +44,7 @@ export function GrepToolCard({
   const input = (block.input ?? {}) as { query?: string; path?: string };
   const parsed = useMemo(() => parseGrepOutput(block.output), [block.output]);
   const query = parsed?.query || input.query || "";
-  const path = parsed?.path || input.path || "";
+  const path = sanitizeFsPath(parsed?.path || input.path || "");
   const total =
     parsed?.total_matches ??
     parsed?.files.reduce((n, f) => n + f.matches.length, 0) ??
@@ -106,16 +107,17 @@ export function GrepToolCard({
       {open && parsed && parsed.files.length > 0 && (
         <div className="grep">
           {parsed.files.map((file) => {
-            const name = fileName(file.path);
+            const cleanPath = sanitizeFsPath(file.path);
+            const name = fileName(cleanPath);
             return (
-              <div key={file.path}>
+              <div key={cleanPath}>
                 {name && parsed.files.length > 1 && (
-                  <div className="grep-file" title={file.path}>
+                  <div className="grep-file" title={cleanPath}>
                     {name}
                   </div>
                 )}
                 {file.matches.map((m, i) => (
-                  <div className="grep-hit" key={`${file.path}:${i}`}>
+                  <div className="grep-hit" key={`${cleanPath}:${i}`}>
                     <span className="grep-ln">
                       {m.label ||
                         (m.paragraph != null

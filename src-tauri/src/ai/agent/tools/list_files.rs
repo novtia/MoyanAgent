@@ -9,7 +9,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::ai::agent::tools::paragraph::paragraph_count;
-use crate::ai::agent::tools::project_path::{self, DIR_REF_DESC};
+use crate::ai::agent::tools::project_path::{self, display_path, DIR_REF_DESC};
 use crate::ai::agent::tools::text_decode::decode_file_bytes;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
@@ -131,7 +131,7 @@ impl Tool for ListFilesTool {
 
             Ok(ToolResult::ok(json!({
                 "success": true,
-                "path": canonical.to_string_lossy(),
+                "path": display_path(&canonical),
                 "truncated": truncated,
                 "entries": entries,
             })))

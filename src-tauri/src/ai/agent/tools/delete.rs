@@ -12,7 +12,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
-use crate::ai::agent::tools::project_path::{self, FILE_REF_DESC};
+use crate::ai::agent::tools::project_path::{self, display_path, FILE_REF_DESC};
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
@@ -107,7 +107,7 @@ impl Tool for DeleteTool {
                 .map_err(|e| AppError::Other(format!("{TOOL_NAME}: remove {:?}: {e}", path)))?;
 
             Ok(ToolResult::ok(json!({
-                "path": path.to_string_lossy(),
+                "path": display_path(&path),
                 "name": name,
                 "deleted": true,
             })))

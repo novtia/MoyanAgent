@@ -97,3 +97,58 @@ pub fn abs_from_rel(app: &AppHandle, rel: &str) -> AppResult<PathBuf> {
     let p = root.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
     Ok(p)
 }
+
+/// Strip Windows extended-length / verbatim prefixes (`\\?\C:\...`, `\\?\UNC\...`)
+/// so stored and displayed paths stay user-readable.
+pub fn strip_verbatim_prefix(path: &str) -> String {
+    let p = path.trim();
+    if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    if let Some(rest) = p.strip_prefix(r"\\?\") {
+        return rest.to_string();
+    }
+    p.to_string()
+}
+
+/// Path string for tool JSON / UI: strips Windows verbatim prefixes after canonicalize.
+pub fn display_path(path: &Path) -> String {
+    strip_verbatim_prefix(&path.to_string_lossy())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_verbatim_drive_and_unc() {
+        assert_eq!(strip_verbatim_prefix(r"\\?\C:\Users\x"), r"C:\Users\x");
+        assert_eq!(
+            strip_verbatim_prefix(r"\\?\UNC\server\share\a"),
+            r"\\server\share\a"
+        );
+        assert_eq!(strip_verbatim_prefix(r"C:\Users\x"), r"C:\Users\x");
+    }
+
+    #[test]
+    fn display_path_strips_canonicalize_prefix() {
+        let dir = std::env::temp_dir().join("moyan_display_path_厕所");
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let canon = std::fs::canonicalize(&dir).expect("canonicalize");
+        let shown = display_path(&canon);
+        #[cfg(windows)]
+        assert!(
+            canon.to_string_lossy().starts_with(r"\\?\"),
+            "Windows canonicalize should yield verbatim path"
+        );
+        assert!(
+            !shown.starts_with(r"\\?\"),
+            "display_path must strip verbatim prefix: {shown}"
+        );
+        assert!(
+            shown.contains("厕所"),
+            "display_path must keep unicode folder name: {shown}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

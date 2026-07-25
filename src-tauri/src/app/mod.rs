@@ -1283,12 +1283,18 @@ fn message_blocks(m: &session::Message) -> Option<&Vec<serde_json::Value>> {
 
 /// Ordered timeline for a prior assistant turn, used by providers to
 /// replay tool history in the native call/response format instead of a
-/// leaked plain-text transcript. Prefers the persisted `params.timeline`
-/// and falls back to reconstructing it from `params.blocks` for legacy
-/// rows. User turns and turns without tool activity return an empty vec.
+/// leaked plain-text transcript. Prefers reconstructing from
+/// `params.blocks` (so per-round thinking is preserved) and falls back
+/// to the persisted `params.timeline` for rows without blocks.
 fn message_timeline_for_history(m: &session::Message) -> Vec<chat::TimelineSegment> {
     if m.role != "assistant" {
         return Vec::new();
+    }
+    if let Some(blocks) = message_blocks(m) {
+        let segs = crate::ai::block_timeline::restore_timeline_from_blocks(blocks);
+        if !segs.is_empty() {
+            return segs;
+        }
     }
     if let Some(params) = m.params.as_ref() {
         if let Some(tv) = params.get("timeline") {
@@ -1298,9 +1304,6 @@ fn message_timeline_for_history(m: &session::Message) -> Vec<chat::TimelineSegme
                 }
             }
         }
-    }
-    if let Some(blocks) = message_blocks(m) {
-        return crate::ai::block_timeline::restore_timeline_from_blocks(blocks);
     }
     Vec::new()
 }

@@ -9,20 +9,49 @@
 //! [`TimelineSegment::ToolRound`]; `text` blocks become
 //! [`TimelineSegment::Text`]; `agent_stage` markers become
 //! [`TimelineSegment::AgentStage`].
+//!
+//! Thinking blocks attach to the following ToolRound or Text segment so
+//! providers can echo `reasoning_content` on history replay (DeepSeek
+//! tool turns / Kimi preserved thinking).
 
 use serde_json::{json, Value};
 
 use crate::ai::chat::{TimelineSegment, TimelineToolCall, TimelineToolResult};
 use crate::ai::stream_split::strip_leaked_host_tool_log;
 
+fn take_thinking(pending: &mut Option<String>) -> Option<String> {
+    pending
+        .take()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn append_thinking(pending: &mut Option<String>, chunk: &str) {
+    let trimmed = chunk.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    match pending {
+        Some(existing) => {
+            if !existing.is_empty() {
+                existing.push('\n');
+            }
+            existing.push_str(trimmed);
+        }
+        None => *pending = Some(trimmed.to_string()),
+    }
+}
+
 pub fn restore_timeline_from_blocks(blocks: &[Value]) -> Vec<TimelineSegment> {
     let mut segments: Vec<TimelineSegment> = Vec::new();
     let mut pending_prefix: Option<String> = None;
+    let mut pending_thinking: Option<String> = None;
     let mut batch_calls: Vec<TimelineToolCall> = Vec::new();
     let mut batch_results: Vec<TimelineToolResult> = Vec::new();
 
     let flush_tool_batch = |segments: &mut Vec<TimelineSegment>,
                             pending_prefix: &mut Option<String>,
+                            pending_thinking: &mut Option<String>,
                             batch_calls: &mut Vec<TimelineToolCall>,
                             batch_results: &mut Vec<TimelineToolResult>| {
         if batch_calls.is_empty() {
@@ -30,7 +59,7 @@ pub fn restore_timeline_from_blocks(blocks: &[Value]) -> Vec<TimelineSegment> {
         }
         segments.push(TimelineSegment::ToolRound {
             assistant_text: pending_prefix.take(),
-            thinking_content: None,
+            thinking_content: take_thinking(pending_thinking),
             calls: std::mem::take(batch_calls),
             results: std::mem::take(batch_results),
         });
@@ -42,6 +71,7 @@ pub fn restore_timeline_from_blocks(blocks: &[Value]) -> Vec<TimelineSegment> {
                 flush_tool_batch(
                     &mut segments,
                     &mut pending_prefix,
+                    &mut pending_thinking,
                     &mut batch_calls,
                     &mut batch_results,
                 );
@@ -53,6 +83,25 @@ pub fn restore_timeline_from_blocks(blocks: &[Value]) -> Vec<TimelineSegment> {
                     .to_string();
                 let index = block.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
                 segments.push(TimelineSegment::AgentStage { agent_type, index });
+            }
+            Some("thinking") => {
+                // A new thinking chunk after an open tool batch starts the
+                // next model sub-turn — flush the batch with the prior
+                // thinking first.
+                if !batch_calls.is_empty() {
+                    flush_tool_batch(
+                        &mut segments,
+                        &mut pending_prefix,
+                        &mut pending_thinking,
+                        &mut batch_calls,
+                        &mut batch_results,
+                    );
+                }
+                let content = block
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                append_thinking(&mut pending_thinking, content);
             }
             Some("text") => {
                 let text = block
@@ -67,9 +116,13 @@ pub fn restore_timeline_from_blocks(blocks: &[Value]) -> Vec<TimelineSegment> {
                 flush_tool_batch(
                     &mut segments,
                     &mut pending_prefix,
+                    &mut pending_thinking,
                     &mut batch_calls,
                     &mut batch_results,
                 );
+                // Hold as prefix for a following tool batch; if none
+                // follows, the epilogue emits a Text segment (with any
+                // pending thinking still attached).
                 pending_prefix = Some(text);
             }
             Some("tool_use") => {
@@ -123,7 +176,7 @@ pub fn restore_timeline_from_blocks(blocks: &[Value]) -> Vec<TimelineSegment> {
                     });
                 }
             }
-            Some("tool_result") | Some("thinking") => {}
+            Some("tool_result") => {}
             _ => {}
         }
     }
@@ -131,14 +184,23 @@ pub fn restore_timeline_from_blocks(blocks: &[Value]) -> Vec<TimelineSegment> {
     flush_tool_batch(
         &mut segments,
         &mut pending_prefix,
+        &mut pending_thinking,
         &mut batch_calls,
         &mut batch_results,
     );
     if let Some(text) = pending_prefix.take() {
         let text = strip_leaked_host_tool_log(&text);
-        if !text.trim().is_empty() {
-            segments.push(TimelineSegment::Text { text });
+        if !text.trim().is_empty() || pending_thinking.is_some() {
+            segments.push(TimelineSegment::Text {
+                text,
+                thinking_content: take_thinking(&mut pending_thinking),
+            });
         }
+    } else if let Some(thinking) = take_thinking(&mut pending_thinking) {
+        segments.push(TimelineSegment::Text {
+            text: String::new(),
+            thinking_content: Some(thinking),
+        });
     }
     segments
 }
@@ -150,7 +212,7 @@ pub fn timeline_summary_text(segments: &[TimelineSegment]) -> String {
         .iter()
         .rev()
         .find_map(|s| match s {
-            TimelineSegment::Text { text } => Some(text.as_str()),
+            TimelineSegment::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .map(strip_leaked_host_tool_log)
@@ -174,6 +236,17 @@ mod tests {
         assert_eq!(segs.len(), 2);
         assert!(matches!(&segs[0], TimelineSegment::ToolRound { .. }));
         assert!(matches!(&segs[1], TimelineSegment::Text { .. }));
+        match &segs[0] {
+            TimelineSegment::ToolRound {
+                assistant_text,
+                thinking_content,
+                ..
+            } => {
+                assert_eq!(assistant_text.as_deref(), Some("先查目录"));
+                assert!(thinking_content.is_none());
+            }
+            _ => panic!("expected ToolRound"),
+        }
     }
 
     #[test]
@@ -208,9 +281,65 @@ mod tests {
     #[test]
     fn summary_takes_last_text() {
         let segs = vec![
-            TimelineSegment::Text { text: "第一段".into() },
-            TimelineSegment::Text { text: "最终答复".into() },
+            TimelineSegment::Text {
+                text: "第一段".into(),
+                thinking_content: None,
+            },
+            TimelineSegment::Text {
+                text: "最终答复".into(),
+                thinking_content: None,
+            },
         ];
         assert_eq!(timeline_summary_text(&segs), "最终答复");
+    }
+
+    #[test]
+    fn thinking_attaches_to_tool_round_and_final_text() {
+        let blocks = vec![
+            json!({"type":"thinking","content":"先读文件"}),
+            json!({"type":"tool_use","id":"c1","tool":"Read","input":{},"output":"ok","status":"success"}),
+            json!({"type":"thinking","content":"再总结"}),
+            json!({"type":"text","content":"完成了"}),
+        ];
+        let segs = restore_timeline_from_blocks(&blocks);
+        assert_eq!(segs.len(), 2);
+        match &segs[0] {
+            TimelineSegment::ToolRound {
+                thinking_content,
+                assistant_text,
+                ..
+            } => {
+                assert_eq!(thinking_content.as_deref(), Some("先读文件"));
+                assert!(assistant_text.is_none());
+            }
+            _ => panic!("expected ToolRound"),
+        }
+        match &segs[1] {
+            TimelineSegment::Text {
+                text,
+                thinking_content,
+            } => {
+                assert_eq!(text, "完成了");
+                assert_eq!(thinking_content.as_deref(), Some("再总结"));
+            }
+            _ => panic!("expected Text"),
+        }
+    }
+
+    #[test]
+    fn trailing_thinking_only_becomes_text_segment() {
+        let blocks = vec![json!({"type":"thinking","content":"只思考"})];
+        let segs = restore_timeline_from_blocks(&blocks);
+        assert_eq!(segs.len(), 1);
+        match &segs[0] {
+            TimelineSegment::Text {
+                text,
+                thinking_content,
+            } => {
+                assert!(text.is_empty());
+                assert_eq!(thinking_content.as_deref(), Some("只思考"));
+            }
+            _ => panic!("expected Text"),
+        }
     }
 }

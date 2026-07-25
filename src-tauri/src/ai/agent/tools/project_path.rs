@@ -9,7 +9,13 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::data::paths;
 use crate::error::{AppError, AppResult};
+
+/// Path string for tool JSON / UI (strips Windows `\\?\` verbatim prefixes).
+pub fn display_path(path: &Path) -> String {
+    paths::display_path(path)
+}
 
 pub const FILE_REF_DESC: &str = "Project file: file name at the project root (e.g. `notes.md`), \
     or a folder\\file breadcrumb for nested files (e.g. `drafts\\chapter-01.md`). \

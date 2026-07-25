@@ -1381,11 +1381,15 @@ fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) -> Value {
             // AgentStage markers are host-only and dropped.
             for seg in &turn.timeline {
                 match seg {
-                    crate::ai::chat::TimelineSegment::Text { text } => {
-                        let t = text.trim();
-                        if !t.is_empty() {
-                            messages.push(json!({ "role": "assistant", "content": t }));
-                        }
+                    crate::ai::chat::TimelineSegment::Text {
+                        text,
+                        thinking_content,
+                    } => {
+                        append_openai_assistant_text_turn(
+                            &mut messages,
+                            text,
+                            thinking_content.as_deref(),
+                        );
                     }
                     crate::ai::chat::TimelineSegment::ToolRound { .. } => {
                         if let Some(round) = seg.to_tool_round() {
@@ -1449,6 +1453,29 @@ fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) -> Value {
     }
 
     body
+}
+
+fn append_openai_assistant_text_turn(
+    messages: &mut Vec<Value>,
+    text: &str,
+    thinking_content: Option<&str>,
+) {
+    let t = text.trim();
+    let thinking = thinking_content.map(str::trim).filter(|s| !s.is_empty());
+    if t.is_empty() && thinking.is_none() {
+        return;
+    }
+    let mut msg = json!({ "role": "assistant" });
+    let m = msg.as_object_mut().unwrap();
+    if !t.is_empty() {
+        m.insert("content".into(), Value::String(t.to_string()));
+    } else {
+        m.insert("content".into(), Value::Null);
+    }
+    if let Some(thinking) = thinking {
+        m.insert("reasoning_content".into(), json!(thinking));
+    }
+    messages.push(msg);
 }
 
 fn append_openai_assistant_tool_turn(messages: &mut Vec<Value>, pending: &PendingAssistantTurn) {
@@ -2377,5 +2404,24 @@ mod tests {
             parse_tool_call_arguments("CreateDoc", "not json at all"),
             Value::Null
         );
+    }
+
+    #[test]
+    fn assistant_text_turn_echoes_reasoning_content() {
+        let mut messages = Vec::new();
+        append_openai_assistant_text_turn(&mut messages, "最终答复", Some("先推理"));
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["content"], "最终答复");
+        assert_eq!(messages[0]["reasoning_content"], "先推理");
+    }
+
+    #[test]
+    fn assistant_text_turn_thinking_only() {
+        let mut messages = Vec::new();
+        append_openai_assistant_text_turn(&mut messages, "", Some("只思考"));
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["content"], Value::Null);
+        assert_eq!(messages[0]["reasoning_content"], "只思考");
     }
 }

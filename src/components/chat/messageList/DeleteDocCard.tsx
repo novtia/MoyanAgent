@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { AssistantBlock } from "../../../types";
+import { sanitizeFsPath } from "../../../utils/sanitizePath";
 import { ToolGlyph } from "./toolIcons";
 
 export function DeleteDocCard({
@@ -12,7 +13,7 @@ export function DeleteDocCard({
   const input = (block.input ?? {}) as { path?: string };
   const output = (block.output ?? {}) as { name?: string; path?: string };
 
-  const fullPath = output.path || input.path || "";
+  const fullPath = sanitizeFsPath(output.path || input.path || "");
   const name =
     (output.name || "").trim() ||
     fullPath.split(/[\\/]/).filter(Boolean).pop() ||

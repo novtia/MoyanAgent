@@ -18,6 +18,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
+use crate::ai::agent::tools::project_path::display_path;
 use crate::ai::agent::tools::read_receipt::content_hash;
 use crate::ai::agent::tools::text_decode::normalize_tool_string;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
@@ -168,7 +169,7 @@ impl Tool for CreateDocTool {
             }
 
             Ok(ToolResult::ok(json!({
-                "path": canonical.to_string_lossy(),
+                "path": display_path(&canonical),
                 "title": title,
                 "doc_type": ext,
                 "folder": folder.map(str::trim).filter(|s| !s.is_empty()),

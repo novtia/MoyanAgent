@@ -81,17 +81,8 @@ fn blank_projects_root() -> AppResult<PathBuf> {
     paths::blank_projects_root()
 }
 
-/// Strip Windows extended-length / verbatim prefixes (`\\?\C:\...`, `\\?\UNC\...`)
-/// so stored and displayed project paths stay user-readable.
 fn normalize_project_path(path: &str) -> String {
-    let p = path.trim();
-    if let Some(rest) = p.strip_prefix(r"\\?\UNC\") {
-        return format!(r"\\{rest}");
-    }
-    if let Some(rest) = p.strip_prefix(r"\\?\") {
-        return rest.to_string();
-    }
-    p.to_string()
+    paths::strip_verbatim_prefix(path)
 }
 
 fn normalize_optional_project_path(path: Option<&str>) -> Option<String> {

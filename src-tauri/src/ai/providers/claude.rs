@@ -77,7 +77,7 @@ fn build_body(request: &ChatRequest) -> Value {
             // are host-only and dropped.
             for seg in &turn.timeline {
                 match seg {
-                    TimelineSegment::Text { text } => {
+                    TimelineSegment::Text { text, .. } => {
                         let t = text.trim();
                         if !t.is_empty() {
                             messages.push(message_from_parts("assistant", Some(t), &[]));

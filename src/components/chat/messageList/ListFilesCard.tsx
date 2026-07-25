@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AssistantBlock } from "../../../types";
+import { sanitizeFsPath } from "../../../utils/sanitizePath";
 import type { ListFilesEntry } from "./types";
 import { parseListFilesToolOutput } from "./parsers";
 import { ToolHeaderRow } from "./ToolHeaderRow";
@@ -65,7 +66,7 @@ export function ListFilesCard({
     block.input && typeof block.input === "object"
       ? String((block.input as { path?: string }).path || "")
       : "";
-  const root = parsed?.path || inputPath || ".";
+  const root = sanitizeFsPath(parsed?.path || inputPath || ".");
   const baseName = root.split(/[\\/]/).filter(Boolean).pop() || root;
   const count = parsed ? countEntries(parsed.entries) : 0;
   const metaParts = [

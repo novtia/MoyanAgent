@@ -13,7 +13,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
-use crate::ai::agent::tools::project_path::{self, FILE_REF_DESC};
+use crate::ai::agent::tools::project_path::{self, display_path, FILE_REF_DESC};
 use crate::ai::agent::tools::read_receipt::record_receipt;
 use crate::ai::agent::tools::text_decode::{
     detect_and_decode, normalize_tool_string, read_text_file, write_text_file, TextEncoding,
@@ -116,7 +116,7 @@ impl Tool for FileWriteTool {
             };
 
             Ok(ToolResult::ok(json!({
-                "path": path.to_string_lossy(),
+                "path": display_path(&path),
                 "bytes": content.len(),
                 "created": !exists,
                 "text": content,
@@ -271,12 +271,7 @@ impl Tool for FileEditTool {
 
             record_receipt(&invocation.context.read_file_state, &path, &updated);
 
-            let path_str = {
-                let raw = path.to_string_lossy();
-                raw.strip_prefix(r"\\?\")
-                    .unwrap_or(raw.as_ref())
-                    .to_string()
-            };
+            let path_str = display_path(&path);
             let mut pending_diff_id: Option<String> = None;
             if let (Some(pool), Some(sid)) = (&self.pool, invocation.context.session_id.as_deref())
             {

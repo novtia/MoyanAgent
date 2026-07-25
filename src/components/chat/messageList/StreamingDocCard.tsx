@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { countWords, resolveToolFilePath } from "../../../store/reader";
 import type { AssistantBlock } from "../../../types";
@@ -16,8 +16,13 @@ export function StreamingDocCard({
   const status = block.status;
   const isEdit = block.tool === "Edit";
   const isWrite = block.tool === "Write";
+  const isCreateDoc = block.tool === "CreateDoc";
   const streaming = block.streaming === true;
   const [open, setOpen] = useState(status === "pending" || streaming);
+  /** Full written content under the truncated preview (CreateDoc / Write). */
+  const [contentExpanded, setContentExpanded] = useState(false);
+  const [truncated, setTruncated] = useState(false);
+  const proseRef = useRef<HTMLDivElement | null>(null);
 
   const input = (block.input ?? {}) as {
     title?: string;
@@ -161,6 +166,33 @@ export function StreamingDocCard({
     if (status === "error" && hasContent) setOpen(true);
   }, [status, hasContent]);
 
+  useEffect(() => {
+    if (!open) setContentExpanded(false);
+  }, [open]);
+
+  const showProseExpand =
+    !isEdit && (isCreateDoc || isWrite) && open && hasContent && !streaming;
+
+  useEffect(() => {
+    if (!showProseExpand || contentExpanded) {
+      setTruncated(false);
+      return;
+    }
+    const el = proseRef.current;
+    if (!el) return;
+    const measure = () => {
+      setTruncated(el.scrollHeight > el.clientHeight + 2);
+    };
+    measure();
+    const ro = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(measure)
+      : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, [showProseExpand, contentExpanded, content]);
+
+  const showExpandBtn = showProseExpand && (truncated || contentExpanded);
+
   return (
     <ToolHeaderRow
       tool={block.tool}
@@ -173,6 +205,35 @@ export function StreamingDocCard({
       onToggle={() => setOpen((v) => !v)}
       errorMessage={errorMessage || undefined}
       errorLabel={t("message.toolCallErrorReason")}
+      footer={
+        showExpandBtn ? (
+          <button
+            type="button"
+            className={`doc-prose-expand${contentExpanded ? " is-expanded" : ""}`}
+            aria-expanded={contentExpanded}
+            title={
+              contentExpanded
+                ? t("message.createDocCollapseContent")
+                : t("message.createDocExpandContent")
+            }
+            onClick={() => setContentExpanded((v) => !v)}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+        ) : null
+      }
       tail={
         (added > 0 || removed > 0) && (
           <span className="tool-call-diff-chips" aria-hidden>
@@ -216,7 +277,10 @@ export function StreamingDocCard({
           )}
         </div>
       ) : (
-        <div className="doc-prose">
+        <div
+          ref={proseRef}
+          className={`doc-prose${contentExpanded ? " is-expanded" : ""}`}
+        >
           {content}
           {streaming && <span className="stream-doc-cursor" aria-hidden />}
         </div>

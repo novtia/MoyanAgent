@@ -20,7 +20,7 @@
 use serde_json::Value;
 
 use crate::ai::agent::tools::paragraph::paragraph_count;
-use crate::ai::agent::tools::project_path::{self, FILE_REF_DESC};
+use crate::ai::agent::tools::project_path::{self, display_path, FILE_REF_DESC};
 use crate::ai::agent::tools::read_receipt::{
     content_hash, expand_read_range, MIN_READ_CONTEXT_LINES,
 };
@@ -217,7 +217,7 @@ impl Tool for FileReadTool {
             }
 
             Ok(ToolResult::ok(serde_json::json!({
-                "path": canonical.to_string_lossy(),
+                "path": display_path(&canonical),
                 "bytes": bytes.len(),
                 "encoding": decoded.encoding.label(),
                 "had_bom": decoded.had_bom,

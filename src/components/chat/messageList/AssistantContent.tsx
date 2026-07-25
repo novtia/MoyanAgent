@@ -27,6 +27,13 @@ export function AssistantContent({
     }
     return -1;
   }, [blocks]);
+  // Only the trailing thinking block that is still the tip of the stream
+  // should show the live "thinking…" state. Once a tool_use / text block
+  // follows, prior thinking collapses to the static toggle.
+  const liveThinkingIdx = useMemo(() => {
+    if (blocks.length === 0) return -1;
+    return blocks[blocks.length - 1].type === "thinking" ? lastThinkingIdx : -1;
+  }, [blocks, lastThinkingIdx]);
 
   const firstTodoIdx = useMemo(
     () => blocks.findIndex((b) => b.type === "tool_use" && b.tool === "TodoList"),
@@ -44,12 +51,13 @@ export function AssistantContent({
     <>
       {blocks.map((block, i) => {
         if (block.type === "thinking") {
-          const trailing = i === lastThinkingIdx;
+          const live = i === liveThinkingIdx;
+          if (!block.content && !live) return null;
           return (
             <ThinkingBlock
               key={`thinking:${i}`}
               content={block.content}
-              streaming={isStreaming && trailing}
+              streaming={isStreaming && live}
             />
           );
         }

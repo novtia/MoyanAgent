@@ -207,6 +207,19 @@ impl GenerationParameters {
         }
     }
 
+    /// Moonshot / Kimi: enable thinking and preserved thinking (`keep: "all"`)
+    /// so historical `reasoning_content` is consumed across turns.
+    pub fn apply_moonshot_thinking_object(&self, body: &mut Map<String, Value>) {
+        if self.model.resolved_thinking_effort().is_some() {
+            body.insert(
+                "thinking".into(),
+                json!({ "type": "enabled", "keep": "all" }),
+            );
+        } else {
+            body.insert("thinking".into(), json!({ "type": "disabled" }));
+        }
+    }
+
     /// Route thinking/reasoning controls to the shape each upstream expects.
     pub fn apply_thinking_params(&self, body: &mut Map<String, Value>, endpoint: &str) {
         if is_openrouter_endpoint(endpoint) {
@@ -218,6 +231,13 @@ impl GenerationParameters {
                 self.apply_openai_reasoning_effort(body);
             }
             self.apply_native_thinking_object(body);
+            return;
+        }
+        if is_moonshot_endpoint(endpoint) {
+            if self.model.resolved_thinking_effort().is_some() {
+                self.apply_openai_reasoning_effort(body);
+            }
+            self.apply_moonshot_thinking_object(body);
             return;
         }
         self.apply_openai_reasoning_effort(body);
@@ -320,6 +340,14 @@ fn is_volcengine_endpoint(endpoint: &str) -> bool {
     e.contains("volces.com") || e.contains("volcengine.com") || e.contains("volcengine.cn")
 }
 
+fn is_moonshot_endpoint(endpoint: &str) -> bool {
+    let e = endpoint.trim().to_ascii_lowercase();
+    e.contains("moonshot.cn")
+        || e.contains("moonshot.ai")
+        || e.contains("kimi.com")
+        || e.contains("kimi.ai")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,5 +400,46 @@ mod tests {
                 .and_then(Value::as_str),
             Some("disabled")
         );
+    }
+
+    #[test]
+    fn moonshot_thinking_enabled_sends_keep_all() {
+        let p = params(true);
+        let mut body = Map::new();
+        p.apply_thinking_params(&mut body, "https://api.moonshot.cn/v1/chat/completions");
+        assert_eq!(
+            body.get("reasoning_effort").and_then(Value::as_str),
+            Some("high")
+        );
+        assert_eq!(
+            body.get("thinking")
+                .and_then(|v| v.get("type"))
+                .and_then(Value::as_str),
+            Some("enabled")
+        );
+        assert_eq!(
+            body.get("thinking")
+                .and_then(|v| v.get("keep"))
+                .and_then(Value::as_str),
+            Some("all")
+        );
+    }
+
+    #[test]
+    fn moonshot_thinking_disabled_omits_keep() {
+        let p = params(false);
+        let mut body = Map::new();
+        p.apply_thinking_params(&mut body, "https://api.moonshot.cn/v1/chat/completions");
+        assert!(!body.contains_key("reasoning_effort"));
+        assert_eq!(
+            body.get("thinking")
+                .and_then(|v| v.get("type"))
+                .and_then(Value::as_str),
+            Some("disabled")
+        );
+        assert!(body
+            .get("thinking")
+            .and_then(|v| v.get("keep"))
+            .is_none());
     }
 }

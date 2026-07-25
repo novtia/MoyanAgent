@@ -15,6 +15,8 @@ type Props = {
   onToggle?: () => void;
   tail?: ReactNode;
   children?: ReactNode;
+  /** Rendered below the expanded body (outside `.doc-row-body`). */
+  footer?: ReactNode;
   errorMessage?: string;
   errorLabel?: string;
 };
@@ -34,6 +36,7 @@ export function ToolHeaderRow({
   onToggle,
   tail,
   children,
+  footer,
   errorMessage,
   errorLabel,
 }: Props) {
@@ -87,6 +90,9 @@ export function ToolHeaderRow({
       {open && children != null && (
         <div className="doc-row-body">{children}</div>
       )}
+      {open && footer != null && footer !== false ? (
+        <div className="doc-row-footer">{footer}</div>
+      ) : null}
       {errorMessage ? (
         <div className="tool-call-error-detail" role="alert">
           {errorLabel ? (

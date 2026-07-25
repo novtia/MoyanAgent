@@ -248,11 +248,24 @@ pub enum TimelineSegment {
     },
     Text {
         text: String,
+        /// DeepSeek / Kimi: final-answer (or thinking-only) turns must echo
+        /// prior `reasoning_content` on replay when the turn involved tools
+        /// or the model requires preserved thinking.
+        #[serde(
+            rename = "thinkingContent",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        thinking_content: Option<String>,
     },
     ToolRound {
-        #[serde(rename = "assistantText", skip_serializing_if = "Option::is_none")]
+        #[serde(rename = "assistantText", default, skip_serializing_if = "Option::is_none")]
         assistant_text: Option<String>,
-        #[serde(rename = "thinkingContent", skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "thinkingContent",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
         thinking_content: Option<String>,
         calls: Vec<TimelineToolCall>,
         results: Vec<TimelineToolResult>,

@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 use crate::ai::agent::tools::paragraph::split_paragraphs;
-use crate::ai::agent::tools::project_path::{self, FILE_REF_DESC};
+use crate::ai::agent::tools::project_path::{self, display_path, FILE_REF_DESC};
 use crate::ai::agent::tools::text_decode::decode_file_bytes;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
@@ -219,7 +219,7 @@ impl Tool for GrepTool {
                     if matches_capped {
                         if !matches.is_empty() {
                             file_results.push(json!({
-                                "path": file.to_string_lossy(),
+                                "path": display_path(file),
                                 "matches": matches,
                             }));
                         }
@@ -229,7 +229,7 @@ impl Tool for GrepTool {
 
                 if !matches.is_empty() {
                     file_results.push(json!({
-                        "path": file.to_string_lossy(),
+                        "path": display_path(file),
                         "matches": matches,
                     }));
                 }
@@ -244,7 +244,7 @@ impl Tool for GrepTool {
                     .and_then(|f| f.get("matches").cloned())
                     .unwrap_or_else(|| json!([]));
                 return Ok(ToolResult::ok(json!({
-                    "path": canonical.to_string_lossy(),
+                    "path": display_path(&canonical),
                     "query": query,
                     "case_sensitive": case_sensitive,
                     "total_matches": total_matches,
@@ -254,7 +254,7 @@ impl Tool for GrepTool {
             }
 
             Ok(ToolResult::ok(json!({
-                "path": canonical.to_string_lossy(),
+                "path": display_path(&canonical),
                 "query": query,
                 "case_sensitive": case_sensitive,
                 "recursive": recursive,
