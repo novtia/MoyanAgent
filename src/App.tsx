@@ -8,6 +8,7 @@ import { ImagePreview } from "./components/media/ImagePreview";
 import { VideoPreview } from "./components/media/VideoPreview";
 import { SettingsView } from "./components/settings";
 import type { SettingsTab, ThemeMode } from "./components/settings";
+import { UsageView } from "./components/usage";
 import { ContextMenuHost } from "./components/context-menu";
 import { ToastHost, DialogHost } from "./components/ui";
 import { SearchDialog } from "./components/search/SearchDialog";
@@ -32,6 +33,7 @@ import type { AttachmentDraft, ImageRefAbs } from "./types";
 
 type AppRoute =
   | { view: "chat" }
+  | { view: "usage" }
   | { view: "settings"; tab: SettingsTab };
 
 const SETTINGS_TABS: SettingsTab[] = [
@@ -44,6 +46,9 @@ const SETTINGS_TABS: SettingsTab[] = [
 
 function parseRoute(): AppRoute {
   const [, view, tab] = window.location.hash.match(/^#\/([^/]+)\/?([^/]*)?/) || [];
+  if (view === "usage") {
+    return { view: "usage" };
+  }
   if (view === "settings" && SETTINGS_TABS.includes(tab as SettingsTab)) {
     return { view: "settings", tab: tab as SettingsTab };
   }
@@ -162,6 +167,10 @@ export default function App() {
     window.location.hash = "#/";
     setRoute({ view: "chat" });
   };
+  const openUsage = () => {
+    window.location.hash = "#/usage";
+    setRoute({ view: "usage" });
+  };
   const openSettings = (tab: SettingsTab = "appearance") => {
     window.location.hash = `#/settings/${tab}`;
     setRoute({ view: "settings", tab });
@@ -177,7 +186,7 @@ export default function App() {
         <TitleBar
           onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
           sidebarCollapsed={sidebarCollapsed}
-          canGoBack={route.view === "settings"}
+          canGoBack={route.view === "settings" || route.view === "usage"}
           onBack={openChat}
           onNewChat={onNewChat}
           onOpenSearch={() => setSearchOpen(true)}
@@ -198,27 +207,33 @@ export default function App() {
                 onOpenChat={openChat}
                 onOpenSearch={() => setSearchOpen(true)}
                 onOpenSettings={() => openSettings("appearance")}
+                onOpenUsage={openUsage}
+                usageActive={route.view === "usage"}
                 settingsActive={false}
               />
-              <ChatView
-                onEditAttachment={(a) => setEditorTarget(a)}
-                onPreviewImage={(img: ImageRefAbs) => {
-                  if (img.mime.startsWith("video/")) {
-                    setVideoPreview(img);
-                    return;
-                  }
-                  const session = useSession.getState().active;
-                  const items = collectSessionGalleryImages(session);
-                  const idx = indexOfImageInGallery(items, img);
-                  if (idx >= 0) {
-                    setPreview({ items, index: idx });
-                  } else {
-                    setPreview({ items: [img], index: 0 });
-                  }
-                }}
-                onOpenSettings={() => openSettings("llm")}
-                needsSetup={needsSetup}
-              />
+              {route.view === "usage" ? (
+                <UsageView />
+              ) : (
+                <ChatView
+                  onEditAttachment={(a) => setEditorTarget(a)}
+                  onPreviewImage={(img: ImageRefAbs) => {
+                    if (img.mime.startsWith("video/")) {
+                      setVideoPreview(img);
+                      return;
+                    }
+                    const session = useSession.getState().active;
+                    const items = collectSessionGalleryImages(session);
+                    const idx = indexOfImageInGallery(items, img);
+                    if (idx >= 0) {
+                      setPreview({ items, index: idx });
+                    } else {
+                      setPreview({ items: [img], index: 0 });
+                    }
+                  }}
+                  onOpenSettings={() => openSettings("llm")}
+                  needsSetup={needsSetup}
+                />
+              )}
             </>
           )}
         </div>

@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MoyanAgent · 用量统计设计语言</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;550;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+/* ───── tokens (mirrored from src/styles/modules/tokens.css) ───── */
+:root {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-soft: #f7f8fa;
+  --bg-sunk: #f1f3f6;
+  --bg-side: #fafafa;
+  --bg-hover: #efefef;
+  --line: #ececec;
+  --line-strong: #d8d8d8;
+  --ink: #0d0d0d;
+  --ink-2: #1f1f1f;
+  --ink-soft: #5a5a5a;
+  --ink-mute: #8a8a8a;
+  --accent: #0d0d0d;
+  --accent-soft: #2c2c2c;
+  --blue-50: #eef4ff;
+  --blue-100: #dbe7ff;
+  --blue-500: #2563eb;
+  --blue-600: #1d4ed8;
+  --green-50: #ecfdf5;
+  --green-500: #10b981;
+  --green-600: #059669;
+  --rose-50: #fff5f7;
+  --rose-500: #e11d48;
+  --radius: 14px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 22px;
+  --radius-xs: 6px;
+  --shadow-1: 0 1px 0 rgba(15,23,42,.03), 0 1px 2px rgba(15,23,42,.04);
+  --shadow-2: 0 4px 16px -6px rgba(15,23,42,.08), 0 1px 2px rgba(15,23,42,.04);
+  --ease-out: cubic-bezier(.2,.7,.2,1);
+  --ease-pop: cubic-bezier(.16,1,.3,1);
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #101112;
+  --bg-soft: #17191c;
+  --bg-sunk: #0b0c0e;
+  --bg-side: #141517;
+  --bg-hover: #23262a;
+  --line: #292c31;
+  --line-strong: #3a3f46;
+  --ink: #f3f5f7;
+  --ink-2: #dce1e7;
+  --ink-soft: #aab2bd;
+  --ink-mute: #77808b;
+  --accent: #f3f5f7;
+  --accent-soft: #dce1e7;
+  --blue-50: #15233d;
+  --blue-100: #1d3155;
+  --blue-500: #5b8cff;
+  --blue-600: #7aa2ff;
+  --green-50: #112a22;
+  --green-500: #31d09a;
+  --green-600: #5ee0b2;
+  --rose-50: #35151c;
+  --rose-500: #ff6685;
+  --shadow-1: 0 1px 0 rgba(255,255,255,.03), 0 1px 2px rgba(0,0,0,.24);
+  --shadow-2: 0 8px 22px -8px rgba(0,0,0,.44), 0 1px 2px rgba(0,0,0,.24);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 13.5px; }
+body {
+  font-family: "Instrument Sans", "Noto Sans SC", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+code, .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+/* ───── page chrome ───── */
+.page-head {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 28px;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+}
+.page-head h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.page-head .sub { font-size: 12px; color: var(--ink-mute); }
+.page-head .spacer { flex: 1; }
+.theme-toggle {
+  border: 1px solid var(--line); background: var(--bg-soft); color: var(--ink-2);
+  border-radius: 999px; padding: 6px 14px; font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: border-color .15s, background .15s;
+}
+.theme-toggle:hover { border-color: var(--line-strong); background: var(--bg-hover); }
+
+.hero { max-width: 860px; margin: 0 auto; padding: 56px 28px 8px; }
+.hero h2 { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.25; }
+.hero p { margin-top: 12px; font-size: 14px; color: var(--ink-soft); max-width: 640px; line-height: 1.7; }
+.hero p b { color: var(--ink); font-weight: 550; }
+.note {
+  max-width: 860px; margin: 20px auto 0; padding: 12px 16px;
+  border: 1px dashed var(--line-strong); border-radius: var(--radius-sm);
+  font-size: 12.5px; color: var(--ink-soft); line-height: 1.6;
+}
+.note strong { color: var(--ink); font-weight: 550; }
+
+.family-band { max-width: 860px; margin: 0 auto; padding: 44px 28px 0; }
+.family-band h3 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.family-band .desc { margin-top: 6px; font-size: 13px; color: var(--ink-mute); line-height: 1.6; max-width: 600px; }
+
+.thread {
+  max-width: 860px; margin: 0 auto;
+  padding: 20px 28px 40px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+.label {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-mute);
+  margin: 14px 0 -2px;
+}
+
+/* ───── shared bits ───── */
+.ti { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.ti svg { display: block; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 500; line-height: 1;
+  padding: 4px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--ink-soft); background: var(--bg);
+}
+.chip.add { color: var(--green-600); border-color: color-mix(in srgb, var(--green-500) 30%, var(--line)); background: var(--green-50); }
+.chip.del { color: var(--rose-500); border-color: color-mix(in srgb, var(--rose-500) 30%, var(--line)); background: var(--rose-50); }
+.chip.info { color: var(--blue-500); border-color: color-mix(in srgb, var(--blue-500) 30%, var(--line)); background: var(--blue-50); }
+
+.kv { font-size: 11px; color: var(--ink-mute); }
+.kv b { color: var(--ink-soft); font-weight: 500; }
+
+/* ════════════════════════════════════════════════════
+   USAGE VIEW — page-level structure
+   用量统计不是对话流里的材料，而是一个「仪表盘页面」：
+   顶部是范围切换 segmented control；之下是 stat 行、
+   趋势面板、分布列表、明细表。浅底面板 + 无框行混排。
+   ════════════════════════════════════════════════════ */
+.usage { display: flex; flex-direction: column; gap: 22px; }
+
+/* scope segmented control — same grammar as settings SegmentButton */
+.scope {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 3px; border-radius: 999px;
+  background: var(--bg-soft); border: 1px solid var(--line);
+  width: fit-content;
+}
+.scope button {
+  appearance: none; border: none; background: transparent;
+  font: inherit; font-size: 12px; font-weight: 500; color: var(--ink-mute);
+  padding: 5px 14px; border-radius: 999px; cursor: pointer;
+  transition: color .15s, background .15s, box-shadow .15s;
+  white-space: nowrap;
+}
+.scope button:hover { color: var(--ink-2); }
+.scope button.on {
+  color: var(--ink); background: var(--bg);
+  box-shadow: var(--shadow-1);
+  border: 1px solid var(--line);
+  margin: -1px;
+}
+
+/* ── stat strip — big numbers on hairlines, NOT cards ── */
+.stats {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: var(--bg); box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+.stat { padding: 14px 16px 12px; position: relative; min-width: 0; }
+.stat + .stat::before {
+  content: ""; position: absolute; left: 0; top: 14px; bottom: 14px;
+  width: 1px; background: var(--line);
+}
+.stat-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-mute);
+}
+.stat-label .ti { color: var(--ink-mute); }
+.stat-value {
+  margin-top: 7px;
+  font-size: 24px; font-weight: 600; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums; line-height: 1.1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.stat-value .unit { font-size: 12px; font-weight: 500; color: var(--ink-mute); margin-left: 3px; letter-spacing: 0; }
+.stat-sub { margin-top: 4px; font-size: 11px; color: var(--ink-mute); display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.stat-sub .mono { font-size: 10.5px; }
+.stat-sub .up { color: var(--green-600); }
+.stat-sub .down { color: var(--rose-500); }
+
+/* ── trend panel — the ONE sunk surface on this page ── */
+.panel {
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+}
+.panel-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.panel-head .t { font-size: 12.5px; font-weight: 550; }
+.panel-head .m { font-size: 11.5px; color: var(--ink-mute); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.legend { display: flex; align-items: center; gap: 12px; flex: none; }
+.legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-mute); }
+.legend i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+
+.chart { padding: 14px 14px 8px; }
+.chart svg { display: block; width: 100%; height: auto; }
+.chart-x {
+  display: flex; justify-content: space-between;
+  padding: 6px 14px 10px;
+  font-size: 10.5px; color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── distribution rows — share bars, boxless ── */
+.dist { display: flex; flex-direction: column; }
+.dist-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 14px; cursor: default;
+  transition: background .15s var(--ease-out);
+}
+.dist-row:hover { background: var(--bg-soft); }
+.dist-row + .dist-row { border-top: 1px solid var(--line); }
+.dist-swatch { flex: none; width: 8px; height: 8px; border-radius: 2.5px; }
+.dist-name { font-size: 12.5px; font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.dist-name .prov { font-weight: 400; color: var(--ink-mute); font-size: 11.5px; margin-left: 6px; }
+.dist-track { flex: 1; min-width: 60px; height: 4px; border-radius: 4px; background: var(--bg-sunk); overflow: hidden; }
+.dist-track i { display: block; height: 100%; border-radius: 4px; background: var(--ink); transition: width .5s var(--ease-pop); }
+.dist-num { flex: none; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--ink-2); text-align: right; min-width: 86px; }
+.dist-pct { flex: none; font-size: 11px; color: var(--ink-mute); font-variant-numeric: tabular-nums; text-align: right; width: 44px; }
+
+/* in/out split micro-bar under model rows */
+.dist-split { display: flex; gap: 8px; align-items: baseline; flex: none; }
+.dist-split span { font-size: 10.5px; color: var(--ink-mute); font-variant-numeric: tabular-nums; }
+.dist-split b { font-weight: 500; color: var(--ink-soft); }
+
+/* ── event table — hairline rows, status chip, mono numbers ── */
+.table { display: flex; flex-direction: column; }
+.table-head, .table-row {
+  display: grid;
+  grid-template-columns: 86px 64px 1fr 1fr 92px 92px 96px 56px;
+  gap: 10px; align-items: center;
+  padding: 8px 14px;
+}
+.table-head {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--ink-mute);
+  border-bottom: 1px solid var(--line);
+}
+.table-row { border-bottom: 1px solid var(--line); font-size: 12px; transition: background .15s; }
+.table-row:hover { background: var(--bg-soft); }
+.table-row:last-child { border-bottom: none; }
+.table-row .time { font-size: 11.5px; color: var(--ink-mute); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.table-row .kind { display: flex; }
+.table-row .who { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.table-row .who .prov { font-weight: 400; color: var(--ink-mute); }
+.table-row .detail { font-size: 11.5px; color: var(--ink-mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.table-row .num { font-size: 11.5px; font-family: "JetBrains Mono", monospace; color: var(--ink-2); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.table-row .num.dim { color: var(--ink-mute); }
+.table-row .st { display: flex; justify-content: flex-end; }
+.dot-ok, .dot-err { width: 7px; height: 7px; border-radius: 50%; }
+.dot-ok { background: var(--green-500); }
+.dot-err { background: var(--rose-500); }
+
+.kind-badge {
+  display: inline-flex; align-items: center;
+  font-size: 10px; font-weight: 600; letter-spacing: .05em;
+  padding: 2.5px 7px; border-radius: 4px; line-height: 1;
+  text-transform: uppercase;
+}
+.kind-badge.api { color: var(--blue-500); background: var(--blue-50); }
+.kind-badge.tool { color: var(--ink-soft); background: var(--bg-sunk); }
+.kind-badge.turn { color: var(--green-600); background: var(--green-50); }
+
+/* pagination footer inside panel */
+.panel-foot {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; border-top: 1px solid var(--line);
+  font-size: 11.5px; color: var(--ink-mute);
+}
+.pager { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.pager button {
+  appearance: none; border: 1px solid var(--line); background: var(--bg);
+  border-radius: var(--radius-xs); padding: 3px 9px;
+  font-size: 11px; font-weight: 500; color: var(--ink-2); cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.pager button:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--line-strong); }
+.pager button:disabled { opacity: .4; cursor: default; }
+.pager .pg { font-size: 11px; color: var(--ink-mute); padding: 0 6px; font-variant-numeric: tabular-nums; }
+
+/* ── empty state ── */
+.empty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 44px 20px; text-align: center;
+}
+.empty .ti { color: var(--ink-mute); opacity: .7; }
+.empty .et { font-size: 13px; font-weight: 550; color: var(--ink-soft); }
+.empty .ed { font-size: 12px; color: var(--ink-mute); line-height: 1.6; max-width: 320px; }
+
+/* ── in-chat mini usage (message meta) — reference only ── */
+.mini-usage {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 10.5px; color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+}
+.mini-usage .sep { opacity: .5; }
+
+.foot { max-width: 860px; margin: 0 auto; padding: 10px 28px 80px; color: var(--ink-mute); font-size: 11.5px; line-height: 1.7; }
+.foot code { font-size: 10.5px; background: var(--bg-soft); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+
+@media (max-width: 720px) {
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .stat:nth-child(3)::before { display: none; }
+  .stat:nth-child(n+3) { border-top: 1px solid var(--line); }
+  .table-head, .table-row { grid-template-columns: 76px 1fr 84px 84px 48px; }
+  .table-head .h-hide, .table-row .h-hide { display: none; }
+}
+</style>
+</head>
+<body>
+
+<header class="page-head">
+  <h1>MoyanAgent · 用量统计设计语言</h1>
+  <span class="sub">v1 — Token / 调用 / 成本</span>
+  <span class="spacer"></span>
+  <button class="theme-toggle" id="themeToggle">切换暗色</button>
+</header>
+
+<section class="hero">
+  <h2>用量页面不是报表系统，<br/>而是同一张纸上的四段文字。</h2>
+  <p>延续工具渲染语言：<b>大数字贴发丝线</b>，不装卡片；趋势图是页面<b>唯一的下沉面板</b>；模型分布是无框行 + 细条；事件明细是发丝线表格。数字一律 <b>JetBrains Mono / tabular-nums</b>，状态仍用绿点红点，不引入第五种彩色。</p>
+</section>
+<div class="note"><strong>色彩纪律：</strong>图表与分布条一律用 <code>--ink</code>（黑/白）作主色，输入 = 墨色，输出 = 墨色 45% 透明；蓝仅用于「api_call」类型徽标与链接态，绿/红仅表达成功/失败与涨跌。<strong>不做</strong>彩虹饼图、渐变面积图、立体柱。</div>
+
+<!-- ═══════════════ SCOPE + STATS ═══════════════ -->
+<section class="family-band">
+  <h3>范围 · 总览</h3>
+  <p class="desc">Segmented control 复用设置页语法；Stat 行是一个带发丝分隔线的浅底长条，不是四张卡片。</p>
+</section>
+<div class="thread usage">
+
+  <div class="label">Scope · segmented</div>
+  <div class="scope" role="tablist">
+    <button class="on">今天</button>
+    <button>7 天</button>
+    <button>30 天</button>
+    <button>全部</button>
+  </div>
+
+  <div class="label">Stat strip · 大数字贴发丝线</div>
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-label">
+        <span class="ti"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+        总 Tokens
+      </div>
+      <div class="stat-value">1.28M</div>
+      <div class="stat-sub"><span class="up">▲ 12.4%</span><span>vs 前 7 天</span></div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">
+        <span class="ti"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+        API 调用
+      </div>
+      <div class="stat-value">342</div>
+      <div class="stat-sub"><span class="mono">avg 3.7K tok/次</span></div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">
+        <span class="ti"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
+        工具调用
+      </div>
+      <div class="stat-value">1,059</div>
+      <div class="stat-sub"><span class="mono">失败 3</span><span class="down">0.28%</span></div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">
+        <span class="ti"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span>
+        估算成本
+      </div>
+      <div class="stat-value"><span class="unit">¥</span>18.42</div>
+      <div class="stat-sub"><span class="mono">输入 ¥6.10 · 输出 ¥12.32</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ TREND ═══════════════ -->
+<section class="family-band">
+  <h3>趋势</h3>
+  <p class="desc">14 天堆叠柱：输入 = 墨色，输出 = 墨色 45%。柱圆角 3px，间距 40%，无网格线，只留底部基线与 hover 十字提示。</p>
+</section>
+<div class="thread usage">
+
+  <div class="label">Daily stacked bars · sunk panel</div>
+  <div class="panel">
+    <div class="panel-head">
+      <span class="t">Token 趋势</span>
+      <span class="m">07-12 → 07-25 · 按天聚合</span>
+      <div class="legend">
+        <span><i style="background:var(--ink)"></i>输入</span>
+        <span><i style="background:color-mix(in srgb, var(--ink) 45%, transparent)"></i>输出</span>
+      </div>
+    </div>
+    <div class="chart">
+      <svg viewBox="0 0 800 180" role="img" aria-label="每日 token 用量">
+        <!-- baseline -->
+        <line x1="0" y1="164" x2="800" y2="164" stroke="var(--line-strong)" stroke-width="1"/>
+        <!-- bars: x step 57.14, width 26, input solid / output 45% stacked on top -->
+        <g>
+          <rect x="16"  y="118" width="26" height="46" rx="3" fill="var(--ink)"/>
+          <rect x="16"  y="98"  width="26" height="20" rx="3" fill="var(--ink)" opacity=".45"/>
+
+          <rect x="73"  y="132" width="26" height="32" rx="3" fill="var(--ink)"/>
+          <rect x="73"  y="118" width="26" height="14" rx="3" fill="var(--ink)" opacity=".45"/>
+
+          <rect x="130" y="96"  width="26" height="68" rx="3" fill="var(--ink)"/>
+          <rect x="130" y="70"  width="26" height="26" rx="3" fill="var(--ink)" opacity=".45"/>
+
+          <rect x="187" y="124" width="26" height="40" rx="3" fill="var(--ink)"/>
+          <rect x="187" y="106" width="26" height="18" rx="3" fill="var(--ink)" opacity=".45"/>
+
+          <rect x="244" y="142" width="26" height="22" rx="3" fill="var(--ink)"/>
+          <rect x="244" y="132" width="26" height="10" rx="3" fill="var(--ink)" opacity=".45"/>
+
+          <rect x="301" y="104" width="26" height="60" rx="3" fill="var(--ink)"/>
+          <rect x="301" y="82"  width="26" height="22" rx="3" fill="var(--ink)" opacity=".45"/>
+
+          <rect x="358" y="88"  width="26" height="76" rx="3" fill="var(--ink)"/>
+          <rect x="358" y="58"  width="26" height="30" rx="3" fill="var(--ink)" opacity=".45"/>
+
+          <rect x="415" y="120" width="26" height="44" rx="3" fill="var(--ink)"/>
+          <rect x="415" y="100" width="26" height="20" rx="3" fill="var(--ink)" opacity=".45"/>
+
+          <rect x="472" y="136" width="26" height="28" rx="3" fill="var(--ink)"/>
+          <rect x="472" y="124" width="26" height="12" rx="3" fill="var(--ink)" opacity=".45"/>
+
+          <rect x="529" y="110" width="26" height="54" rx="3" fill="var(--ink)"/>
+          <rect x="529" y="88"  width="26" height="22" rx="3" fill="var(--ink)" opacity=".45"/>
+
+          <rect x="586" y="76"  width="26" height="88" rx="3" fill="var(--ink)"/>
+          <rect x="586" y="44"  width="26" height="32" rx="3" fill="var(--ink)" opacity=".45"/>
+
+          <rect x="643" y="128" width="26" height="36" rx="3" fill="var(--ink)"/>
+          <rect x="643" y="112" width="26" height="16" rx="3" fill="var(--ink)" opacity=".45"/>
+
+          <rect x="700" y="98"  width="26" height="66" rx="3" fill="var(--ink)"/>
+          <rect x="700" y="72"  width="26" height="26" rx="3" fill="var(--ink)" opacity=".45"/>
+
+          <!-- today: hovered state -->
+          <rect x="757" y="66"  width="26" height="98" rx="3" fill="var(--ink)"/>
+          <rect x="757" y="34"  width="26" height="32" rx="3" fill="var(--ink)" opacity=".45"/>
+        </g>
+        <!-- hover crosshair on today -->
+        <line x1="770" y1="10" x2="770" y2="164" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+        <g>
+          <rect x="664" y="12" width="118" height="46" rx="8" fill="var(--bg)" stroke="var(--line-strong)"/>
+          <text x="676" y="30" font-size="11" font-weight="600" fill="var(--ink)" font-family="Instrument Sans">07-25 · 今天</text>
+          <text x="676" y="47" font-size="10.5" fill="var(--ink-mute)" font-family="JetBrains Mono">in 61.2K · out 19.8K</text>
+        </g>
+      </svg>
+    </div>
+    <div class="chart-x"><span>07-12</span><span>07-15</span><span>07-18</span><span>07-21</span><span>07-25</span></div>
+  </div>
+</div>
+
+<!-- ═══════════════ DISTRIBUTION ═══════════════ -->
+<section class="family-band">
+  <h3>分布</h3>
+  <p class="desc">模型分布 = 无框行 + 4px 细条（--ink 填充），右侧 mono 数字与占比；行内附 输入/输出 拆分。工具分布同构，条更短，不要双面板——上下排。</p>
+</section>
+<div class="thread usage">
+
+  <div class="label">By model · share rows</div>
+  <div class="panel">
+    <div class="panel-head">
+      <span class="t">按模型</span>
+      <span class="m">total tokens 降序</span>
+    </div>
+    <div class="dist">
+      <div class="dist-row">
+        <span class="dist-swatch" style="background:var(--ink)"></span>
+        <span class="dist-name">claude-sonnet-4<span class="prov">anthropic</span></span>
+        <div class="dist-track"><i style="width:100%"></i></div>
+        <span class="dist-split"><span>in <b>512K</b></span><span>out <b>176K</b></span></span>
+        <span class="dist-num">688K</span>
+        <span class="dist-pct">53.7%</span>
+      </div>
+      <div class="dist-row">
+        <span class="dist-swatch" style="background:var(--ink)"></span>
+        <span class="dist-name">gpt-5<span class="prov">openai</span></span>
+        <div class="dist-track"><i style="width:56%"></i></div>
+        <span class="dist-split"><span>in <b>298K</b></span><span>out <b>88K</b></span></span>
+        <span class="dist-num">386K</span>
+        <span class="dist-pct">30.1%</span>
+      </div>
+      <div class="dist-row">
+        <span class="dist-swatch" style="background:var(--ink)"></span>
+        <span class="dist-name">gemini-2.5-pro<span class="prov">google</span></span>
+        <div class="dist-track"><i style="width:23%"></i></div>
+        <span class="dist-split"><span>in <b>112K</b></span><span>out <b>41K</b></span></span>
+        <span class="dist-num">153K</span>
+        <span class="dist-pct">11.9%</span>
+      </div>
+      <div class="dist-row">
+        <span class="dist-swatch" style="background:var(--ink)"></span>
+        <span class="dist-name">deepseek-v3<span class="prov">deepseek</span></span>
+        <div class="dist-track"><i style="width:8%"></i></div>
+        <span class="dist-split"><span>in <b>38K</b></span><span>out <b>16K</b></span></span>
+        <span class="dist-num">54K</span>
+        <span class="dist-pct">4.3%</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="label">By tool · call count rows</div>
+  <div class="panel">
+    <div class="panel-head">
+      <span class="t">按工具</span>
+      <span class="m">调用次数 · 近 7 天</span>
+    </div>
+    <div class="dist">
+      <div class="dist-row">
+        <span class="dist-swatch" style="background:var(--ink-mute)"></span>
+        <span class="dist-name mono">Read</span>
+        <div class="dist-track"><i style="width:100%;background:var(--ink-mute)"></i></div>
+        <span class="dist-num">412</span>
+        <span class="dist-pct">38.9%</span>
+      </div>
+      <div class="dist-row">
+        <span class="dist-swatch" style="background:var(--ink-mute)"></span>
+        <span class="dist-name mono">Edit</span>
+        <div class="dist-track"><i style="width:58%;background:var(--ink-mute)"></i></div>
+        <span class="dist-num">238</span>
+        <span class="dist-pct">22.5%</span>
+      </div>
+      <div class="dist-row">
+        <span class="dist-swatch" style="background:var(--ink-mute)"></span>
+        <span class="dist-name mono">Grep</span>
+        <div class="dist-track"><i style="width:37%;background:var(--ink-mute)"></i></div>
+        <span class="dist-num">154</span>
+        <span class="dist-pct">14.5%</span>
+      </div>
+      <div class="dist-row">
+        <span class="dist-swatch" style="background:var(--ink-mute)"></span>
+        <span class="dist-name mono">Bash</span>
+        <div class="dist-track"><i style="width:24%;background:var(--ink-mute)"></i></div>
+        <span class="dist-num">98</span>
+        <span class="dist-pct">9.3%</span>
+      </div>
+      <div class="dist-row">
+        <span class="dist-swatch" style="background:var(--ink-mute)"></span>
+        <span class="dist-name mono">WebSearch</span>
+        <div class="dist-track"><i style="width:14%;background:var(--ink-mute)"></i></div>
+        <span class="dist-num">57</span>
+        <span class="dist-pct">5.4%</span>
+      </div>
+      <div class="dist-row">
+        <span class="dist-swatch" style="background:var(--ink-mute)"></span>
+        <span class="dist-name mono">其他</span>
+        <div class="dist-track"><i style="width:24%;background:var(--ink-mute)"></i></div>
+        <span class="dist-num">100</span>
+        <span class="dist-pct">9.4%</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ EVENTS TABLE ═══════════════ -->
+<section class="family-band">
+  <h3>明细</h3>
+  <p class="desc">原始事件流：发丝线表格，类型用上色小徽标（api=蓝 / tool=灰 / turn=绿），数字右对齐 mono，状态用点不用文字。面板内分页。</p>
+</section>
+<div class="thread usage">
+
+  <div class="label">Events · hairline table</div>
+  <div class="panel">
+    <div class="panel-head">
+      <span class="t">事件明细</span>
+      <span class="m">list_token_usage_events · 最新在前</span>
+      <span class="chip">全部类型</span>
+      <span class="chip">全部模型</span>
+    </div>
+    <div class="table">
+      <div class="table-head">
+        <span>时间</span><span>类型</span><span>模型 / 工具</span><span class="h-hide">明细</span><span class="h-hide" style="text-align:right">输入</span><span class="h-hide" style="text-align:right">输出</span><span style="text-align:right">合计</span><span style="text-align:right">状态</span>
+      </div>
+      <div class="table-row">
+        <span class="time">22:41:07</span>
+        <span class="kind"><span class="kind-badge turn">turn</span></span>
+        <span class="who">claude-sonnet-4 <span class="prov">anthropic</span></span>
+        <span class="detail h-hide">msg_01J… · turn 汇总</span>
+        <span class="num h-hide">48,210</span>
+        <span class="num h-hide">3,924</span>
+        <span class="num">52,134</span>
+        <span class="st"><span class="dot-ok"></span></span>
+      </div>
+      <div class="table-row">
+        <span class="time">22:40:58</span>
+        <span class="kind"><span class="kind-badge tool">tool</span></span>
+        <span class="who mono">Edit</span>
+        <span class="detail h-hide">角色设定.md · P012</span>
+        <span class="num dim h-hide">—</span>
+        <span class="num dim h-hide">—</span>
+        <span class="num dim">—</span>
+        <span class="st"><span class="dot-ok"></span></span>
+      </div>
+      <div class="table-row">
+        <span class="time">22:40:51</span>
+        <span class="kind"><span class="kind-badge api">api</span></span>
+        <span class="who">claude-sonnet-4 <span class="prov">anthropic</span></span>
+        <span class="detail h-hide">turn 3 · 第 2 次请求</span>
+        <span class="num h-hide">12,040</span>
+        <span class="num h-hide">1,208</span>
+        <span class="num">13,248</span>
+        <span class="st"><span class="dot-ok"></span></span>
+      </div>
+      <div class="table-row">
+        <span class="time">22:39:12</span>
+        <span class="kind"><span class="kind-badge tool">tool</span></span>
+        <span class="who mono">Bash</span>
+        <span class="detail h-hide">npm run build · exit 1</span>
+        <span class="num dim h-hide">—</span>
+        <span class="num dim h-hide">—</span>
+        <span class="num dim">—</span>
+        <span class="st"><span class="dot-err"></span></span>
+      </div>
+      <div class="table-row">
+        <span class="time">22:37:44</span>
+        <span class="kind"><span class="kind-badge api">api</span></span>
+        <span class="who">gpt-5 <span class="prov">openai</span></span>
+        <span class="detail h-hide">turn 1 · 第 1 次请求</span>
+        <span class="num h-hide">36,170</span>
+        <span class="num h-hide">2,716</span>
+        <span class="num">38,886</span>
+        <span class="st"><span class="dot-ok"></span></span>
+      </div>
+    </div>
+    <div class="panel-foot">
+      <span>共 1,404 条 · 每页 50</span>
+      <div class="pager">
+        <button disabled>‹ 上一页</button>
+        <span class="pg">1 / 29</span>
+        <button>下一页 ›</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="label">Empty state · 空范围</div>
+  <div class="panel">
+    <div class="empty">
+      <span class="ti"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
+      <div class="et">该范围内还没有用量记录</div>
+      <div class="ed">开始一段对话后，API 调用与工具调用会实时写入本地 SQLite，这里按天聚合展示。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ IN-CHAT META ═══════════════ -->
+<section class="family-band">
+  <h3>联动 · 消息内迷你用量</h3>
+  <p class="desc">消息气泡底部已有的 token meta 保持现状（小字、不发徽章），用量页是它的「展开态」：点击迷你数字 → 跳转到用量页并按该会话过滤。此处仅作语法对照。</p>
+</section>
+<div class="thread usage">
+  <div class="label">Message meta (existing)</div>
+  <span class="mini-usage">
+    <span class="mono">in 48,210</span><span class="sep">·</span><span class="mono">out 3,924</span><span class="sep">·</span><span>查看用量 →</span>
+  </span>
+</div>
+
+<div class="foot">
+  <p><b>落地映射</b> — 数据源：<code>get_token_usage_summary(from_ms, to_ms)</code> 喂 stat 行与模型分布；<code>list_token_usage_events(filter)</code> 喂明细表；按天聚合趋势需要新增 <code>get_token_usage_daily</code> 命令（SQL <code>date(created_at/1000,'unixepoch')</code> 分组）。<strong>页面不是设置页</strong>：与 ChatView 平级的主视图（路由 <code>#/usage</code>），入口在主侧栏「自动化」下方的「用量」nav 项；点击后替换主列内容，侧栏保持。成本为前端按模型单价的<b>估算值</b>，单价表放本页底部，不入库。完整布局见 <code>design/usage-page.html</code>。</p>
+</div>
+
+<script>
+const root = document.documentElement;
+const btn = document.getElementById('themeToggle');
+function sync() { btn.textContent = root.dataset.theme === 'dark' ? '切换亮色' : '切换暗色'; }
+btn.addEventListener('click', () => {
+  root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+  sync();
+});
+sync();
+document.querySelectorAll('.scope button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.scope button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+  });
+});
+</script>
+</body>
+</html>

@@ -361,11 +361,17 @@ fn image_from_part(part: &Value) -> Option<ImageResult> {
 
 fn usage(v: &Value) -> TokenUsage {
     let usage = v.get("usageMetadata").unwrap_or(&Value::Null);
+    let cache_read = usage
+        .get("cachedContentTokenCount")
+        .and_then(Value::as_i64)
+        .filter(|n| *n > 0);
     TokenUsage {
         prompt_tokens: usage.get("promptTokenCount").and_then(Value::as_i64),
         completion_tokens: usage.get("candidatesTokenCount").and_then(Value::as_i64),
         total_tokens: usage.get("totalTokenCount").and_then(Value::as_i64),
         last_prompt_tokens: None,
+        cache_read_tokens: cache_read,
+        cache_write_tokens: None,
     }
 }
 

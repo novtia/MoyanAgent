@@ -23,8 +23,10 @@ import type {
   SessionSearchResult,
   SessionSummary,
   SessionWithMessagesAbs,
+  DailyUsageRow,
   TokenUsageEventRow,
   TokenUsageSummary,
+  ToolUsageRow,
   Session,
   Settings,
   SettingsPatch,
@@ -387,6 +389,28 @@ export const api = {
     toMs?: number | null;
   }) =>
     invoke<TokenUsageSummary>("get_token_usage_summary", {
+      args: {
+        from_ms: args?.fromMs ?? null,
+        to_ms: args?.toMs ?? null,
+      },
+    }),
+
+  getTokenUsageDaily: (args?: {
+    fromMs?: number | null;
+    toMs?: number | null;
+  }) =>
+    invoke<DailyUsageRow[]>("get_token_usage_daily", {
+      args: {
+        from_ms: args?.fromMs ?? null,
+        to_ms: args?.toMs ?? null,
+      },
+    }),
+
+  getTokenUsageByTool: (args?: {
+    fromMs?: number | null;
+    toMs?: number | null;
+  }) =>
+    invoke<ToolUsageRow[]>("get_token_usage_by_tool", {
       args: {
         from_ms: args?.fromMs ?? null,
         to_ms: args?.toMs ?? null,

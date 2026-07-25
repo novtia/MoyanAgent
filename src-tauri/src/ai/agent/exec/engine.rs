@@ -546,13 +546,24 @@ fn accumulate_usage(
     if let Some(c) = next.completion_tokens {
         *target.completion_tokens.get_or_insert(0) += c;
     }
-    // Recompute total as the running sum rather than trusting the per-turn field.
-    target.total_tokens = match (target.prompt_tokens, target.completion_tokens) {
-        (Some(p), Some(c)) => Some(p + c),
-        (Some(p), None) => Some(p),
-        (None, Some(c)) => Some(c),
-        (None, None) => None,
-    };
+    if let Some(r) = next.cache_read_tokens {
+        *target.cache_read_tokens.get_or_insert(0) += r;
+    }
+    if let Some(w) = next.cache_write_tokens {
+        *target.cache_write_tokens.get_or_insert(0) += w;
+    }
+    // Prefer summing provider totals (already consistent per-provider). Fallback
+    // to prompt+completion when a round omits total.
+    if let Some(t) = next.total_tokens {
+        *target.total_tokens.get_or_insert(0) += t;
+    } else {
+        target.total_tokens = match (target.prompt_tokens, target.completion_tokens) {
+            (Some(p), Some(c)) => Some(p + c),
+            (Some(p), None) => Some(p),
+            (None, Some(c)) => Some(c),
+            (None, None) => target.total_tokens,
+        };
+    }
 }
 
 /// Move the in-flight assistant/tool-result pair into `tool_chain`.

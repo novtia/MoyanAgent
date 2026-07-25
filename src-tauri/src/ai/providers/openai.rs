@@ -1002,6 +1002,12 @@ fn merge_usage(target: &mut TokenUsage, next: TokenUsage) {
     if next.total_tokens.is_some() {
         target.total_tokens = next.total_tokens;
     }
+    if next.cache_read_tokens.is_some() {
+        target.cache_read_tokens = next.cache_read_tokens;
+    }
+    if next.cache_write_tokens.is_some() {
+        target.cache_write_tokens = next.cache_write_tokens;
+    }
 }
 
 /// Buffered shape used while streaming tool_calls arrive piecewise.

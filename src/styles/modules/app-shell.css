@@ -197,6 +197,13 @@
   height: 100%;
   overflow: hidden;
 }
+/* Usage is a long page: allow the main column itself to scroll. */
+.stage > .usage {
+  min-height: 0;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
 .app-shell.sidebar-collapsed .stage {
   grid-template-columns: 0 1fr;
 }

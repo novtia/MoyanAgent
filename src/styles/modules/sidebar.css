@@ -59,7 +59,7 @@
   align-items: center;
   gap: 10px;
   padding: 6px 10px;
-  border: none;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--ink-2);
   font-size: 13px;
@@ -68,7 +68,7 @@
   text-align: left;
   width: 100%;
   user-select: none;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.12s, color 0.12s, border-color 0.12s, box-shadow 0.12s;
 }
 .side-nav-item:hover:not(:disabled) {
   background: var(--bg-hover);
@@ -86,6 +86,16 @@
 }
 .side-nav-item:disabled svg {
   color: var(--ink-mute);
+}
+.side-nav-item.active {
+  background: var(--bg);
+  color: var(--ink);
+  font-weight: 550;
+  box-shadow: var(--shadow-1);
+  border: 1px solid var(--line);
+}
+.side-nav-item.active svg {
+  color: var(--ink);
 }
 
 .side-section {

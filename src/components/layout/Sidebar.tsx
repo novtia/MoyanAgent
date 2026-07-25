@@ -16,6 +16,8 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onOpenChat: () => void;
   onOpenSearch: () => void;
+  onOpenUsage: () => void;
+  usageActive: boolean;
   settingsActive: boolean;
 }
 
@@ -23,6 +25,8 @@ export function Sidebar({
   onOpenSettings,
   onOpenChat,
   onOpenSearch,
+  onOpenUsage,
+  usageActive,
   settingsActive,
 }: SidebarProps) {
   const { t } = useTranslation();
@@ -59,6 +63,14 @@ export function Sidebar({
           <button type="button" className="side-nav-item" disabled>
             <ClockIcon />
             <span>{t("sidebar.automations")}</span>
+          </button>
+          <button
+            type="button"
+            className={`side-nav-item ${usageActive ? "active" : ""}`}
+            onClick={onOpenUsage}
+          >
+            <UsageIcon />
+            <span>{t("sidebar.usage")}</span>
           </button>
           {/* 无项目时显示 nav 项；有项目时移到 scroll 区的标题栏 */}
           {!hasProjects && <ProjectNavItem />}
@@ -613,6 +625,15 @@ function ClockIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="9" />
       <path d="M12 7v5l3 2" />
+    </svg>
+  );
+}
+function UsageIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="20" x2="18" y2="10" />
+      <line x1="12" y1="20" x2="12" y2="4" />
+      <line x1="6" y1="20" x2="6" y2="14" />
     </svg>
   );
 }

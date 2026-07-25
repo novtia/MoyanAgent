@@ -2796,6 +2796,24 @@ fn get_token_usage_summary(
 }
 
 #[tauri::command]
+fn get_token_usage_daily(
+    state: tauri::State<Arc<AppState>>,
+    args: TokenUsageSummaryArgs,
+) -> Result<Vec<crate::data::token_log::DailyUsageRow>, AppError> {
+    let conn = state.conn()?;
+    crate::data::token_log::query_daily(&conn, args.from_ms, args.to_ms)
+}
+
+#[tauri::command]
+fn get_token_usage_by_tool(
+    state: tauri::State<Arc<AppState>>,
+    args: TokenUsageSummaryArgs,
+) -> Result<Vec<crate::data::token_log::ToolUsageRow>, AppError> {
+    let conn = state.conn()?;
+    crate::data::token_log::query_by_tool(&conn, args.from_ms, args.to_ms)
+}
+
+#[tauri::command]
 fn list_token_usage_events(
     state: tauri::State<Arc<AppState>>,
     args: ListTokenUsageEventsArgs,
@@ -4429,6 +4447,8 @@ pub fn run() {
             delete_role_state,
             extract_session_memory,
             get_token_usage_summary,
+            get_token_usage_daily,
+            get_token_usage_by_tool,
             list_token_usage_events,
             generate_image,
             regenerate_image,

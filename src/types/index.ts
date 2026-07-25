@@ -432,6 +432,8 @@ export interface MessageAbs {
       completion_tokens?: number | null;
       total_tokens?: number | null;
       last_prompt_tokens?: number | null;
+      cache_read_tokens?: number | null;
+      cache_write_tokens?: number | null;
     };
   } | null;
   created_at: number;
@@ -461,6 +463,8 @@ export interface TokenUsageEventRow {
   prompt_tokens?: number | null;
   completion_tokens?: number | null;
   total_tokens?: number | null;
+  cache_read_tokens?: number | null;
+  cache_write_tokens?: number | null;
   output_chars?: number | null;
   output_bytes?: number | null;
   is_error: boolean;
@@ -474,6 +478,8 @@ export interface ModelUsageRow {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   event_count: number;
 }
 
@@ -481,10 +487,29 @@ export interface TokenUsageSummary {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
   api_call_count: number;
   tool_call_count: number;
   turn_summary_count: number;
   by_model: ModelUsageRow[];
+}
+
+export interface DailyUsageRow {
+  /** Local calendar date `YYYY-MM-DD`. */
+  date: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  api_call_count: number;
+}
+
+export interface ToolUsageRow {
+  tool_name: string;
+  call_count: number;
+  error_count: number;
 }
 
 export interface AttachmentDraft {

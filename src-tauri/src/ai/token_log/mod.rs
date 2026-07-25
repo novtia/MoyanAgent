@@ -73,6 +73,8 @@ impl TokenStatsRecorder {
         event.prompt_tokens = entry.usage.prompt_tokens;
         event.completion_tokens = entry.usage.completion_tokens;
         event.total_tokens = entry.usage.total_tokens;
+        event.cache_read_tokens = entry.usage.cache_read_tokens;
+        event.cache_write_tokens = entry.usage.cache_write_tokens;
         self.persist(event);
     }
 
@@ -98,6 +100,8 @@ impl TokenStatsRecorder {
         event.prompt_tokens = entry.usage.prompt_tokens;
         event.completion_tokens = entry.usage.completion_tokens;
         event.total_tokens = entry.usage.total_tokens;
+        event.cache_read_tokens = entry.usage.cache_read_tokens;
+        event.cache_write_tokens = entry.usage.cache_write_tokens;
         self.persist(event);
     }
 

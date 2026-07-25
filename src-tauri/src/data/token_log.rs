@@ -28,6 +28,10 @@ pub struct TokenUsageEvent {
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
+    #[serde(default)]
+    pub cache_read_tokens: Option<i64>,
+    #[serde(default)]
+    pub cache_write_tokens: Option<i64>,
     pub output_chars: Option<i64>,
     pub output_bytes: Option<i64>,
     pub is_error: bool,
@@ -57,6 +61,8 @@ impl TokenUsageEvent {
             prompt_tokens: None,
             completion_tokens: None,
             total_tokens: None,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
             output_chars: None,
             output_bytes: None,
             is_error: false,
@@ -72,8 +78,9 @@ pub fn insert_event(conn: &DbConn, event: &TokenUsageEvent) -> AppResult<()> {
             id, created_at, event_kind, session_id, correlation_id, message_id,
             agent_id, agent_type, model, provider, turn_index, tool_name,
             prompt_tokens, completion_tokens, total_tokens, output_chars,
-            output_bytes, is_error, metadata_json, content_json
-        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+            output_bytes, is_error, metadata_json, content_json,
+            cache_read_tokens, cache_write_tokens
+        ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
         params![
             event.id,
             event.created_at,
@@ -95,6 +102,8 @@ pub fn insert_event(conn: &DbConn, event: &TokenUsageEvent) -> AppResult<()> {
             event.is_error as i64,
             event.metadata_json,
             event.content_json,
+            event.cache_read_tokens,
+            event.cache_write_tokens,
         ],
     )?;
     Ok(())
@@ -107,6 +116,8 @@ pub struct ModelUsageRow {
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
     pub total_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
     pub event_count: i64,
 }
 
@@ -115,10 +126,31 @@ pub struct TokenUsageSummary {
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
     pub total_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
     pub api_call_count: i64,
     pub tool_call_count: i64,
     pub turn_summary_count: i64,
     pub by_model: Vec<ModelUsageRow>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DailyUsageRow {
+    /// Local calendar date `YYYY-MM-DD`.
+    pub date: String,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    pub cache_read_tokens: i64,
+    pub cache_write_tokens: i64,
+    pub api_call_count: i64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ToolUsageRow {
+    pub tool_name: String,
+    pub call_count: i64,
+    pub error_count: i64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -154,25 +186,17 @@ fn map_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<TokenUsageEvent> {
         is_error: row.get::<_, i64>(17)? != 0,
         metadata_json: row.get(18)?,
         content_json: row.get(19)?,
+        cache_read_tokens: row.get(20)?,
+        cache_write_tokens: row.get(21)?,
     })
 }
 
-pub fn query_summary(
-    conn: &DbConn,
+fn push_time_bounds(
+    sql: &mut String,
+    args: &mut Vec<Box<dyn rusqlite::ToSql>>,
     from_ms: Option<i64>,
     to_ms: Option<i64>,
-) -> AppResult<TokenUsageSummary> {
-    let mut sql = String::from(
-        "SELECT
-            COALESCE(SUM(prompt_tokens), 0),
-            COALESCE(SUM(completion_tokens), 0),
-            COALESCE(SUM(total_tokens), 0),
-            SUM(CASE WHEN event_kind = 'api_call' THEN 1 ELSE 0 END),
-            SUM(CASE WHEN event_kind = 'tool_call' THEN 1 ELSE 0 END),
-            SUM(CASE WHEN event_kind = 'turn_summary' THEN 1 ELSE 0 END)
-         FROM token_usage_events WHERE 1=1",
-    );
-    let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+) {
     if let Some(from) = from_ms {
         sql.push_str(" AND created_at >= ?");
         args.push(Box::new(from));
@@ -181,30 +205,65 @@ pub fn query_summary(
         sql.push_str(" AND created_at <= ?");
         args.push(Box::new(to));
     }
+}
+
+pub fn query_summary(
+    conn: &DbConn,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+) -> AppResult<TokenUsageSummary> {
+    // Token sums are api_call-only so turn_summary does not double-count.
+    // Kind counts still cover the full event stream in the window.
+    let mut sql = String::from(
+        "SELECT
+            COALESCE(SUM(CASE WHEN event_kind = 'api_call' THEN prompt_tokens ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN event_kind = 'api_call' THEN completion_tokens ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN event_kind = 'api_call' THEN total_tokens ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN event_kind = 'api_call' THEN cache_read_tokens ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN event_kind = 'api_call' THEN cache_write_tokens ELSE 0 END), 0),
+            SUM(CASE WHEN event_kind = 'api_call' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN event_kind = 'tool_call' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN event_kind = 'turn_summary' THEN 1 ELSE 0 END)
+         FROM token_usage_events WHERE 1=1",
+    );
+    let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    push_time_bounds(&mut sql, &mut args, from_ms, to_ms);
     let params_ref: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
-    let (prompt, completion, total, api, tool, turn): (i64, i64, i64, i64, i64, i64) = conn
-        .query_row(&sql, params_ref.as_slice(), |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
-        })?;
+    let (prompt, completion, total, cache_read, cache_write, api, tool, turn): (
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+    ) = conn.query_row(&sql, params_ref.as_slice(), |r| {
+        Ok((
+            r.get(0)?,
+            r.get(1)?,
+            r.get(2)?,
+            r.get(3)?,
+            r.get(4)?,
+            r.get(5)?,
+            r.get(6)?,
+            r.get(7)?,
+        ))
+    })?;
 
     let mut model_sql = String::from(
         "SELECT COALESCE(model, ''), provider,
                 COALESCE(SUM(prompt_tokens), 0),
                 COALESCE(SUM(completion_tokens), 0),
                 COALESCE(SUM(total_tokens), 0),
+                COALESCE(SUM(cache_read_tokens), 0),
+                COALESCE(SUM(cache_write_tokens), 0),
                 COUNT(*)
          FROM token_usage_events
-         WHERE event_kind IN ('api_call', 'turn_summary')",
+         WHERE event_kind = 'api_call'",
     );
     let mut model_args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-    if let Some(from) = from_ms {
-        model_sql.push_str(" AND created_at >= ?");
-        model_args.push(Box::new(from));
-    }
-    if let Some(to) = to_ms {
-        model_sql.push_str(" AND created_at <= ?");
-        model_args.push(Box::new(to));
-    }
+    push_time_bounds(&mut model_sql, &mut model_args, from_ms, to_ms);
     model_sql.push_str(" GROUP BY COALESCE(model, ''), provider ORDER BY SUM(total_tokens) DESC");
     let model_params: Vec<&dyn rusqlite::ToSql> = model_args.iter().map(|b| b.as_ref()).collect();
     let mut stmt = conn.prepare(&model_sql)?;
@@ -216,7 +275,9 @@ pub fn query_summary(
                 prompt_tokens: r.get(2)?,
                 completion_tokens: r.get(3)?,
                 total_tokens: r.get(4)?,
-                event_count: r.get(5)?,
+                cache_read_tokens: r.get(5)?,
+                cache_write_tokens: r.get(6)?,
+                event_count: r.get(7)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -225,11 +286,79 @@ pub fn query_summary(
         prompt_tokens: prompt,
         completion_tokens: completion,
         total_tokens: total,
+        cache_read_tokens: cache_read,
+        cache_write_tokens: cache_write,
         api_call_count: api,
         tool_call_count: tool,
         turn_summary_count: turn,
         by_model,
     })
+}
+
+pub fn query_daily(
+    conn: &DbConn,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+) -> AppResult<Vec<DailyUsageRow>> {
+    let mut sql = String::from(
+        "SELECT date(created_at / 1000, 'unixepoch', 'localtime') AS day,
+                COALESCE(SUM(prompt_tokens), 0),
+                COALESCE(SUM(completion_tokens), 0),
+                COALESCE(SUM(total_tokens), 0),
+                COALESCE(SUM(cache_read_tokens), 0),
+                COALESCE(SUM(cache_write_tokens), 0),
+                COUNT(*)
+         FROM token_usage_events
+         WHERE event_kind = 'api_call'",
+    );
+    let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    push_time_bounds(&mut sql, &mut args, from_ms, to_ms);
+    sql.push_str(" GROUP BY day ORDER BY day ASC");
+    let params_ref: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(params_ref.as_slice(), |r| {
+            Ok(DailyUsageRow {
+                date: r.get(0)?,
+                prompt_tokens: r.get(1)?,
+                completion_tokens: r.get(2)?,
+                total_tokens: r.get(3)?,
+                cache_read_tokens: r.get(4)?,
+                cache_write_tokens: r.get(5)?,
+                api_call_count: r.get(6)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn query_by_tool(
+    conn: &DbConn,
+    from_ms: Option<i64>,
+    to_ms: Option<i64>,
+) -> AppResult<Vec<ToolUsageRow>> {
+    let mut sql = String::from(
+        "SELECT COALESCE(tool_name, ''),
+                COUNT(*),
+                SUM(CASE WHEN is_error != 0 THEN 1 ELSE 0 END)
+         FROM token_usage_events
+         WHERE event_kind = 'tool_call'",
+    );
+    let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    push_time_bounds(&mut sql, &mut args, from_ms, to_ms);
+    sql.push_str(" GROUP BY COALESCE(tool_name, '') ORDER BY COUNT(*) DESC");
+    let params_ref: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(params_ref.as_slice(), |r| {
+            Ok(ToolUsageRow {
+                tool_name: r.get(0)?,
+                call_count: r.get(1)?,
+                error_count: r.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 /// Messages from the rolled-back branch — used to trim the per-session JSONL file.
@@ -300,7 +429,8 @@ pub fn list_events(conn: &DbConn, filter: &TokenUsageListFilter) -> AppResult<Ve
         "SELECT id, created_at, event_kind, session_id, correlation_id, message_id,
                 agent_id, agent_type, model, provider, turn_index, tool_name,
                 prompt_tokens, completion_tokens, total_tokens, output_chars,
-                output_bytes, is_error, metadata_json, content_json
+                output_bytes, is_error, metadata_json, content_json,
+                cache_read_tokens, cache_write_tokens
          FROM token_usage_events WHERE 1=1",
     );
     let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();

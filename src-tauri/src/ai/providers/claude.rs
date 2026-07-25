@@ -349,14 +349,32 @@ fn usage(v: &Value) -> TokenUsage {
     let usage = v.get("usage").unwrap_or(&Value::Null);
     let prompt = usage.get("input_tokens").and_then(Value::as_i64);
     let completion = usage.get("output_tokens").and_then(Value::as_i64);
+    let cache_read = usage
+        .get("cache_read_input_tokens")
+        .and_then(Value::as_i64)
+        .filter(|n| *n > 0);
+    let cache_write = usage
+        .get("cache_creation_input_tokens")
+        .and_then(Value::as_i64)
+        .filter(|n| *n > 0);
+    // Anthropic reports cache tokens separately from `input_tokens`.
+    let total = match (prompt, completion, cache_read, cache_write) {
+        (p, c, r, w) => {
+            let sum = p.unwrap_or(0) + c.unwrap_or(0) + r.unwrap_or(0) + w.unwrap_or(0);
+            if p.is_some() || c.is_some() || r.is_some() || w.is_some() {
+                Some(sum)
+            } else {
+                None
+            }
+        }
+    };
     TokenUsage {
         prompt_tokens: prompt,
         completion_tokens: completion,
-        total_tokens: match (prompt, completion) {
-            (Some(a), Some(b)) => Some(a + b),
-            _ => None,
-        },
+        total_tokens: total,
         last_prompt_tokens: None,
+        cache_read_tokens: cache_read,
+        cache_write_tokens: cache_write,
     }
 }
 
