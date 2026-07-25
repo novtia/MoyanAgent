@@ -1,7 +1,7 @@
 import {
-  mediaMentionDisplayLabel,
+  mentionDisplayLabel,
   mediaMentionKind,
-  mentionBasename,
+  type MentionRange,
 } from "./core";
 import { MentionIcon } from "./MentionIcon";
 
@@ -13,12 +13,14 @@ import { MentionIcon } from "./MentionIcon";
 export function MentionChip({
   path,
   previewSrc,
+  range,
 }: {
   path: string;
   previewSrc?: string;
+  range?: MentionRange;
 }) {
   const mediaKind = mediaMentionKind(path);
-  const displayLabel = mediaMentionDisplayLabel(path);
+  const displayLabel = mentionDisplayLabel(path, range);
   return (
     <span
       className={`composer-mention composer-mention--static${
@@ -39,9 +41,7 @@ export function MentionChip({
         <>
           <span className="composer-mention-at">@</span>
           <MentionIcon path={path} />
-          <span className="composer-mention-label">
-            {mediaKind ? displayLabel : mentionBasename(path)}
-          </span>
+          <span className="composer-mention-label">{displayLabel}</span>
         </>
       )}
     </span>

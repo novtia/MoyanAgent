@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { getLanguage, setLanguage } from "../../../i18n";
 import { useAppearance } from "../../../store/appearance";
 import { useChatFont } from "../../../store/chatFont";
-import { DisplayIcon, MoonIcon, SunIcon } from "../icons";
+import { DisplayIcon, InkIcon, MoonIcon, PorcelainIcon, ScrollIcon, SunIcon } from "../icons";
 import type { ThemeMode } from "../types";
 import { AccentColorCard } from "./AccentColorCard";
 import { LanguageDropdown } from "./LanguageDropdown";
@@ -62,6 +62,27 @@ export function AppearanceSection({
               icon={<DisplayIcon />}
               label={t("settings.appearance.system")}
               onSelect={() => onThemeModeChange("system")}
+            />
+            <ThemeTile
+              mode="paper"
+              active={themeMode === "paper"}
+              icon={<ScrollIcon />}
+              label={t("settings.appearance.paper")}
+              onSelect={() => onThemeModeChange("paper")}
+            />
+            <ThemeTile
+              mode="mist"
+              active={themeMode === "mist"}
+              icon={<PorcelainIcon />}
+              label={t("settings.appearance.mist")}
+              onSelect={() => onThemeModeChange("mist")}
+            />
+            <ThemeTile
+              mode="ink"
+              active={themeMode === "ink"}
+              icon={<InkIcon />}
+              label={t("settings.appearance.ink")}
+              onSelect={() => onThemeModeChange("ink")}
             />
           </div>
         </div>

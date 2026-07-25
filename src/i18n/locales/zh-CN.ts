@@ -571,10 +571,6 @@ const zhCN = {
     videoRetry: "视频加载失败，点击重试",
     systemFullscreen: "系统全屏",
   },
-  dropzone: {
-    title: "松手即可添加参考媒体",
-    hint: "支持图片；Seedance 多模态模式额外支持 WAV / MP3",
-  },
   sessions: {
     deleteConfirm: "删除会话「{{title}}」？该会话下的媒体文件也会一并删除。",
     renameTitle: "重命名",
@@ -636,6 +632,9 @@ const zhCN = {
       light: "浅色",
       dark: "深色",
       system: "系统",
+      paper: "宣纸",
+      mist: "青瓷",
+      ink: "墨夜",
       accentTitle: "强调色",
       accentDesc: "用于按钮、选中态与交互高亮",
       accent: {

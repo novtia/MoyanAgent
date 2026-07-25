@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession, modelCapabilities } from "../../store/session";
@@ -29,11 +30,13 @@ import type { AttachmentDraft, ModelServiceModel } from "../../types";
 import {
   ComposerEditor,
   MentionIcon,
+  computeCaretMentionStyle,
   mediaMentionDisplayLabel,
   mediaMentionKindFromMime,
   mediaMentionLabel,
   normalizeMentionPath,
   isWithinProject,
+  scrollableAncestors,
   type ComposerEditorHandle,
   type MentionTriggerAnchor,
 } from "./mention";
@@ -75,17 +78,6 @@ const THINKING_EFFORTS = [
   { value: "high", labelKey: "composer.thinkingHigh" },
   { value: "max", labelKey: "composer.thinkingMax" },
 ] as const;
-
-function scrollableAncestors(el: HTMLElement | null): HTMLElement[] {
-  const out: HTMLElement[] = [];
-  let node = el?.parentElement ?? null;
-  while (node) {
-    const oy = getComputedStyle(node).overflowY;
-    if (/(auto|scroll|overlay)/.test(oy)) out.push(node);
-    node = node.parentElement;
-  }
-  return out;
-}
 
 interface ComposerProps {
   onEditAttachment: (a: AttachmentDraft) => void;
@@ -166,6 +158,9 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionAnchor, setMentionAnchor] =
     useState<MentionTriggerAnchor | null>(null);
+  const [mentionCaretStyle, setMentionCaretStyle] = useState<
+    CSSProperties | undefined
+  >(undefined);
   const [thinkingOpen, setThinkingOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
@@ -180,6 +175,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const closeMentionPanel = useCallback(() => {
     setMentionOpen(false);
     setMentionAnchor(null);
+    setMentionCaretStyle(undefined);
   }, []);
 
   const onEditorMentionTrigger = useCallback(
@@ -464,6 +460,30 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     window.addEventListener("mousedown", onDoc);
     return () => window.removeEventListener("mousedown", onDoc);
   }, [mentionOpen, closeMentionPanel]);
+
+  useLayoutEffect(() => {
+    if (!mentionOpen || !mentionAnchor) {
+      setMentionCaretStyle(undefined);
+      return;
+    }
+    const update = () => {
+      setMentionCaretStyle(
+        computeCaretMentionStyle(mentionAnchor, mentionRef.current),
+      );
+    };
+    update();
+    const scrollNodes = scrollableAncestors(mentionRef.current);
+    for (const n of scrollNodes) {
+      n.addEventListener("scroll", update, { passive: true });
+    }
+    window.addEventListener("resize", update);
+    return () => {
+      for (const n of scrollNodes) {
+        n.removeEventListener("scroll", update);
+      }
+      window.removeEventListener("resize", update);
+    };
+  }, [mentionOpen, mentionAnchor]);
 
   useEffect(() => {
     if (!modelOpen) return;
@@ -984,31 +1004,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                   }`}
                   role="dialog"
                   aria-label={t("composer.mentionPickerTitle")}
-                  style={
-                    mentionAnchor
-                      ? {
-                          left: Math.max(
-                            12,
-                            Math.min(
-                              mentionAnchor.left,
-                              window.innerWidth - 332,
-                            ),
-                          ) -
-                            (mentionRef.current?.getBoundingClientRect().left ??
-                              0),
-                          top:
-                            mentionAnchor.bottom +
-                            8 -
-                            (mentionRef.current?.getBoundingClientRect().top ??
-                              0),
-                          bottom: "auto",
-                          maxHeight: Math.max(
-                            72,
-                            window.innerHeight - mentionAnchor.bottom - 12,
-                          ),
-                        }
-                      : undefined
-                  }
+                  style={mentionAnchor ? mentionCaretStyle : undefined}
                 >
                   <div className="composer-mention-popover-title">
                     {t("composer.mentionPickerTitle")}

@@ -23,6 +23,10 @@ export {
   mediaMentionDisplayLabel,
   mediaMentionKindFromMime,
   serializeMentionPath,
+  serializeMentionRangeSuffix,
+  formatMentionParagraphRange,
+  mentionDisplayLabel,
+  normalizeMentionRange,
   parseMentionAt,
   parseMentionSegments,
   parseMentionPaths,
@@ -36,6 +40,8 @@ export {
   type MentionMediaRenderData,
   type MediaMentionKind,
   type MentionSegment,
+  type MentionRange,
+  type ParsedMention,
 } from "./core";
 export { MentionIcon } from "./MentionIcon";
 export { MentionChip } from "./MentionChip";
@@ -51,3 +57,4 @@ export {
   type ComposerEditorHandle,
   type ComposerEditorProps,
 } from "./ComposerEditor";
+export { computeCaretMentionStyle, scrollableAncestors } from "./placement";

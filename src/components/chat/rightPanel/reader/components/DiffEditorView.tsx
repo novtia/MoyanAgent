@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   buildLineParagraphLabels,
   type ReaderFileTab,
@@ -7,7 +14,6 @@ import {
   buildEditorDisplaySegments,
   buildPendingDiffLineRanges,
   isDiffTextEqual,
-  normalizeDiffText,
   replaceTabLineRange,
   sliceTabLines,
   type EditorDisplaySegment,
@@ -29,6 +35,8 @@ export function DiffEditorView({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const hunkRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const scrollTopRef = useRef(0);
+  const lastScrolledHunkRef = useRef<number | null>(null);
   const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
   const hideBarTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -111,6 +119,31 @@ export function DiffEditorView({
   );
 
   useEffect(() => {
+    lastScrolledHunkRef.current = null;
+    scrollTopRef.current = 0;
+  }, [tab.path]);
+
+  // Track scroll so confirming a hunk (DOM rebuild) does not jump to top.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      scrollTopRef.current = el.scrollTop;
+    };
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (Math.abs(el.scrollTop - scrollTopRef.current) > 1) {
+      el.scrollTop = scrollTopRef.current;
+    }
+  }, [displaySegments, tab.pendingDiffs.length]);
+
+  useEffect(() => {
     if (activeHunkIndex == null || activeHunkIndex < 0) return;
     const range = lineRanges[activeHunkIndex];
     if (!range) return;
@@ -119,7 +152,15 @@ export function DiffEditorView({
       hideBarTimerRef.current = null;
     }
     setHoveredBlockId(range.blockId);
-    hunkRefs.current.get(range.blockId)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    // Only scroll on intentional hunk navigation — not when lineRanges
+    // rebuilds after accept/reject (that was jumping the viewport to top).
+    const indexChanged = lastScrolledHunkRef.current !== activeHunkIndex;
+    lastScrolledHunkRef.current = activeHunkIndex;
+    if (!indexChanged) return;
+    hunkRefs.current.get(range.blockId)?.scrollIntoView({
+      block: "nearest",
+      behavior: "smooth",
+    });
   }, [activeHunkIndex, lineRanges]);
 
   const renderContextBlock = (seg: Extract<EditorDisplaySegment, { kind: "context" }>) => {
@@ -131,6 +172,8 @@ export function DiffEditorView({
       <ReaderCodeMirror
         key={`ctx-${seg.tabStart}-${seg.tabEnd}`}
         layout="segment"
+        filePath={tab.path}
+        paragraphBase={seg.tabStart}
         lineLabels={segmentLabels}
         value={sliceTabLines(tab.text, seg.tabStart, seg.tabEnd)}
         onChange={(value) => onSegmentChange(seg.tabStart, seg.tabEnd, value)}
@@ -149,17 +192,15 @@ export function DiffEditorView({
     }
 
     const deleteLines = seg.before.trim() ? seg.before.split("\n") : [];
-    const insertLines = seg.after ? seg.after.split("\n") : [];
+    const showInsert = !!seg.after;
     // Line number comes from placement in the live document (correct even when
     // old_string/new_string are mid-line snippets).
     const lineLabel = paraLabels[seg.tabStart] ?? null;
-    const insertLabels = insertLines.map(() => lineLabel);
+    // Always edit the live line range — not the historical `after` snapshot.
+    // Gating on after===live made the green block flip to readOnly as soon as
+    // the user typed (text diverged from the original Edit payload).
     const liveInsert = sliceTabLines(tab.text, seg.tabStart, seg.tabEnd);
-    // Only bind editing to the live line when this hunk's after still matches
-    // (or is) that line — otherwise a substring Edit would clobber the line.
-    const afterIsLive =
-      normalizeDiffText(seg.after) === normalizeDiffText(liveInsert) ||
-      (!!seg.after.trim() && liveInsert.includes(seg.after));
+    const insertLabels = liveInsert.split("\n").map(() => lineLabel);
     const range = lineRanges.find((r) => r.blockId === seg.blockId);
     const hunkIndex = range ? lineRanges.findIndex((r) => r.blockId === seg.blockId) : -1;
     const showBar = hoveredBlockId === seg.blockId && range != null && hunkIndex >= 0;
@@ -187,21 +228,18 @@ export function DiffEditorView({
             ariaLabel="removed line"
           />
         ))}
-        {insertLines.length > 0 && (
+        {showInsert && (
           <ReaderCodeMirror
             key={`ins-${seg.blockId}`}
             layout="segment"
+            filePath={tab.path}
+            paragraphBase={seg.tabStart}
             diffVariant="insert"
             diffSign="+"
             diffSignFirstLineOnly
             lineLabels={insertLabels}
-            value={afterIsLive ? liveInsert : seg.after}
-            readOnly={!afterIsLive}
-            onChange={
-              afterIsLive
-                ? (value) => onSegmentChange(seg.tabStart, seg.tabEnd, value)
-                : undefined
-            }
+            value={liveInsert}
+            onChange={(value) => onSegmentChange(seg.tabStart, seg.tabEnd, value)}
             ariaLabel={tab.path}
           />
         )}

@@ -31,6 +31,7 @@ export function MentionText({
       <MentionChip
         key={`m${i}`}
         path={seg.path}
+        range={seg.range}
         previewSrc={mediaByPath[seg.path]?.previewSrc}
       />
     ),

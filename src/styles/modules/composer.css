@@ -295,6 +295,19 @@
   line-height: 1.55;
   padding: 4px var(--composer-textarea-padding-x);
   outline: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.composer-textarea::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.composer-textarea::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
+}
+.composer-textarea::-webkit-scrollbar-track {
+  background: transparent;
 }
 /* Override forms.css `textarea:disabled` (higher specificity than `.composer-textarea` alone). */
 .composer-textarea:disabled {
@@ -324,6 +337,19 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   cursor: text;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.composer-editor::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.composer-editor::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
+}
+.composer-editor::-webkit-scrollbar-track {
+  background: transparent;
 }
 .composer-editor:focus {
   outline: none;
@@ -514,6 +540,22 @@
   max-height: 340px;
   overflow-y: auto;
   padding: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.composer-mention-popover-body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.composer-mention-popover-body::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
+}
+
+.composer-mention-popover-body::-webkit-scrollbar-track {
+  background: transparent;
 }
 .composer-mention-section + .composer-mention-section {
   margin-top: 4px;
@@ -1031,6 +1073,22 @@
   overflow-x: hidden;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.model-popover-body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.model-popover-body::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
+}
+
+.model-popover-body::-webkit-scrollbar-track {
+  background: transparent;
 }
 .model-popover-group {
   padding-bottom: 6px;

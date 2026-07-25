@@ -110,3 +110,32 @@ export function CaretIcon() {
     </svg>
   );
 }
+
+export function ScrollIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7 3h12a1 1 0 0 1 1 1v14a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Z" />
+      <path d="M7 3a3 3 0 0 1 3 3v12a3 3 0 0 1-3 3" />
+      <path d="M12 8h4M12 12h4" />
+    </svg>
+  );
+}
+
+export function PorcelainIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 3h8v4a4 4 0 0 1-8 0V3Z" />
+      <path d="M6 11h12l-1.5 8a2 2 0 0 1-2 1.5h-5a2 2 0 0 1-2-1.5L6 11Z" />
+      <path d="M12 7v4" />
+    </svg>
+  );
+}
+
+export function InkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3s5 5.5 5 9.5a5 5 0 0 1-10 0C7 8.5 12 3 12 3Z" />
+      <path d="M9.5 13.5a2.5 2.5 0 0 0 2.5 2.5" />
+    </svg>
+  );
+}

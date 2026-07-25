@@ -99,6 +99,7 @@ export function PlainReader({
         value={tab.text}
         onChange={applyText}
         ariaLabel={tab.path}
+        filePath={tab.path}
         findRanges={showFindHighlight ? findRanges : []}
         findActiveIndex={showFindHighlight ? findActiveIndex : -1}
         scrollToIndex={scrollToIndex}

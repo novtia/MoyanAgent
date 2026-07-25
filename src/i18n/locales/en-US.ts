@@ -580,10 +580,6 @@ const enUS: Resource = {
     videoRetry: "Video failed to load. Click to retry.",
     systemFullscreen: "System fullscreen",
   },
-  dropzone: {
-    title: "Release to add reference media",
-    hint: "Images supported; Seedance reference mode also accepts WAV / MP3",
-  },
   sessions: {
     deleteConfirm:
       "Delete chat \"{{title}}\"? Media files in this chat will be removed too.",
@@ -650,6 +646,9 @@ const enUS: Resource = {
       light: "Light",
       dark: "Dark",
       system: "System",
+      paper: "Xuan Paper",
+      mist: "Celadon Mist",
+      ink: "Ink Night",
       accentTitle: "Accent color",
       accentDesc: "Used for buttons, selection, and interactive highlights",
       accent: {

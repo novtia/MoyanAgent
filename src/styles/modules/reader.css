@@ -323,6 +323,25 @@
   outline: none;
 }
 
+.reader-codemirror .cm-scroller {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.reader-codemirror .cm-scroller::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.reader-codemirror .cm-scroller::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
+}
+
+.reader-codemirror .cm-scroller::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .reader-codemirror--segment {
   width: 100%;
   min-width: 0;
@@ -623,6 +642,22 @@
   /* Match plain editor `.cm-scroller` padding: vertical only, no horizontal inset */
   padding: 16px 0;
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.reader-editor-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.reader-editor-scroll::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
+}
+
+.reader-editor-scroll::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .reader-editor-segment {

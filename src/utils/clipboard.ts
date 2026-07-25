@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
+import {
+  clearRememberedReaderSelection,
+  consumeReaderSelectionCopyFlag,
+} from "./readerSelection";
 
 const IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
 
@@ -30,10 +34,28 @@ export async function copyImageFromBlob(blob: Blob): Promise<void> {
 /**
  * Re-own selection copies (Ctrl+C) with the host window HWND so they appear
  * in Windows Clipboard History. WebView2's built-in copy is otherwise ignored.
+ *
+ * If a more specific handler already called `preventDefault` (e.g. reader
+ * multi-line copy with custom MIME), only rewrite plain text for Win+V —
+ * do not clear the in-app reader-selection memory used by composer paste.
  */
 export function installClipboardHistoryFix(): void {
   if (typeof document === "undefined") return;
   document.addEventListener("copy", (e) => {
+    // After target handlers: keep reader→@ memory only for multi-line reader copies.
+    if (!consumeReaderSelectionCopyFlag()) clearRememberedReaderSelection();
+
+    if (e.defaultPrevented) {
+      const text =
+        e.clipboardData?.getData("text/plain") ||
+        window.getSelection()?.toString() ||
+        "";
+      if (!text) return;
+      void invoke("clipboard_write_text", { text }).catch((err) => {
+        console.warn("[clipboard] history fix failed", err);
+      });
+      return;
+    }
     const text = window.getSelection()?.toString();
     if (!text) return;
     e.preventDefault();

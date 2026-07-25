@@ -153,7 +153,7 @@ async fn generate_chat_stream(
     }
 
     let mut body = build_chat_body(&request, allow_image_parts);
-    set_streaming(&mut body);
+    set_streaming(&mut body, true);
     let provider_label = provider_label(&request);
     let openrouter_compat = is_openrouter_endpoint(&request.provider.endpoint);
 
@@ -182,7 +182,9 @@ async fn generate_responses_stream(
     on_text_delta: TextDeltaCallback,
 ) -> AppResult<GenerateResponse> {
     let mut body = build_responses_body(&request);
-    set_streaming(&mut body);
+    // Responses API reports usage on `response.completed`; do not send
+    // chat-completions-only `stream_options`.
+    set_streaming(&mut body, false);
     let provider_label = provider_label(&request);
 
     let client = crate::ai::providers::build_chat_client()?;
@@ -699,9 +701,19 @@ async fn consume_responses_stream(
     finalize_stream_response(text, thinking, images, usage, Vec::new())
 }
 
-fn set_streaming(body: &mut Value) {
+fn set_streaming(body: &mut Value, include_usage: bool) {
     if let Some(map) = body.as_object_mut() {
         map.insert("stream".into(), Value::Bool(true));
+        // Chat Completions (incl. Volcengine Ark / Doubao): streaming omits
+        // token usage unless explicitly requested. The final SSE chunk then
+        // carries `usage` with an empty `choices` array.
+        // Docs: https://console.volcengine.com/ark/region:cn-beijing/docs/82379/1569618
+        if include_usage {
+            map.insert(
+                "stream_options".into(),
+                json!({ "include_usage": true }),
+            );
+        }
     }
 }
 
@@ -770,6 +782,7 @@ fn without_streaming(body: &Value) -> Value {
     let mut body = body.clone();
     if let Some(map) = body.as_object_mut() {
         map.remove("stream");
+        map.remove("stream_options");
     }
     body
 }
@@ -2429,5 +2442,64 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0]["content"], Value::Null);
         assert_eq!(messages[0]["reasoning_content"], "只思考");
+    }
+
+    #[test]
+    fn set_streaming_requests_include_usage_for_chat() {
+        let mut body = json!({ "model": "doubao", "messages": [] });
+        set_streaming(&mut body, true);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn set_streaming_skips_stream_options_for_responses() {
+        let mut body = json!({ "model": "gpt", "input": [] });
+        set_streaming(&mut body, false);
+        assert_eq!(body["stream"], true);
+        assert!(body.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn without_streaming_strips_stream_options() {
+        let body = json!({
+            "stream": true,
+            "stream_options": { "include_usage": true },
+            "model": "x",
+        });
+        let cleaned = without_streaming(&body);
+        assert!(cleaned.get("stream").is_none());
+        assert!(cleaned.get("stream_options").is_none());
+        assert_eq!(cleaned["model"], "x");
+    }
+
+    #[test]
+    fn merge_usage_from_final_empty_choices_chunk() {
+        let mut usage = TokenUsage::default();
+        // Intermediate chunk with usage: null — no overwrite.
+        merge_usage(
+            &mut usage,
+            tokens::extract_usage(&json!({
+                "choices": [{ "delta": { "content": "hi" } }],
+                "usage": null,
+            })),
+        );
+        assert!(usage.prompt_tokens.is_none());
+
+        // Final Ark/OpenAI usage chunk: empty choices + usage object.
+        merge_usage(
+            &mut usage,
+            tokens::extract_usage(&json!({
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 12,
+                    "completion_tokens": 34,
+                    "total_tokens": 46
+                }
+            })),
+        );
+        assert_eq!(usage.prompt_tokens, Some(12));
+        assert_eq!(usage.completion_tokens, Some(34));
+        assert_eq!(usage.total_tokens, Some(46));
     }
 }

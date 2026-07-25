@@ -11,6 +11,12 @@ import {
 import { useEffect, useMemo, useRef } from "react";
 import { formatParagraphNumber } from "../../../../store/reader";
 import type { TextRange } from "../../../../utils/readerFind";
+import {
+  encodeReaderSelectionHtml,
+  READER_SELECTION_MIME,
+  rememberReaderSelection,
+  type ReaderSelectionPayload,
+} from "../../../../utils/readerSelection";
 import { diffSignGutterExtension } from "./readerCodeMirror/diffSignGutter";
 import { applyFindHighlights, findHighlightField } from "./readerCodeMirror/findHighlights";
 import { readerIndentKeymap } from "./readerCodeMirror/indentKeymap";
@@ -26,6 +32,13 @@ export interface ReaderCodeMirrorProps {
   onChange?: (value: string) => void;
   ariaLabel: string;
   readOnly?: boolean;
+  /** Absolute file path — enables multi-line copy → @file#P… paste into composer. */
+  filePath?: string;
+  /**
+   * Added to 1-based document line numbers when computing paragraph range
+   * (for segment editors that represent a slice of the full file).
+   */
+  paragraphBase?: number;
   /** Per-document-line paragraph numbers; null hides the label. */
   lineLabels?: (number | null)[];
   layout?: ReaderCodeMirrorLayout;
@@ -39,11 +52,34 @@ export interface ReaderCodeMirrorProps {
   scrollTrigger?: number;
 }
 
+function selectionLineRange(
+  view: EditorView,
+): { fromLine: number; toLine: number; text: string } | null {
+  const sel = view.state.selection.main;
+  if (sel.empty) return null;
+  const fromLine = view.state.doc.lineAt(sel.from).number;
+  let toLine = view.state.doc.lineAt(sel.to).number;
+  // Selection ending exactly at the start of a line does not include that line.
+  if (sel.to > sel.from) {
+    const lineAtTo = view.state.doc.lineAt(sel.to);
+    if (sel.to === lineAtTo.from && toLine > fromLine) {
+      toLine -= 1;
+    }
+  }
+  return {
+    fromLine,
+    toLine: Math.max(fromLine, toLine),
+    text: view.state.sliceDoc(sel.from, sel.to),
+  };
+}
+
 export function ReaderCodeMirror({
   value,
   onChange,
   ariaLabel,
   readOnly = false,
+  filePath,
+  paragraphBase = 0,
   lineLabels,
   layout = "document",
   diffVariant = "none",
@@ -57,9 +93,13 @@ export function ReaderCodeMirror({
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
+  const filePathRef = useRef(filePath);
+  const paragraphBaseRef = useRef(paragraphBase);
   const syncingRef = useRef(false);
   const scrollToIndexRef = useRef(scrollToIndex);
   scrollToIndexRef.current = scrollToIndex;
+  filePathRef.current = filePath;
+  paragraphBaseRef.current = paragraphBase;
 
   onChangeRef.current = onChange;
 
@@ -88,6 +128,32 @@ export function ReaderCodeMirror({
       onChangeRef.current(update.state.doc.toString());
     });
 
+    const copyHandler = EditorView.domEventHandlers({
+      copy(event, view) {
+        const path = filePathRef.current?.trim();
+        if (!path) return false;
+        const picked = selectionLineRange(view);
+        if (!picked || picked.toLine <= picked.fromLine) return false;
+        const base = Math.max(0, paragraphBaseRef.current);
+        const payload: ReaderSelectionPayload = {
+          path,
+          paragraphFrom: picked.fromLine + base,
+          paragraphTo: picked.toLine + base,
+          text: picked.text,
+        };
+        // Clipboard shows original text; composer turns this into an @ chip on paste.
+        rememberReaderSelection(payload);
+        event.clipboardData?.setData(READER_SELECTION_MIME, JSON.stringify(payload));
+        event.clipboardData?.setData(
+          "text/html",
+          encodeReaderSelectionHtml(payload),
+        );
+        event.clipboardData?.setData("text/plain", picked.text);
+        event.preventDefault();
+        return true;
+      },
+    });
+
     const state = EditorState.create({
       doc: value,
       extensions: [
@@ -100,6 +166,7 @@ export function ReaderCodeMirror({
         ...(layout === "document" ? [findHighlightField] : []),
         createReaderCodeMirrorTheme(layout),
         updateListener,
+        copyHandler,
         ...(editable
           ? [keymap.of([...readerIndentKeymap, ...defaultKeymap, ...historyKeymap])]
           : []),

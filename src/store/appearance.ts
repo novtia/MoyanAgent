@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { isDarkLike, type ResolvedTheme } from "../theme";
 
 export const APPEARANCE_STORAGE_KEY = "atelier.appearance";
 
@@ -140,9 +141,10 @@ function deriveAccentPalette(hex: string): Record<(typeof ACCENT_VARS)[number], 
   const white = { r: 255, g: 255, b: 255 };
   const black = { r: 0, g: 0, b: 0 };
   const darkBg = { r: 16, g: 17, b: 18 };
-  const isDark = document.documentElement.dataset.theme === "dark";
+  const theme = (document.documentElement.dataset.theme || "light") as ResolvedTheme;
+  const darkLike = isDarkLike(theme);
 
-  if (isDark) {
+  if (darkLike) {
     const soft = mix(rgb, white, 0.28);
     const blue50 = mix(rgb, darkBg, 0.78);
     const blue100 = mix(rgb, darkBg, 0.62);

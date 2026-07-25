@@ -494,7 +494,7 @@
 /* Theme preview tiles */
 .theme-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 12px;
 }
 .theme-tile {
@@ -561,6 +561,30 @@
   --tp-pill: #f3f5f7;
   --tp-dot: #33383f;
   border-color: rgba(255, 255, 255, 0.09);
+}
+.theme-preview--paper {
+  --tp-bg: #f4efe4;
+  --tp-bar: #ede6d6;
+  --tp-line: #ddd3bd;
+  --tp-pill: #9e2b25;
+  --tp-dot: #c6b996;
+  border-color: rgba(94, 78, 55, 0.14);
+}
+.theme-preview--mist {
+  --tp-bg: #f0f4f3;
+  --tp-bar: #e6edeb;
+  --tp-line: #d3ddda;
+  --tp-pill: #2f6b6e;
+  --tp-dot: #b5c4c0;
+  border-color: rgba(45, 75, 72, 0.12);
+}
+.theme-preview--ink {
+  --tp-bg: #16130e;
+  --tp-bar: #1e1a14;
+  --tp-line: #2e2920;
+  --tp-pill: #c9a227;
+  --tp-dot: #453e30;
+  border-color: rgba(255, 255, 255, 0.1);
 }
 .tp-bar {
   display: flex;

@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Sidebar } from "./components/layout/Sidebar";
 import { ChatView } from "./components/chat/ChatView";
-import { Dropzone } from "./components/media/Dropzone";
 import { ImageEditor } from "./components/editor/ImageEditor";
 import { ImagePreview } from "./components/media/ImagePreview";
 import { VideoPreview } from "./components/media/VideoPreview";
@@ -238,7 +237,6 @@ export default function App() {
           )}
         </div>
       </div>
-      <Dropzone />
       <SearchDialog
         open={searchOpen}
         onClose={() => setSearchOpen(false)}

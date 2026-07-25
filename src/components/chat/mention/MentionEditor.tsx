@@ -6,6 +6,13 @@ import {
   useRef,
 } from "react";
 import {
+  isMultiLineReaderSelection,
+  matchRememberedReaderSelection,
+  parseReaderSelectionHtml,
+  READER_SELECTION_MIME,
+  type ReaderSelectionPayload,
+} from "../../../utils/readerSelection";
+import {
   buildMentionNodes,
   collectMentions,
   createMentionNode,
@@ -15,14 +22,21 @@ import {
   mediaMentionLabel,
   moveCaretToEnd,
   normalizeMentionPath,
+  normalizeMentionRange,
+  parseMentionAt,
   serializeMentions,
   type MediaMentionKind,
   type MentionMediaRenderData,
+  type MentionRange,
 } from "./core";
 
 export interface MentionEditorHandle {
   focus: () => void;
-  insertMention: (absPath: string, isDir?: boolean) => void;
+  insertMention: (
+    absPath: string,
+    isDir?: boolean,
+    range?: MentionRange,
+  ) => void;
   insertMediaMention: (kind: MediaMentionKind) => string | null;
   replaceMentionTrigger: (
     absPath: string,
@@ -171,6 +185,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         rawPath: string,
         isDir?: boolean,
         media?: MentionMediaRenderData,
+        mentionRange?: MentionRange | null,
       ): string | null => {
         const root = rootRef.current;
         if (!root) return null;
@@ -202,7 +217,12 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         }
         range.deleteContents();
         const space = document.createTextNode(" ");
-        const mention = createMentionNode(cleanPath, isDir, media);
+        const mention = createMentionNode(
+          cleanPath,
+          isDir,
+          media,
+          mentionRange,
+        );
         range.insertNode(space);
         range.insertNode(mention);
         range.setStartAfter(space);
@@ -214,6 +234,21 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         return cleanPath;
       },
       [syncFromDom],
+    );
+
+    const tryInsertReaderSelection = useCallback(
+      (payload: ReaderSelectionPayload): boolean => {
+        if (!isMultiLineReaderSelection(payload)) return false;
+        const range = normalizeMentionRange({
+          from: payload.paragraphFrom,
+          to: payload.paragraphTo,
+        });
+        if (!range) return false;
+        const path = normalizeMentionPath(payload.path);
+        insertMentionAtSelection(path, false, mediaByPath[path], range);
+        return true;
+      },
+      [insertMentionAtSelection, mediaByPath],
     );
 
     const compactMediaMentionIndexes = useCallback(
@@ -282,7 +317,11 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
           moveCaretToEnd(root);
           rememberSelection();
         },
-        insertMention: (absPath: string, isDir?: boolean) => {
+        insertMention: (
+          absPath: string,
+          isDir?: boolean,
+          range?: MentionRange,
+        ) => {
           const root = rootRef.current;
           if (!root) return;
           const cleanPath = normalizeMentionPath(absPath);
@@ -290,6 +329,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
             cleanPath,
             isDir,
             mediaByPath[cleanPath],
+            range,
           );
         },
         insertMediaMention: (kind: MediaMentionKind) => {
@@ -459,8 +499,46 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
         }}
         onPaste={(e) => {
           e.preventDefault();
+          const mimeRaw = e.clipboardData.getData(READER_SELECTION_MIME);
+          if (mimeRaw) {
+            try {
+              const payload = JSON.parse(mimeRaw) as ReaderSelectionPayload;
+              if (tryInsertReaderSelection(payload)) return;
+            } catch {
+              // fall through
+            }
+          }
+          const fromHtml = parseReaderSelectionHtml(
+            e.clipboardData.getData("text/html") || "",
+          );
+          if (fromHtml && tryInsertReaderSelection(fromHtml)) return;
+
           const text = e.clipboardData.getData("text/plain");
-          if (text) document.execCommand("insertText", false, text);
+          if (!text) return;
+          // Host clipboard may have stripped custom MIME; match last reader copy text.
+          const remembered = matchRememberedReaderSelection(text);
+          if (remembered && tryInsertReaderSelection(remembered)) return;
+
+          // Chip copied from composer may paste as @"path"#P003-P007.
+          const trimmed = text.trim();
+          if (trimmed.startsWith("@") && !trimmed.includes("\n")) {
+            const parsed = parseMentionAt(trimmed, 0);
+            if (
+              parsed &&
+              parsed.length === trimmed.length &&
+              parsed.range &&
+              parsed.range.to > parsed.range.from
+            ) {
+              insertMentionAtSelection(
+                parsed.path,
+                false,
+                mediaByPath[parsed.path],
+                parsed.range,
+              );
+              return;
+            }
+          }
+          document.execCommand("insertText", false, text);
         }}
         onKeyDown={(e) => {
           if (e.nativeEvent.isComposing || e.keyCode === 229) return;

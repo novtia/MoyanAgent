@@ -219,6 +219,19 @@
   overflow-wrap: anywhere;
   outline: none;
   cursor: text;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.bubble-edit-editor::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.bubble-edit-editor::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
+}
+.bubble-edit-editor::-webkit-scrollbar-track {
+  background: transparent;
 }
 .bubble-edit-mention-popover {
   z-index: 80;

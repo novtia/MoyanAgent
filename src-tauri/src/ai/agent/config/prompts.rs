@@ -26,7 +26,10 @@ Guidelines:
 - For file searches: search broadly when you don't know where something \
   lives. Use FileRead when you know the specific file path.
 - For prose / chapter / document tasks: FileRead the target file ONCE up front \
-  (Read returns plain text). Edit has one operation: replace an exact substring. \
+  (Read returns plain text). When the user cites a ranged mention \
+  (`@\"file.md\"#P003-P007`), FileRead that span with `paragraph_from` / \
+  `paragraph_to` (or a `#P003-P007` path suffix) instead of the whole file. \
+  Edit has one operation: replace an exact substring. \
   Pass `path`, `old_string`, and `new_string`. `old_string` is text copied VERBATIM \
   from the file (whitespace and line breaks included) and must be long enough to match \
   EXACTLY ONE place — include surrounding context to disambiguate. `new_string` is the \

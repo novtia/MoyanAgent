@@ -12,13 +12,20 @@ export const MENTION_PREFIX = "@";
 /**
  * Matches a serialized mention in plain text (`@"…"` form only).
  * Prefer {@link parseMentionSegments} for rendering and {@link parseMentionPaths}
- * for path extraction.
+ * for path extraction. Optional range suffix `#P003-P007` is parsed by
+ * {@link parseMentionAt}, not this regex alone.
  */
-export const MENTION_RE = /@"((?:[^"\\]|\\.)*)"/g;
+export const MENTION_RE = /@"((?:[^"\\]|\\.)*)"(?:#P\d+(?:-P\d+)?)?/g;
+
+/** Optional 1-based inclusive paragraph range attached to a file mention. */
+export interface MentionRange {
+  from: number;
+  to: number;
+}
 
 export type MentionSegment =
   | { type: "text"; value: string }
-  | { type: "mention"; path: string };
+  | { type: "mention"; path: string; range?: MentionRange };
 
 export type MediaMentionKind = "image" | "audio" | "video";
 export type MentionIconKind =
@@ -132,32 +139,96 @@ export function mentionIconSvg(absPath: string, isDir?: boolean): string {
   return `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
 }
 
+/** Display form for a paragraph range (`P003` or `P003–P007`). */
+export function formatMentionParagraphRange(from: number, to: number): string {
+  const pad = (n: number) => String(Math.max(1, Math.trunc(n))).padStart(3, "0");
+  if (from === to) return `P${pad(from)}`;
+  return `P${pad(from)}–P${pad(to)}`;
+}
+
+/** Serialize suffix `#P003-P007` (ASCII hyphen) for storage in prompt text. */
+export function serializeMentionRangeSuffix(range: MentionRange): string {
+  const from = Math.max(1, Math.trunc(range.from));
+  const to = Math.max(from, Math.trunc(range.to));
+  const pad = (n: number) => String(n).padStart(3, "0");
+  if (from === to) return `#P${pad(from)}`;
+  return `#P${pad(from)}-P${pad(to)}`;
+}
+
+export function normalizeMentionRange(
+  range?: MentionRange | null,
+): MentionRange | undefined {
+  if (!range) return undefined;
+  const from = Math.trunc(range.from);
+  const to = Math.trunc(range.to);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from < 1 || to < from) {
+    return undefined;
+  }
+  return { from, to };
+}
+
+/** Chip / title label: `file.md` or `file.md · P003–P007`. */
+export function mentionDisplayLabel(
+  path: string,
+  range?: MentionRange | null,
+): string {
+  const mediaKind = mediaMentionKind(path);
+  if (mediaKind) return mediaMentionDisplayLabel(path);
+  const base = mentionBasename(path);
+  const normalized = normalizeMentionRange(range);
+  if (!normalized) return base;
+  return `${base} · ${formatMentionParagraphRange(normalized.from, normalized.to)}`;
+}
+
 /** Serialize one mention path into the `@\"…\"` plain-text form stored in messages. */
-export function serializeMentionPath(path: string): string {
+export function serializeMentionPath(
+  path: string,
+  range?: MentionRange | null,
+): string {
   if (mediaMentionKind(path)) return `${MENTION_PREFIX}${path}`;
-  return `${MENTION_PREFIX}${JSON.stringify(path)}`;
+  let out = `${MENTION_PREFIX}${JSON.stringify(path)}`;
+  const normalized = normalizeMentionRange(range);
+  if (normalized) out += serializeMentionRangeSuffix(normalized);
+  return out;
 }
 
 const QUOTED_MENTION_HEAD = /^@"((?:[^"\\]|\\.)*)"/;
+const MENTION_RANGE_TAIL = /^#P(\d+)(?:-P(\d+))?/;
 
 /** Decode the inner payload of a quoted `@\"…\"` mention. */
 function decodeQuotedMentionPayload(raw: string): string {
   return JSON.parse(`"${raw}"`) as string;
 }
 
+export interface ParsedMention {
+  path: string;
+  length: number;
+  range?: MentionRange;
+}
+
 /** Parse a single `@\"…\"` mention starting at `atIndex` (which must point to `@`). */
 export function parseMentionAt(
   text: string,
   atIndex: number,
-): { path: string; length: number } | null {
+): ParsedMention | null {
   if (text[atIndex] !== MENTION_PREFIX) return null;
   const rest = text.slice(atIndex);
 
   const quoted = rest.match(QUOTED_MENTION_HEAD);
   if (quoted) {
+    let length = quoted[0].length;
+    let range: MentionRange | undefined;
+    const tail = rest.slice(quoted[0].length).match(MENTION_RANGE_TAIL);
+    if (tail) {
+      const from = parseInt(tail[1], 10);
+      const to = tail[2] ? parseInt(tail[2], 10) : from;
+      range = normalizeMentionRange({ from, to });
+      length += tail[0].length;
+    }
     return {
       path: normalizeMentionPath(decodeQuotedMentionPayload(quoted[1])),
-      length: quoted[0].length,
+      length,
+      range,
     };
   }
 
@@ -189,7 +260,11 @@ export function parseMentionSegments(text: string): MentionSegment[] {
     }
     const parsed = parseMentionAt(text, at);
     if (parsed) {
-      segments.push({ type: "mention", path: parsed.path });
+      segments.push({
+        type: "mention",
+        path: parsed.path,
+        range: parsed.range,
+      });
       i = at + parsed.length;
       continue;
     }
@@ -221,26 +296,44 @@ export function isWithinProject(path: string, root: string): boolean {
 
 /* ───── contenteditable chip DOM + serialization ───── */
 
+function rangeFromDataset(el: HTMLElement): MentionRange | undefined {
+  const from = Number(el.dataset.paragraphFrom);
+  const to = Number(el.dataset.paragraphTo);
+  return normalizeMentionRange({ from, to });
+}
+
 /**
  * Build the inline, non-editable mention chip for a file path.
  * Layout: file-type icon, file name, remove button. The full path lives on
  * `dataset.path` (used for serialization), while only the name is displayed.
+ * Optional paragraph range is stored on `dataset.paragraphFrom` / `paragraphTo`.
  */
 export function createMentionNode(
   absPath: string,
   isDir?: boolean,
   media?: MentionMediaRenderData,
+  range?: MentionRange | null,
 ): HTMLElement {
   const chip = document.createElement("span");
   const mediaKind = mediaMentionKind(absPath);
-  const displayLabel = mediaMentionDisplayLabel(absPath);
+  const normalizedRange = normalizeMentionRange(range);
+  const displayLabel = mentionDisplayLabel(absPath, normalizedRange);
   chip.className = `composer-mention${mediaKind ? ` is-media media-${mediaKind}` : ""}`;
   if (mediaKind === "image" && media?.previewSrc) {
     chip.classList.add("has-preview");
   }
   chip.contentEditable = "false";
   chip.dataset.path = absPath;
-  chip.setAttribute("title", mediaKind ? `@${displayLabel}` : absPath);
+  if (normalizedRange) {
+    chip.dataset.paragraphFrom = String(normalizedRange.from);
+    chip.dataset.paragraphTo = String(normalizedRange.to);
+  }
+  chip.setAttribute(
+    "title",
+    mediaKind ? `@${displayLabel}` : normalizedRange
+      ? `${absPath} · ${formatMentionParagraphRange(normalizedRange.from, normalizedRange.to)}`
+      : absPath,
+  );
 
   if (mediaKind === "image" && media?.previewSrc) {
     const image = document.createElement("img");
@@ -262,7 +355,7 @@ export function createMentionNode(
 
     const label = document.createElement("span");
     label.className = "composer-mention-label";
-    label.textContent = mediaKind ? displayLabel : mentionBasename(absPath);
+    label.textContent = displayLabel;
     chip.appendChild(label);
   }
 
@@ -288,7 +381,7 @@ export function serializeMentions(root: HTMLElement): string {
       if (child.nodeType !== Node.ELEMENT_NODE) return;
       const el = child as HTMLElement;
       if (el.dataset.path) {
-        out += serializeMentionPath(el.dataset.path);
+        out += serializeMentionPath(el.dataset.path, rangeFromDataset(el));
       } else if (el.tagName === "BR") {
         out += "\n";
       } else if (el.tagName === "DIV" || el.tagName === "P") {
@@ -346,6 +439,7 @@ export function buildMentionNodes(
             parsed.path,
             undefined,
             mediaByPath[parsed.path],
+            parsed.range,
           ),
         );
         i += parsed.length;

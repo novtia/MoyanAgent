@@ -6,7 +6,7 @@
      1. tokens          — design tokens (CSS custom properties)
      2. base            — element reset, body, shared @keyframes
      3. layout          — app shell, sidebar, chat list, chat column
-     4. components      — messages, composer, forms, dropzone, modal
+     4. components      — messages, composer, forms, modal
      5. overlays        — preview lightbox, image editor
      6. pages           — settings
      7. interactions    — universal click feedback (cross-cutting)
@@ -14,6 +14,7 @@
    ───────────────────────────────────────────────────────────── */
 
 @import './modules/tokens.css';
+@import './modules/themes.css';
 @import './modules/base.css';
 
 @import './modules/app-shell.css';
@@ -26,7 +27,6 @@
 @import './modules/reader.css';
 @import './modules/composer.css';
 @import './modules/forms.css';
-@import './modules/dropzone.css';
 @import './modules/modal.css';
 @import './modules/config-modal.css';
 @import './modules/search.css';

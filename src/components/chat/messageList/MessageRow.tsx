@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -23,12 +24,14 @@ import {
   MentionEditor,
   MentionIcon,
   MentionText,
+  computeCaretMentionStyle,
   isWithinProject,
   mediaMentionDisplayLabel,
   mediaMentionKindFromMime,
   mediaMentionLabel,
   normalizeMentionPath,
   parseMentionPaths,
+  scrollableAncestors,
   type MentionEditorHandle,
   type MentionTriggerAnchor,
 } from "../mention";
@@ -157,6 +160,9 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
   }, [draftMedia]);
   const [editMentionAnchor, setEditMentionAnchor] =
     useState<MentionTriggerAnchor | null>(null);
+  const [editMentionStyle, setEditMentionStyle] = useState<
+    CSSProperties | undefined
+  >(undefined);
   const [picking, setPicking] = useState(false);
   const [editDragOver, setEditDragOver] = useState(false);
   const editDragDepth = useRef(0);
@@ -212,10 +218,38 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
         !editMentionPanelRef.current.contains(event.target as Node)
       ) {
         setEditMentionAnchor(null);
+        setEditMentionStyle(undefined);
       }
     };
     window.addEventListener("mousedown", onMouseDown);
     return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [editing, editMentionAnchor]);
+
+  useLayoutEffect(() => {
+    if (!editing || !editMentionAnchor) {
+      setEditMentionStyle(undefined);
+      return;
+    }
+    const update = () => {
+      setEditMentionStyle(
+        computeCaretMentionStyle(
+          editMentionAnchor,
+          editMentionPanelRef.current,
+        ),
+      );
+    };
+    update();
+    const scrollNodes = scrollableAncestors(editMentionPanelRef.current);
+    for (const n of scrollNodes) {
+      n.addEventListener("scroll", update, { passive: true });
+    }
+    window.addEventListener("resize", update);
+    return () => {
+      for (const n of scrollNodes) {
+        n.removeEventListener("scroll", update);
+      }
+      window.removeEventListener("resize", update);
+    };
   }, [editing, editMentionAnchor]);
 
   const cleanupAddedDrafts = async (ids: Iterable<string>) => {
@@ -812,28 +846,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
                       className="composer-mention-popover is-caret bubble-edit-mention-popover"
                       role="dialog"
                       aria-label={t("composer.mentionPickerTitle")}
-                      style={{
-                        left:
-                          Math.max(
-                            12,
-                            Math.min(
-                              editMentionAnchor.left,
-                              window.innerWidth - 332,
-                            ),
-                          ) -
-                          (editMentionPanelRef.current?.getBoundingClientRect()
-                            .left ?? 0),
-                        top:
-                          editMentionAnchor.bottom +
-                          8 -
-                          (editMentionPanelRef.current?.getBoundingClientRect()
-                            .top ?? 0),
-                        bottom: "auto",
-                        maxHeight: Math.max(
-                          72,
-                          window.innerHeight - editMentionAnchor.bottom - 12,
-                        ),
-                      }}
+                      style={editMentionStyle}
                     >
                       <div className="composer-mention-popover-title">
                         {t("composer.mentionPickerTitle")}

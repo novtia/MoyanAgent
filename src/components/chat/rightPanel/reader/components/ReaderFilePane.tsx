@@ -12,9 +12,17 @@ export function ReaderFilePane({ tab, preview }: { tab: ReaderFileTab; preview: 
   const canPreview = tab.fileType === "markdown" && !hasPendingDiff;
   const showPreview = preview && canPreview;
 
+  // Reset only when switching files — not after each confirm (that used to
+  // force activeHunkIndex → 0 and scroll the editor back to the top).
   useEffect(() => {
     setActiveHunkIndex(0);
-  }, [tab.id, tab.pendingDiffs.length]);
+  }, [tab.id]);
+
+  useEffect(() => {
+    const total = tab.pendingDiffs.length;
+    if (total === 0) return;
+    setActiveHunkIndex((prev) => Math.min(prev, total - 1));
+  }, [tab.pendingDiffs.length]);
 
   const navigateHunk = useCallback(
     (direction: -1 | 1) => {
