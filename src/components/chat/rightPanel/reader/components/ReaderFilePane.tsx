@@ -8,6 +8,9 @@ import { ReaderMarkdownPreview } from "../ReaderMarkdownPreview";
 export function ReaderFilePane({ tab, preview }: { tab: ReaderFileTab; preview: boolean }) {
   const [activeHunkIndex, setActiveHunkIndex] = useState(0);
   const hasPendingDiff = tab.pendingDiffs.length > 0;
+  // Keep preview + source mounted together so toggling does not reset scroll.
+  const canPreview = tab.fileType === "markdown" && !hasPendingDiff;
+  const showPreview = preview && canPreview;
 
   useEffect(() => {
     setActiveHunkIndex(0);
@@ -24,16 +27,6 @@ export function ReaderFilePane({ tab, preview }: { tab: ReaderFileTab; preview: 
     [tab.pendingDiffs.length],
   );
 
-  if (preview && tab.fileType === "markdown" && !hasPendingDiff) {
-    return (
-      <div className="document-reader reader-file-pane">
-        <div className="document-reader-body reader-file-body">
-          <ReaderMarkdownPreview text={tab.text} />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="document-reader reader-file-pane">
       {hasPendingDiff && (
@@ -48,11 +41,24 @@ export function ReaderFilePane({ tab, preview }: { tab: ReaderFileTab; preview: 
         </div>
       )}
       <div className="document-reader-body reader-file-body">
-        <ReaderEditor
-          tab={tab}
-          activeHunkIndex={hasPendingDiff ? activeHunkIndex : undefined}
-          onActiveHunkChange={setActiveHunkIndex}
-        />
+        {canPreview && (
+          <div
+            className={`reader-pane-layer${showPreview ? " is-visible" : ""}`}
+            aria-hidden={!showPreview}
+          >
+            <ReaderMarkdownPreview text={tab.text} />
+          </div>
+        )}
+        <div
+          className={`reader-pane-layer${!showPreview ? " is-visible" : ""}`}
+          aria-hidden={showPreview}
+        >
+          <ReaderEditor
+            tab={tab}
+            activeHunkIndex={hasPendingDiff ? activeHunkIndex : undefined}
+            onActiveHunkChange={setActiveHunkIndex}
+          />
+        </div>
       </div>
     </div>
   );

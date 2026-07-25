@@ -191,6 +191,7 @@
 .cfg-param {
   padding: 14px 0;
   border-bottom: 1px solid var(--line);
+  overflow: visible;
 }
 .cfg-param:first-child {
   padding-top: 2px;
@@ -292,19 +293,23 @@
 /* ── 滑块 ── */
 .cfg-slider-wrap {
   margin-top: 8px;
+  overflow: visible;
 }
 /* The slider itself uses the shared `.app-slider` style (see forms.css);
    the filled-track gradient is supplied per-value via the `--slider-track`
    CSS variable set inline by `trackStyle()`. */
 .cfg-slider-marks {
   position: relative;
-  height: 16px;
-  margin-top: 0;
+  height: 18px;
+  margin-top: 4px;
+  overflow: visible;
 }
 .cfg-slider-marks span {
   position: absolute;
+  top: 0;
   transform: translateX(-50%);
   font-size: 11px;
+  line-height: 1.2;
   color: var(--ink-mute);
   white-space: nowrap;
 }

@@ -177,6 +177,7 @@ const zhCN = {
     fileList: "匹配文件",
     matchList: "匹配结果",
     fileMatchCount: "{{count}} 处",
+    groupedMatchMeta: "{{files}} 个文件 · {{matches}} 处",
     matchLine: "第 {{line}} 行",
     diffBlocked: "有待确认的编辑差异时无法查找替换",
   },

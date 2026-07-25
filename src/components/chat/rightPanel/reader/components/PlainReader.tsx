@@ -18,6 +18,7 @@ export function PlainReader({
   const findQuery = useReaderFind((s) => s.query);
   const matchCase = useReaderFind((s) => s.matchCase);
   const matchIndex = useReaderFind((s) => s.matchIndex);
+  const navEpoch = useReaderFind((s) => s.navEpoch);
   const findMatches = useReaderFind((s) => s.matches);
 
   const { ranges: findRanges, activeIndex: findActiveIndex } = useMemo(() => {
@@ -101,7 +102,7 @@ export function PlainReader({
         findRanges={showFindHighlight ? findRanges : []}
         findActiveIndex={showFindHighlight ? findActiveIndex : -1}
         scrollToIndex={scrollToIndex}
-        scrollTrigger={matchIndex}
+        scrollTrigger={navEpoch}
       />
     </div>
   );

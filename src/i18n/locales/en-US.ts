@@ -180,6 +180,7 @@ const enUS: Resource = {
     fileList: "Matching files",
     matchList: "Matches",
     fileMatchCount: "{{count}} matches",
+    groupedMatchMeta: "{{files}} files · {{matches}} matches",
     matchLine: "Line {{line}}",
     diffBlocked: "Find/replace is unavailable while diff hunks are pending",
   },

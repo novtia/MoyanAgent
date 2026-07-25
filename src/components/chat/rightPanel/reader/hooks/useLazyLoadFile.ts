@@ -25,6 +25,9 @@ export function useLazyLoadFile(
       .readProjectFile(activeId, path)
       .then(async (file) => {
         if (cancelled) return;
+        // Activate: the panel is already showing this path, so the reader
+        // store's active tab must match — otherwise find/replace searches and
+        // highlights the wrong file.
         openDoc(
           {
             path,
@@ -35,7 +38,7 @@ export function useLazyLoadFile(
             chars: countWords(file.text),
             lines: file.text.split("\n").length,
           },
-          { activate: false },
+          { activate: true },
         );
         await syncPendingDiffsForPath(activeId, path);
       })

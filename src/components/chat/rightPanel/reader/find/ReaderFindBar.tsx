@@ -5,14 +5,14 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { normalizeReaderPath, useReader } from "../../../../../store/reader";
+import { useReader } from "../../../../../store/reader";
 import {
-  summarizeFindFiles,
+  groupFindMatches,
   useReaderFind,
   type ReaderFindScope,
 } from "../../../../../store/readerFind";
 import type { ReaderFindBarProps } from "../types";
-import { FindFileList } from "./FindFileList";
+import { FindGroupedMatchList } from "./FindGroupedMatchList";
 import { FindMatchList } from "./FindMatchList";
 import { ChevronDownIcon, ChevronUpIcon, CloseIcon } from "./icons";
 
@@ -42,47 +42,39 @@ export function ReaderFindBar({ disabled, disabledReason }: ReaderFindBarProps) 
   const goToFile = useReaderFind((s) => s.goToFile);
   const goToMatch = useReaderFind((s) => s.goToMatch);
   const activeTabId = useReader((s) => s.activeTabId);
-  const readerTabs = useReader((s) => s.tabs);
   const findInputRef = useRef<HTMLInputElement>(null);
   const activeListBtnRef = useRef<HTMLButtonElement>(null);
   const isComposingRef = useRef(false);
 
-  const fileSummaries = useMemo(
-    () => (scope === "all" ? summarizeFindFiles(matches) : []),
+  const fileGroups = useMemo(
+    () => (scope === "all" ? groupFindMatches(matches) : []),
     [scope, matches],
   );
 
   const hasQuery = query.trim().length > 0;
   const showResults = hasQuery && !searching;
-  const showFileList = showResults && scope === "all";
+  const showGroupedList = showResults && scope === "all";
   const showMatchList = showResults && scope === "file";
-  const activeMatch = matchIndex >= 0 ? matches[matchIndex] ?? null : null;
   const matchCount = matches.length;
   const currentMatch = matchIndex >= 0 ? matchIndex + 1 : 0;
 
   const matchRows = useMemo(() => {
     if (!showMatchList) return [];
-    const textByPath = new Map(
-      readerTabs.map((tb) => [normalizeReaderPath(tb.path), tb.text] as const),
-    );
-    return matches.map((match, index) => {
-      const text = textByPath.get(normalizeReaderPath(match.path)) ?? "";
-      const lineStart = text.lastIndexOf("\n", Math.max(0, match.start - 1)) + 1;
-      const lineEndIdx = text.indexOf("\n", match.start);
-      const lineText = text.slice(lineStart, lineEndIdx < 0 ? text.length : lineEndIdx);
-      const snippet = lineText.trim() || query;
-      const localStart = Math.max(0, match.start - lineStart);
-      const localEnd = Math.max(localStart, match.end - lineStart);
-      return { match, index, snippet, localStart, localEnd };
-    });
-  }, [showMatchList, matches, readerTabs, query]);
+    return matches.map((match, index) => ({
+      match,
+      index,
+      snippet: match.snippet,
+      localStart: match.snippetStart,
+      localEnd: match.snippetEnd,
+    }));
+  }, [showMatchList, matches]);
 
   useEffect(() => {
-    if ((!showFileList && !showMatchList) || matchIndex < 0) return;
+    if ((!showGroupedList && !showMatchList) || matchIndex < 0) return;
     requestAnimationFrame(() => {
       activeListBtnRef.current?.scrollIntoView({ block: "nearest" });
     });
-  }, [showFileList, showMatchList, matchIndex, matches]);
+  }, [showGroupedList, showMatchList, matchIndex, matches]);
 
   useEffect(() => {
     if (open && scope === "file") {
@@ -275,13 +267,17 @@ export function ReaderFindBar({ disabled, disabledReason }: ReaderFindBarProps) 
         />
       )}
 
-      {showFileList && (
-        <FindFileList
-          fileSummaries={fileSummaries}
-          activeMatch={activeMatch}
+      {showGroupedList && (
+        <FindGroupedMatchList
+          groups={fileGroups}
+          matches={matches}
+          matchIndex={matchIndex}
+          matchCount={matchCount}
+          query={query}
           disabled={disabled}
           activeListBtnRef={activeListBtnRef}
           onGoToFile={goToFile}
+          onGoToMatch={goToMatch}
         />
       )}
 

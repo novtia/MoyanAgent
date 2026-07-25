@@ -66,7 +66,10 @@ interface ReaderStore {
   bindSession: (sessionId: string | null) => void;
   openDoc: (doc: ReaderDoc, opts?: { activate?: boolean }) => void;
   closeTab: (id: string) => void;
+  /** Switch the active reader tab without forcing panel chrome to follow. */
   setActiveTab: (id: string) => void;
+  /** Activate a tab and bump openSeq so the right-panel chrome focuses its path. */
+  revealTab: (id: string) => void;
   updateTabText: (path: string, text: string, opts?: { dirty?: boolean }) => void;
   setTabDirty: (path: string, dirty: boolean, saveError?: boolean) => void;
   appendPendingDiff: (
@@ -493,10 +496,12 @@ export const useReader = create<ReaderStore>((set, get) => ({
         if (existing.pendingDiffs.length > 0 || existing.dirty) {
           if (activate) activeTabId = existing.id;
           persistTabs(s.sessionId, tabs, activeTabId);
+          // Passive loads (activate:false) must not bump openSeq — that would
+          // steal the panel chrome / gallery focus away from the visible file.
           return {
             tabs,
             activeTabId,
-            openSeq: s.openSeq + 1,
+            openSeq: activate ? s.openSeq + 1 : s.openSeq,
           };
         }
 
@@ -530,7 +535,7 @@ export const useReader = create<ReaderStore>((set, get) => ({
       return {
         tabs,
         activeTabId,
-        openSeq: s.openSeq + 1,
+        openSeq: activate ? s.openSeq + 1 : s.openSeq,
       };
     });
   },
@@ -552,8 +557,22 @@ export const useReader = create<ReaderStore>((set, get) => ({
   setActiveTab: (id) => {
     set((s) => {
       if (!s.tabs.some((t) => t.id === id)) return s;
+      if (s.activeTabId === id) return s;
       persistTabs(s.sessionId, s.tabs, id);
       return { activeTabId: id };
+    });
+  },
+
+  revealTab: (id) => {
+    set((s) => {
+      if (!s.tabs.some((t) => t.id === id)) return s;
+      if (s.activeTabId === id) {
+        // Already active in the store — still bump so panel chrome can catch up
+        // if it was showing a different path.
+        return { openSeq: s.openSeq + 1 };
+      }
+      persistTabs(s.sessionId, s.tabs, id);
+      return { activeTabId: id, openSeq: s.openSeq + 1 };
     });
   },
 

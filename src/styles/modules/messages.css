@@ -427,6 +427,11 @@
   font-synthesis: none;
   color: var(--chat-font-color, var(--ink));
 }
+/* Match tool/thinking row inset (8px) so prose lines up with icons. */
+.msg.assistant .bubble > .text {
+  padding-left: 8px;
+  padding-right: 8px;
+}
 .bubble .text.mono {
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
@@ -465,7 +470,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px 4px 0;
+  padding: 4px 8px;
   cursor: pointer;
   color: var(--ink-mute);
   font-size: 13px;
@@ -597,17 +602,17 @@
 .kv { font-size: 11px; color: var(--ink-mute); }
 
 /* ── doc family ──
-   Left edge of .ti must align with .msg-thinking-icon (thinking header
-   uses padding-left: 0). Keep horizontal padding at 0; hover fills full width. */
+   Left edge of .ti must align with .msg-thinking-icon. Both use 8px
+   horizontal padding so hover highlight does not flush against the icon. */
 .doc-row {
   width: 100%;
   margin: 4px 0;
-  padding: 4px 0;
+  padding: 4px 8px;
   border-radius: var(--radius-sm);
   transition: background 0.15s var(--ease-out);
 }
 .doc-row--bare {
-  padding: 4px 0;
+  padding: 4px 8px;
 }
 .doc-row--bare:hover {
   background: transparent;
@@ -796,7 +801,7 @@ button.doc-row-head:disabled {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 0;
+  padding: 4px 8px;
   margin: 4px 0;
   color: var(--ink-mute);
   font-size: 12.5px;
@@ -898,7 +903,7 @@ button.doc-row-head:disabled {
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 4px 0 6px;
+  padding: 4px 8px 6px;
   margin: 4px 0 0;
   border: none;
   background: transparent;
@@ -1344,7 +1349,7 @@ button.flow-head:disabled {
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 4px 0;
+  padding: 4px 8px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;

@@ -61,6 +61,15 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
 
   const { canBack, canForward, goBack, goForward } = useReaderNavHistory(path, onOpenFile);
   const loadError = useLazyLoadFile(path, tab, activeId);
+  const setActiveTab = useReader((s) => s.setActiveTab);
+  const readerActiveTabId = useReader((s) => s.activeTabId);
+
+  // Keep reader.activeTabId aligned with the panel-visible path so find/replace
+  // (file scope) always searches the document the user is looking at.
+  useEffect(() => {
+    if (!tab || tab.id === readerActiveTabId) return;
+    setActiveTab(tab.id);
+  }, [tab, readerActiveTabId, setActiveTab]);
 
   // Re-open / switch path: restore Keep/Undo from backend (authoritative).
   useEffect(() => {

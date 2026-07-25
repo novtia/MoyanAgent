@@ -20,7 +20,10 @@ export function useOpenFileTab(
           (tb) => tb.kind === "reader" && tb.path && normalizeReaderPath(tb.path) === key,
         );
         if (existing) {
-          setActiveTabId(existing.id);
+          // Already focused — avoid setState so openSeq sync cannot loop.
+          if (existing.id !== activeTabIdRef.current) {
+            setActiveTabId(existing.id);
+          }
           return prev;
         }
 

@@ -11,6 +11,8 @@ export function useReaderPanelSync(
   openFileTab: (filePath: string) => void,
   setTabs: Dispatch<SetStateAction<PanelTab[]>>,
   setActiveTabId: Dispatch<SetStateAction<string | null>>,
+  /** Currently focused panel reader path — used to skip no-op mirrors. */
+  panelActivePath?: string | null,
 ) {
   // Auto-open: when a document is requested (openSeq bumps), ensure a reader
   // tab exists and make it active so the document shows immediately.
@@ -18,28 +20,22 @@ export function useReaderPanelSync(
   // the old path slot and focuses the new path without a gap.
   const readerOpenSeq = useReader((s) => s.openSeq);
   const lastReaderSeq = useRef(readerOpenSeq);
-  const lastReaderActive = useRef<string | null>(useReader.getState().activeTabId);
-  const lastReaderActivePath = useRef<string | null>(
-    useReader.getState().tabs.find((t) => t.id === useReader.getState().activeTabId)?.path ??
-      null,
-  );
   useLayoutEffect(() => {
     if (readerOpenSeq === lastReaderSeq.current) return;
     lastReaderSeq.current = readerOpenSeq;
     const st = useReader.getState();
     const active = st.tabs.find((tb) => tb.id === st.activeTabId) ?? null;
     const activePath = active?.path ?? null;
-    const sameTab = st.activeTabId === lastReaderActive.current;
-    const samePath =
-      activePath != null &&
-      lastReaderActivePath.current != null &&
-      normalizeReaderPath(activePath) === normalizeReaderPath(lastReaderActivePath.current);
-    lastReaderActive.current = st.activeTabId;
-    lastReaderActivePath.current = activePath;
-    // Passive lazy-loads keep both active tab and path unchanged.
-    if (sameTab && samePath) return;
-    if (activePath) openFileTab(activePath);
-  }, [readerOpenSeq, openFileTab]);
+    if (!activePath) return;
+    // Panel already shows this file — calling openFileTab would only churn state.
+    if (
+      panelActivePath &&
+      normalizeReaderPath(panelActivePath) === normalizeReaderPath(activePath)
+    ) {
+      return;
+    }
+    openFileTab(activePath);
+  }, [readerOpenSeq, openFileTab, panelActivePath]);
 
   // Keep panel reader tab paths in sync when files are renamed/moved/deleted.
   // useLayoutEffect: apply before paint so the tab title never flashes the old name.

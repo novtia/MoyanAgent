@@ -73,13 +73,13 @@ select {
   padding-right: 30px;
   cursor: pointer;
 }
-input:hover:not(:focus):not(:disabled),
+input:not([type="range"]):hover:not(:focus):not(:disabled),
 select:hover:not(:focus):not(:disabled),
 textarea:hover:not(:focus):not(:disabled),
 .field-input:hover:not(:focus):not(:disabled) {
   border-color: var(--field-border-hover);
 }
-input:focus,
+input:not([type="range"]):focus,
 select:focus,
 textarea:focus,
 .field-input:focus,
@@ -87,7 +87,7 @@ textarea:focus,
   border-color: var(--field-border-focus);
   box-shadow: var(--field-focus-ring);
 }
-input:disabled,
+input:not([type="range"]):disabled,
 select:disabled,
 textarea:disabled,
 .field-input:disabled {
@@ -149,10 +149,26 @@ input.field-input--mono {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 16px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
   background: transparent;
+  box-shadow: none;
   cursor: pointer;
   outline: none;
+  /* Keep thumb scale / drag chrome from being clipped by parents. */
+  overflow: visible;
+}
+.app-slider:hover,
+.app-slider:focus,
+.app-slider:focus-visible,
+.app-slider:active {
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
 }
 .app-slider:disabled {
   cursor: not-allowed;
@@ -160,6 +176,7 @@ input.field-input--mono {
 }
 .app-slider::-webkit-slider-runnable-track {
   height: 4px;
+  border: none;
   border-radius: 999px;
   background: var(--slider-track, var(--line-strong));
 }
@@ -178,10 +195,10 @@ input.field-input--mono {
   transition: transform 0.14s var(--ease-out);
 }
 .app-slider:not(:disabled)::-webkit-slider-thumb:hover {
-  transform: scale(1.15);
+  transform: scale(1.12);
 }
 .app-slider:not(:disabled)::-webkit-slider-thumb:active {
-  transform: scale(0.95);
+  transform: scale(1.05);
 }
 .app-slider::-moz-range-track {
   height: 4px;
@@ -199,10 +216,10 @@ input.field-input--mono {
   box-shadow: var(--slider-thumb-shadow, var(--shadow-1));
 }
 .app-slider:not(:disabled)::-moz-range-thumb:hover {
-  transform: scale(1.15);
+  transform: scale(1.12);
 }
 .app-slider:not(:disabled)::-moz-range-thumb:active {
-  transform: scale(0.95);
+  transform: scale(1.05);
 }
 
 .chips {

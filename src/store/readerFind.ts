@@ -42,6 +42,11 @@ export interface ReaderFindMatch {
   end: number;
   line: number;
   column: number;
+  /** Line text at the match (for result list snippets). */
+  snippet: string;
+  /** Match start/end offsets within `snippet`. */
+  snippetStart: number;
+  snippetEnd: number;
 }
 
 export interface ReaderFindFileSummary {
@@ -51,23 +56,54 @@ export interface ReaderFindFileSummary {
   firstMatchIndex: number;
 }
 
+export interface ReaderFindFileGroup extends ReaderFindFileSummary {
+  matchIndexes: number[];
+}
+
 export function summarizeFindFiles(matches: ReaderFindMatch[]): ReaderFindFileSummary[] {
-  const map = new Map<string, ReaderFindFileSummary>();
+  return groupFindMatches(matches).map(({ matchIndexes: _i, ...summary }) => summary);
+}
+
+/** Group matches by file in encounter order (already sorted by filename in build). */
+export function groupFindMatches(matches: ReaderFindMatch[]): ReaderFindFileGroup[] {
+  const groups: ReaderFindFileGroup[] = [];
+  const map = new Map<string, ReaderFindFileGroup>();
   matches.forEach((match, index) => {
     const key = normalizeReaderPath(match.path);
     const existing = map.get(key);
     if (existing) {
       existing.count += 1;
+      existing.matchIndexes.push(index);
     } else {
-      map.set(key, {
+      const group: ReaderFindFileGroup = {
         path: match.path,
         name: readerFileName(match.path),
         count: 1,
         firstMatchIndex: index,
-      });
+        matchIndexes: [index],
+      };
+      map.set(key, group);
+      groups.push(group);
     }
   });
-  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  return groups;
+}
+
+function snippetForRange(
+  text: string,
+  start: number,
+  end: number,
+): { snippet: string; snippetStart: number; snippetEnd: number } {
+  const lineStart = text.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+  const lineEndIdx = text.indexOf("\n", start);
+  const lineText = text.slice(lineStart, lineEndIdx < 0 ? text.length : lineEndIdx);
+  const snippetStart = Math.max(0, start - lineStart);
+  const snippetEnd = Math.max(snippetStart, end - lineStart);
+  return {
+    snippet: lineText.length > 0 ? lineText : text.slice(start, end),
+    snippetStart,
+    snippetEnd,
+  };
 }
 
 interface SearchTarget {
@@ -85,6 +121,8 @@ interface ReaderFindStore {
   matchCase: boolean;
   scope: ReaderFindScope;
   matchIndex: number;
+  /** Bumps on every navigation so the editor re-scrolls even when index is unchanged. */
+  navEpoch: number;
   matches: ReaderFindMatch[];
   searching: boolean;
   openFind: (opts?: { replace?: boolean }) => void;
@@ -189,6 +227,11 @@ function buildMatches(
   for (const target of targets) {
     for (const range of findInText(target.text, query, matchCase)) {
       const { line, column } = lineColumnAt(target.text, range.start);
+      const { snippet, snippetStart, snippetEnd } = snippetForRange(
+        target.text,
+        range.start,
+        range.end,
+      );
       out.push({
         tabId: target.tabId,
         path: target.path,
@@ -196,6 +239,9 @@ function buildMatches(
         end: range.end,
         line,
         column,
+        snippet,
+        snippetStart,
+        snippetEnd,
       });
     }
   }
@@ -217,24 +263,58 @@ function activateMatch(match: ReaderFindMatch | null) {
     void (async () => {
       try {
         const file = await api.readProjectFile(reader.sessionId!, match.path);
-        reader.openDoc({
+        // openDoc(activate) bumps openSeq → panel chrome focuses this path.
+        useReader.getState().openDoc({
           path: match.path,
           text: file.text,
           fileType: inferFileType(match.path),
           encoding: file.encoding,
           hadBom: file.hadBom,
         });
-        const opened = useReader.getState().getTabByPath(match.path);
-        if (opened) useReader.getState().setActiveTab(opened.id);
       } catch {
         /* ignore */
       }
     })();
     return;
   }
-  if (tab && reader.activeTabId !== tab.id) {
-    reader.setActiveTab(tab.id);
+  if (tab) {
+    // revealTab bumps openSeq so panel chrome follows find navigation.
+    reader.revealTab(tab.id);
   }
+}
+
+function resolveMatchIndexAfterRefresh(
+  matches: ReaderFindMatch[],
+  prev: ReaderFindMatch | null,
+  prevIndex: number,
+): number {
+  if (matches.length === 0) return -1;
+  if (prev) {
+    const prevKey = normalizeReaderPath(prev.path);
+    const exact = matches.findIndex(
+      (m) =>
+        normalizeReaderPath(m.path) === prevKey &&
+        m.start === prev.start &&
+        m.end === prev.end,
+    );
+    if (exact >= 0) return exact;
+    // After replace/edit: land on the next hit at/after the old offset.
+    const after = matches.findIndex(
+      (m) => normalizeReaderPath(m.path) === prevKey && m.start >= prev.start,
+    );
+    if (after >= 0) return after;
+    const samePathLast = [...matches]
+      .map((m, i) => ({ m, i }))
+      .reverse()
+      .find(({ m }) => normalizeReaderPath(m.path) === prevKey);
+    if (samePathLast) return samePathLast.i;
+    // Previous file is no longer in this result set (scope/tab change).
+    return -1;
+  }
+  // No prior selection (fresh query): stay unset so the first Enter lands on #1.
+  if (prevIndex < 0) return -1;
+  if (prevIndex < matches.length) return prevIndex;
+  return 0;
 }
 
 function applyTextToTarget(
@@ -265,6 +345,7 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
   matchCase: false,
   scope: "file",
   matchIndex: -1,
+  navEpoch: 0,
   matches: [],
   searching: false,
 
@@ -304,60 +385,61 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
   },
 
   refreshMatches: async () => {
-    const { query, matchCase, scope, open, matchIndex: prevIndex } = get();
+    const { query, matchCase, scope, open, matchIndex: prevIndex, navEpoch } = get();
     if (!open) return;
+    const prev = get().getActiveMatch();
     const sessionId = useReader.getState().sessionId;
     set({ searching: true });
     try {
       const projectRoot = scope === "all" && sessionId ? resolveProjectRoot() : null;
       const targets = await buildSearchTargets(scope, sessionId, projectRoot);
       const matches = buildMatches(targets, query, matchCase);
-      // Keep selection when possible; otherwise land on the first hit.
-      let matchIndex = -1;
-      if (matches.length > 0) {
-        matchIndex =
-          prevIndex >= 0 && prevIndex < matches.length ? prevIndex : 0;
-      }
+      const matchIndex = resolveMatchIndexAfterRefresh(matches, prev, prevIndex);
       set({
         matches,
         matchIndex,
         searching: false,
+        // Re-scroll to the resolved hit (and avoid first Enter skipping #1).
+        navEpoch: matchIndex >= 0 ? navEpoch + 1 : navEpoch,
       });
+      if (matchIndex >= 0) {
+        activateMatch(matches[matchIndex] ?? null);
+      }
     } catch {
       set({ matches: [], matchIndex: -1, searching: false });
     }
   },
 
   nextMatch: () => {
-    const { matches, matchIndex } = get();
+    const { matches, matchIndex, navEpoch } = get();
     if (matches.length === 0) return;
     const next = matchIndex < 0 ? 0 : (matchIndex + 1) % matches.length;
-    set({ matchIndex: next });
+    set({ matchIndex: next, navEpoch: navEpoch + 1 });
     activateMatch(matches[next] ?? null);
   },
 
   prevMatch: () => {
-    const { matches, matchIndex } = get();
+    const { matches, matchIndex, navEpoch } = get();
     if (matches.length === 0) return;
     const prev =
       matchIndex <= 0 ? matches.length - 1 : matchIndex - 1;
-    set({ matchIndex: prev });
+    set({ matchIndex: prev, navEpoch: navEpoch + 1 });
     activateMatch(matches[prev] ?? null);
   },
 
   goToFile: (path: string) => {
-    const { matches } = get();
+    const { matches, navEpoch } = get();
     const key = normalizeReaderPath(path);
     const idx = matches.findIndex((m) => normalizeReaderPath(m.path) === key);
     if (idx < 0) return;
-    set({ matchIndex: idx });
+    set({ matchIndex: idx, navEpoch: navEpoch + 1 });
     activateMatch(matches[idx] ?? null);
   },
 
   goToMatch: (index) => {
-    const { matches } = get();
+    const { matches, navEpoch } = get();
     if (index < 0 || index >= matches.length) return;
-    set({ matchIndex: index });
+    set({ matchIndex: index, navEpoch: navEpoch + 1 });
     activateMatch(matches[index] ?? null);
   },
 
@@ -368,13 +450,14 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
   },
 
   replaceCurrent: async () => {
-    let { query, replaceWith, matchCase, matches, matchIndex } = get();
+    let { query, replaceWith, matchCase, matches, matchIndex, navEpoch } = get();
     if (!query || matches.length === 0) return;
 
     if (matchIndex < 0) {
       matchIndex = 0;
-      set({ matchIndex: 0 });
+      set({ matchIndex: 0, navEpoch: navEpoch + 1 });
       activateMatch(matches[0] ?? null);
+      navEpoch = get().navEpoch;
     }
 
     const match = matches[matchIndex] ?? null;
@@ -399,13 +482,14 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
     const expected = matchCase ? query : query.toLowerCase();
     const found = matchCase ? actual : actual.toLowerCase();
     if (found !== expected) {
-      void get().refreshMatches();
+      await get().refreshMatches();
       return;
     }
 
     const nextText = replaceRange(text, start, end, replaceWith);
     applyTextToTarget(match.path, nextText, sessionId, true);
-    void get().refreshMatches();
+    // refreshMatches restores index by identity / next-at-offset and re-scrolls.
+    await get().refreshMatches();
   },
 
   replaceAll: async () => {
@@ -424,6 +508,6 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
       }
       applyTextToTarget(target.path, text, sessionId, true);
     }
-    void get().refreshMatches();
+    await get().refreshMatches();
   },
 }));

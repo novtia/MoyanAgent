@@ -60,7 +60,6 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
   );
 
   const openFileTab = useOpenFileTab(setTabs, setActiveTabId, activeTabIdRef);
-  useReaderPanelSync(openFileTab, setTabs, setActiveTabId);
 
   const galleryCount = useMemo(
     () => collectSessionGalleryMedia(active).length,
@@ -82,6 +81,12 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
   }, [open, onClose]);
 
   const activeTab = tabs.find((tb) => tb.id === activeTabId) ?? null;
+  useReaderPanelSync(
+    openFileTab,
+    setTabs,
+    setActiveTabId,
+    activeTab?.kind === "reader" ? activeTab.path : null,
+  );
   const tabIndex = open ? 0 : -1;
   const style = { ["--chat-gallery-width" as string]: `${width}px` } as React.CSSProperties;
 
