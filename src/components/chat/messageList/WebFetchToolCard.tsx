@@ -4,7 +4,7 @@ import { api } from "../../../api/tauri";
 import { countWords } from "../../../store/reader";
 import type { AssistantBlock } from "../../../types";
 import { parseWebFetchOutput } from "./parsers";
-import { FlowHead } from "./ToolHeaderRow";
+import { ToolGlyph } from "./toolIcons";
 import { extractToolErrorMessage } from "./utils";
 
 export function WebFetchToolCard({
@@ -34,16 +34,26 @@ export function WebFetchToolCard({
     .join(" · ");
   const errorMessage =
     status === "error" ? extractToolErrorMessage(block.output) : "";
+  const hasDetail =
+    !!errorMessage || !!parsed?.text || (!!url && status === "success");
 
   return (
-    <div className="web-fetch-tool">
-      <FlowHead
-        tool="WebFetch"
-        name="WebFetch"
-        meta={meta || url}
-        status={status}
-      />
-      {url && status === "success" && (
+    <div className={`web-fetch-tool${open ? " is-open" : ""}`}>
+      <button
+        type="button"
+        className="flow-head"
+        aria-expanded={hasDetail ? open : undefined}
+        title={hasDetail ? t("message.toolCallToggle") : undefined}
+        onClick={() => hasDetail && setOpen((v) => !v)}
+        disabled={!hasDetail}
+      >
+        <span className="ti">
+          <ToolGlyph tool="WebFetch" />
+        </span>
+        <span className="t">WebFetch</span>
+        {meta && <span className="m">{meta}</span>}
+      </button>
+      {open && url && status === "success" && (
         <button
           type="button"
           className="hit-url"
@@ -60,20 +70,13 @@ export function WebFetchToolCard({
           {url.replace(/^https?:\/\//, "")}
         </button>
       )}
-      {errorMessage && (
+      {open && errorMessage && (
         <div className="tool-call-error-detail" role="alert">
           <span className="tool-call-error-detail-text">{errorMessage}</span>
         </div>
       )}
-      {parsed?.text && (
-        <button
-          type="button"
-          className={`fetch-body${open ? " is-open" : ""}`}
-          onClick={() => setOpen((v) => !v)}
-          title={t("message.toolCallToggle")}
-        >
-          {parsed.text}
-        </button>
+      {open && parsed?.text && (
+        <div className="fetch-body">{parsed.text}</div>
       )}
     </div>
   );

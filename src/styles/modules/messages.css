@@ -1175,35 +1175,16 @@ button.flow-head:disabled {
 }
 
 .fetch-body {
-  appearance: none;
   display: block;
   width: 100%;
-  border: none;
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
   font-size: 12.5px;
   line-height: 1.8;
   color: var(--ink-2);
   padding: 8px 4px 2px;
-  max-height: 160px;
-  overflow: hidden;
-  position: relative;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-.fetch-body:not(.is-open)::after {
-  content: "";
-  position: absolute;
-  inset: auto 0 0 0;
-  height: 40px;
-  background: linear-gradient(transparent, var(--bg));
-  pointer-events: none;
-}
-.fetch-body.is-open {
   max-height: min(50vh, 480px);
   overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .agent-run {

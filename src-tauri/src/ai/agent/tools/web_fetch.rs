@@ -1,8 +1,8 @@
-//! `WebFetch` — download a web page and return its readable text.
+//! `WebFetch` — download a web page and return its readable Markdown.
 //!
 //! Companion to `WebSearch`: after finding a result URL, use this to read the
-//! page content. Strips scripts/styles and collapses to plain text. Read-only
-//! and concurrency-safe.
+//! page content. Converts HTML to Markdown after stripping navigation, forms,
+//! and other boilerplate. Read-only and concurrency-safe.
 
 use serde_json::{json, Value};
 
@@ -27,10 +27,10 @@ impl WebFetchTool {
         Self {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
-                description: "Fetch a web page by URL and return its readable text \
-                    content (scripts, styles and markup stripped). Use after \
-                    `WebSearch` to read a specific result, or on any absolute \
-                    http(s) URL. Long pages are truncated."
+                description: "Fetch a web page by URL and return its readable \
+                    Markdown content (navigation, forms and boilerplate stripped). \
+                    Use after `WebSearch` to read a specific result, or on any \
+                    absolute http(s) URL. Long pages are truncated."
                     .to_string(),
                 schema: json!({
                     "type": "object",

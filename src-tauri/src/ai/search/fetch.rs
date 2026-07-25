@@ -1,16 +1,17 @@
-//! Fetch a single web page and extract readable text.
+//! Fetch a single web page and convert it to readable Markdown.
 //!
-//! Deliberately lightweight: strips `script`/`style`/`nav`/`footer` noise and
-//! collapses the remaining text. Good enough to feed a model a page's gist
-//! without pulling in a full readability engine.
+//! Uses `html-to-markdown-rs` with aggressive preprocessing to strip
+//! navigation, forms, and other boilerplate before conversion.
 
-use scraper::{Html, Selector};
+use html_to_markdown_rs::{
+    convert, ConversionOptions, PreprocessingOptions, PreprocessingPreset,
+};
 
-use crate::ai::search::{build_search_client, clean_text};
+use crate::ai::search::build_search_client;
 use crate::error::{AppError, AppResult};
 
 /// Hard cap on extracted text so a huge page can't blow up a tool result.
-const MAX_TEXT_CHARS: usize = 12_000;
+const MAX_TEXT_CHARS: usize = 24_000;
 
 pub struct FetchedPage {
     pub url: String,
@@ -41,7 +42,7 @@ pub async fn fetch_page(url: &str) -> AppResult<FetchedPage> {
         )));
     }
     let body = resp.text().await?;
-    let (title, mut text) = extract(&body);
+    let (title, mut text) = extract(&body)?;
     let truncated = text.chars().count() > MAX_TEXT_CHARS;
     if truncated {
         text = text.chars().take(MAX_TEXT_CHARS).collect();
@@ -54,38 +55,26 @@ pub async fn fetch_page(url: &str) -> AppResult<FetchedPage> {
     })
 }
 
-fn extract(html: &str) -> (String, String) {
-    let doc = Html::parse_document(html);
-    let title = Selector::parse("title")
-        .ok()
-        .and_then(|sel| doc.select(&sel).next().map(|t| clean_text(&t.text().collect::<String>())))
+fn extract(html: &str) -> AppResult<(String, String)> {
+    let mut options = ConversionOptions::default();
+    options.preprocessing = PreprocessingOptions {
+        enabled: true,
+        preset: PreprocessingPreset::Aggressive,
+        remove_navigation: true,
+        remove_forms: true,
+    };
+    options.skip_images = true;
+    options.extract_metadata = true;
+
+    let result = convert(html, options).map_err(|e| {
+        AppError::Other(format!("html to markdown conversion failed: {e}"))
+    })?;
+
+    let title = result
+        .metadata
+        .document
+        .title
         .unwrap_or_default();
-
-    // Prefer semantic content containers; fall back to <body>.
-    let body_sel = Selector::parse("main, article, body").unwrap();
-    let drop_sel = Selector::parse("script, style, noscript, template, svg").unwrap();
-
-    let mut chunks: Vec<String> = Vec::new();
-    if let Some(root) = doc.select(&body_sel).next() {
-        // Collect text but skip descendants of dropped tags. `scraper` has no
-        // node removal, so we gather text from block elements and filter.
-        let block_sel = Selector::parse("p, li, h1, h2, h3, h4, h5, h6, td, blockquote, pre").unwrap();
-        let drop_ids: std::collections::HashSet<_> =
-            root.select(&drop_sel).map(|e| e.id()).collect();
-        for el in root.select(&block_sel) {
-            // Skip if this element is inside a dropped subtree.
-            if el
-                .ancestors()
-                .any(|a| drop_ids.contains(&a.id()))
-            {
-                continue;
-            }
-            let t = clean_text(&el.text().collect::<String>());
-            if !t.is_empty() {
-                chunks.push(t);
-            }
-        }
-    }
-    let text = chunks.join("\n");
-    (title, text)
+    let text = result.content.unwrap_or_default();
+    Ok((title, text))
 }
