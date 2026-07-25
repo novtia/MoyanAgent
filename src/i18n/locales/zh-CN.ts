@@ -795,8 +795,11 @@ const zhCN = {
     toolCalls: "工具调用",
     estCost: "估算成本",
     vsPrev: "较前一周期",
+    cacheHitRate: "缓存命中率",
+    cacheReadWrite: "读 {{read}} · 写 {{write}}",
     cacheSplit: "缓存读 {{read}} · 写 {{write}} · 命中 {{hit}}",
-    cacheHint: "提示词缓存：读自缓存 / 写入缓存的 token 数",
+    cacheHint:
+      "缓存命中率 = 缓存读取 / 输入侧 token。OpenAI 类将缓存计入 prompt；Claude 将缓存与 input 分开。",
     cacheEmpty: "本周期无缓存命中",
     avgTokPerCall: "平均 {{avg}} tok/次",
     toolFailRate: "失败 {{count}} 次 ·",

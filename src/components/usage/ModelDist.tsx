@@ -1,6 +1,10 @@
 import { useTranslation } from "react-i18next";
 import type { ModelUsageRow } from "../../types";
-import { formatCompactTokens } from "./format";
+import {
+  cacheHitRate,
+  formatCacheHitPct,
+  formatCompactTokens,
+} from "./format";
 
 interface ModelDistProps {
   rows: ModelUsageRow[];
@@ -26,6 +30,11 @@ export function ModelDist({ rows }: ModelDistProps) {
           {rows.map((row) => {
             const pct = (row.total_tokens / total) * 100;
             const width = (row.total_tokens / max) * 100;
+            const hitPct = cacheHitRate(
+              row.prompt_tokens,
+              row.cache_read_tokens,
+              row.provider,
+            );
             return (
               <div className="usage-dist-row" key={`${row.model}|${row.provider ?? ""}`}>
                 <span className="usage-dist-name">
@@ -45,13 +54,14 @@ export function ModelDist({ rows }: ModelDistProps) {
                     <b>{formatCompactTokens(row.completion_tokens)}</b>
                   </span>
                   {(row.cache_read_tokens > 0 || row.cache_write_tokens > 0) && (
-                    <span>
+                    <span title={t("usage.cacheHint")}>
                       {t("usage.legendCache")}{" "}
                       <b>
                         {formatCompactTokens(row.cache_read_tokens)}
                         {row.cache_write_tokens > 0
                           ? `/${formatCompactTokens(row.cache_write_tokens)}`
                           : ""}
+                        {hitPct != null ? ` · ${formatCacheHitPct(hitPct)}` : ""}
                       </b>
                     </span>
                   )}

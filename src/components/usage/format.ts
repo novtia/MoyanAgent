@@ -66,6 +66,76 @@ export function formatPctChange(current: number, previous: number): number | nul
   return ((current - previous) / previous) * 100;
 }
 
+/** Claude/Anthropic report cache tokens outside `input_tokens`; OpenAI folds them in. */
+export function isSeparateCacheProvider(provider?: string | null): boolean {
+  const p = (provider ?? "").toLowerCase();
+  return p === "claude" || p.includes("anthropic");
+}
+
+/**
+ * Denominator for cache hit rate.
+ * - Claude: prompt + cache_read
+ * - OpenAI-style (known provider): prompt (cache ⊆ prompt)
+ * - Unknown: if cache_read ≤ prompt treat as folded, else separate
+ */
+export function cacheHitDenom(
+  promptTokens: number,
+  cacheReadTokens: number,
+  provider?: string | null,
+): number {
+  if (cacheReadTokens <= 0) return 0;
+  if (promptTokens <= 0) return cacheReadTokens;
+  if (isSeparateCacheProvider(provider)) {
+    return promptTokens + cacheReadTokens;
+  }
+  if (provider) {
+    return promptTokens;
+  }
+  return cacheReadTokens <= promptTokens
+    ? promptTokens
+    : promptTokens + cacheReadTokens;
+}
+
+/** Cache hit rate in 0–100, or null when there is no cache read. */
+export function cacheHitRate(
+  promptTokens: number,
+  cacheReadTokens: number,
+  provider?: string | null,
+): number | null {
+  if (cacheReadTokens <= 0) return null;
+  const denom = cacheHitDenom(promptTokens, cacheReadTokens, provider);
+  if (denom <= 0) return null;
+  return Math.min(100, (cacheReadTokens / denom) * 100);
+}
+
+/** Weighted hit rate across model rows (preferred for period summaries). */
+export function aggregateCacheHitRate(
+  rows: Array<{
+    prompt_tokens: number;
+    cache_read_tokens: number;
+    provider?: string | null;
+  }>,
+): number | null {
+  let read = 0;
+  let denom = 0;
+  for (const row of rows) {
+    const r = row.cache_read_tokens ?? 0;
+    if (r <= 0) continue;
+    const d = cacheHitDenom(row.prompt_tokens ?? 0, r, row.provider);
+    if (d > 0) {
+      read += r;
+      denom += d;
+    }
+  }
+  if (read <= 0 || denom <= 0) return null;
+  return Math.min(100, (read / denom) * 100);
+}
+
+export function formatCacheHitPct(rate: number | null): string {
+  if (rate == null) return "—";
+  return `${rate.toFixed(rate >= 10 ? 0 : 1)}%`;
+}
+
 export function formatMdShort(dateStr: string): string {
   // YYYY-MM-DD → MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {

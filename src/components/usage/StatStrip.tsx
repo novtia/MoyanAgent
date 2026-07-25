@@ -1,6 +1,9 @@
 import { useTranslation } from "react-i18next";
 import type { TokenUsageSummary } from "../../types";
 import {
+  aggregateCacheHitRate,
+  cacheHitRate,
+  formatCacheHitPct,
   formatCompactTokens,
   formatInt,
   formatMoney,
@@ -39,12 +42,10 @@ export function StatStrip({
     tools > 0 && toolErrorCount > 0
       ? ((toolErrorCount / tools) * 100).toFixed(2)
       : null;
-  // OpenAI folds cached into prompt; Claude keeps them separate.
-  const cacheDenom = Math.max(prompt, prompt + cacheRead);
   const cacheHitPct =
-    cacheRead > 0 && cacheDenom > 0
-      ? Math.min(100, (cacheRead / cacheDenom) * 100)
-      : null;
+    summary?.by_model?.length
+      ? aggregateCacheHitRate(summary.by_model)
+      : cacheHitRate(prompt, cacheRead);
 
   return (
     <div className="usage-stats">
@@ -55,23 +56,32 @@ export function StatStrip({
         </div>
         <div className="usage-stat-value">{formatCompactTokens(total)}</div>
         <div className="usage-stat-sub">
+          {pct != null ? (
+            <span className={pct >= 0 ? "up" : "down"}>
+              {pct >= 0 ? "▲" : "▼"} {Math.abs(pct).toFixed(1)}%
+            </span>
+          ) : null}
+          <span>{t("usage.vsPrev")}</span>
+        </div>
+      </div>
+      <div className="usage-stat">
+        <div className="usage-stat-label">
+          <CacheIcon />
+          {t("usage.cacheHitRate")}
+        </div>
+        <div className="usage-stat-value" title={t("usage.cacheHint")}>
+          {formatCacheHitPct(cacheHitPct)}
+        </div>
+        <div className="usage-stat-sub">
           {cacheRead + cacheWrite > 0 ? (
             <span className="mono" title={t("usage.cacheHint")}>
-              {t("usage.cacheSplit", {
+              {t("usage.cacheReadWrite", {
                 read: formatCompactTokens(cacheRead),
                 write: formatCompactTokens(cacheWrite),
-                hit: cacheHitPct != null ? `${cacheHitPct.toFixed(0)}%` : "—",
               })}
             </span>
           ) : (
-            <>
-              {pct != null ? (
-                <span className={pct >= 0 ? "up" : "down"}>
-                  {pct >= 0 ? "▲" : "▼"} {Math.abs(pct).toFixed(1)}%
-                </span>
-              ) : null}
-              <span>{t("usage.vsPrev")}</span>
-            </>
+            <span className="mono">{t("usage.cacheEmpty")}</span>
           )}
         </div>
       </div>
@@ -140,6 +150,15 @@ function BoltIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    </svg>
+  );
+}
+function CacheIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <ellipse cx="12" cy="5" rx="9" ry="3" />
+      <path d="M3 5v6c0 1.7 4 3 9 3s9-1.3 9-3V5" />
+      <path d="M3 11v6c0 1.7 4 3 9 3s9-1.3 9-3v-6" />
     </svg>
   );
 }

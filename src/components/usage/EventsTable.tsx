@@ -1,7 +1,12 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { TokenUsageEventRow } from "../../types";
-import { formatInt, formatTimeOfDay } from "./format";
+import {
+  cacheHitRate,
+  formatCacheHitPct,
+  formatInt,
+  formatTimeOfDay,
+} from "./format";
 
 const PAGE_SIZE = 50;
 
@@ -205,17 +210,24 @@ function EventRow({ ev }: { ev: TokenUsageEventRow }) {
   const cacheRead = ev.cache_read_tokens ?? 0;
   const cacheWrite = ev.cache_write_tokens ?? 0;
   const hasCache = hasTokens && (cacheRead > 0 || cacheWrite > 0);
-  const cacheLabel = !hasCache
+  const hitPct = hasTokens
+    ? cacheHitRate(ev.prompt_tokens ?? 0, cacheRead, ev.provider)
+    : null;
+  const cacheBase = !hasCache
     ? "—"
     : cacheWrite > 0
       ? `${formatInt(cacheRead)}/${formatInt(cacheWrite)}`
       : formatInt(cacheRead);
+  const cacheLabel =
+    hasCache && hitPct != null
+      ? `${cacheBase} · ${formatCacheHitPct(hitPct)}`
+      : cacheBase;
   const cacheTitle = !hasCache
     ? undefined
     : t("usage.cacheSplit", {
         read: formatInt(cacheRead),
         write: formatInt(cacheWrite),
-        hit: "—",
+        hit: formatCacheHitPct(hitPct),
       });
 
   return (

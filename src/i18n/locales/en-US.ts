@@ -812,8 +812,11 @@ const enUS: Resource = {
     toolCalls: "Tool calls",
     estCost: "Est. cost",
     vsPrev: "vs previous period",
+    cacheHitRate: "Cache hit rate",
+    cacheReadWrite: "↓ {{read}} · ↑ {{write}}",
     cacheSplit: "cache↓ {{read}} · ↑ {{write}} · hit {{hit}}",
-    cacheHint: "Prompt cache: tokens read from / written to cache",
+    cacheHint:
+      "Hit rate = cache read / prompt-side tokens. OpenAI folds cache into prompt; Claude reports cache separately.",
     cacheEmpty: "No cache hits in this range",
     avgTokPerCall: "avg {{avg}} tok/call",
     toolFailRate: "{{count}} failed ·",
