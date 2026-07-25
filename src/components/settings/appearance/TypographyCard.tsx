@@ -13,20 +13,13 @@ export function TypographyCard() {
 
   return (
     <div className="settings-card">
-      <div className="settings-card-head settings-card-head--stack">
-        <div>
-          <div className="settings-card-title">
-            {t("settings.appearance.typographyTitle")}
-          </div>
-          <div className="settings-card-desc">
-            {t("settings.appearance.typographyDesc")}
+      <div className="settings-row">
+        <div className="settings-row-main">
+          <div className="settings-row-title">
+            {t("settings.appearance.uiFontLabel")}
           </div>
         </div>
-
-        <label className="appearance-field-row">
-          <span className="appearance-field-label">
-            {t("settings.appearance.uiFontLabel")}
-          </span>
+        <div className="settings-row-control">
           <select
             className="chat-font-select appearance-select"
             value={uiFont}
@@ -38,17 +31,22 @@ export function TypographyCard() {
               </option>
             ))}
           </select>
-        </label>
+        </div>
+      </div>
 
-        <div className="appearance-chat-font">
-          <div className="appearance-subsection-title">
+      <div className="settings-row settings-row--stack">
+        <div className="settings-row-main">
+          <div className="settings-row-title">
             {t("settings.appearance.chatFontTitle")}
           </div>
-          <ChatFontControls
-            className="appearance-chat-font-controls"
-            hideReset
-          />
+          <div className="settings-row-desc">
+            {t("settings.appearance.typographyDesc")}
+          </div>
         </div>
+        <ChatFontControls
+          className="appearance-chat-font-controls"
+          hideReset
+        />
       </div>
     </div>
   );

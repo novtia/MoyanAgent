@@ -562,14 +562,20 @@ export function ModelServiceSection() {
   if (catalogError) {
     return (
       <div className="model-service-card">
-        <div className="hint is-error">无法加载模型目录：{catalogError}</div>
+        <div className="model-provider-detail-inner">
+          <div className="model-empty-state">
+            <span className="hint is-error">无法加载模型目录：{catalogError}</span>
+          </div>
+        </div>
       </div>
     );
   }
   if (!llmCatalog) {
     return (
       <div className="model-service-card">
-        <div className="model-empty-state model-empty-state--center">加载模型目录中…</div>
+        <div className="model-provider-detail-inner">
+          <div className="model-empty-state model-empty-state--center">加载模型目录中…</div>
+        </div>
       </div>
     );
   }
@@ -578,13 +584,15 @@ export function ModelServiceSection() {
     <div className="model-service-card">
       <div className="model-service-layout">
         <aside className="model-provider-pane">
-          <input
-            type="search"
-            className="model-provider-search"
-            value={providerSearch}
-            placeholder="搜索模型平台..."
-            onChange={(e) => setProviderSearch(e.target.value)}
-          />
+          <div className="model-provider-search-wrap">
+            <SearchIcon />
+            <input
+              type="search"
+              value={providerSearch}
+              placeholder="搜索模型平台..."
+              onChange={(e) => setProviderSearch(e.target.value)}
+            />
+          </div>
           <div className="model-provider-list">
             {filteredProviders.map((provider) => {
               const provOn = provider.enabled !== false;
@@ -632,10 +640,21 @@ export function ModelServiceSection() {
 
         <section className="model-provider-detail">
           {selectedProvider ? (
-            <>
-              <div className="model-provider-title-row">
-                <div className="model-provider-heading">
-                  <span>{providerDraft.name || selectedProvider.name}</span>
+            <div className="model-provider-detail-inner">
+              <div className="model-provider-hero">
+                <ProviderAvatarDisplay
+                  name={providerDraft.name || selectedProvider.name}
+                  avatar={selectedProvider.avatar}
+                />
+                <div className="model-provider-hero-text">
+                  <span className="model-provider-hero-name">
+                    {providerDraft.name || selectedProvider.name}
+                  </span>
+                  <div className="model-provider-hero-meta">
+                    <span className="model-provider-hero-sdk">
+                      {providerSdkLabel(selectedProvider.sdk, sdkOptions)}
+                    </span>
+                  </div>
                 </div>
                 <div className="model-provider-title-tools">
                   <ProviderEnableSwitch
@@ -658,60 +677,62 @@ export function ModelServiceSection() {
                 </div>
               </div>
 
-              <div className="model-provider-fields">
-                <div className="row">
-                  <label className="field-label">API 密钥</label>
-                  <div className="input-affix">
+              <div className="model-provider-config">
+                <div className="model-provider-fields">
+                  <div className="row">
+                    <label className="field-label">API 密钥</label>
+                    <div className="input-affix">
+                      <input
+                        type={showKey ? "text" : "password"}
+                        value={providerDraft.api_key}
+                        autoComplete="off"
+                        spellCheck={false}
+                        placeholder={selectedSdkConfig.apiKeyPlaceholder}
+                        onChange={(e) =>
+                          setProviderDraft((draft) => ({
+                            ...draft,
+                            api_key: e.target.value,
+                          }))
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="affix-btn"
+                        onClick={() => setShowKey((value) => !value)}
+                      >
+                        {showKey ? "隐藏" : "显示"}
+                      </button>
+                    </div>
+                    <div
+                      className={`hint ${
+                        selectedProviderValidation.api_key ? "is-error" : ""
+                      }`}
+                    >
+                      {selectedProviderValidation.api_key ?? selectedSdkConfig.apiKeyHint}
+                    </div>
+                  </div>
+                  <div className="row">
+                    <label className="field-label">API 地址</label>
                     <input
-                      type={showKey ? "text" : "password"}
-                      value={providerDraft.api_key}
-                      autoComplete="off"
+                      type="url"
+                      value={providerDraft.endpoint}
                       spellCheck={false}
-                      placeholder={selectedSdkConfig.apiKeyPlaceholder}
+                      placeholder={selectedSdkConfig.endpointPlaceholder}
                       onChange={(e) =>
                         setProviderDraft((draft) => ({
                           ...draft,
-                          api_key: e.target.value,
+                          endpoint: e.target.value,
                         }))
                       }
                     />
-                    <button
-                      type="button"
-                      className="affix-btn"
-                      onClick={() => setShowKey((value) => !value)}
+                    <div
+                      className={`hint ${
+                        selectedProviderValidation.endpoint ? "is-error" : ""
+                      }`}
                     >
-                      {showKey ? "隐藏" : "显示"}
-                    </button>
-                  </div>
-                  <div
-                    className={`hint ${
-                      selectedProviderValidation.api_key ? "is-error" : ""
-                    }`}
-                  >
-                    {selectedProviderValidation.api_key ?? selectedSdkConfig.apiKeyHint}
-                  </div>
-                </div>
-                <div className="row">
-                  <label className="field-label">API 地址</label>
-                  <input
-                    type="url"
-                    value={providerDraft.endpoint}
-                    spellCheck={false}
-                    placeholder={selectedSdkConfig.endpointPlaceholder}
-                    onChange={(e) =>
-                      setProviderDraft((draft) => ({
-                        ...draft,
-                        endpoint: e.target.value,
-                      }))
-                    }
-                  />
-                  <div
-                    className={`hint ${
-                      selectedProviderValidation.endpoint ? "is-error" : ""
-                    }`}
-                  >
-                    {selectedProviderValidation.endpoint ??
-                      selectedSdkConfig.endpointHint}
+                      {selectedProviderValidation.endpoint ??
+                        selectedSdkConfig.endpointHint}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -759,6 +780,7 @@ export function ModelServiceSection() {
                       >
                         <ChevronIcon />
                         <span>{group}</span>
+                        <span className="model-group-title-count">{models.length}</span>
                       </button>
                       {!collapsed && (
                       <div className="model-row-list">
@@ -828,10 +850,12 @@ export function ModelServiceSection() {
               ) : (
                 <div className="model-empty-state">该供应商还没有模型。</div>
               )}
-            </>
+            </div>
           ) : (
-            <div className="model-empty-state model-empty-state--center">
-              添加供应商后，在这里配置 API 和模型列表。
+            <div className="model-provider-detail-inner">
+              <div className="model-empty-state model-empty-state--center">
+                添加供应商后，在这里配置 API 和模型列表。
+              </div>
             </div>
           )}
         </section>

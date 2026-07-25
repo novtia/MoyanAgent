@@ -108,153 +108,173 @@ export function WebSearchSection() {
   ];
 
   return (
-    <div className="settings-stack">
+    <>
       <div className="settings-card">
-        <div className="settings-card-head">
-          <div>
-            <div className="settings-card-title">
+        <div className="settings-row">
+          <div className="settings-row-main">
+            <div className="settings-row-title">
               {t("settings.search.enableTitle")}
             </div>
-            <div className="settings-card-desc">
+            <div className="settings-row-desc">
               {t("settings.search.enableDesc")}
             </div>
           </div>
-          <button
-            type="button"
-            className={`settings-toggle ${enabled ? "settings-toggle--on" : ""}`}
-            role="switch"
-            aria-checked={enabled}
-            aria-label={t("settings.search.enableTitle")}
-            onClick={() => void update({ web_search_enabled: !enabled })}
-          >
-            <span className="settings-toggle-thumb" />
-          </button>
+          <div className="settings-row-control">
+            <button
+              type="button"
+              className={`settings-toggle ${enabled ? "settings-toggle--on" : ""}`}
+              role="switch"
+              aria-checked={enabled}
+              aria-label={t("settings.search.enableTitle")}
+              onClick={() => void update({ web_search_enabled: !enabled })}
+            >
+              <span className="settings-toggle-thumb" />
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div className="settings-card">
-        <div className="settings-card-head">
-          <div>
-            <div className="settings-card-title">
+        <div className="settings-row">
+          <div className="settings-row-main">
+            <div className="settings-row-title">
               {t("settings.search.backendTitle")}
             </div>
-            <div className="settings-card-desc">
+            <div className="settings-row-desc">
               {t("settings.search.backendDesc")}
             </div>
           </div>
-          <select
-            className="settings-select"
-            aria-label={t("settings.search.backendTitle")}
-            value={backend}
-            onChange={(e) => void update({ web_search_backend: e.target.value })}
-          >
-            {backendOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <div className="settings-row-control">
+            <select
+              className="settings-select"
+              aria-label={t("settings.search.backendTitle")}
+              value={backend}
+              onChange={(e) => void update({ web_search_backend: e.target.value })}
+            >
+              {backendOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {backend === "local" && (
-          <div className="settings-card-head">
-            <div>
-              <div className="settings-card-title">
+          <div className="settings-row">
+            <div className="settings-row-main">
+              <div className="settings-row-title">
                 {t("settings.search.localEngineTitle")}
               </div>
-              <div className="settings-card-desc">
+              <div className="settings-row-desc">
                 {t("settings.search.localEngineDesc")}
               </div>
             </div>
-            <select
-              className="settings-select"
-              aria-label={t("settings.search.localEngineTitle")}
-              value={localEngine}
-              onChange={(e) =>
-                void update({ web_search_local_engine: e.target.value })
-              }
-            >
-              <option value="duckduckgo">DuckDuckGo</option>
-              <option value="bing">Bing</option>
-            </select>
+            <div className="settings-row-control">
+              <select
+                className="settings-select"
+                aria-label={t("settings.search.localEngineTitle")}
+                value={localEngine}
+                onChange={(e) =>
+                  void update({ web_search_local_engine: e.target.value })
+                }
+              >
+                <option value="duckduckgo">DuckDuckGo</option>
+                <option value="bing">Bing</option>
+              </select>
+            </div>
           </div>
         )}
 
-        <div className="settings-card-head">
-          <div>
-            <div className="settings-card-title">
+        <div className="settings-row">
+          <div className="settings-row-main">
+            <div className="settings-row-title">
               {t("settings.search.maxResultsTitle")}
             </div>
-            <div className="settings-card-desc">
+            <div className="settings-row-desc">
               {t("settings.search.maxResultsDesc")}
             </div>
           </div>
-          <input
-            type="number"
-            min={1}
-            max={20}
-            className="settings-select"
-            style={{ width: 88 }}
-            value={maxResults}
-            onChange={(e) => onMaxResultsChange(e.target.value)}
-          />
+          <div className="settings-row-control">
+            <input
+              type="number"
+              min={1}
+              max={20}
+              className="settings-number"
+              value={maxResults}
+              onChange={(e) => onMaxResultsChange(e.target.value)}
+            />
+          </div>
         </div>
       </div>
 
       <div className="settings-card">
-        <div className="settings-card-head">
-          <div>
-            <div className="settings-card-title">
+        <div className="settings-block">
+          <div className="settings-block-head">
+            <div className="settings-row-title">
               {t("settings.search.providersTitle")}
             </div>
-            <div className="settings-card-desc">
+            <div className="settings-row-desc">
               {t("settings.search.providersDesc")}
             </div>
           </div>
         </div>
 
-        <div className="model-settings-form">
-          {API_KINDS.map((kind) => {
-            const draft = drafts[kind] ?? { api_key: "", endpoint: "" };
-            const label = kind === "bing" ? "Bing API" : kind[0].toUpperCase() + kind.slice(1);
-            const show = visibleKeys[kind] ?? false;
-            return (
-              <div className="row" key={kind}>
-                <label className="field-label">
-                  {label} · {t("settings.search.apiKeyLabel")}
-                </label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input
-                    type={show ? "text" : "password"}
-                    value={draft.api_key}
-                    spellCheck={false}
-                    placeholder={t("settings.search.apiKeyPlaceholder")}
-                    style={{ flex: 1 }}
-                    onChange={(e) => onKeyChange(kind, e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() =>
-                      setVisibleKeys((v) => ({ ...v, [kind]: !show }))
-                    }
-                  >
-                    {show ? t("settings.llm.keyHide") : t("settings.llm.keyShow")}
-                  </button>
-                </div>
-                <input
-                  type="text"
-                  value={draft.endpoint}
-                  spellCheck={false}
-                  placeholder={t("settings.search.endpointPlaceholder")}
-                  onChange={(e) => onEndpointChange(kind, e.target.value)}
-                />
+        {API_KINDS.map((kind) => {
+          const draft = drafts[kind] ?? { api_key: "", endpoint: "" };
+          const label =
+            kind === "bing"
+              ? "Bing API"
+              : kind[0].toUpperCase() + kind.slice(1);
+          const show = visibleKeys[kind] ?? false;
+          return (
+            <div className="search-provider" key={kind}>
+              <div className="search-provider-head">
+                <span className="search-provider-name">{label}</span>
+                <span className="search-provider-tag">{kind}</span>
               </div>
-            );
-          })}
-          <div className="hint">{t("settings.search.keyHint")}</div>
+              <div className="search-provider-fields">
+                <div className="row">
+                  <label className="field-label">
+                    {t("settings.search.apiKeyLabel")}
+                  </label>
+                  <div className="input-affix">
+                    <input
+                      type={show ? "text" : "password"}
+                      value={draft.api_key}
+                      spellCheck={false}
+                      placeholder={t("settings.search.apiKeyPlaceholder")}
+                      onChange={(e) => onKeyChange(kind, e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="affix-btn"
+                      onClick={() =>
+                        setVisibleKeys((v) => ({ ...v, [kind]: !show }))
+                      }
+                    >
+                      {show
+                        ? t("settings.llm.keyHide")
+                        : t("settings.llm.keyShow")}
+                    </button>
+                  </div>
+                </div>
+                <div className="row">
+                  <input
+                    type="text"
+                    value={draft.endpoint}
+                    spellCheck={false}
+                    placeholder={t("settings.search.endpointPlaceholder")}
+                    onChange={(e) => onEndpointChange(kind, e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        <div className="settings-block">
+          <div className="settings-row-desc">{t("settings.search.keyHint")}</div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

@@ -558,6 +558,13 @@ const zhCN = {
     tabDefault: "默认模型设置",
     tabSearch: "网络搜索",
     tabSystem: "系统",
+    subtitle: {
+      appearance: "定制主题、强调色与界面排版",
+      llm: "管理模型供应商、API 接入与模型列表",
+      default: "选择执行轻量任务时使用的模型",
+      search: "配置网络搜索的来源与 API 供应商",
+      system: "应用信息、提示音与数据存储位置",
+    },
     default: {
       quickModelTitle: "快速模型",
       quickModelDesc: "用于执行会话标题重命名等轻量任务的模型。新会话发出首条消息后会自动生成标题。",

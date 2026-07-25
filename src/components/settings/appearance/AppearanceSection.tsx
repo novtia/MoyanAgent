@@ -1,14 +1,13 @@
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { getLanguage, setLanguage } from "../../../i18n";
 import { useAppearance } from "../../../store/appearance";
 import { useChatFont } from "../../../store/chatFont";
 import { DisplayIcon, MoonIcon, SunIcon } from "../icons";
-import { SegmentButton } from "../SegmentButton";
 import type { ThemeMode } from "../types";
 import { AccentColorCard } from "./AccentColorCard";
 import { LanguageDropdown } from "./LanguageDropdown";
 import { LayoutCard } from "./LayoutCard";
-import { RadiusCard } from "./RadiusCard";
 import { TypographyCard } from "./TypographyCard";
 
 interface AppearanceSectionProps {
@@ -33,83 +32,139 @@ export function AppearanceSection({
   return (
     <>
       <div className="settings-card">
-        <div className="settings-card-head">
-          <div>
-            <div className="settings-card-title">
+        <div className="settings-block">
+          <div className="settings-block-head">
+            <div className="settings-row-title">
               {t("settings.appearance.themeTitle")}
             </div>
-            <div className="settings-card-desc">
+            <div className="settings-row-desc">
               {t("settings.appearance.themeDesc")}
             </div>
           </div>
-          <div className="settings-segment" role="tablist">
-            <SegmentButton
+          <div className="theme-grid" role="radiogroup">
+            <ThemeTile
+              mode="light"
               active={themeMode === "light"}
-              onClick={() => onThemeModeChange("light")}
-            >
-              <SunIcon />
-              <span>{t("settings.appearance.light")}</span>
-            </SegmentButton>
-            <SegmentButton
+              icon={<SunIcon />}
+              label={t("settings.appearance.light")}
+              onSelect={() => onThemeModeChange("light")}
+            />
+            <ThemeTile
+              mode="dark"
               active={themeMode === "dark"}
-              onClick={() => onThemeModeChange("dark")}
-            >
-              <MoonIcon />
-              <span>{t("settings.appearance.dark")}</span>
-            </SegmentButton>
-            <SegmentButton
+              icon={<MoonIcon />}
+              label={t("settings.appearance.dark")}
+              onSelect={() => onThemeModeChange("dark")}
+            />
+            <ThemeTile
+              mode="system"
               active={themeMode === "system"}
-              onClick={() => onThemeModeChange("system")}
-            >
-              <DisplayIcon />
-              <span>{t("settings.appearance.system")}</span>
-            </SegmentButton>
+              icon={<DisplayIcon />}
+              label={t("settings.appearance.system")}
+              onSelect={() => onThemeModeChange("system")}
+            />
           </div>
         </div>
+        <AccentColorCard />
       </div>
 
-      <AccentColorCard />
       <TypographyCard />
       <LayoutCard />
-      <RadiusCard />
 
       <div className="settings-card">
-        <div className="settings-card-head">
-          <div>
-            <div className="settings-card-title">
+        <div className="settings-row">
+          <div className="settings-row-main">
+            <div className="settings-row-title">
               {t("settings.appearance.languageTitle")}
             </div>
-            <div className="settings-card-desc">
+            <div className="settings-row-desc">
               {t("settings.appearance.languageDesc")}
             </div>
           </div>
-          <LanguageDropdown
-            current={currentLang}
-            onChange={(lang) => setLanguage(lang)}
-            ariaLabel={t("settings.appearance.languageTitle")}
-          />
+          <div className="settings-row-control">
+            <LanguageDropdown
+              current={currentLang}
+              onChange={(lang) => setLanguage(lang)}
+              ariaLabel={t("settings.appearance.languageTitle")}
+            />
+          </div>
         </div>
-      </div>
-
-      <div className="settings-card appearance-reset-card">
-        <div className="settings-card-head">
-          <div>
-            <div className="settings-card-title">
+        <div className="settings-row">
+          <div className="settings-row-main">
+            <div className="settings-row-title">
               {t("settings.appearance.resetTitle")}
             </div>
-            <div className="settings-card-desc">
+            <div className="settings-row-desc">
               {t("settings.appearance.resetDesc")}
             </div>
           </div>
-          <button
-            type="button"
-            className="appearance-reset-btn"
-            onClick={handleResetAll}
-          >
-            {t("settings.appearance.resetAction")}
-          </button>
+          <div className="settings-row-control">
+            <button
+              type="button"
+              className="appearance-reset-btn"
+              onClick={handleResetAll}
+            >
+              {t("settings.appearance.resetAction")}
+            </button>
+          </div>
         </div>
       </div>
+    </>
+  );
+}
+
+interface ThemeTileProps {
+  mode: ThemeMode;
+  active: boolean;
+  icon: ReactNode;
+  label: string;
+  onSelect: () => void;
+}
+
+function ThemeTile({ mode, active, icon, label, onSelect }: ThemeTileProps) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      className={`theme-tile ${active ? "active" : ""}`}
+      onClick={onSelect}
+    >
+      {mode === "system" ? (
+        <span className="theme-preview theme-preview--system">
+          <span className="tp-half tp-half--light">
+            <MiniWindow />
+          </span>
+          <span className="tp-half tp-half--dark">
+            <MiniWindow />
+          </span>
+        </span>
+      ) : (
+        <span className={`theme-preview theme-preview--${mode}`}>
+          <MiniWindow />
+        </span>
+      )}
+      <span className="theme-tile-label">
+        {icon}
+        <span>{label}</span>
+      </span>
+    </button>
+  );
+}
+
+function MiniWindow() {
+  return (
+    <>
+      <span className="tp-bar">
+        <i />
+        <i />
+        <i />
+      </span>
+      <span className="tp-body">
+        <span className="tp-line tp-w70" />
+        <span className="tp-line tp-w45" />
+        <span className="tp-pill" />
+      </span>
     </>
   );
 }

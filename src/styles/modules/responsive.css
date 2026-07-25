@@ -30,26 +30,27 @@
   .composer-dock {
     padding: 0 16px 16px;
   }
-  .settings-main {
-    padding: 24px 18px 48px;
-  }
-  .settings--llm .settings-main {
-    padding: 0;
+  .settings-panel {
+    padding: 32px 20px 72px;
   }
   .settings--llm .settings-panel {
     height: 100%;
+    padding: 0;
   }
   .settings-side {
     width: 64px;
     padding: 12px 8px;
   }
   .settings-back span,
-  .settings-nav-item span {
+  .settings-nav-item > span:not(.settings-nav-icon) {
     display: none;
   }
   .settings-back,
   .settings-nav-item {
     justify-content: center;
+  }
+  .settings-nav-item {
+    padding: 6px;
   }
   .model-service-layout {
     grid-template-columns: 1fr;
@@ -69,5 +70,30 @@
   .model-list-head {
     align-items: stretch;
     flex-direction: column;
+  }
+  .model-provider-detail-inner {
+    padding: 20px 18px 56px;
+  }
+}
+
+@media (max-width: 560px) {
+  .theme-grid {
+    grid-template-columns: 1fr;
+  }
+  .settings-row {
+    flex-wrap: wrap;
+    gap: 12px 16px;
+  }
+  .settings-row-control {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .settings-select {
+    min-width: 0;
+    width: 100%;
+    max-width: none;
+  }
+  .settings-segment {
+    flex-wrap: wrap;
   }
 }

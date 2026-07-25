@@ -76,39 +76,42 @@ export function DefaultModelSection() {
 
   return (
     <div className="settings-card">
-      <div className="settings-card-head">
-        <div>
-          <div className="settings-card-title">
+      <div className="settings-row">
+        <div className="settings-row-main">
+          <div className="settings-row-title">
             {t("settings.default.quickModelTitle")}
           </div>
-          <div className="settings-card-desc">
+          <div className="settings-row-desc">
             {t("settings.default.quickModelDesc")}
           </div>
+          {options.length === 0 && (
+            <div className="settings-row-desc">
+              {t("settings.default.quickModelEmpty")}
+            </div>
+          )}
         </div>
-        {options.length > 0 ? (
-          <select
-            className="settings-select"
-            aria-label={t("settings.default.quickModelTitle")}
-            value={selectedIndex >= 0 ? String(selectedIndex) : ""}
-            onChange={(event) => onChange(event.target.value)}
-          >
-            <option value="">{t("settings.default.quickModelNone")}</option>
-            {grouped.map(([providerId, group]) => (
-              <optgroup key={providerId} label={group.name}>
-                {group.items.map(({ option, index }) => (
-                  <option
-                    key={`${option.providerId}:${option.modelId}`}
-                    value={String(index)}
-                  >
-                    {option.modelName}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        ) : (
-          <div className="settings-card-desc">
-            {t("settings.default.quickModelEmpty")}
+        {options.length > 0 && (
+          <div className="settings-row-control">
+            <select
+              className="settings-select"
+              aria-label={t("settings.default.quickModelTitle")}
+              value={selectedIndex >= 0 ? String(selectedIndex) : ""}
+              onChange={(event) => onChange(event.target.value)}
+            >
+              <option value="">{t("settings.default.quickModelNone")}</option>
+              {grouped.map(([providerId, group]) => (
+                <optgroup key={providerId} label={group.name}>
+                  {group.items.map(({ option, index }) => (
+                    <option
+                      key={`${option.providerId}:${option.modelId}`}
+                      value={String(index)}
+                    >
+                      {option.modelName}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
           </div>
         )}
       </div>

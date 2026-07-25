@@ -5,6 +5,7 @@ import {
   type ChatWidthOption,
   type DensityOption,
 } from "../../../store/appearance";
+import { RadiusCard } from "./RadiusCard";
 
 const WIDTH_OPTIONS: ChatWidthOption[] = ["narrow", "default", "wide", "full"];
 const DENSITY_OPTIONS: DensityOption[] = [
@@ -21,20 +22,16 @@ export function LayoutCard() {
 
   return (
     <div className="settings-card">
-      <div className="settings-card-head settings-card-head--stack">
-        <div>
-          <div className="settings-card-title">
-            {t("settings.appearance.layoutTitle")}
+      <div className="settings-row">
+        <div className="settings-row-main">
+          <div className="settings-row-title">
+            {t("settings.appearance.chatWidthLabel")}
           </div>
-          <div className="settings-card-desc">
+          <div className="settings-row-desc">
             {t("settings.appearance.layoutDesc")}
           </div>
         </div>
-
-        <div className="appearance-control-block">
-          <div className="appearance-field-label">
-            {t("settings.appearance.chatWidthLabel")}
-          </div>
+        <div className="settings-row-control">
           <div className="settings-segment" role="tablist">
             {WIDTH_OPTIONS.map((option) => (
               <SegmentButton
@@ -47,11 +44,15 @@ export function LayoutCard() {
             ))}
           </div>
         </div>
+      </div>
 
-        <div className="appearance-control-block">
-          <div className="appearance-field-label">
+      <div className="settings-row">
+        <div className="settings-row-main">
+          <div className="settings-row-title">
             {t("settings.appearance.densityLabel")}
           </div>
+        </div>
+        <div className="settings-row-control">
           <div className="settings-segment" role="tablist">
             {DENSITY_OPTIONS.map((option) => (
               <SegmentButton
@@ -65,6 +66,8 @@ export function LayoutCard() {
           </div>
         </div>
       </div>
+
+      <RadiusCard />
     </div>
   );
 }

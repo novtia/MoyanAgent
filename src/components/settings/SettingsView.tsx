@@ -27,7 +27,14 @@ export function SettingsView({
       <div className="settings-main">
         <div className="settings-panel" key={activeTab}>
           {activeTab !== "llm" && (
-            <h1 className="settings-page-title">{t(TAB_TITLE_KEYS[activeTab])}</h1>
+            <header className="settings-page-header">
+              <h1 className="settings-page-title">
+                {t(TAB_TITLE_KEYS[activeTab])}
+              </h1>
+              <p className="settings-page-subtitle">
+                {t(`settings.subtitle.${activeTab}`)}
+              </p>
+            </header>
           )}
           {activeTab === "appearance" && (
             <AppearanceSection

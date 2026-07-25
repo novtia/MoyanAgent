@@ -78,7 +78,7 @@ function SettingsNavItem({
       className={`settings-nav-item ${active ? "active" : ""}`}
       onClick={onClick}
     >
-      {icon}
+      <span className="settings-nav-icon">{icon}</span>
       <span>{label}</span>
     </button>
   );

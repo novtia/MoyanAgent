@@ -16,17 +16,16 @@ export function AccentColorCard() {
   const customValue = getAccentSwatchColor(accent) ?? CUSTOM_FALLBACK;
 
   return (
-    <div className="settings-card">
-      <div className="settings-card-head settings-card-head--stack">
-        <div>
-          <div className="settings-card-title">
-            {t("settings.appearance.accentTitle")}
-          </div>
-          <div className="settings-card-desc">
-            {t("settings.appearance.accentDesc")}
-          </div>
+    <div className="settings-block">
+      <div className="settings-block-head">
+        <div className="settings-row-title">
+          {t("settings.appearance.accentTitle")}
         </div>
-        <div className="appearance-swatches" role="listbox" aria-label={t("settings.appearance.accentTitle")}>
+        <div className="settings-row-desc">
+          {t("settings.appearance.accentDesc")}
+        </div>
+      </div>
+      <div className="appearance-swatches" role="listbox" aria-label={t("settings.appearance.accentTitle")}>
           {ACCENT_PRESETS.map((preset) => {
             const active = accent === preset.id;
             const swatch =
@@ -47,11 +46,7 @@ export function AccentColorCard() {
                 }
                 title={t(`settings.appearance.accent.${preset.id}`)}
                 onClick={() => set({ accent: preset.id })}
-              >
-                {preset.id === "default" ? (
-                  <span className="appearance-swatch-default-mark" />
-                ) : null}
-              </button>
+              />
             );
           })}
           <label
@@ -66,7 +61,6 @@ export function AccentColorCard() {
               aria-label={t("settings.appearance.accent.custom")}
             />
           </label>
-        </div>
       </div>
     </div>
   );

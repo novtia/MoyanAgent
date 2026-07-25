@@ -23,7 +23,6 @@
 .settings-back,
 .settings-nav-item,
 .settings-segment-btn,
-.settings-preset-item,
 .settings-icon-btn,
 .settings-toggle,
 .lang-dropdown-trigger,
@@ -60,7 +59,6 @@
 .settings-back:active:not(:disabled),
 .settings-nav-item:active:not(:disabled),
 .settings-segment-btn:active:not(:disabled),
-.settings-preset-item:active:not(:disabled),
 .settings-icon-btn:active:not(:disabled),
 .lang-dropdown-trigger:active:not(:disabled),
 .lang-dropdown-item:active:not(:disabled),
@@ -107,7 +105,6 @@
 .btn:active:not(:disabled):not(.primary):not(.danger):not(.warning),
 .modal-head .close:active:not(:disabled),
 .settings-back:active:not(:disabled),
-.settings-preset-item:active:not(:disabled),
 .settings-icon-btn:active:not(:disabled),
 .lang-dropdown-trigger:active:not(:disabled),
 .lang-dropdown-item:active:not(:disabled),
@@ -174,12 +171,6 @@
 }
 
 @media (max-width: 720px) {
-  .settings-main {
-    padding: 24px 20px 48px;
-  }
-  .settings-side {
-    width: 200px;
-  }
   .settings-info-row {
     grid-template-columns: 1fr auto;
   }

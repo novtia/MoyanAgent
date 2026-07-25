@@ -568,6 +568,13 @@ const enUS: Resource = {
     tabDefault: "Default model",
     tabSearch: "Web search",
     tabSystem: "System",
+    subtitle: {
+      appearance: "Customize the theme, accent, and typography",
+      llm: "Manage providers, API access, and model lists",
+      default: "Pick the model for lightweight background tasks",
+      search: "Choose how web search works and configure providers",
+      system: "App info, notification sound, and data locations",
+    },
     default: {
       quickModelTitle: "Quick model",
       quickModelDesc:
