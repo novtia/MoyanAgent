@@ -16,12 +16,13 @@
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0;
-  vertical-align: 2px;
+  line-height: 1.4;
   max-width: 260px;
   display: inline-block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex-shrink: 1;
 }
 
 /* body：去掉默认 padding，改为左右两栏。
@@ -254,7 +255,7 @@
   padding: 2px;
   margin: 0;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-md);
   background: var(--bg-soft);
   cursor: pointer;
   transition: background 0.14s ease, border-color 0.14s ease;
@@ -266,18 +267,26 @@
   display: block;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   box-shadow: var(--shadow-1);
   transition: transform 0.16s var(--ease-pop);
   pointer-events: none;
 }
 .cfg-switch--on {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: color-mix(in srgb, var(--ink) 78%, var(--bg));
+  border-color: color-mix(in srgb, var(--ink) 78%, var(--bg));
 }
 .cfg-switch--on .cfg-switch-thumb {
   transform: translateX(18px);
+  background: var(--bg);
+}
+:root[data-theme="dark"] .cfg-switch--on {
+  background: color-mix(in srgb, var(--ink) 26%, var(--bg));
+  border-color: color-mix(in srgb, var(--ink) 34%, var(--bg));
+}
+:root[data-theme="dark"] .cfg-switch--on .cfg-switch-thumb {
+  background: #f3f5f7;
 }
 
 /* ── 滑块 ── */
@@ -341,6 +350,7 @@
   display: inline-flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
 }
 .config-modal-autosave {
   font-size: 11.5px;

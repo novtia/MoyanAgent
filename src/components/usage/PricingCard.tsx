@@ -56,7 +56,7 @@ export function PricingCard({ models }: PricingCardProps) {
                       setPrice(model, { inputPer1M: Number(e.target.value) || 0 })
                     }
                   />
-                  <span className="per">/M</span>
+                  <span className="per">{t("usage.pricingPerMillion")}</span>
                 </span>
               </span>
               <span className="usage-price-field">
@@ -75,7 +75,7 @@ export function PricingCard({ models }: PricingCardProps) {
                       })
                     }
                   />
-                  <span className="per">/M</span>
+                  <span className="per">{t("usage.pricingPerMillion")}</span>
                 </span>
               </span>
             </div>

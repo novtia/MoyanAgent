@@ -34,9 +34,14 @@ export function EventsTable({
   const [kindOpen, setKindOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
 
-  const kindLabel = eventKind
-    ? eventKind.replace("_", " ")
-    : t("usage.allKinds");
+  const kindLabel =
+    eventKind === "api_call"
+      ? t("usage.kindApiCall")
+      : eventKind === "tool_call"
+        ? t("usage.kindToolCall")
+        : eventKind === "turn_summary"
+          ? t("usage.kindTurnSummary")
+          : t("usage.allKinds");
   const modelLabel = model ?? t("usage.allModels");
 
   const approxTotal = useMemo(() => {
@@ -67,7 +72,13 @@ export function EventsTable({
               <button type="button" onClick={() => { onEventKindChange(null); setKindOpen(false); }}>
                 {t("usage.allKinds")}
               </button>
-              {["api_call", "tool_call", "turn_summary"].map((k) => (
+              {(
+                [
+                  ["api_call", "usage.kindApiCall"],
+                  ["tool_call", "usage.kindToolCall"],
+                  ["turn_summary", "usage.kindTurnSummary"],
+                ] as const
+              ).map(([k, labelKey]) => (
                 <button
                   key={k}
                   type="button"
@@ -76,7 +87,7 @@ export function EventsTable({
                     setKindOpen(false);
                   }}
                 >
-                  {k}
+                  {t(labelKey)}
                 </button>
               ))}
             </div>
@@ -133,6 +144,9 @@ export function EventsTable({
             <span className="h-hide" style={{ textAlign: "right" }}>
               {t("usage.colOut")}
             </span>
+            <span className="h-hide" style={{ textAlign: "right" }}>
+              {t("usage.colCache")}
+            </span>
             <span style={{ textAlign: "right" }}>{t("usage.colTotal")}</span>
             <span style={{ textAlign: "right" }}>{t("usage.colStatus")}</span>
           </div>
@@ -172,17 +186,37 @@ export function EventsTable({
 }
 
 function EventRow({ ev }: { ev: TokenUsageEventRow }) {
+  const { t } = useTranslation();
   const kind = ev.event_kind;
   const badgeClass =
     kind === "api_call" ? "api" : kind === "tool_call" ? "tool" : "turn";
   const badgeLabel =
-    kind === "api_call" ? "api" : kind === "tool_call" ? "tool" : "turn";
+    kind === "api_call"
+      ? t("usage.kindApi")
+      : kind === "tool_call"
+        ? t("usage.kindTool")
+        : t("usage.kindTurn");
   const who =
     kind === "tool_call"
       ? ev.tool_name || "—"
       : ev.model || "—";
-  const detail = detailOf(ev);
+  const detail = detailOf(ev, t);
   const hasTokens = kind === "api_call" || kind === "turn_summary";
+  const cacheRead = ev.cache_read_tokens ?? 0;
+  const cacheWrite = ev.cache_write_tokens ?? 0;
+  const hasCache = hasTokens && (cacheRead > 0 || cacheWrite > 0);
+  const cacheLabel = !hasCache
+    ? "—"
+    : cacheWrite > 0
+      ? `${formatInt(cacheRead)}/${formatInt(cacheWrite)}`
+      : formatInt(cacheRead);
+  const cacheTitle = !hasCache
+    ? undefined
+    : t("usage.cacheSplit", {
+        read: formatInt(cacheRead),
+        write: formatInt(cacheWrite),
+        hit: "—",
+      });
 
   return (
     <div className="usage-table-row">
@@ -205,6 +239,12 @@ function EventRow({ ev }: { ev: TokenUsageEventRow }) {
           ? formatInt(ev.completion_tokens)
           : "—"}
       </span>
+      <span
+        className={`num h-hide ${hasCache ? "" : "dim"}`}
+        title={cacheTitle}
+      >
+        {cacheLabel}
+      </span>
       <span className={`num ${hasTokens ? "" : "dim"}`}>
         {hasTokens && ev.total_tokens != null ? formatInt(ev.total_tokens) : "—"}
       </span>
@@ -215,22 +255,19 @@ function EventRow({ ev }: { ev: TokenUsageEventRow }) {
   );
 }
 
-function detailOf(ev: TokenUsageEventRow): string {
+function detailOf(
+  ev: TokenUsageEventRow,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string {
   if (ev.event_kind === "turn_summary") {
-    return ev.message_id ? `${ev.message_id.slice(0, 10)}…` : "turn";
+    return ev.message_id
+      ? `${ev.message_id.slice(0, 10)}…`
+      : t("usage.detailTurnSummary");
   }
   if (ev.event_kind === "api_call") {
-    const base = ev.turn_index != null ? `turn ${ev.turn_index}` : "api";
-    const cacheRead = ev.cache_read_tokens ?? 0;
-    const cacheWrite = ev.cache_write_tokens ?? 0;
-    if (cacheRead > 0 || cacheWrite > 0) {
-      const parts = [
-        cacheRead > 0 ? `cache↓${formatInt(cacheRead)}` : null,
-        cacheWrite > 0 ? `cache↑${formatInt(cacheWrite)}` : null,
-      ].filter(Boolean);
-      return `${base} · ${parts.join(" ")}`;
-    }
-    return base;
+    return ev.turn_index != null
+      ? t("usage.detailTurn", { n: ev.turn_index })
+      : t("usage.detailApi");
   }
   if (ev.metadata_json) {
     try {

@@ -47,6 +47,9 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
     addTab,
     setTabKind,
     closeTab,
+    closeOtherTabs,
+    closeTabsToRight,
+    closeAllTabs,
   } = usePanelTabs(activeSessionId, hasProjectPath);
 
   const { tabsScrollRef, tabOverflow, updateTabOverflow, scrollTabs } = useTabScroll(
@@ -111,6 +114,9 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
           onScrollTabs={scrollTabs}
           onSelectTab={setActiveTabId}
           onCloseTab={closeTab}
+          onCloseOtherTabs={closeOtherTabs}
+          onCloseTabsToRight={closeTabsToRight}
+          onCloseAllTabs={closeAllTabs}
           onAddTab={() => addTab("empty")}
           onClosePanel={onClose}
         />

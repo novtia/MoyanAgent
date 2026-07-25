@@ -4,6 +4,7 @@
  * settings page), so both "项目设置" and "会话设置" share one consistent UI.
  */
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import type { ModelParamSettings } from "../../types";
 import { EMPTY_MODEL_PARAMS } from "../settings/llm/modelServices";
 
@@ -171,7 +172,7 @@ export function ScopeConfigModal({
     return () => window.removeEventListener("keydown", handler);
   });
 
-  return (
+  return createPortal(
     <div className="modal-backdrop" role="presentation" onMouseDown={handleClose}>
       <div className="modal config-modal" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
@@ -363,7 +364,8 @@ export function ScopeConfigModal({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

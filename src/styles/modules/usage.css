@@ -251,20 +251,25 @@
   height: auto;
 }
 .usage-chart-x {
-  display: grid;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 6px 18px 12px;
   font-size: 10.5px;
   color: var(--ink-mute);
   font-variant-numeric: tabular-nums;
+}
+.usage-chart-x--single {
+  justify-content: center;
+}
+.usage-chart-x--ends {
+  justify-content: space-between;
 }
 .usage-chart-x span {
   text-align: center;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-}
-.usage-chart-x span.is-hidden {
-  visibility: hidden;
 }
 
 /* ───── distribution ───── */
@@ -362,7 +367,7 @@
 .usage-table-head,
 .usage-table-row {
   display: grid;
-  grid-template-columns: 82px 62px 1.2fr 1fr 84px 84px 90px 44px;
+  grid-template-columns: 82px 62px 1.2fr 1fr 72px 72px 84px 84px 44px;
   gap: 10px;
   align-items: center;
   padding: 8px 18px;
@@ -623,41 +628,67 @@
   letter-spacing: 0.04em;
 }
 .usage-price-field .box {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 3px;
-  border: 1px solid var(--line);
+  gap: 4px;
+  min-height: 28px;
+  border: 1px solid var(--field-border);
   border-radius: var(--radius-xs);
-  background: var(--bg);
-  padding: 4px 8px;
-  transition: border-color 0.15s;
+  background: var(--field-bg);
+  padding: 0 8px;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .usage-price-field .box:focus-within {
-  border-color: var(--line-strong);
+  border-color: var(--field-border-focus);
+  box-shadow: var(--field-focus-ring);
 }
-.usage-price-field .box .cur {
+.usage-price-field .box .cur,
+.usage-price-field .box .per {
+  flex: 0 0 auto;
   font-size: 11px;
+  line-height: 1;
   color: var(--ink-mute);
+  user-select: none;
 }
-.usage-price-field input {
-  appearance: none;
-  border: none;
-  outline: none;
-  background: transparent;
+.usage-price-field .box .per {
+  font-size: 10px;
+}
+/* Reset global input[type=number] chrome — the .box is the only frame. */
+.usage-price-field .box input[type="number"] {
+  box-sizing: border-box;
   width: 56px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none !important;
+  border-radius: 0;
+  outline: none;
+  background: transparent !important;
+  box-shadow: none !important;
   font: inherit;
   font-size: 11.5px;
-  color: var(--ink);
   font-family: "JetBrains Mono", ui-monospace, monospace;
+  color: var(--ink);
   text-align: right;
   font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
-.usage-price-field input:disabled {
-  opacity: 0.5;
+.usage-price-field .box input[type="number"]:hover,
+.usage-price-field .box input[type="number"]:focus,
+.usage-price-field .box input[type="number"]:disabled {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
-.usage-price-field .per {
-  font-size: 10px;
+.usage-price-field .box input[type="number"]:disabled {
   color: var(--ink-mute);
+  cursor: not-allowed;
+}
+.usage-price-field .box input[type="number"]::-webkit-outer-spin-button,
+.usage-price-field .box input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .usage-toggle {
@@ -669,9 +700,9 @@
   height: 24px;
   padding: 2px;
   margin: 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  background: var(--bg-sunk);
+  border: 1px solid color-mix(in srgb, var(--ink) 22%, var(--bg));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--ink) 14%, var(--bg));
   cursor: pointer;
   transition: background 0.18s, border-color 0.18s;
 }
@@ -679,17 +710,26 @@
   display: block;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
   background: #fff;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.22);
-  transition: transform 0.2s var(--ease-pop);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  transition: transform 0.2s var(--ease-pop), background 0.18s ease;
 }
 .usage-toggle--on {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: color-mix(in srgb, var(--ink) 78%, var(--bg));
+  border-color: color-mix(in srgb, var(--ink) 78%, var(--bg));
 }
 .usage-toggle--on .usage-toggle-thumb {
   transform: translateX(16px);
+  background: var(--bg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+}
+:root[data-theme="dark"] .usage-toggle--on {
+  background: color-mix(in srgb, var(--ink) 26%, var(--bg));
+  border-color: color-mix(in srgb, var(--ink) 34%, var(--bg));
+}
+:root[data-theme="dark"] .usage-toggle--on .usage-toggle-thumb {
+  background: #f3f5f7;
 }
 
 .usage-empty {

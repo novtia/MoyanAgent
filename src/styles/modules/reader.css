@@ -594,7 +594,8 @@
   min-width: 0;
   width: 100%;
   overflow: auto;
-  padding: 16px;
+  /* Match plain editor `.cm-scroller` padding: vertical only, no horizontal inset */
+  padding: 16px 0;
   box-sizing: border-box;
 }
 

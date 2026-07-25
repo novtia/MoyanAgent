@@ -100,6 +100,33 @@ export function usePanelTabs(
     });
   }, []);
 
+  const closeOtherTabs = useCallback((id: string) => {
+    setTabs((prev) => {
+      const keep = prev.find((tb) => tb.id === id);
+      if (!keep) return prev;
+      setActiveTabId(id);
+      return [keep];
+    });
+  }, []);
+
+  const closeTabsToRight = useCallback((id: string) => {
+    setTabs((prev) => {
+      const idx = prev.findIndex((tb) => tb.id === id);
+      if (idx < 0) return prev;
+      const next = prev.slice(0, idx + 1);
+      setActiveTabId((cur) => {
+        if (cur == null || next.some((tb) => tb.id === cur)) return cur;
+        return id;
+      });
+      return next;
+    });
+  }, []);
+
+  const closeAllTabs = useCallback(() => {
+    setTabs([]);
+    setActiveTabId(null);
+  }, []);
+
   return {
     tabs,
     setTabs,
@@ -109,5 +136,8 @@ export function usePanelTabs(
     addTab,
     setTabKind,
     closeTab,
+    closeOtherTabs,
+    closeTabsToRight,
+    closeAllTabs,
   };
 }

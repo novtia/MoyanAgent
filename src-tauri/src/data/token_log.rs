@@ -221,9 +221,9 @@ pub fn query_summary(
             COALESCE(SUM(CASE WHEN event_kind = 'api_call' THEN total_tokens ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN event_kind = 'api_call' THEN cache_read_tokens ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN event_kind = 'api_call' THEN cache_write_tokens ELSE 0 END), 0),
-            SUM(CASE WHEN event_kind = 'api_call' THEN 1 ELSE 0 END),
-            SUM(CASE WHEN event_kind = 'tool_call' THEN 1 ELSE 0 END),
-            SUM(CASE WHEN event_kind = 'turn_summary' THEN 1 ELSE 0 END)
+            COALESCE(SUM(CASE WHEN event_kind = 'api_call' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN event_kind = 'tool_call' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN event_kind = 'turn_summary' THEN 1 ELSE 0 END), 0)
          FROM token_usage_events WHERE 1=1",
     );
     let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -340,7 +340,7 @@ pub fn query_by_tool(
     let mut sql = String::from(
         "SELECT COALESCE(tool_name, ''),
                 COUNT(*),
-                SUM(CASE WHEN is_error != 0 THEN 1 ELSE 0 END)
+                COALESCE(SUM(CASE WHEN is_error != 0 THEN 1 ELSE 0 END), 0)
          FROM token_usage_events
          WHERE event_kind = 'tool_call'",
     );

@@ -253,11 +253,18 @@
   background: var(--bg-hover);
 }
 .bubble-edit-btn.primary {
-  background: var(--accent);
-  color: #fff;
+  background: color-mix(in srgb, var(--ink) 88%, var(--bg));
+  color: var(--bg);
 }
 .bubble-edit-btn.primary:hover:not(:disabled) {
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--ink) 78%, var(--bg));
+}
+:root[data-theme="dark"] .bubble-edit-btn.primary {
+  background: color-mix(in srgb, var(--ink) 22%, var(--bg));
+  color: var(--ink);
+}
+:root[data-theme="dark"] .bubble-edit-btn.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 30%, var(--bg));
 }
 .bubble-edit-btn:disabled {
   opacity: 0.45;

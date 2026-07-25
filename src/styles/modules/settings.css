@@ -258,14 +258,15 @@
   height: 24px;
   padding: 2px;
   margin: 0;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  background: var(--bg-sunk);
+  border: 1px solid color-mix(in srgb, var(--ink) 22%, var(--bg));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--ink) 14%, var(--bg));
   cursor: pointer;
   transition: background 0.18s ease, border-color 0.18s ease;
 }
 .settings-toggle:hover {
-  border-color: var(--ink-mute);
+  border-color: color-mix(in srgb, var(--ink) 36%, var(--bg));
+  background: color-mix(in srgb, var(--ink) 20%, var(--bg));
 }
 .settings-toggle:focus-visible {
   outline: none;
@@ -275,18 +276,28 @@
   display: block;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
+  /* Opposite of track: white on dark/gray off-track; follows --bg when on (so dark thumb on light accent). */
   background: #fff;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.22);
-  transition: transform 0.2s var(--ease-pop);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  transition: transform 0.2s var(--ease-pop), background 0.18s ease;
   pointer-events: none;
 }
 .settings-toggle--on {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: color-mix(in srgb, var(--ink) 78%, var(--bg));
+  border-color: color-mix(in srgb, var(--ink) 78%, var(--bg));
 }
 .settings-toggle--on .settings-toggle-thumb {
   transform: translateX(16px);
+  background: var(--bg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+}
+:root[data-theme="dark"] .settings-toggle--on {
+  background: color-mix(in srgb, var(--ink) 26%, var(--bg));
+  border-color: color-mix(in srgb, var(--ink) 34%, var(--bg));
+}
+:root[data-theme="dark"] .settings-toggle--on .settings-toggle-thumb {
+  background: #f3f5f7;
 }
 
 /* Segment control */
@@ -850,12 +861,13 @@
   width: 32px;
   height: 32px;
   box-sizing: border-box;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--green-500);
-  color: #fff;
+  background: color-mix(in srgb, var(--green-500) 16%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--green-500) 28%, var(--line));
+  color: var(--green-600);
   font-weight: 700;
   font-size: 13px;
   overflow: hidden;
@@ -865,6 +877,12 @@
 .model-provider-avatar.has-image {
   background: var(--bg);
   border: 1px solid var(--line);
+  color: inherit;
+}
+/* Dark logos (OpenAI etc.) need a light plate in dark theme. */
+:root[data-theme="dark"] .model-provider-avatar.has-image {
+  background: #e8eaed;
+  border-color: #e8eaed;
 }
 .model-provider-avatar img,
 .provider-avatar-preview-image img {
@@ -873,7 +891,8 @@
   display: block;
   object-fit: contain;
 }
-.model-provider-item-body .model-provider-avatar.has-image img {
+.model-provider-item-body .model-provider-avatar.has-image img,
+.model-provider-hero .model-provider-avatar.has-image img {
   width: 68%;
   height: 68%;
 }
@@ -954,10 +973,10 @@
   margin-bottom: 26px;
 }
 .model-provider-hero .model-provider-avatar {
-  width: 44px;
-  height: 44px;
-  border-radius: 13px;
-  font-size: 17px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
 }
 .model-provider-hero-text {
   min-width: 0;
@@ -1456,12 +1475,13 @@
   width: 36px;
   height: 36px;
   box-sizing: border-box;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--green-500);
-  color: #fff;
+  background: color-mix(in srgb, var(--green-500) 16%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--green-500) 28%, var(--line));
+  color: var(--green-600);
   font-size: 13px;
   font-weight: 700;
   overflow: hidden;
@@ -1470,6 +1490,11 @@
 .provider-avatar-preview-image.has-image {
   background: var(--bg);
   border: 1px solid var(--line);
+  color: inherit;
+}
+:root[data-theme="dark"] .provider-avatar-preview-image.has-image {
+  background: #e8eaed;
+  border-color: #e8eaed;
 }
 .provider-avatar-upload {
   position: relative;

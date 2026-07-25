@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { readerFileName } from "../../../../store/reader";
 import { FileTypeIcon } from "../../../../utils/fileIcons";
+import { openContextMenu } from "../../../context-menu";
 import type { PanelTab } from "../types";
 import {
   ChevronLeftIcon,
@@ -24,6 +25,9 @@ export interface TabBarProps {
   onScrollTabs: (dir: -1 | 1) => void;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
+  onCloseOtherTabs: (id: string) => void;
+  onCloseTabsToRight: (id: string) => void;
+  onCloseAllTabs: () => void;
   onAddTab: () => void;
   onClosePanel: () => void;
 }
@@ -79,10 +83,40 @@ export function TabBar({
   onScrollTabs,
   onSelectTab,
   onCloseTab,
+  onCloseOtherTabs,
+  onCloseTabsToRight,
+  onCloseAllTabs,
   onAddTab,
   onClosePanel,
 }: TabBarProps) {
   const { t } = useTranslation();
+
+  const openTabMenu = (event: React.MouseEvent, tb: PanelTab, index: number) => {
+    openContextMenu(event, [
+      {
+        id: "close",
+        label: t("rightPanel.closeTab"),
+        onSelect: () => onCloseTab(tb.id),
+      },
+      {
+        id: "close-others",
+        label: t("rightPanel.closeOtherTabs"),
+        disabled: tabs.length <= 1,
+        onSelect: () => onCloseOtherTabs(tb.id),
+      },
+      {
+        id: "close-right",
+        label: t("rightPanel.closeTabsToRight"),
+        disabled: index === tabs.length - 1,
+        onSelect: () => onCloseTabsToRight(tb.id),
+      },
+      {
+        id: "close-all",
+        label: t("rightPanel.closeAllTabs"),
+        onSelect: () => onCloseAllTabs(),
+      },
+    ]);
+  };
 
   return (
     <div className="right-panel-tabbar">
@@ -103,12 +137,13 @@ export function TabBar({
         ref={tabsScrollRef as React.RefObject<HTMLDivElement>}
         onScroll={onScroll}
       >
-        {tabs.map((tb) => (
+        {tabs.map((tb, index) => (
           <div
             key={tb.id}
             className={`right-panel-tab ${tb.id === activeTabId ? "is-active" : ""}`}
             role="tab"
             aria-selected={tb.id === activeTabId}
+            onContextMenu={(e) => openTabMenu(e, tb, index)}
           >
             <button
               type="button"

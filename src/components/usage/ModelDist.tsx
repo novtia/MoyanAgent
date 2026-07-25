@@ -37,17 +37,22 @@ export function ModelDist({ rows }: ModelDistProps) {
                 </div>
                 <span className="usage-dist-split">
                   <span>
-                    in <b>{formatCompactTokens(row.prompt_tokens)}</b>
+                    {t("usage.legendIn")}{" "}
+                    <b>{formatCompactTokens(row.prompt_tokens)}</b>
                   </span>
                   <span>
-                    out <b>{formatCompactTokens(row.completion_tokens)}</b>
+                    {t("usage.legendOut")}{" "}
+                    <b>{formatCompactTokens(row.completion_tokens)}</b>
                   </span>
                   {(row.cache_read_tokens > 0 || row.cache_write_tokens > 0) && (
                     <span>
-                      cache <b>{formatCompactTokens(row.cache_read_tokens)}</b>
-                      {row.cache_write_tokens > 0
-                        ? `/${formatCompactTokens(row.cache_write_tokens)}`
-                        : ""}
+                      {t("usage.legendCache")}{" "}
+                      <b>
+                        {formatCompactTokens(row.cache_read_tokens)}
+                        {row.cache_write_tokens > 0
+                          ? `/${formatCompactTokens(row.cache_write_tokens)}`
+                          : ""}
+                      </b>
                     </span>
                   )}
                 </span>

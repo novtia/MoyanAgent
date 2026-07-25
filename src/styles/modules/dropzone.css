@@ -34,7 +34,7 @@
   height: 56px;
   border-radius: var(--radius);
   background: var(--accent);
-  color: #fff;
+  color: var(--bg);
   display: flex;
   align-items: center;
   justify-content: center;

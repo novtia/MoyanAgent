@@ -9,6 +9,11 @@ interface TrendChartProps {
   toLabel: string;
 }
 
+/** Axis label: 07-01 → 7-1 */
+function formatMdAxis(dateStr: string): string {
+  return formatMdShort(dateStr).replace(/^0/, "").replace(/-0/, "-");
+}
+
 /** Keep the chart light when the range has many days. */
 function downsample(rows: DailyUsageRow[], maxPoints = 60): DailyUsageRow[] {
   if (rows.length <= maxPoints) return rows;
@@ -34,6 +39,18 @@ function downsample(rows: DailyUsageRow[], maxPoints = 60): DailyUsageRow[] {
   return out;
 }
 
+type BarGeom = DailyUsageRow & {
+  x: number;
+  barW: number;
+  cx: number;
+  inFreshY: number;
+  inFreshH: number;
+  cacheY: number;
+  cacheH: number;
+  outY: number;
+  outH: number;
+};
+
 export function TrendChart({ rows, fromLabel, toLabel }: TrendChartProps) {
   const { t } = useTranslation();
   const [hover, setHover] = useState<number | null>(null);
@@ -53,23 +70,47 @@ export function TrendChart({ rows, fromLabel, toLabel }: TrendChartProps) {
     const n = Math.max(plotRows.length, 1);
     const slot = width / n;
     const barW = Math.min(44, Math.max(18, slot * 0.55));
-    const max = Math.max(
-      1,
-      ...plotRows.map((r) => r.prompt_tokens + r.completion_tokens),
-    );
-    const bars = plotRows.map((r, i) => {
-      const inH = (r.prompt_tokens / max) * usable;
-      const outH = (r.completion_tokens / max) * usable;
+
+    // Split prompt into fresh + cached so OpenAI-style (cache ⊆ prompt) does not
+    // double-count; leftover cache beyond prompt still stacks on top.
+    const parts = plotRows.map((r) => {
+      const cacheRead = r.cache_read_tokens ?? 0;
+      const inCached = Math.min(cacheRead, r.prompt_tokens);
+      const inFresh = Math.max(0, r.prompt_tokens - inCached);
+      const cacheExtra = Math.max(0, cacheRead - r.prompt_tokens);
+      const cacheH = inCached + cacheExtra;
+      const stack = inFresh + cacheH + r.completion_tokens;
+      return { inFresh, cacheH, out: r.completion_tokens, stack };
+    });
+    const max = Math.max(1, ...parts.map((p) => p.stack));
+
+    const bars: BarGeom[] = plotRows.map((r, i) => {
+      const p = parts[i];
+      const inFreshH = (p.inFresh / max) * usable;
+      const cacheH = (p.cacheH / max) * usable;
+      const outH = (p.out / max) * usable;
       const x = slot * i + (slot - barW) / 2;
-      const inY = baseline - inH;
-      const outY = inY - outH;
-      return { ...r, x, barW, inY, inH, outY, outH, cx: x + barW / 2 };
+      const inFreshY = baseline - inFreshH;
+      const cacheY = inFreshY - cacheH;
+      const outY = cacheY - outH;
+      return {
+        ...r,
+        x,
+        barW,
+        inFreshY,
+        inFreshH,
+        cacheY,
+        cacheH,
+        outY,
+        outH,
+        cx: x + barW / 2,
+      };
     });
     return { width, height, baseline, bars };
   }, [plotRows]);
 
-  const tipIdx = hover ?? (plotRows.length > 0 ? plotRows.length - 1 : null);
-  const tip = tipIdx != null ? chart.bars[tipIdx] : null;
+  // Only show tip while hovering — never pin to the last bar.
+  const tip = hover != null ? chart.bars[hover] ?? null : null;
 
   if (plotRows.length === 0) {
     return (
@@ -86,9 +127,18 @@ export function TrendChart({ rows, fromLabel, toLabel }: TrendChartProps) {
     );
   }
 
+  const tipW = 168;
   const tipX = tip
-    ? Math.min(Math.max(tip.cx - 66, 8), chart.width - 140)
+    ? Math.min(Math.max(tip.cx - tipW / 2, 8), chart.width - tipW - 8)
     : 0;
+  const tipCache = tip
+    ? (tip.cache_read_tokens ?? 0) + (tip.cache_write_tokens ?? 0)
+    : 0;
+  const tipH = tipCache > 0 ? 62 : 48;
+
+  const firstDate = plotRows[0]?.date;
+  const lastDate = plotRows[plotRows.length - 1]?.date;
+  const sameDay = firstDate === lastDate;
 
   return (
     <div className="usage-card">
@@ -107,6 +157,14 @@ export function TrendChart({ rows, fromLabel, toLabel }: TrendChartProps) {
               }}
             />
             {t("usage.legendOut")}
+          </span>
+          <span>
+            <i
+              style={{
+                background: "color-mix(in srgb, var(--blue-500) 70%, transparent)",
+              }}
+            />
+            {t("usage.legendCache")}
           </span>
         </div>
       </div>
@@ -127,7 +185,7 @@ export function TrendChart({ rows, fromLabel, toLabel }: TrendChartProps) {
           />
           {chart.bars.map((b, i) => (
             <g
-              key={b.date}
+              key={`${b.date}-${i}`}
               onMouseEnter={() => setHover(i)}
               style={{ cursor: "default" }}
             >
@@ -138,14 +196,24 @@ export function TrendChart({ rows, fromLabel, toLabel }: TrendChartProps) {
                 height={chart.baseline}
                 fill="transparent"
               />
-              {b.inH > 0 && (
+              {b.inFreshH > 0 && (
                 <rect
                   x={b.x}
-                  y={b.inY}
+                  y={b.inFreshY}
                   width={b.barW}
-                  height={b.inH}
+                  height={b.inFreshH}
                   rx="3"
                   fill="var(--ink)"
+                />
+              )}
+              {b.cacheH > 0 && (
+                <rect
+                  x={b.x}
+                  y={b.cacheY}
+                  width={b.barW}
+                  height={b.cacheH}
+                  rx="3"
+                  fill="color-mix(in srgb, var(--blue-500) 70%, transparent)"
                 />
               )}
               {b.outH > 0 && (
@@ -176,8 +244,8 @@ export function TrendChart({ rows, fromLabel, toLabel }: TrendChartProps) {
                 <rect
                   x={tipX}
                   y="10"
-                  width="132"
-                  height="48"
+                  width={tipW}
+                  height={tipH}
                   rx="8"
                   fill="var(--bg)"
                   stroke="var(--line-strong)"
@@ -200,32 +268,36 @@ export function TrendChart({ rows, fromLabel, toLabel }: TrendChartProps) {
                   fill="var(--ink-mute)"
                   fontFamily="JetBrains Mono, monospace"
                 >
-                  in {formatCompactTokens(tip.prompt_tokens)} · out{" "}
-                  {formatCompactTokens(tip.completion_tokens)}
+                  {t("usage.tipInOut", {
+                    in: formatCompactTokens(tip.prompt_tokens),
+                    out: formatCompactTokens(tip.completion_tokens),
+                  })}
                 </text>
+                {tipCache > 0 && (
+                  <text
+                    x={tipX + 12}
+                    y="62"
+                    fontSize="10.5"
+                    fill="var(--ink-mute)"
+                    fontFamily="JetBrains Mono, monospace"
+                  >
+                    {t("usage.tipCache", {
+                      cache:
+                        formatCompactTokens(tip.cache_read_tokens ?? 0) +
+                        ((tip.cache_write_tokens ?? 0) > 0
+                          ? `/${formatCompactTokens(tip.cache_write_tokens ?? 0)}`
+                          : ""),
+                    })}
+                  </text>
+                )}
               </g>
             </>
           )}
         </svg>
       </div>
-      {/* Equal columns match SVG bar slots so labels sit under each bar center. */}
-      <div
-        className="usage-chart-x"
-        style={{ gridTemplateColumns: `repeat(${plotRows.length}, minmax(0, 1fr))` }}
-      >
-        {plotRows.map((r, i) => {
-          const step = Math.max(1, Math.ceil(plotRows.length / 8));
-          const show =
-            plotRows.length <= 8 ||
-            i === 0 ||
-            i === plotRows.length - 1 ||
-            i % step === 0;
-          return (
-            <span key={`${r.date}-${i}`} className={show ? undefined : "is-hidden"}>
-              {formatMdShort(r.date)}
-            </span>
-          );
-        })}
+      <div className={`usage-chart-x ${sameDay ? "usage-chart-x--single" : "usage-chart-x--ends"}`}>
+        <span>{formatMdAxis(firstDate)}</span>
+        {!sameDay && <span>{formatMdAxis(lastDate)}</span>}
       </div>
     </div>
   );

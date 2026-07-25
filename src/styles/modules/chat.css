@@ -509,10 +509,11 @@
   display: none;
 }
 .right-panel-tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 0 4px 0 8px;
+  gap: 0;
+  padding: 0 8px;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink-mute);
@@ -535,7 +536,7 @@
   gap: 6px;
   background: none;
   border: none;
-  padding: 6px 2px;
+  padding: 6px 0;
   font-size: 12px;
   font-weight: 500;
   color: inherit;
@@ -543,6 +544,7 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  width: 100%;
 }
 .right-panel-tab-icon {
   flex-shrink: 0;
@@ -562,8 +564,13 @@
   color: var(--ink-mute);
   font-variant-numeric: tabular-nums;
 }
-/* Close button stays hidden until the tab is hovered. */
+/* Overlay close: no layout space; appears over label text on hover. */
 .right-panel-tab-close {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -572,19 +579,29 @@
   padding: 0;
   border: none;
   border-radius: 5px;
-  background: none;
+  background: var(--bg);
   color: var(--ink-mute);
   cursor: pointer;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.right-panel-tab.is-active .right-panel-tab-close {
+  background: var(--bg-sunk);
+}
+.right-panel-tab:hover:not(.is-active) .right-panel-tab-close {
+  background: color-mix(in srgb, var(--ink) 4%, var(--bg));
 }
 .right-panel-tab:hover .right-panel-tab-close {
   opacity: 1;
+  pointer-events: auto;
 }
-/* Right-side highlight when the close button itself is hovered. */
 .right-panel-tab-close:hover {
-  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  background: color-mix(in srgb, var(--ink) 12%, var(--bg));
   color: var(--ink-1);
+}
+.right-panel-tab.is-active .right-panel-tab-close:hover {
+  background: color-mix(in srgb, var(--ink) 12%, var(--bg-sunk));
 }
 .right-panel-tab-close svg {
   width: 12px;
