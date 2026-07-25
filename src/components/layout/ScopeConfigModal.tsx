@@ -8,12 +8,20 @@ import { createPortal } from "react-dom";
 import type { ModelParamSettings } from "../../types";
 import { EMPTY_MODEL_PARAMS } from "../settings/llm/modelServices";
 
-type ConfigSection = "address" | "prompt" | "model";
+type ConfigSection = "basics" | "prompt" | "model";
 
 export interface ScopeConfigInitial {
   systemPrompt: string;
   historyTurns: number;
   llmParams: ModelParamSettings;
+}
+
+/** Optional editable project name (project scope only). */
+export interface ScopeConfigNameField {
+  /** Current persisted name. */
+  value: string;
+  /** Persist a new non-empty name. */
+  onSave: (name: string) => Promise<void> | void;
 }
 
 /** Optional editable working-directory path (project scope only). */
@@ -37,7 +45,9 @@ interface ScopeConfigModalProps {
   historyHint?: string;
   paramsHint: string;
   initial: ScopeConfigInitial;
-  /** 当提供时，显示"项目地址"分区，允许编辑工作目录路径 */
+  /** 当提供时，显示"基础设置"分区中的项目名称编辑 */
+  nameField?: ScopeConfigNameField;
+  /** 当提供时，显示"基础设置"分区中的工作目录路径编辑 */
   pathField?: ScopeConfigPathField;
   onSave: (
     systemPrompt: string,
@@ -57,10 +67,10 @@ const BASE_SECTIONS: Array<{
   { id: "model", label: "模型参数", desc: "采样 · 上下文", icon: TuneIcon },
 ];
 
-const ADDRESS_SECTION = {
-  id: "address" as const,
-  label: "项目地址",
-  desc: "工作目录路径",
+const BASICS_SECTION = {
+  id: "basics" as const,
+  label: "基础设置",
+  desc: "名称 · 工作目录",
   icon: FolderIcon,
 };
 
@@ -72,14 +82,14 @@ export function ScopeConfigModal({
   historyHint,
   paramsHint,
   initial,
+  nameField,
   pathField,
   onSave,
   onClose,
 }: ScopeConfigModalProps) {
-  const sections = pathField ? [ADDRESS_SECTION, ...BASE_SECTIONS] : BASE_SECTIONS;
-  const [section, setSection] = useState<ConfigSection>(
-    pathField ? "address" : "prompt",
-  );
+  const showBasics = !!(nameField || pathField);
+  const sections = showBasics ? [BASICS_SECTION, ...BASE_SECTIONS] : BASE_SECTIONS;
+  const [section, setSection] = useState<ConfigSection>(showBasics ? "basics" : "prompt");
   const [paramsResetKey, setParamsResetKey] = useState(0);
   const [systemPromptDraft, setSystemPromptDraft] = useState(initial.systemPrompt);
   const [historyTurnsDraft, setHistoryTurnsDraft] = useState(String(initial.historyTurns));
@@ -90,8 +100,28 @@ export function ScopeConfigModal({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedOnce, setSavedOnce] = useState(false);
+  const [nameDraft, setNameDraft] = useState(nameField?.value ?? "");
+  const [displaySubtitle, setDisplaySubtitle] = useState(subtitle ?? nameField?.value ?? "");
+  const nameSavedRef = useRef(nameField?.value ?? "");
   const [pathDraft, setPathDraft] = useState(pathField?.value ?? "");
   const pathSavedRef = useRef(pathField?.value ?? "");
+
+  const commitName = (next: string) => {
+    if (!nameField) return;
+    const trimmed = next.trim();
+    if (!trimmed) {
+      setNameDraft(nameSavedRef.current);
+      setError("项目名称不能为空。");
+      return;
+    }
+    if (trimmed === nameSavedRef.current) return;
+    nameSavedRef.current = trimmed;
+    setNameDraft(trimmed);
+    setDisplaySubtitle(trimmed);
+    setError(null);
+    setSavedOnce(true);
+    void Promise.resolve(nameField.onSave(trimmed));
+  };
 
   const commitPath = (next: string) => {
     if (!pathField) return;
@@ -178,7 +208,9 @@ export function ScopeConfigModal({
         <div className="modal-head">
           <h3>
             {title}
-            {subtitle && <span className="config-modal-subtitle">{subtitle}</span>}
+            {displaySubtitle && (
+              <span className="config-modal-subtitle">{displaySubtitle}</span>
+            )}
           </h3>
           <div className="config-modal-head-trailing">
             <span className={`config-modal-autosave ${saving ? "is-saving" : ""}`}>
@@ -212,36 +244,76 @@ export function ScopeConfigModal({
           </nav>
 
           <div className="config-modal-content" key={section}>
-            {section === "address" && pathField && (
+            {section === "basics" && showBasics && (
               <>
                 <div className="config-modal-section-head">
-                  <h4 className="config-modal-section-title">项目地址</h4>
+                  <h4 className="config-modal-section-title">基础设置</h4>
                   <p className="config-modal-section-desc">
-                    该项目的工作目录路径，供 Agent 读写文件等使用。留空则不绑定目录。
+                    管理项目名称与工作目录。工作目录供 Agent 读写文件等使用，留空则不绑定目录。
                   </p>
                 </div>
-                <div className="config-modal-path-row">
-                  <input
-                    type="text"
-                    className="field-input field-input--mono config-modal-path-input"
-                    value={pathDraft}
-                    spellCheck={false}
-                    placeholder="例如 C:\\Users\\you\\Documents\\my-project"
-                    onChange={(e) => setPathDraft(e.target.value)}
-                    onBlur={(e) => commitPath(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") commitPath((e.target as HTMLInputElement).value);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="cfg-reset-btn config-modal-path-browse"
-                    onClick={() => void browsePath()}
-                  >
-                    <FolderIcon />
-                    <span>浏览…</span>
-                  </button>
-                </div>
+
+                {nameField && (
+                  <div className="config-modal-field">
+                    <label className="config-modal-field-label" htmlFor="config-project-name">
+                      项目名称
+                    </label>
+                    <input
+                      id="config-project-name"
+                      type="text"
+                      className="field-input config-modal-name-input"
+                      value={nameDraft}
+                      spellCheck={false}
+                      placeholder="输入项目名称"
+                      onChange={(e) => {
+                        setNameDraft(e.target.value);
+                        if (error === "项目名称不能为空。") setError(null);
+                      }}
+                      onBlur={(e) => commitName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          commitName((e.target as HTMLInputElement).value);
+                        }
+                      }}
+                    />
+                    {error === "项目名称不能为空。" && (
+                      <div className="hint is-error">{error}</div>
+                    )}
+                  </div>
+                )}
+
+                {pathField && (
+                  <div className="config-modal-field">
+                    <label className="config-modal-field-label" htmlFor="config-project-path">
+                      项目地址
+                    </label>
+                    <div className="config-modal-path-row">
+                      <input
+                        id="config-project-path"
+                        type="text"
+                        className="field-input field-input--mono config-modal-path-input"
+                        value={pathDraft}
+                        spellCheck={false}
+                        placeholder="例如 C:\\Users\\you\\Documents\\my-project"
+                        onChange={(e) => setPathDraft(e.target.value)}
+                        onBlur={(e) => commitPath(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            commitPath((e.target as HTMLInputElement).value);
+                          }
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="cfg-reset-btn config-modal-path-browse"
+                        onClick={() => void browsePath()}
+                      >
+                        <FolderIcon />
+                        <span>浏览…</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </>
             )}
 

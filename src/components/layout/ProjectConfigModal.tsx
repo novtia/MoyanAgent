@@ -18,6 +18,7 @@ interface ProjectConfigModalProps {
 export function ProjectConfigModal({ project, onClose }: ProjectConfigModalProps) {
   const updateConfig = useProject((s) => s.updateConfig);
   const updatePath = useProject((s) => s.updatePath);
+  const rename = useProject((s) => s.rename);
 
   return (
     <ScopeConfigModal
@@ -30,6 +31,12 @@ export function ProjectConfigModal({ project, onClose }: ProjectConfigModalProps
         systemPrompt: project.system_prompt ?? "",
         historyTurns: project.history_turns ?? 10,
         llmParams: { ...EMPTY_MODEL_PARAMS, ...(project.llm_params ?? EMPTY_MODEL_PARAMS) },
+      }}
+      nameField={{
+        value: project.name,
+        onSave: async (name) => {
+          await rename(project.id, name);
+        },
       }}
       pathField={{
         value: project.path ? sanitizeFsPath(project.path) : project.path,

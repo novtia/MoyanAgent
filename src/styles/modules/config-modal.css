@@ -163,7 +163,25 @@
   line-height: 1.6;
 }
 
-/* ───── 项目地址编辑 ───── */
+/* ───── 基础设置：名称 / 地址 ───── */
+.config-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.config-modal-field:last-child {
+  margin-bottom: 0;
+}
+.config-modal-field-label {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--ink-soft);
+  letter-spacing: 0.01em;
+}
+.config-modal-name-input {
+  width: 100%;
+}
 .config-modal-path-row {
   display: flex;
   align-items: center;
