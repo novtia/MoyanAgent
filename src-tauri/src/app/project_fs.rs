@@ -9,7 +9,9 @@ use tauri::State;
 use crate::data::db;
 use crate::error::{AppError, AppResult};
 
-use super::{project_rules, session_project_cwd, validate_reader_write_path, AppState};
+use super::project_rules;
+use super::reader_paths::{session_project_cwd, validate_reader_write_path};
+use super::state::AppState;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

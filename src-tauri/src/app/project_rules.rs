@@ -13,7 +13,8 @@ use tauri::State;
 
 use crate::error::{AppError, AppResult};
 
-use super::{session_project_cwd, validate_reader_write_path, AppState};
+use super::reader_paths::{session_project_cwd, validate_reader_write_path};
+use super::state::AppState;
 
 /// Folder (relative to the project root) that holds rule files.
 pub const RULES_DIR: &str = ".moyan";
