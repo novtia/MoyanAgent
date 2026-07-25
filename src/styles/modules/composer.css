@@ -1189,15 +1189,22 @@
   min-width: 0;
 }
 .composer-ask-user-count {
-  display: block;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  color: var(--ink-mute);
-  margin-bottom: 4px;
+  display: inline-flex;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--blue-500);
+  background: var(--blue-50);
+  border-radius: 999px;
+  padding: 3px 8px;
+  line-height: 1;
+  margin-bottom: 8px;
 }
 .composer-ask-user-prompt {
-  font-size: 13.5px;
-  line-height: 1.5;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.55;
   color: var(--ink);
   white-space: pre-wrap;
 }
@@ -1215,10 +1222,10 @@
   gap: 6px;
   width: 100%;
   max-width: 100%;
-  padding: 5px 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
   color: var(--ink-soft);
   font-size: 12.5px;
   line-height: 1.35;
@@ -1226,14 +1233,15 @@
   text-align: left;
 }
 .composer-ask-user-option:hover {
-  border-color: transparent;
-  background: transparent;
+  border-color: var(--line-strong);
+  background: var(--bg-hover);
   color: var(--ink);
 }
 .composer-ask-user-option.selected {
-  border-color: transparent;
-  background: transparent;
+  border-color: var(--ink);
+  background: var(--bg);
   color: var(--ink);
+  font-weight: 550;
 }
 .composer-ask-user-mark {
   flex: 0 0 auto;

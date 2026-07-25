@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { AssistantBlock } from "../../../types";
+import { ToolGlyph } from "./toolIcons";
 
 export function RoleStateChip({
   block,
@@ -11,9 +12,15 @@ export function RoleStateChip({
     action?: string;
     id?: string;
     role?: { name?: string };
+    set?: Record<string, unknown>;
+    unset?: string[];
   };
-  const output = (block.output ?? {}) as { role?: { name?: string }; id?: string };
-  const action = input.action ?? "";
+  const output = (block.output ?? {}) as {
+    role?: { name?: string };
+    id?: string;
+    op?: string;
+  };
+  const action = input.action ?? output.op ?? "";
   const name =
     output.role?.name || input.role?.name || output.id || input.id || "";
 
@@ -26,11 +33,25 @@ export function RoleStateChip({
           ? t("roleState.opDelete")
           : t("roleState.opRead");
 
+  const changeBits: string[] = [];
+  if (input.set && typeof input.set === "object") {
+    for (const [k, v] of Object.entries(input.set).slice(0, 3)) {
+      changeBits.push(`${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`);
+    }
+  }
+  if (Array.isArray(input.unset) && input.unset.length > 0) {
+    changeBits.push(`−${input.unset.slice(0, 3).join(", ")}`);
+  }
+  const summary = changeBits.join(" · ");
+
   return (
     <div className="rs-inline-chip">
-      <span className="rs-inline-chip-icon">🎭</span>
-      <span className="rs-inline-chip-op">{opLabel}</span>
-      {name && action !== "get" ? <span>{name}</span> : null}
+      <span className="ti" aria-hidden>
+        <ToolGlyph tool="RoleState" />
+      </span>
+      <span className="op">{opLabel}</span>
+      {name && action !== "get" ? <b>{name}</b> : null}
+      {summary ? <span className="rs-inline-chip-summary">· {summary}</span> : null}
     </div>
   );
 }

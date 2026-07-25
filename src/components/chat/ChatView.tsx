@@ -8,6 +8,7 @@ import { Composer } from "./Composer";
 import { EmptyChat } from "./EmptyChat";
 import { RightPanel } from "./rightPanel";
 import { ChatFontPanel } from "./ChatFontPanel";
+import { ChatSessionBreadcrumb } from "./ChatSessionBreadcrumb";
 import type { AttachmentDraft, ImageRefAbs } from "../../types";
 
 interface ChatViewProps {
@@ -70,6 +71,7 @@ export function ChatView({
   }, [fontOpen]);
 
   const isEmpty = !active || active.messages.length === 0;
+  const isTemporary = !!active?.session.is_temporary;
   const title = active?.session.title || t("chat.defaultTitle");
 
   return (
@@ -77,9 +79,7 @@ export function ChatView({
       <div className="chat-main">
         <div className="chat-topbar">
           <div className="chat-topbar-left">
-            <span className="chat-topbar-title" title={title}>
-              {isEmpty ? "" : title}
-            </span>
+            {isEmpty ? null : <ChatSessionBreadcrumb />}
             {!isEmpty && (
               <div className="chat-topbar-more" ref={moreRef}>
                 <button
@@ -98,7 +98,7 @@ export function ChatView({
                       onClick={async () => {
                         if (!active) return;
                         const ok = await dialog.confirm(
-                          t("chat.deleteSessionConfirm", { title: active.session.title }),
+                          t("chat.deleteSessionConfirm", { title }),
                           { type: "danger", confirmLabel: t("common.delete"), title: t("chat.deleteSession") },
                         );
                         if (ok) {
@@ -167,11 +167,13 @@ export function ChatView({
         ) : (
           <>
             <MessageList onPreviewImage={onPreviewImage} />
-            <Composer
-              onEditAttachment={onEditAttachment}
-              onOpenSettings={onOpenSettings}
-              needsSetup={needsSetup}
-            />
+            {!isTemporary && (
+              <Composer
+                onEditAttachment={onEditAttachment}
+                onOpenSettings={onOpenSettings}
+                needsSetup={needsSetup}
+              />
+            )}
           </>
         )}
       </div>

@@ -175,6 +175,12 @@ export interface Session {
   agent_chain: ChainEntry[] | null;
   /** Project this session belongs to, if any. */
   project_id: string | null;
+  /** Parent session id when this is a temporary subagent child session. */
+  parent_session_id?: string | null;
+  /** Hidden from the sidebar when true. */
+  is_temporary?: boolean;
+  /** Task id of the Agent tool run that spawned this temp session. */
+  spawn_task_id?: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -251,6 +257,8 @@ export interface SessionSummary {
   updated_at: number;
   message_count: number;
   project_id: string | null;
+  /** Present when API includes it; temp sessions are filtered server-side. */
+  is_temporary?: boolean;
 }
 
 export interface Project {
@@ -410,6 +418,8 @@ export interface MessageAbs {
       duration?: number | null;
     }>;
     thinking_content?: string | null;
+    /** Dispatch prompt seeded into a temp subagent session (read-only in UI). */
+    spawned_prompt?: boolean;
     /**
      * Ordered, streamed inline blocks for assistant messages. Newer
      * messages always populate this; older messages (created before the
@@ -431,6 +441,8 @@ export interface MessageAbs {
 export interface SessionWithMessagesAbs {
   session: Session;
   messages: MessageAbs[];
+  /** Parent session title when viewing a temporary child session. */
+  parent_title?: string | null;
 }
 
 export interface TokenUsageEventRow {

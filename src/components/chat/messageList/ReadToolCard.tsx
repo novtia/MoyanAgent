@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { formatReadToolTitle } from "../../../store/reader";
 import type { AssistantBlock } from "../../../types";
-import { ThinkingChevronIcon, ToolCallIcon } from "./icons";
+import { ToolHeaderRow } from "./ToolHeaderRow";
+import { extractToolErrorMessage } from "./utils";
 
 export function ReadToolCard({
   block,
@@ -22,38 +23,38 @@ export function ReadToolCard({
     const text = (o as { text?: unknown }).text;
     return typeof text === "string" ? text : "";
   }, [block.output]);
-  const hasDetail = bodyText.length > 0;
+  const meta = useMemo(() => {
+    const o =
+      block.output && typeof block.output === "object"
+        ? (block.output as Record<string, unknown>)
+        : {};
+    const parts: string[] = [];
+    if (typeof o.chars === "number" && o.chars > 0) {
+      parts.push(`${o.chars}${t("message.createDocCharsUnit")}`);
+    } else if (bodyText) {
+      parts.push(`${bodyText.length}${t("message.createDocCharsUnit")}`);
+    }
+    return parts.join(" · ");
+  }, [block.output, bodyText, t]);
 
-  const statusLabel =
-    status === "pending"
-      ? t("message.toolCallRunning")
-      : status === "error"
-        ? t("message.toolCallError")
-        : t("message.toolCallDone");
+  const hasDetail = bodyText.length > 0;
+  const errorMessage =
+    status === "error" ? extractToolErrorMessage(block.output) : "";
 
   return (
-    <div className={`tool-call-block read-tool-card ${status} ${open ? "is-open" : ""}`}>
-      <button
-        type="button"
-        className="tool-call-summary"
-        aria-expanded={open}
-        title={t("message.toolCallToggle")}
-        onClick={() => hasDetail && setOpen((v) => !v)}
-        disabled={!hasDetail}
-      >
-        <ToolCallIcon status={status} />
-        <span className="tool-call-name read-tool-title" title={title}>
-          {title || t("message.readToolUntitled")}
-        </span>
-        <span className="tool-call-spacer" aria-hidden />
-        <span className={`tool-call-badge ${status}`}>{statusLabel}</span>
-        {hasDetail && <ThinkingChevronIcon />}
-      </button>
-      {open && hasDetail && (
-        <div className="tool-call-detail">
-          <pre className="tool-call-detail-body">{bodyText}</pre>
-        </div>
-      )}
-    </div>
+    <ToolHeaderRow
+      tool="Read"
+      name={title || t("message.readToolUntitled")}
+      meta={meta}
+      status={status}
+      bare
+      open={open && hasDetail}
+      expandable={hasDetail}
+      onToggle={() => setOpen((v) => !v)}
+      errorMessage={errorMessage || undefined}
+      errorLabel={t("message.toolCallErrorReason")}
+    >
+      <pre className="doc-prose doc-prose--scroll">{bodyText}</pre>
+    </ToolHeaderRow>
   );
 }

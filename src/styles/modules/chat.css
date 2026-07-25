@@ -43,6 +43,46 @@
   white-space: nowrap;
   max-width: 360px;
 }
+.chat-topbar-breadcrumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: min(520px, 70vw);
+  font-size: 13px;
+}
+.chat-crumb-parent {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-weight: 550;
+  color: var(--ink-mute);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+.chat-crumb-parent:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.chat-crumb-sep {
+  color: var(--ink-mute);
+  user-select: none;
+  flex: none;
+}
+.chat-crumb-current {
+  font-weight: 550;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 .chat-topbar-right {
   display: inline-flex;
   align-items: center;
@@ -1385,8 +1425,9 @@
 .agent-stage-divider {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   margin: 14px 0 6px;
+  padding: 4px 0;
 }
 .agent-stage-line {
   flex: 1;
@@ -1397,26 +1438,27 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--bg-sunk);
-  color: var(--ink-2);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
   font-size: 11px;
+  font-weight: 550;
   flex-shrink: 0;
 }
 .agent-stage-chip svg {
-  width: 13px;
-  height: 13px;
-  color: var(--blue-500);
+  width: 11px;
+  height: 11px;
+  color: var(--ink-mute);
 }
 .agent-stage-name {
-  font-weight: 600;
-  color: var(--ink-1);
+  font-weight: 550;
+  color: var(--ink-soft);
 }
 .agent-stage-tag {
   color: var(--ink-mute);
-  text-transform: uppercase;
-  font-size: 9px;
-  letter-spacing: 0.05em;
+  font-family: "JetBrains Mono", monospace;
+  text-transform: lowercase;
+  font-size: 10px;
+  letter-spacing: 0;
 }

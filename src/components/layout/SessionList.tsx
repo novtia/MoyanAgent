@@ -10,7 +10,11 @@ interface SessionListProps {
 export function SessionList({ onOpenChat, unassignedOnly }: SessionListProps) {
   const allSessions = useSession((s) => s.sessions);
   const activeId = useSession((s) => s.activeId);
-  const sessions = unassignedOnly ? allSessions.filter(s => !s.project_id) : allSessions;
+  const sessions = allSessions.filter(
+    (s) =>
+      !s.is_temporary &&
+      (!unassignedOnly || !s.project_id),
+  );
 
   return (
     <div className="chat-list">

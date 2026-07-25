@@ -10,7 +10,10 @@ use crate::ai::agent::config::mcp::McpRegistry;
 use crate::ai::agent::exec::engine::ProviderQueryEngine;
 use crate::ai::agent::exec::query::ToolEventCallback;
 use crate::ai::agent::memory::UserContextLoader;
-use crate::ai::agent::tools::agent_tool::{AgentTool, ChatRequestFactory};
+use crate::ai::agent::tools::agent_tool::{
+    AgentTool, ChatRequestFactory, ChildStreamHooks, SpawnedTempSession, SubagentSessionHost,
+};
+use crate::ai::agent::exec::runner::RunAgentResult;
 use crate::ai::agent::tools::text_decode::{
     read_text_file, write_text_file_labeled, ProjectTextFile, TextEncoding,
 };
@@ -1044,6 +1047,183 @@ impl ChatRequestFactory for SettingsChatFactory {
     }
 }
 
+/// Host bridge that materialises temporary child sessions for `Agent` tool
+/// dispatches and streams the sub-agent's events into that child.
+struct TauriSubagentHost {
+    app: AppHandle,
+    pool: DbPool,
+    role_states: Arc<RoleStateStore>,
+    file_snapshots: Arc<FileSnapshotStore>,
+    token_stats: Arc<token_log::TokenStatsRecorder>,
+    session_logger: Arc<session_log::SessionLogger>,
+    /// Per-child stream block buffers drained at finalize.
+    child_blocks: Mutex<HashMap<String, StreamBlocks>>,
+}
+
+impl TauriSubagentHost {
+    fn new(
+        app: AppHandle,
+        pool: DbPool,
+        role_states: Arc<RoleStateStore>,
+        file_snapshots: Arc<FileSnapshotStore>,
+        token_stats: Arc<token_log::TokenStatsRecorder>,
+        session_logger: Arc<session_log::SessionLogger>,
+    ) -> Self {
+        Self {
+            app,
+            pool,
+            role_states,
+            file_snapshots,
+            token_stats,
+            session_logger,
+            child_blocks: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn take_blocks(&self, child_session_id: &str) -> Vec<serde_json::Value> {
+        let blocks = self
+            .child_blocks
+            .lock()
+            .ok()
+            .and_then(|mut g| g.remove(child_session_id));
+        match blocks {
+            Some(b) => snapshot_stream_blocks(&b),
+            None => Vec::new(),
+        }
+    }
+}
+
+impl SubagentSessionHost for TauriSubagentHost {
+    fn prepare_temp_session(
+        &self,
+        parent_session_id: &str,
+        parent_request_message_id: Option<&str>,
+        tool_call_id: &str,
+        title: &str,
+        prompt: &str,
+    ) -> AppResult<SpawnedTempSession> {
+        let conn = self.pool.get()?;
+        let child = session::create_temp(&conn, parent_session_id, title, None)?;
+        let params = serde_json::json!({ "spawned_prompt": true }).to_string();
+        let user_msg = session::insert_message(
+            &conn,
+            &child.id,
+            "user",
+            Some(prompt),
+            Some(params.as_str()),
+        )?;
+
+        // Mid-run draft onto the parent Agent tool_use so the card can jump
+        // into the child before the sub-agent finishes.
+        if let Some(req_id) = parent_request_message_id {
+            let _ = self.app.emit(
+                "gen://tool",
+                serde_json::json!({
+                    "session_id": parent_session_id,
+                    "request_message_id": req_id,
+                    "type": "tool_result",
+                    "id": tool_call_id,
+                    "tool": "Agent",
+                    "output": {
+                        "status": "running",
+                        "child_session_id": &child.id,
+                    },
+                    "is_error": false,
+                    "keep_pending": true,
+                }),
+            );
+        }
+
+        let _ = self.app.emit(
+            "gen://status",
+            serde_json::json!({
+                "phase": "request",
+                "session_id": &child.id,
+                "message_id": &user_msg.id,
+            }),
+        );
+
+        Ok(SpawnedTempSession {
+            session_id: child.id,
+            user_message_id: user_msg.id,
+        })
+    }
+
+    fn begin_child_stream(
+        &self,
+        child_session_id: &str,
+        request_message_id: &str,
+    ) -> ChildStreamHooks {
+        let blocks = new_stream_blocks();
+        if let Ok(mut g) = self.child_blocks.lock() {
+            g.insert(child_session_id.to_string(), blocks.clone());
+        }
+        ChildStreamHooks {
+            on_text_delta: stream_text_callback(
+                self.app.clone(),
+                child_session_id.to_string(),
+                request_message_id.to_string(),
+                blocks.clone(),
+            ),
+            on_tool_event: tool_event_callback(
+                self.app.clone(),
+                child_session_id.to_string(),
+                request_message_id.to_string(),
+                blocks,
+            ),
+        }
+    }
+
+    fn finalize_temp_session(
+        &self,
+        child: &SpawnedTempSession,
+        result: &RunAgentResult,
+        model: &str,
+        provider: &str,
+    ) -> AppResult<()> {
+        let blocks = self.take_blocks(&child.session_id);
+        let conn = self.pool.get()?;
+        let params = parameters::factory().build(
+            String::new(),
+            String::new(),
+            Default::default(),
+        );
+        let resp = chat::GenerateResponse {
+            images: result.images.clone(),
+            videos: result.videos.clone(),
+            text: result.final_text.clone(),
+            thinking_content: result.thinking_content.clone(),
+            usage: result.usage.clone(),
+            tool_calls: Vec::new(),
+        };
+        let _ = finalize_generate_assistant_message(
+            &self.app,
+            &conn,
+            &child.session_id,
+            &child.user_message_id,
+            &params,
+            resp,
+            blocks,
+            &self.role_states,
+            &self.file_snapshots,
+            &self.token_stats,
+            &self.session_logger,
+            "subagent",
+            model,
+            provider,
+        )?;
+        let _ = session::set_spawn_task_id(&conn, &child.session_id, result.task_id.as_str());
+        let _ = self.app.emit(
+            "gen://status",
+            serde_json::json!({
+                "phase": "response",
+                "session_id": &child.session_id,
+            }),
+        );
+        Ok(())
+    }
+}
+
 /// wants to refresh `summary.md` for this session. Mirrors the
 /// `extractSessionMemory()` post-sampling pass - non-blocking, best-effort.
 fn maybe_extract_session_memory(
@@ -1855,8 +2035,19 @@ fn delete_session(
     app: AppHandle,
     id: String,
 ) -> Result<(), AppError> {
+    let child_ids = {
+        let conn = state.conn()?;
+        session::list_temp_child_ids(&conn, &id).unwrap_or_default()
+    };
     {
         let conn = state.conn()?;
+        // Explicitly remove temp children first (FK CASCADE is best-effort
+        // for columns added via ALTER TABLE).
+        for child_id in &child_ids {
+            let _ = crate::data::file_snapshot::clear_session(&conn, child_id);
+            let _ = crate::data::pending_diff::clear_session(&conn, child_id);
+            let _ = session::delete(&conn, child_id);
+        }
         let scope = crate::data::role_state::resolve_role_state_scope(&conn, &id)?;
         session::delete(&conn, &id)?;
         // Standalone sessions own their scope; project sessions share scope.
@@ -1866,6 +2057,14 @@ fn delete_session(
         }
         let _ = crate::data::file_snapshot::clear_session(&conn, &id);
         let _ = crate::data::pending_diff::clear_session(&conn, &id);
+    }
+    for child_id in &child_ids {
+        state.file_snapshots.clear(child_id);
+        state.session_logger.delete_session_log(child_id);
+        let dir = paths::sessions_dir(&app)?.join(child_id);
+        if dir.exists() {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
     state.file_snapshots.clear(&id);
     state.session_logger.delete_session_log(&id);
@@ -3995,6 +4194,8 @@ struct MessageAbs {
 struct SessionWithMessagesAbs {
     session: session::Session,
     messages: Vec<MessageAbs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_title: Option<String>,
 }
 
 fn decorate_image(app: &AppHandle, i: session::ImageRef) -> ImageRefAbs {
@@ -4051,6 +4252,7 @@ fn decorate_session(app: &AppHandle, s: session::SessionWithMessages) -> Session
             .into_iter()
             .map(|m| decorate_message(app, m))
             .collect(),
+        parent_title: s.parent_title,
     }
 }
 
@@ -4125,6 +4327,17 @@ pub fn run() {
                 provider_engine.clone(),
                 permission_resolver,
             ));
+            let logs_dir = paths::token_logs_dir()?;
+            let token_stats = Arc::new(token_log::TokenStatsRecorder::new(pool.clone()));
+            let session_logger = Arc::new(session_log::SessionLogger::new(logs_dir));
+            let session_host: Arc<dyn SubagentSessionHost> = Arc::new(TauriSubagentHost::new(
+                app.handle().clone(),
+                pool.clone(),
+                role_states.clone(),
+                file_snapshots.clone(),
+                token_stats.clone(),
+                session_logger.clone(),
+            ));
             let agent_tool = AgentTool::new(
                 registry.clone(),
                 tools.clone(),
@@ -4132,12 +4345,9 @@ pub fn run() {
                 query_engine.clone(),
                 mcp.clone(),
             )
-            .with_chat_factory(chat_factory);
+            .with_chat_factory(chat_factory)
+            .with_session_host(session_host);
             tools.register(agent_tool);
-
-            let logs_dir = paths::token_logs_dir()?;
-            let token_stats = Arc::new(token_log::TokenStatsRecorder::new(pool.clone()));
-            let session_logger = Arc::new(session_log::SessionLogger::new(logs_dir));
 
             app.manage(Arc::new(AppState {
                 pool,

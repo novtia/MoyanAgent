@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
 import {
   optionKey,
@@ -12,6 +13,7 @@ import {
  * custom-only — empty input means the selected option is the answer.
  */
 export function ComposerAskUserBar() {
+  const { t } = useTranslation();
   const pending = useSession((s) => s.pendingAskUser);
   const prompt = useSession((s) => s.composer.prompt);
   const setAskUserIndex = useSession((s) => s.setAskUserIndex);
@@ -31,7 +33,6 @@ export function ComposerAskUserBar() {
 
   const pick = (opt: AskUserOption, optIndex: number) => {
     const key = optionKey(opt, optIndex);
-    // Toggle off when clicking the already-selected option.
     if (!customActive && answer?.optionKey === key) {
       clearAskUserAnswer();
       return;
@@ -47,27 +48,33 @@ export function ComposerAskUserBar() {
   };
 
   return (
-    <div className="composer-ask-user" role="group" aria-label="AskUser">
+    <div
+      className="composer-ask-user"
+      role="group"
+      aria-label={t("message.askUserAria")}
+    >
       <div className="composer-ask-user-nav">
         <button
           type="button"
           className="composer-ask-user-nav-btn"
           onClick={() => go(-1)}
           disabled={total <= 1}
-          aria-label="Previous question"
+          aria-label={t("message.askUserPrev")}
           title="◀"
         >
           ◀
         </button>
         <div className="composer-ask-user-meta">
           <span className="composer-ask-user-count">
-            问题 {index + 1}/{total}
+            {t("message.askUserQuestionCount", {
+              current: index + 1,
+              total,
+            })}
           </span>
           <div className="composer-ask-user-prompt">{question.prompt}</div>
           <div className="composer-ask-user-options">
             {question.options.map((opt, i) => {
               const key = optionKey(opt, i);
-              // Custom input overrides: when typing, options appear unselected.
               const selected =
                 !customActive && !!answer?.optionKey && answer.optionKey === key;
               return (
@@ -92,7 +99,7 @@ export function ComposerAskUserBar() {
           className="composer-ask-user-nav-btn"
           onClick={() => go(1)}
           disabled={total <= 1}
-          aria-label="Next question"
+          aria-label={t("message.askUserNext")}
           title="▶"
         >
           ▶

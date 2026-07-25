@@ -27,7 +27,8 @@ use crate::ai::agent::exec::runner::{RunAgentParams, RunAgentResult, run_agent};
 use crate::ai::agent::core::task::TaskStore;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolPool, ToolResult, ToolSpec};
 use crate::ai::agent::types::AgentRunMode;
-use crate::ai::chat::ChatRequest;
+use crate::ai::chat::{ChatRequest, TextDeltaCallback};
+use crate::ai::agent::exec::query::ToolEventCallback;
 use crate::error::{AppError, AppResult};
 
 pub const AGENT_TOOL_NAME: &str = "Agent";
@@ -48,6 +49,53 @@ pub trait ChatRequestFactory: Send + Sync {
         agent_type: &str,
         definition: &AgentDefinition,
     ) -> AppResult<(ChatRequest, Vec<Attachment>)>;
+}
+
+/// Temp child session prepared for a sub-agent run.
+#[derive(Debug, Clone)]
+pub struct SpawnedTempSession {
+    pub session_id: String,
+    pub user_message_id: String,
+}
+
+/// Streaming callbacks + opaque drain token for a child session.
+pub struct ChildStreamHooks {
+    pub on_text_delta: TextDeltaCallback,
+    pub on_tool_event: ToolEventCallback,
+}
+
+/// Host-side persistence + streaming for temporary subagent sessions.
+///
+/// Implemented by the Tauri app layer so [`AgentTool`] stays free of SQLite /
+/// `AppHandle` coupling.
+pub trait SubagentSessionHost: Send + Sync {
+    /// Create a hidden temp session, seed the dispatch prompt as a user
+    /// message, and emit a mid-run `{ status: "running", child_session_id }`
+    /// update onto the parent Agent tool_use block.
+    fn prepare_temp_session(
+        &self,
+        parent_session_id: &str,
+        parent_request_message_id: Option<&str>,
+        tool_call_id: &str,
+        title: &str,
+        prompt: &str,
+    ) -> AppResult<SpawnedTempSession>;
+
+    /// Wire `gen://stream` / `gen://tool` for the child session.
+    fn begin_child_stream(
+        &self,
+        child_session_id: &str,
+        request_message_id: &str,
+    ) -> ChildStreamHooks;
+
+    /// Persist the child assistant message from the completed run.
+    fn finalize_temp_session(
+        &self,
+        child: &SpawnedTempSession,
+        result: &RunAgentResult,
+        model: &str,
+        provider: &str,
+    ) -> AppResult<()>;
 }
 
 /// Arguments the model passes when calling the `Agent` tool.
@@ -79,12 +127,21 @@ pub enum AgentToolResult {
         task_id: String,
         text: Option<String>,
         tool_calls: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        child_session_id: Option<String>,
     },
     /// Background run launched. Parent should expect a `<task-notification>`.
     AsyncLaunched {
         agent_id: String,
         task_id: String,
         output_file: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        child_session_id: Option<String>,
+    },
+    /// Mid-run draft written into the pending tool block so the UI can
+    /// open the child session before completion.
+    Running {
+        child_session_id: String,
     },
 }
 
@@ -104,6 +161,8 @@ pub struct AgentTool {
     /// fully-formed [`ChatRequest`]. Without a factory the `Tool` impl
     /// returns an error explaining that the host needs to wire one.
     pub chat_factory: Option<Arc<dyn ChatRequestFactory>>,
+    /// Optional host that creates temp child sessions + streams into them.
+    pub session_host: Option<Arc<dyn SubagentSessionHost>>,
     /// Cached tool spec exposed to the model.
     spec: ToolSpec,
     /// Fork gate: mirrors the `tengu_*` feature flag check. When false,
@@ -130,6 +189,7 @@ impl AgentTool {
             engine,
             mcp,
             chat_factory: None,
+            session_host: None,
             spec: agent_tool_spec(),
             fork_enabled: false,
             is_forked_worker: false,
@@ -139,6 +199,12 @@ impl AgentTool {
     /// Builder-style: attach a factory so the `Tool` impl can run.
     pub fn with_chat_factory(mut self, factory: Arc<dyn ChatRequestFactory>) -> Self {
         self.chat_factory = Some(factory);
+        self
+    }
+
+    /// Builder-style: attach a host that materialises temp child sessions.
+    pub fn with_session_host(mut self, host: Arc<dyn SubagentSessionHost>) -> Self {
+        self.session_host = Some(host);
         self
     }
 
@@ -166,6 +232,7 @@ impl AgentTool {
             parent_hint,
             // Host-side path has no parent ToolUseContext; without a
             // DB-derived path the sub-agent runs without a CWD.
+            None,
             None,
             None,
         )
@@ -204,6 +271,7 @@ impl AgentTool {
         parent_hint: Option<String>,
         parent_cwd: Option<std::path::PathBuf>,
         parent_ctx: Option<&crate::ai::agent::core::context::ToolUseContext>,
+        tool_call_id: Option<&str>,
     ) -> AppResult<AgentToolResult> {
         let run_mode = if agent_type == AGENT_FORK {
             AgentRunMode::Fork
@@ -219,6 +287,54 @@ impl AgentTool {
             None
         };
 
+        let model = chat_request.model.clone();
+        let provider = chat_request.provider.id.clone();
+
+        // Prefer a dedicated temp child session when the host wired one and
+        // we have a parent session + tool call id to attach to.
+        let mut child_session: Option<SpawnedTempSession> = None;
+        let mut on_text_delta = None;
+        let mut on_tool_event = None;
+        let mut session_id = parent_ctx.and_then(|c| c.session_id.clone());
+        let mut correlation_id = parent_ctx.and_then(|c| c.correlation_id.clone());
+
+        if let (Some(host), Some(parent_sid), Some(call_id)) = (
+            self.session_host.as_ref(),
+            parent_ctx.and_then(|c| c.session_id.as_deref()),
+            tool_call_id,
+        ) {
+            let title = if invocation.description.trim().is_empty() {
+                invocation.prompt.chars().take(60).collect::<String>()
+            } else {
+                invocation.description.clone()
+            };
+            match host.prepare_temp_session(
+                parent_sid,
+                parent_ctx.and_then(|c| c.correlation_id.as_deref()),
+                call_id,
+                &title,
+                &invocation.prompt,
+            ) {
+                Ok(spawned) => {
+                    let hooks =
+                        host.begin_child_stream(&spawned.session_id, &spawned.user_message_id);
+                    on_text_delta = Some(hooks.on_text_delta);
+                    on_tool_event = Some(hooks.on_tool_event);
+                    session_id = Some(spawned.session_id.clone());
+                    correlation_id = Some(spawned.user_message_id.clone());
+                    child_session = Some(spawned);
+                }
+                Err(e) => {
+                    // Temp session is required for the model-driven path —
+                    // surface the failure rather than silently sharing the
+                    // parent transcript.
+                    return Err(e);
+                }
+            }
+        }
+
+        let child_session_id = child_session.as_ref().map(|c| c.session_id.clone());
+
         let result = run_agent(RunAgentParams {
             definition,
             prompt: invocation.prompt.clone(),
@@ -230,23 +346,38 @@ impl AgentTool {
             initial_attachments,
             permission_override: None,
             parent_system_prompt,
-            on_text_delta: None,
-            on_tool_event: None,
+            on_text_delta,
+            on_tool_event,
             query_source: None,
             // Sub-agents inherit the parent's DB-derived project path.
             // NEVER the host process directory — if the parent has no
             // project path, the sub-agent gets none either.
             project_cwd: parent_cwd,
-            abort_signal: None,
-            session_id: parent_ctx.and_then(|c| c.session_id.clone()),
+            abort_signal: parent_ctx.map(|c| c.abort.clone()),
+            session_id,
+            // Role board stays on the parent/project scope, not the temp id.
             role_state_scope_id: parent_ctx.and_then(|c| c.role_state_scope_id.clone()),
-            correlation_id: parent_ctx.and_then(|c| c.correlation_id.clone()),
+            correlation_id,
             token_stats: parent_ctx.and_then(|c| c.token_stats.clone()),
             session_logger: parent_ctx.and_then(|c| c.session_logger.clone()),
         })
-        .await?;
+        .await;
 
-        Ok(self.shape_result(run_mode, result))
+        match result {
+            Ok(run) => {
+                if let (Some(host), Some(child)) = (self.session_host.as_ref(), child_session.as_ref())
+                {
+                    if let Err(e) = host.finalize_temp_session(child, &run, &model, &provider) {
+                        eprintln!(
+                            "AgentTool: finalize temp session {} failed: {e}",
+                            child.session_id
+                        );
+                    }
+                }
+                Ok(self.shape_result(run_mode, run, child_session_id))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     fn resolve_agent_type(&self, invocation: &AgentInvocation) -> AppResult<String> {
@@ -264,18 +395,25 @@ impl AgentTool {
         Ok(AGENT_GENERAL_PURPOSE.into())
     }
 
-    fn shape_result(&self, mode: AgentRunMode, result: RunAgentResult) -> AgentToolResult {
+    fn shape_result(
+        &self,
+        mode: AgentRunMode,
+        result: RunAgentResult,
+        child_session_id: Option<String>,
+    ) -> AgentToolResult {
         match mode {
             AgentRunMode::Foreground => AgentToolResult::Completed {
                 agent_id: result.agent_id.0,
                 task_id: result.task_id.0,
                 text: result.final_text,
                 tool_calls: result.tool_call_count,
+                child_session_id,
             },
             AgentRunMode::Background | AgentRunMode::Fork => AgentToolResult::AsyncLaunched {
                 agent_id: result.agent_id.0,
                 task_id: result.task_id.0,
                 output_file: None,
+                child_session_id,
             },
         }
     }
@@ -348,6 +486,8 @@ impl Tool for AgentTool {
                 Some(invocation.context.cwd.clone())
             };
 
+            let tool_call_id = invocation.id.as_str().to_string();
+
             match self
                 .dispatch(
                     invocation_args,
@@ -358,6 +498,7 @@ impl Tool for AgentTool {
                     parent_hint,
                     parent_cwd,
                     Some(invocation.context),
+                    Some(tool_call_id.as_str()),
                 )
                 .await
             {

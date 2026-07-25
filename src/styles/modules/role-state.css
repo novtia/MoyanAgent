@@ -421,23 +421,35 @@
 .rs-inline-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--bg-soft);
-  border: 1px solid var(--line);
-  font-size: 12px;
+  gap: 7px;
+  padding: 4px 0;
+  font-size: 12.5px;
   color: var(--ink-soft);
   margin: 2px 0;
 }
-
-.rs-inline-chip-icon {
-  font-size: 13px;
+.rs-inline-chip .ti {
+  display: inline-flex;
+  color: var(--ink-mute);
 }
-
-.rs-inline-chip-op {
-  font-weight: 600;
-  color: var(--ink-2);
+.rs-inline-chip .op {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10.5px;
+  color: var(--ink-mute);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.rs-inline-chip b {
+  color: var(--ink);
+  font-weight: 550;
+}
+.rs-inline-chip-summary {
+  color: var(--ink-mute);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 360px;
 }
 
 /* ── edit modal ── */

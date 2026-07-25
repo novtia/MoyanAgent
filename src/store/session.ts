@@ -149,6 +149,8 @@ interface ToolResultEventPayload {
   tool?: string;
   output: unknown;
   is_error: boolean;
+  /** When true, update output but keep the tool block pending (Agent mid-run). */
+  keep_pending?: boolean;
 }
 
 type ToolEventPayload = ToolUseEventPayload | ToolResultEventPayload;
@@ -702,14 +704,12 @@ export const useSession = create<SessionStore>((set, get) => {
       });
     }
 
-    // If this session is still generating, restore any buffered streaming
-    // content that accumulated while the user was viewing another session.
+    // If this session is still generating (or already has a live buffer),
+    // restore buffered streaming content accumulated while away.
     let messagesWithBuffer = data.messages;
-    if (isBusy) {
-      const buf = streamingBuffers.get(id);
-      if (buf && buf.blocks.length > 0) {
-        messagesWithBuffer = applyStreamBufferToMessages(data.messages, id, buf);
-      }
+    const buf = streamingBuffers.get(id);
+    if ((isBusy || buf) && buf && buf.blocks.length > 0) {
+      messagesWithBuffer = applyStreamBufferToMessages(data.messages, id, buf);
     }
 
     // Restore draft for the target session, falling back to empty defaults.
@@ -776,11 +776,20 @@ export const useSession = create<SessionStore>((set, get) => {
   },
 
   remove: async (id) => {
+    const parentId =
+      get().activeId === id
+        ? get().active?.session.parent_session_id ?? null
+        : null;
     await api.deleteSession(id);
     askUserPendingBySession.delete(id);
     composerDrafts.delete(id);
+    streamingBuffers.delete(id);
     if (get().activeId === id) {
-      set({ activeId: null, active: null, busy: false, pendingAskUser: null });
+      if (parentId) {
+        await get().switchTo(parentId);
+      } else {
+        set({ activeId: null, active: null, busy: false, pendingAskUser: null });
+      }
     }
     await get().refreshList();
   },
@@ -1749,7 +1758,7 @@ function appendDelta(
 // ─── Streaming tool-call input ────────────────────────────────────────────────
 // Tools whose input arguments we render live as they stream in. Other tools are
 // only materialised by the terminal `gen://tool` event (unchanged behaviour).
-const STREAMING_INPUT_TOOLS = new Set(["CreateDoc", "Edit"]);
+const STREAMING_INPUT_TOOLS = new Set(["CreateDoc", "Edit", "Write"]);
 
 /** Accumulated raw `arguments` JSON string per streaming tool call. */
 const toolCallArgBuffers = new Map<string, string>();
@@ -1842,6 +1851,12 @@ function buildStreamingToolInput(
       path: extractJsonStringField(raw, "path"),
       old_string: extractJsonStringField(raw, "old_string"),
       new_string: extractJsonStringField(raw, "new_string"),
+    };
+  }
+  if (tool === "Write") {
+    return {
+      path: extractJsonStringField(raw, "path"),
+      content: extractJsonStringField(raw, "content"),
     };
   }
   try {
@@ -2156,6 +2171,28 @@ function applyToolEvent(
   for (let i = blocks.length - 1; i >= 0; i--) {
     const b = blocks[i];
     if (b.type === "tool_use" && b.id === event.id) {
+      const outObj =
+        event.output && typeof event.output === "object"
+          ? (event.output as Record<string, unknown>)
+          : null;
+      const keepPending =
+        !!event.keep_pending ||
+        (event.tool === "Agent" &&
+          !event.is_error &&
+          outObj?.status === "running");
+      if (keepPending) {
+        blocks[i] = {
+          ...b,
+          status: "pending",
+          output: event.output,
+        };
+        const childId =
+          typeof outObj?.child_session_id === "string"
+            ? outObj.child_session_id
+            : null;
+        if (childId) markChildSessionBusy(childId, true);
+        return;
+      }
       blocks[i] = {
         ...b,
         status: event.is_error ? "error" : "success",
@@ -2164,6 +2201,36 @@ function applyToolEvent(
       };
       if (!event.is_error) {
         void handleReaderToolComplete(b.tool, b.input, event.output, event.is_error);
+      }
+      if (b.tool === "Agent") {
+        const prevOut =
+          b.output && typeof b.output === "object"
+            ? (b.output as Record<string, unknown>)
+            : null;
+        const childId =
+          (typeof outObj?.child_session_id === "string"
+            ? outObj.child_session_id
+            : null) ||
+          (typeof prevOut?.child_session_id === "string"
+            ? prevOut.child_session_id
+            : null);
+        if (childId) {
+          // Preserve child_session_id on error payloads so the card stays openable.
+          const cur = blocks[i];
+          if (
+            event.is_error &&
+            outObj &&
+            typeof outObj.child_session_id !== "string" &&
+            cur.type === "tool_use"
+          ) {
+            blocks[i] = {
+              ...cur,
+              output: { ...outObj, child_session_id: childId },
+            };
+          }
+          markChildSessionBusy(childId, false);
+          void reloadSessionIfViewing(childId);
+        }
       }
       if (b.tool === "AskUser" && sessionId) {
         askUserPendingBySession.delete(sessionId);
@@ -2177,6 +2244,38 @@ function applyToolEvent(
       }
       return;
     }
+  }
+}
+
+/** Mark a temp child session busy so switchTo can restore its stream buffer. */
+function markChildSessionBusy(sessionId: string, busy: boolean) {
+  useSession.setState((state) => {
+    const busyBySession = { ...state.busyBySession };
+    if (busy) busyBySession[sessionId] = true;
+    else delete busyBySession[sessionId];
+    const generationPhaseBySession = { ...state.generationPhaseBySession };
+    if (!busy) delete generationPhaseBySession[sessionId];
+    return {
+      busyBySession,
+      generationPhaseBySession,
+      busy: state.activeId ? !!busyBySession[state.activeId] : false,
+    };
+  });
+}
+
+async function reloadSessionIfViewing(sessionId: string) {
+  cancelStreamFlushRaf(sessionId);
+  streamingBuffers.delete(sessionId);
+  const state = useSession.getState();
+  if (state.activeId !== sessionId) return;
+  try {
+    const data = await api.loadSession(sessionId);
+    useSession.setState({
+      active: data,
+      busy: !!useSession.getState().busyBySession[sessionId],
+    });
+  } catch (e) {
+    console.warn(e);
   }
 }
 

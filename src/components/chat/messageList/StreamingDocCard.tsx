@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  countWords,
-  readerDocFromToolOutput,
-  resolveToolFilePath,
-  useReader,
-} from "../../../store/reader";
+import { countWords, resolveToolFilePath } from "../../../store/reader";
 import type { AssistantBlock } from "../../../types";
 import { normalizeToolContent } from "../../../utils/normalizeToolContent";
+import { parseWriteOutput } from "./parsers";
+import { ToolHeaderRow } from "./ToolHeaderRow";
 import { extractToolErrorMessage } from "./utils";
-import { ThinkingChevronIcon, ToolCallIcon } from "./icons";
 
 export function StreamingDocCard({
   block,
@@ -19,6 +15,7 @@ export function StreamingDocCard({
   const { t } = useTranslation();
   const status = block.status;
   const isEdit = block.tool === "Edit";
+  const isWrite = block.tool === "Write";
   const streaming = block.streaming === true;
   const [open, setOpen] = useState(status === "pending" || streaming);
 
@@ -39,7 +36,10 @@ export function StreamingDocCard({
     new_string?: string;
     replace_all?: boolean;
     replaced_count?: number;
+    chars?: number;
+    lines?: number;
   };
+  const writeOut = isWrite ? parseWriteOutput(block.output) : null;
 
   const oldString = useMemo(
     () =>
@@ -53,8 +53,6 @@ export function StreamingDocCard({
     [isEdit, output.old_string, input.old_string],
   );
 
-  // For Edit the detail/word-count reflects the replacement text (`new_string`);
-  // for CreateDoc it is the written `content`.
   const content = useMemo(
     () =>
       normalizeToolContent(
@@ -62,47 +60,94 @@ export function StreamingDocCard({
           ? typeof output.new_string === "string"
             ? output.new_string
             : (input.new_string ?? "")
-          : (input.content ?? ""),
+          : isWrite
+            ? (typeof writeOut?.text === "string" && status === "success"
+                ? writeOut.text
+                : (input.content ?? ""))
+            : (input.content ?? ""),
       ),
-    [isEdit, output.new_string, input.new_string, input.content],
+    [
+      isEdit,
+      isWrite,
+      output.new_string,
+      input.new_string,
+      input.content,
+      writeOut?.text,
+      status,
+    ],
   );
 
   const path = resolveToolFilePath(block.input, block.output);
   const baseName = path ? path.split(/[\\/]/).pop() || path : "";
   const replaceAll = output.replace_all === true || input.replace_all === true;
-  const summary = isEdit
-    ? [
-        streaming && status === "pending"
-          ? t("message.streamDocEditing")
-          : null,
-        baseName || t("message.streamDocEditUntitled"),
-        replaceAll ? "×N" : "",
-      ]
-        .filter(Boolean)
-        .join(" · ")
-    : (output.title || input.title || "").trim() ||
-      t("message.createDocUntitled");
+
+  const name = useMemo(() => {
+    if (isEdit) return baseName || t("message.streamDocEditUntitled");
+    if (isWrite) return baseName || t("message.streamDocEditUntitled");
+    return (
+      (output.title || input.title || "").trim() || t("message.createDocUntitled")
+    );
+  }, [isEdit, isWrite, baseName, output.title, input.title, t]);
+
+  const meta = useMemo(() => {
+    if (isEdit) {
+      const parts: string[] = [];
+      if (streaming && status === "pending") {
+        parts.push(t("message.streamDocEditing"));
+      } else if (status === "success") {
+        parts.push(t("message.streamDocEdited"));
+      }
+      if (typeof output.replaced_count === "number") {
+        parts.push(
+          t("message.streamDocReplaced", { count: output.replaced_count }),
+        );
+      } else if (replaceAll) {
+        parts.push("×N");
+      }
+      return parts.filter(Boolean).join(" · ");
+    }
+    if (isWrite) {
+      if (streaming && status === "pending") return t("message.streamDocWriting");
+      const parts: string[] = [];
+      if (status === "success") {
+        parts.push(
+          writeOut?.created === false
+            ? t("message.createDocUpdated")
+            : t("message.streamDocWritten"),
+        );
+      }
+      const chars = writeOut?.chars ?? (content ? countWords(content) : 0);
+      const lines = writeOut?.lines;
+      if (chars > 0) {
+        parts.push(`${chars.toLocaleString()}${t("message.createDocCharsUnit")}`);
+      }
+      if (lines != null && lines > 0) {
+        parts.push(`${lines}${t("message.createDocLinesUnit")}`);
+      }
+      return parts.join(" · ");
+    }
+    // CreateDoc
+    if (streaming && status === "pending") return t("message.createDocWriting");
+    if (path) return path;
+    return "";
+  }, [
+    isEdit,
+    isWrite,
+    streaming,
+    status,
+    output.replaced_count,
+    replaceAll,
+    writeOut,
+    content,
+    path,
+    t,
+  ]);
 
   const added = useMemo(() => countWords(content), [content]);
   const removed = useMemo(
     () => (isEdit ? countWords(oldString) : 0),
     [isEdit, oldString],
   );
-
-  const readerDoc = useMemo(
-    () =>
-      !isEdit && status === "success"
-        ? readerDocFromToolOutput(block.output)
-        : null,
-    [isEdit, block.output, status],
-  );
-
-  const statusLabel =
-    status === "pending"
-      ? t("message.toolCallRunning")
-      : status === "error"
-        ? t("message.toolCallError")
-        : t("message.toolCallDone");
 
   const hasContent = content.length > 0 || oldString.length > 0;
   const errorMessage =
@@ -117,100 +162,65 @@ export function StreamingDocCard({
   }, [status, hasContent]);
 
   return (
-    <div
-      className={`tool-call-block doc-tool-card ${status} ${open ? "is-open" : ""} ${
-        streaming ? "is-streaming" : ""
-      }`}
-    >
-      <button
-        type="button"
-        className="tool-call-summary"
-        aria-expanded={open}
-        title={t("message.toolCallToggle")}
-        onClick={() => hasContent && setOpen((v) => !v)}
-        disabled={!hasContent}
-      >
-        <ToolCallIcon status={status} />
-        <span className="tool-call-name">{block.tool}</span>
-        {summary && <span className="tool-call-args">{summary}</span>}
-        <span className="tool-call-spacer" aria-hidden />
-        {(added > 0 || removed > 0) && (
+    <ToolHeaderRow
+      tool={block.tool}
+      name={name}
+      meta={meta}
+      status={status}
+      streaming={streaming}
+      open={open && hasContent}
+      expandable={hasContent}
+      onToggle={() => setOpen((v) => !v)}
+      errorMessage={errorMessage || undefined}
+      errorLabel={t("message.toolCallErrorReason")}
+      tail={
+        (added > 0 || removed > 0) && (
           <span className="tool-call-diff-chips" aria-hidden>
             {removed > 0 && (
-              <span className="is-del">
+              <span className="chip del">
                 −{removed}
                 {t("message.createDocCharsUnit")}
               </span>
             )}
             {added > 0 && (
-              <span className="is-add">
+              <span className="chip add">
                 +{added}
                 {t("message.createDocCharsUnit")}
               </span>
             )}
           </span>
-        )}
-        {readerDoc && (
-          <span
-            className="tool-call-read-btn"
-            role="button"
-            tabIndex={0}
-            title={t("message.openInReader")}
-            onClick={(e) => {
-              e.stopPropagation();
-              useReader.getState().openDoc(readerDoc);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                e.stopPropagation();
-                useReader.getState().openDoc(readerDoc);
-              }
-            }}
-          >
-            {t("message.openInReader")}
-          </span>
-        )}
-        <span className={`tool-call-badge ${status}`}>{statusLabel}</span>
-        {hasContent && <ThinkingChevronIcon />}
-      </button>
-
-      {open && hasContent && (
-        <div className="tool-call-detail">
-          {isEdit ? (
-            <div className="tool-call-edit-stream">
-              {oldString.length > 0 && (
-                <pre className="tool-call-detail-body is-delete">
-                  {oldString}
-                  {streaming && !content && (
-                    <span className="stream-doc-cursor" aria-hidden />
-                  )}
-                </pre>
-              )}
-              {content.length > 0 && (
-                <pre className="tool-call-detail-body is-insert">
-                  {content}
-                  {streaming && <span className="stream-doc-cursor" aria-hidden />}
-                </pre>
-              )}
+        )
+      }
+    >
+      {isEdit ? (
+        <div className="diff-view">
+          {oldString.length > 0 && (
+            <div className="diff-line del">
+              <span className="gutter">−</span>
+              <span className="txt">
+                {oldString}
+                {streaming && !content && (
+                  <span className="stream-doc-cursor" aria-hidden />
+                )}
+              </span>
             </div>
-          ) : (
-            <pre className="tool-call-detail-body">
-              {content}
-              {streaming && <span className="stream-doc-cursor" aria-hidden />}
-            </pre>
+          )}
+          {content.length > 0 && (
+            <div className="diff-line add">
+              <span className="gutter">+</span>
+              <span className="txt">
+                {content}
+                {streaming && <span className="stream-doc-cursor" aria-hidden />}
+              </span>
+            </div>
           )}
         </div>
-      )}
-
-      {errorMessage && (
-        <div className="tool-call-error-detail" role="alert">
-          <span className="tool-call-error-detail-label">
-            {t("message.toolCallErrorReason")}
-          </span>
-          <span className="tool-call-error-detail-text">{errorMessage}</span>
+      ) : (
+        <div className="doc-prose">
+          {content}
+          {streaming && <span className="stream-doc-cursor" aria-hidden />}
         </div>
       )}
-    </div>
+    </ToolHeaderRow>
   );
 }

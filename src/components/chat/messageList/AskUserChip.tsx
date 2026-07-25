@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import type { AssistantBlock } from "../../../types";
 import {
   displayAskUserAnswer,
@@ -8,13 +9,14 @@ import {
 
 /**
  * History card for AskUser: lists every question with only the user's
- * selected option / custom reply (no carousel).
+ * selected option / custom reply (structure unchanged; restyled).
  */
 export function AskUserChip({
   block,
 }: {
   block: Extract<AssistantBlock, { type: "tool_use" }>;
 }) {
+  const { t } = useTranslation();
   const questions = useMemo(
     () => parseAskUserInput(block.input),
     [block.input],
@@ -45,23 +47,30 @@ export function AskUserChip({
             ? displayAskUserAnswer(question, rawAnswer)
             : rawAnswer
           : pending
-            ? "等待回答…"
+            ? t("message.askUserWaiting")
             : errored
-              ? "已取消"
+              ? t("message.askUserCancelled")
               : "";
 
         return (
           <div className="ask-user-card-item" key={`ask-q:${i}`}>
             {total > 1 ? (
               <div className="ask-user-card-meta">
-                <span className="ask-user-card-count">问题 {i + 1}/{total}</span>
+                <span className="ask-user-card-count">
+                  {t("message.askUserQuestionCount", {
+                    current: i + 1,
+                    total,
+                  })}
+                </span>
               </div>
             ) : null}
             {promptText ? (
               <div className="ask-user-card-prompt">{promptText}</div>
             ) : null}
             {displayAnswer ? (
-              <div className="ask-user-card-answer">
+              <div
+                className={`ask-user-card-answer${answered ? " is-answered" : ""}${pending ? " is-pending" : ""}`}
+              >
                 <span className="ask-user-card-answer-mark" aria-hidden>
                   {answered ? "●" : "○"}
                 </span>

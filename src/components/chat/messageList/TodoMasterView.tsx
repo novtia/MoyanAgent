@@ -1,8 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import type { AssistantBlock } from "../../../types";
 import { replayTodoState, type TodoBlock } from "./utils";
-import { ThinkingChevronIcon, TodoStatusIcon } from "./icons";
 
 export function TodoMasterView({
   toolBlocks,
@@ -12,7 +10,6 @@ export function TodoMasterView({
   isStreaming: boolean;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(true);
 
   const { items, busy } = useMemo(
     () => replayTodoState(toolBlocks),
@@ -22,70 +19,77 @@ export function TodoMasterView({
   const totalDone = items.filter((it) => it.status === "done").length;
   const totalItems = items.length;
   const overallPending = busy || (isStreaming && totalItems === 0);
-  const progressLabel = totalItems > 0 ? `${totalDone} / ${totalItems}` : null;
+  const pct = totalItems > 0 ? Math.round((totalDone / totalItems) * 100) : 0;
 
   return (
     <div
-      className={`tool-call-block todo-list-block todo-master ${overallPending ? "pending" : "success"} ${open ? "is-open" : ""}`}
+      className={`todo${overallPending ? " is-pending" : ""}`}
+      role="region"
+      aria-label={t("message.todoListTitle")}
     >
-      <button
-        type="button"
-        className="tool-call-summary"
-        aria-expanded={open}
-        onClick={() => totalItems > 0 && setOpen((v) => !v)}
-        disabled={totalItems === 0}
-      >
-        <svg
-          className="tool-call-icon"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden
-        >
-          <path d="M9 11l3 3L22 4" />
-          <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-        </svg>
-        <span className="tool-call-name">{t("message.todoListTitle")}</span>
-        {progressLabel && (
-          <span className="tool-call-args todo-progress">{progressLabel}</span>
-        )}
-        <span className="tool-call-spacer" aria-hidden />
-        {busy && (
-          <span className="tool-call-badge pending">{t("message.toolCallRunning")}</span>
-        )}
-        {totalItems > 0 && <ThinkingChevronIcon />}
-      </button>
+      <div className="todo-progress">
+        <span className="kv" style={{ fontWeight: 600, color: "var(--ink-soft)" }}>
+          {t("message.todoListTitle")}
+        </span>
+        <div className="todo-bar" aria-hidden>
+          <i style={{ width: `${pct}%` }} />
+        </div>
+        <span className="todo-count">
+          {totalItems > 0 ? `${totalDone} / ${totalItems}` : "—"}
+        </span>
+      </div>
 
-      {open && totalItems > 0 && (
+      {totalItems > 0 ? (
         <ul className="todo-item-list" role="list">
-          {items.map((item) => (
-            <li key={item.id} className={`todo-item ${item.status}`}>
-              <TodoStatusIcon status={item.status} />
-              <div className="todo-item-main">
-                <span className="todo-item-content">{item.content}</span>
-                {item.detail && (
-                  <span className="todo-item-detail">{item.detail}</span>
+          {items.map((item) => {
+            const doing = item.status === "in_progress";
+            const done = item.status === "done";
+            const cancelled = item.status === "cancelled";
+            return (
+              <li
+                key={item.id}
+                className={`todo-item${done ? " done" : ""}${doing ? " doing" : ""}${cancelled ? " cancelled" : ""}`}
+              >
+                <span className="todo-box" aria-hidden>
+                  {done ? (
+                    <svg
+                      width="9"
+                      height="9"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="3.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  ) : null}
+                </span>
+                <div className="todo-item-main">
+                  <div className="tt">{item.content}</div>
+                  {item.detail && <div className="td">{item.detail}</div>}
+                </div>
+                {doing && (
+                  <span className="todo-tag doing">
+                    {t("message.todoStatusInProgress")}
+                  </span>
                 )}
-              </div>
-              <span className={`todo-item-badge ${item.status}`}>
-                {item.status === "pending"
-                  ? t("message.todoStatusPending")
-                  : item.status === "in_progress"
-                    ? t("message.todoStatusInProgress")
-                    : item.status === "done"
-                      ? t("message.todoStatusDone")
-                      : t("message.todoStatusCancelled")}
-              </span>
-            </li>
-          ))}
+                {cancelled && (
+                  <span className="todo-tag cancelled">
+                    {t("message.todoStatusCancelled")}
+                  </span>
+                )}
+              </li>
+            );
+          })}
         </ul>
-      )}
-
-      {open && totalItems === 0 && !busy && (
-        <p className="todo-empty">{t("message.todoListEmpty")}</p>
+      ) : (
+        <p className="todo-empty">
+          {busy
+            ? t("message.toolCallRunning")
+            : t("message.todoListEmpty")}
+        </p>
       )}
     </div>
   );

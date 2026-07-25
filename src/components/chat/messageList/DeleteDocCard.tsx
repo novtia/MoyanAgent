@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { AssistantBlock } from "../../../types";
-import { ToolCallIcon } from "./icons";
+import { ToolGlyph } from "./toolIcons";
 
 export function DeleteDocCard({
   block,
@@ -18,24 +18,22 @@ export function DeleteDocCard({
     fullPath.split(/[\\/]/).filter(Boolean).pop() ||
     t("message.deleteDocUntitled");
 
-  const statusLabel =
+  const label =
     status === "pending"
-      ? t("message.toolCallRunning")
+      ? t("message.deleteDocDeleting")
       : status === "error"
-        ? t("message.toolCallError")
-        : t("message.toolCallDone");
+        ? t("message.deleteDocFailed")
+        : t("message.deleteDocDeleted");
 
   return (
-    <div className={`tool-call-block ${status}`}>
-      <div className="tool-call-summary tool-call-summary--static">
-        <ToolCallIcon status={status} />
-        <span className="tool-call-name">Delete</span>
-        <span className="tool-call-args" title={fullPath || name}>
-          {name}
-        </span>
-        <span className="tool-call-spacer" aria-hidden />
-        <span className={`tool-call-badge ${status}`}>{statusLabel}</span>
-      </div>
+    <div className={`del-line${status === "error" ? " is-error" : ""}`}>
+      <span className="ti">
+        <ToolGlyph tool="Delete" />
+      </span>
+      <span className="fname" title={fullPath || name}>
+        {name}
+      </span>
+      <span className="kv">{label}</span>
     </div>
   );
 }

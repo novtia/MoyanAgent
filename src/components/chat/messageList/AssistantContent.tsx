@@ -1,14 +1,9 @@
 import { useMemo } from "react";
 import type { AssistantBlock } from "../../../types";
 import { AgentStageDivider } from "./AgentStageDivider";
-import { DeleteDocCard } from "./DeleteDocCard";
-import { ReadToolCard } from "./ReadToolCard";
-import { RoleStateChip } from "./RoleStateChip";
-import { AskUserChip } from "./AskUserChip";
-import { StreamingDocCard } from "./StreamingDocCard";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { TodoMasterView } from "./TodoMasterView";
-import { ToolCallBlock } from "./ToolCallBlock";
+import { resolveToolComponent } from "./registry";
 import type { TodoBlock } from "./utils";
 
 export function AssistantContent({
@@ -33,7 +28,6 @@ export function AssistantContent({
     return -1;
   }, [blocks]);
 
-  // Pre-compute once so the map below can check cheaply.
   const firstTodoIdx = useMemo(
     () => blocks.findIndex((b) => b.type === "tool_use" && b.tool === "TodoList"),
     [blocks],
@@ -41,8 +35,7 @@ export function AssistantContent({
   const toolBlocks = useMemo(
     () =>
       blocks.filter(
-        (b): b is Extract<AssistantBlock, { type: "tool_use" }> =>
-          b.type === "tool_use",
+        (b): b is TodoBlock => b.type === "tool_use",
       ),
     [blocks],
   );
@@ -76,8 +69,9 @@ export function AssistantContent({
             />
           );
         }
-        // All TodoList blocks are collapsed into one persistent view;
-        // only the first occurrence renders the master card.
+        if (block.type !== "tool_use") return null;
+
+        // All TodoList blocks collapse into one persistent master view.
         if (block.tool === "TodoList") {
           if (i === firstTodoIdx) {
             return (
@@ -90,29 +84,9 @@ export function AssistantContent({
           }
           return null;
         }
-        // RoleState mutations render as a terse one-line chip; the full board
-        // lives in the right-panel "role state" tab.
-        if (block.tool === "RoleState") {
-          return <RoleStateChip key={`role:${block.id}:${i}`} block={block} />;
-        }
-        // AskUser: card with question + selected answer; multi-Q via ◀▶.
-        if (block.tool === "AskUser") {
-          return <AskUserChip key={`ask:${block.id}:${i}`} block={block} />;
-        }
-        // CreateDoc renders as a dedicated document card; clicking it opens
-        // the freshly created file in the reader panel.
-        if (block.tool === "CreateDoc" || block.tool === "Edit") {
-          return <StreamingDocCard key={`doc:${block.id}`} block={block} />;
-        }
-        // Delete renders as a dedicated "removed document" card, distinct from
-        // the generic tool-call block.
-        if (block.tool === "Delete") {
-          return <DeleteDocCard key={`del:${block.id}:${i}`} block={block} />;
-        }
-        if (block.tool === "Read") {
-          return <ReadToolCard key={`read:${block.id}:${i}`} block={block} />;
-        }
-        return <ToolCallBlock key={`tool:${block.id}:${i}`} block={block} />;
+
+        const Comp = resolveToolComponent(block.tool);
+        return <Comp key={`tool:${block.id}:${i}`} block={block} />;
       })}
     </>
   );

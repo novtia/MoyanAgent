@@ -168,6 +168,15 @@ pub struct Session {
     pub agent_chain: Option<Vec<ChainNode>>,
     /// Project this session belongs to, if any.
     pub project_id: Option<String>,
+    /// Parent session when this is a temporary subagent child session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
+    /// Hidden from the sidebar when true (subagent temp sessions).
+    #[serde(default)]
+    pub is_temporary: bool,
+    /// Task id of the Agent tool run that spawned this temp session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn_task_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -253,6 +262,9 @@ pub struct Message {
 pub struct SessionWithMessages {
     pub session: Session,
     pub messages: Vec<Message>,
+    /// Parent session title when `session.parent_session_id` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_title: Option<String>,
 }
 
 pub fn create(conn: &DbConn, title: Option<String>, model: Option<String>) -> AppResult<Session> {
@@ -276,9 +288,101 @@ pub fn create(conn: &DbConn, title: Option<String>, model: Option<String>) -> Ap
         agent_type: SESSION_AGENT_GENERAL.into(),
         agent_chain: None,
         project_id: None,
+        parent_session_id: None,
+        is_temporary: false,
+        spawn_task_id: None,
         created_at: now,
         updated_at: now,
     })
+}
+
+/// Create a hidden temporary child session for an Agent tool dispatch.
+/// Copies model / provider / project / llm settings from the parent.
+pub fn create_temp(
+    conn: &DbConn,
+    parent_id: &str,
+    title: &str,
+    spawn_task_id: Option<&str>,
+) -> AppResult<Session> {
+    let parent = get(conn, parent_id)?;
+    let id = Ulid::new().to_string();
+    let now = now_ms();
+    let title = {
+        let t = title.trim();
+        if t.is_empty() {
+            "Temporary session".to_string()
+        } else {
+            t.chars().take(120).collect()
+        }
+    };
+    let llm_json = serde_json::to_string(&parent.llm_params)
+        .map_err(|e| AppError::Invalid(format!("failed to serialize llm_params: {e}")))?;
+    conn.execute(
+        "INSERT INTO sessions(
+            id, title, model, provider_id, system_prompt, history_turns, llm_params,
+            context_window, context_window_used, agent_type, project_id,
+            parent_session_id, is_temporary, spawn_task_id,
+            created_at, updated_at
+         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,0,?9,?10,?11,1,?12,?13,?13)",
+        params![
+            id,
+            title,
+            parent.model,
+            parent.provider_id,
+            parent.system_prompt,
+            parent.history_turns,
+            llm_json,
+            parent.context_window,
+            parent.agent_type,
+            parent.project_id,
+            parent_id,
+            spawn_task_id,
+            now,
+        ],
+    )?;
+    Ok(Session {
+        id,
+        title,
+        model: parent.model,
+        provider_id: parent.provider_id,
+        system_prompt: parent.system_prompt,
+        history_turns: parent.history_turns,
+        llm_params: parent.llm_params,
+        context_window: parent.context_window,
+        context_window_used: 0,
+        agent_type: parent.agent_type,
+        agent_chain: None,
+        project_id: parent.project_id,
+        parent_session_id: Some(parent_id.to_string()),
+        is_temporary: true,
+        spawn_task_id: spawn_task_id.map(|s| s.to_string()),
+        created_at: now,
+        updated_at: now,
+    })
+}
+
+/// Ids of temporary child sessions spawned from `parent_id`.
+pub fn list_temp_child_ids(conn: &DbConn, parent_id: &str) -> AppResult<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM sessions WHERE parent_session_id=?1 AND is_temporary=1",
+    )?;
+    let rows = stmt.query_map(params![parent_id], |r| r.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+pub fn set_spawn_task_id(conn: &DbConn, id: &str, spawn_task_id: &str) -> AppResult<()> {
+    let n = conn.execute(
+        "UPDATE sessions SET spawn_task_id=?1, updated_at=?2 WHERE id=?3",
+        params![spawn_task_id, now_ms(), id],
+    )?;
+    if n == 0 {
+        return Err(AppError::NotFound(format!("session {id}")));
+    }
+    Ok(())
 }
 
 /// Persist the ordered agent flow chain for a session. An empty list clears
@@ -493,6 +597,7 @@ pub fn list(conn: &DbConn) -> AppResult<Vec<SessionSummary>> {
             (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt,
             s.project_id, s.provider_id
          FROM sessions s
+         WHERE COALESCE(s.is_temporary, 0) = 0
          ORDER BY s.updated_at DESC",
     )?;
     let rows = stmt.query_map(params![], |r| {
@@ -544,6 +649,7 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
                 NULL AS match_created_at, 0 AS match_count, 0 AS title_match,
                 s.provider_id
              FROM sessions s
+             WHERE COALESCE(s.is_temporary, 0) = 0
              ORDER BY s.updated_at DESC
              LIMIT ?1",
         )?;
@@ -577,11 +683,14 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
             CASE WHEN s.title LIKE ?1 ESCAPE '\\' THEN 1 ELSE 0 END AS title_match,
             s.provider_id
          FROM sessions s
-         WHERE s.title LIKE ?1 ESCAPE '\\'
-            OR EXISTS (
-                SELECT 1 FROM messages mx
-                WHERE mx.session_id = s.id AND COALESCE(mx.text, '') LIKE ?1 ESCAPE '\\'
-            )
+         WHERE COALESCE(s.is_temporary, 0) = 0
+           AND (
+             s.title LIKE ?1 ESCAPE '\\'
+             OR EXISTS (
+                 SELECT 1 FROM messages mx
+                 WHERE mx.session_id = s.id AND COALESCE(mx.text, '') LIKE ?1 ESCAPE '\\'
+             )
+           )
          ORDER BY
             CASE WHEN s.title LIKE ?1 ESCAPE '\\' THEN 0 ELSE 1 END,
             s.updated_at DESC
@@ -623,12 +732,15 @@ fn map_search_result(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSearchR
 
 pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, model, system_prompt, history_turns, llm_params, context_window, context_window_used, agent_type, project_id, created_at, updated_at, agent_chain, provider_id FROM sessions WHERE id=?1",
+        "SELECT id, title, model, system_prompt, history_turns, llm_params, context_window, context_window_used, agent_type, project_id, created_at, updated_at, agent_chain, provider_id,
+                parent_session_id, is_temporary, spawn_task_id
+         FROM sessions WHERE id=?1",
     )?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
         let raw: Option<String> = row.get(5)?;
         let chain_raw: Option<String> = row.get(12)?;
+        let is_temporary: i64 = row.get(15).unwrap_or(0);
         Ok(Session {
             id: row.get(0)?,
             title: row.get(1)?,
@@ -642,6 +754,9 @@ pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
             agent_type: row.get(8)?,
             agent_chain: decode_agent_chain(chain_raw),
             project_id: row.get(9)?,
+            parent_session_id: row.get(14)?,
+            is_temporary: is_temporary != 0,
+            spawn_task_id: row.get(16)?,
             created_at: row.get(10)?,
             updated_at: row.get(11)?,
         })
@@ -951,6 +1066,16 @@ fn load_message_images(conn: &DbConn, message_id: &str) -> AppResult<Vec<ImageRe
 
 pub fn load_with_messages(conn: &DbConn, session_id: &str) -> AppResult<SessionWithMessages> {
     let session = get(conn, session_id)?;
+    let parent_title = match session.parent_session_id.as_deref() {
+        Some(pid) => conn
+            .query_row(
+                "SELECT title FROM sessions WHERE id=?1",
+                params![pid],
+                |r| r.get::<_, String>(0),
+            )
+            .ok(),
+        None => None,
+    };
     let mut stmt = conn.prepare(
         "SELECT id, role, text, params_json, created_at FROM messages
          WHERE session_id=?1 ORDER BY created_at ASC",
@@ -973,5 +1098,9 @@ pub fn load_with_messages(conn: &DbConn, session_id: &str) -> AppResult<SessionW
         m.images = load_message_images(conn, &m.id)?;
         messages.push(m);
     }
-    Ok(SessionWithMessages { session, messages })
+    Ok(SessionWithMessages {
+        session,
+        messages,
+        parent_title,
+    })
 }

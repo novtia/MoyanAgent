@@ -87,11 +87,16 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
   const isAssistant = m.role === "assistant";
   const isError = m.role === "error";
   const busyBySession = useSession((s) => s.busyBySession);
+  const isTempSession = useSession((s) => !!s.active?.session.is_temporary);
+  const isSpawnedPrompt =
+    isUser &&
+    (m.params?.spawned_prompt === true || isTempSession);
   const isStreamingDraft =
     m.id.startsWith("tmp-assistant-") && !!busyBySession[m.session_id];
   const hasText = !!(m.text && m.text.trim());
-  const canEditUser = isUser && (hasText || inputs.length > 0);
-  const canEditAssistant = isAssistant && !isStreamingDraft;
+  const canEditUser =
+    isUser && !isSpawnedPrompt && (hasText || inputs.length > 0);
+  const canEditAssistant = isAssistant && !isStreamingDraft && !isTempSession;
   const canEdit = canEditUser || canEditAssistant;
   const canQuote =
     hasText ||
@@ -1018,7 +1023,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
                 <span>{t("message.actionEdit")}</span>
               </button>
             )}
-            {isUser && (hasText || inputs.length > 0) && (
+            {isUser && !isSpawnedPrompt && (hasText || inputs.length > 0) && (
               <button
                 type="button"
                 className="msg-action"
@@ -1050,14 +1055,16 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
                 <span>{t("message.actionQuote")}</span>
               </button>
             )}
-            <button
-              type="button"
-              className="msg-action danger"
-              onClick={onDelete}
-            >
-              <TrashIcon />
-              <span>{t("message.actionDelete")}</span>
-            </button>
+            {!isSpawnedPrompt && (
+              <button
+                type="button"
+                className="msg-action danger"
+                onClick={onDelete}
+              >
+                <TrashIcon />
+                <span>{t("message.actionDelete")}</span>
+              </button>
+            )}
           </div>
         )}
       </div>
