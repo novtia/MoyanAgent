@@ -7,6 +7,7 @@ import {
   buildEditorDisplaySegments,
   buildPendingDiffLineRanges,
   isDiffTextEqual,
+  normalizeDiffText,
   replaceTabLineRange,
   sliceTabLines,
   type EditorDisplaySegment,
@@ -149,12 +150,16 @@ export function DiffEditorView({
 
     const deleteLines = seg.before.trim() ? seg.before.split("\n") : [];
     const insertLines = seg.after ? seg.after.split("\n") : [];
-    const insertLabels: (number | null)[] = insertLines.map((_, i) => {
-      if (seg.paragraphNumber == null) return null;
-      return seg.before.trim() === "" && seg.after.trim() !== ""
-        ? seg.paragraphNumber + 1 + i
-        : seg.paragraphNumber + i;
-    });
+    // Line number comes from placement in the live document (correct even when
+    // old_string/new_string are mid-line snippets).
+    const lineLabel = paraLabels[seg.tabStart] ?? null;
+    const insertLabels = insertLines.map(() => lineLabel);
+    const liveInsert = sliceTabLines(tab.text, seg.tabStart, seg.tabEnd);
+    // Only bind editing to the live line when this hunk's after still matches
+    // (or is) that line — otherwise a substring Edit would clobber the line.
+    const afterIsLive =
+      normalizeDiffText(seg.after) === normalizeDiffText(liveInsert) ||
+      (!!seg.after.trim() && liveInsert.includes(seg.after));
     const range = lineRanges.find((r) => r.blockId === seg.blockId);
     const hunkIndex = range ? lineRanges.findIndex((r) => r.blockId === seg.blockId) : -1;
     const showBar = hoveredBlockId === seg.blockId && range != null && hunkIndex >= 0;
@@ -176,7 +181,7 @@ export function DiffEditorView({
             layout="segment"
             diffVariant="delete"
             diffSign="−"
-            lineLabels={[paraLabels[seg.tabStart + i] ?? null]}
+            lineLabels={[lineLabel]}
             value={line}
             readOnly
             ariaLabel="removed line"
@@ -190,8 +195,13 @@ export function DiffEditorView({
             diffSign="+"
             diffSignFirstLineOnly
             lineLabels={insertLabels}
-            value={seg.after}
-            onChange={(value) => onSegmentChange(seg.tabStart, seg.tabEnd, value)}
+            value={afterIsLive ? liveInsert : seg.after}
+            readOnly={!afterIsLive}
+            onChange={
+              afterIsLive
+                ? (value) => onSegmentChange(seg.tabStart, seg.tabEnd, value)
+                : undefined
+            }
             ariaLabel={tab.path}
           />
         )}

@@ -41,27 +41,53 @@ export function StreamingDocCard({
     replaced_count?: number;
   };
 
+  const oldString = useMemo(
+    () =>
+      isEdit
+        ? normalizeToolContent(
+            typeof output.old_string === "string"
+              ? output.old_string
+              : (input.old_string ?? ""),
+          )
+        : "",
+    [isEdit, output.old_string, input.old_string],
+  );
+
   // For Edit the detail/word-count reflects the replacement text (`new_string`);
   // for CreateDoc it is the written `content`.
   const content = useMemo(
     () =>
       normalizeToolContent(
-        isEdit ? (input.new_string ?? "") : (input.content ?? ""),
+        isEdit
+          ? typeof output.new_string === "string"
+            ? output.new_string
+            : (input.new_string ?? "")
+          : (input.content ?? ""),
       ),
-    [isEdit, input.new_string, input.content],
+    [isEdit, output.new_string, input.new_string, input.content],
   );
 
   const path = resolveToolFilePath(block.input, block.output);
   const baseName = path ? path.split(/[\\/]/).pop() || path : "";
   const replaceAll = output.replace_all === true || input.replace_all === true;
   const summary = isEdit
-    ? [baseName || t("message.streamDocEditUntitled"), replaceAll ? "×N" : ""]
+    ? [
+        streaming && status === "pending"
+          ? t("message.streamDocEditing")
+          : null,
+        baseName || t("message.streamDocEditUntitled"),
+        replaceAll ? "×N" : "",
+      ]
         .filter(Boolean)
         .join(" · ")
     : (output.title || input.title || "").trim() ||
       t("message.createDocUntitled");
 
   const added = useMemo(() => countWords(content), [content]);
+  const removed = useMemo(
+    () => (isEdit ? countWords(oldString) : 0),
+    [isEdit, oldString],
+  );
 
   const readerDoc = useMemo(
     () =>
@@ -78,7 +104,7 @@ export function StreamingDocCard({
         ? t("message.toolCallError")
         : t("message.toolCallDone");
 
-  const hasContent = content.length > 0;
+  const hasContent = content.length > 0 || oldString.length > 0;
   const errorMessage =
     status === "error" ? extractToolErrorMessage(block.output) : "";
 
@@ -108,12 +134,20 @@ export function StreamingDocCard({
         <span className="tool-call-name">{block.tool}</span>
         {summary && <span className="tool-call-args">{summary}</span>}
         <span className="tool-call-spacer" aria-hidden />
-        {added > 0 && (
-          <span className="tool-call-diff-chips" aria-hidden={added === 0}>
-            <span className="is-add">
-              +{added}
-              {t("message.createDocCharsUnit")}
-            </span>
+        {(added > 0 || removed > 0) && (
+          <span className="tool-call-diff-chips" aria-hidden>
+            {removed > 0 && (
+              <span className="is-del">
+                −{removed}
+                {t("message.createDocCharsUnit")}
+              </span>
+            )}
+            {added > 0 && (
+              <span className="is-add">
+                +{added}
+                {t("message.createDocCharsUnit")}
+              </span>
+            )}
           </span>
         )}
         {readerDoc && (
@@ -143,10 +177,29 @@ export function StreamingDocCard({
 
       {open && hasContent && (
         <div className="tool-call-detail">
-          <pre className="tool-call-detail-body">
-            {content}
-            {streaming && <span className="stream-doc-cursor" aria-hidden />}
-          </pre>
+          {isEdit ? (
+            <div className="tool-call-edit-stream">
+              {oldString.length > 0 && (
+                <pre className="tool-call-detail-body is-delete">
+                  {oldString}
+                  {streaming && !content && (
+                    <span className="stream-doc-cursor" aria-hidden />
+                  )}
+                </pre>
+              )}
+              {content.length > 0 && (
+                <pre className="tool-call-detail-body is-insert">
+                  {content}
+                  {streaming && <span className="stream-doc-cursor" aria-hidden />}
+                </pre>
+              )}
+            </div>
+          ) : (
+            <pre className="tool-call-detail-body">
+              {content}
+              {streaming && <span className="stream-doc-cursor" aria-hidden />}
+            </pre>
+          )}
         </div>
       )}
 

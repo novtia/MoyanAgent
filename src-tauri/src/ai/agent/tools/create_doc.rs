@@ -1,9 +1,9 @@
 //! `CreateDoc` — a deliberately tiny document-authoring tool.
 //!
-//! Unlike [`crate::ai::agent::tools::edit::FileWriteTool`] (which demands an
-//! absolute path and a prior read receipt), `CreateDoc` asks the model for
-//! only three things: a `title`, the `content`, and a `doc_type` (`md` or
-//! `txt`), plus an optional `folder` breadcrumb within the project. The file
+//! Unlike [`crate::ai::agent::tools::edit::FileWriteTool`] (which takes a
+//! full path), `CreateDoc` asks the model for only three things: a `title`,
+//! the `content`, and a `doc_type` (`md` or `txt`), plus an optional `folder`
+//! breadcrumb within the project. The file
 //! is written under the session's project working directory
 //! (`ToolUseContext::cwd`), falling back to `~/Documents/moyanagent` when the
 //! session has no project path. Writes are always confined to that project
@@ -161,9 +161,8 @@ impl Tool for CreateDocTool {
             // joined path if canonicalization fails for any reason.
             let canonical = std::fs::canonicalize(&path).unwrap_or(path);
 
-            // Stamp a read receipt (keyed by the content just written) so a
-            // follow-up `Edit` on this file works without a separate `Read`
-            // round-trip and can still detect later out-of-band changes.
+            // Stamp a read receipt (keyed by the content just written) so
+            // unchanged re-reads of this new file can be short-circuited.
             if let Ok(mut s) = invocation.context.read_file_state.lock() {
                 s.insert(canonical.clone(), content_hash(&content));
             }

@@ -5,10 +5,7 @@
 //! the Read tool silently expands the range to include surrounding context.
 //!
 //! A *receipt* records the content hash observed the last time the agent read
-//! or wrote a file. `Edit`/`Write` refuse to touch a file with no receipt, and
-//! `Edit` additionally rejects a stale receipt (the on-disk content no longer
-//! matches what the model last saw), which is the main guard against
-//! paragraph-number drift after out-of-band edits.
+//! or wrote a file. Used by Read to short-circuit unchanged re-reads.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -18,7 +15,7 @@ use std::sync::Mutex;
 /// Minimum paragraphs returned by a ranged Read (system auto-expands).
 pub const MIN_READ_CONTEXT_LINES: usize = 20;
 
-/// Stable content hash used for read-receipt / stale-file detection.
+/// Stable content hash used for read-receipt equality checks.
 ///
 /// Uses [`std::collections::hash_map::DefaultHasher`], which is seeded with
 /// fixed keys and therefore deterministic within (and across) a process — good
@@ -36,30 +33,6 @@ pub fn record_receipt(state: &Mutex<HashMap<PathBuf, u64>>, path: &Path, text: &
     if let Ok(mut s) = state.lock() {
         s.insert(key, content_hash(text));
     }
-}
-
-/// Look up the stored content hash for `path`, matching either directly or via
-/// canonicalization (receipts are keyed canonically, but callers may pass a
-/// non-canonical path).
-pub fn lookup_receipt(state: &Mutex<HashMap<PathBuf, u64>>, path: &Path) -> Option<u64> {
-    let canonical = std::fs::canonicalize(path).ok();
-    let s = state.lock().ok()?;
-    for (p, hash) in s.iter() {
-        if p == path {
-            return Some(*hash);
-        }
-        if let (Some(a), Some(b)) = (canonical.as_ref(), std::fs::canonicalize(p).ok()) {
-            if a == &b {
-                return Some(*hash);
-            }
-        }
-    }
-    None
-}
-
-/// True iff the agent holds any receipt for `path` (read-first guard).
-pub fn has_receipt(state: &Mutex<HashMap<PathBuf, u64>>, path: &Path) -> bool {
-    lookup_receipt(state, path).is_some()
 }
 
 /// Expand a requested inclusive 1-based range to at least

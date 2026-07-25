@@ -56,9 +56,7 @@ pub struct ToolUseContext {
 
     /// Files the model has already Read this session, mapped to the content
     /// hash observed at that read/write. Used by FileReadTool to short-circuit
-    /// unchanged reads, by Edit/Write to enforce the read-first receipt, and by
-    /// Edit to detect that a file was mutated out-of-band (stale receipt) before
-    /// applying paragraph-numbered edits.
+    /// unchanged reads.
     pub read_file_state: Arc<Mutex<HashMap<PathBuf, u64>>>,
 
     /// Paths that triggered a nested-memory attachment on this turn.

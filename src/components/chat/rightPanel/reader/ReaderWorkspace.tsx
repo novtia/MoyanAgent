@@ -13,6 +13,7 @@ import { toast } from "../../../ui/Toast";
 import {
   normalizeReaderPath,
   readerFileName,
+  syncPendingDiffsForPath,
   useReader,
 } from "../../../../store/reader";
 import { useSession } from "../../../../store/session";
@@ -60,6 +61,12 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
 
   const { canBack, canForward, goBack, goForward } = useReaderNavHistory(path, onOpenFile);
   const loadError = useLazyLoadFile(path, tab, activeId);
+
+  // Re-open / switch path: restore Keep/Undo from backend (authoritative).
+  useEffect(() => {
+    if (!path || !tab || !activeId) return;
+    void syncPendingDiffsForPath(activeId, path);
+  }, [path, tab?.id, activeId]);
 
   useEffect(() => {
     if (loadError) toast.error(t("fileExplorer.openFailed"), { description: loadError });

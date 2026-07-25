@@ -1,6 +1,10 @@
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../../../store/session";
-import { useReader, type ReaderFileTab } from "../../../../store/reader";
+import {
+  normalizeReaderPath,
+  useReader,
+  type ReaderFileTab,
+} from "../../../../store/reader";
 import { api } from "../../../../api/tauri";
 
 interface ReaderDiffHeaderBarProps {
@@ -9,6 +13,16 @@ interface ReaderDiffHeaderBarProps {
   onNavigate: (direction: -1 | 1) => void;
   onAcceptAll: () => void;
   onRejectAll: () => void;
+}
+
+async function resolveDbPath(sessionId: string, path: string): Promise<string> {
+  try {
+    const rows = await api.listPendingDiffs(sessionId);
+    const key = normalizeReaderPath(path);
+    return rows.find((r) => normalizeReaderPath(r.path) === key)?.path ?? path;
+  } catch {
+    return path;
+  }
 }
 
 export function ReaderDiffHeaderBar({
@@ -27,27 +41,32 @@ export function ReaderDiffHeaderBar({
 
   const safeIndex = hunkTotal > 0 ? Math.min(Math.max(activeIndex, 0), hunkTotal - 1) : 0;
 
-  const handleAcceptAll = () => {
-    confirmAllDiffs(tab.path);
-    onAcceptAll();
+  const handleAcceptAll = async () => {
+    if (!sessionId) return;
+    try {
+      const dbPath = await resolveDbPath(sessionId, tab.path);
+      await api.confirmAllPendingDiffs(sessionId, dbPath, true);
+      confirmAllDiffs(tab.path);
+      onAcceptAll();
+    } catch {
+      /* keep UI pending on failure */
+    }
   };
 
   const handleRejectAll = async () => {
-    const result = rejectAllDiffs(tab.path);
-    if (result?.revertText && sessionId) {
-      try {
-        await api.writeProjectFile(
-          sessionId,
-          tab.path,
-          result.revertText,
-          tab.encoding,
-          tab.hadBom,
-        );
-      } catch {
-        /* still update UI */
+    if (!sessionId) return;
+    try {
+      const dbPath = await resolveDbPath(sessionId, tab.path);
+      const revert = await api.confirmAllPendingDiffs(sessionId, dbPath, false);
+      if (!revert) return;
+      const result = rejectAllDiffs(tab.path);
+      if (result?.revertText !== revert.text) {
+        useReader.getState().updateTabText(tab.path, revert.text, { dirty: false });
       }
+      onRejectAll();
+    } catch {
+      /* keep UI pending on failure */
     }
-    onRejectAll();
   };
 
   if (hunkTotal === 0) return null;
@@ -62,7 +81,7 @@ export function ReaderDiffHeaderBar({
           aria-label={t("reader.diffPrevHunk")}
           onClick={() => onNavigate(-1)}
         >
-          â†?
+          {"\u2190"}
         </button>
         <span className="reader-diff-actionbar-count">
           {t("reader.diffHunkCount", { current: safeIndex + 1, total: hunkTotal })}
@@ -74,7 +93,7 @@ export function ReaderDiffHeaderBar({
           aria-label={t("reader.diffNextHunk")}
           onClick={() => onNavigate(1)}
         >
-          â†?
+          {"\u2192"}
         </button>
       </div>
       <button
@@ -87,7 +106,7 @@ export function ReaderDiffHeaderBar({
       <button
         type="button"
         className="reader-diff-actionbar-btn keep"
-        onClick={handleAcceptAll}
+        onClick={() => void handleAcceptAll()}
       >
         {t("reader.diffAcceptAll")}
       </button>

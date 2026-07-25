@@ -1,26 +1,11 @@
 //! File-mutation tools: `Write` (overwrite) and `Edit` (string replace).
 //!
-//! Both refuse to operate on a file that the agent hasn't read first,
-//! using [`crate::ai::agent::core::context::ToolUseContext::read_file_state`]
-//! as the receipt. This mirrors the safety property in the TS executor
-//! and prevents the model from clobbering files it doesn't actually
-//! understand.
-//!
-//! The `Read` precondition is skipped for `Write` when the target file
-//! does not yet exist — creating new files is always fine.
-//!
 //! `Edit` has one operation: find an exact `old_string` in the file and
-//! replace it with `new_string`. `old_string` must be copied verbatim from a
-//! prior Read (Read returns plain, unlabeled text). By default `old_string`
-//! must match exactly once; if it occurs multiple times the edit is rejected
-//! unless `replace_all` is set, in which case every occurrence is replaced. An
-//! empty `new_string` deletes the matched text. Because the match is
-//! content-based (not positional), `Edit`:
-//!
-//! - verifies the on-disk content still matches the receipt hash recorded at
-//!   the last Read/Write (stale files are rejected, not silently mis-edited);
-//! - updates the read receipt after every successful edit so consecutive edits
-//!   remain safe.
+//! replace it with `new_string`. By default `old_string` must match exactly
+//! once; if it occurs multiple times the edit is rejected unless
+//! `replace_all` is set. An empty `new_string` deletes the matched text.
+//! Successful Write/Edit still refresh the read receipt so unchanged-file
+//! short-circuiting in Read stays accurate.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -29,13 +14,13 @@ use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
 use crate::ai::agent::tools::project_path::{self, FILE_REF_DESC};
-use crate::ai::agent::tools::read_receipt::{
-    content_hash, has_receipt, lookup_receipt, record_receipt,
-};
+use crate::ai::agent::tools::read_receipt::record_receipt;
 use crate::ai::agent::tools::text_decode::{
     detect_and_decode, normalize_tool_string, read_text_file, write_text_file, TextEncoding,
 };
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
+use crate::data::db::DbPool;
+use crate::data::pending_diff;
 use crate::error::{AppError, AppResult};
 
 const WRITE_TOOL: &str = "Write";
@@ -54,7 +39,7 @@ impl FileWriteTool {
             spec: ToolSpec {
                 name: WRITE_TOOL.to_string(),
                 description: "Write a UTF-8 file to disk, creating parent directories as needed. \
-                    Refuses to overwrite an existing file unless it was previously read in this session."
+                    Overwrites the file if it already exists."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -94,12 +79,6 @@ impl Tool for FileWriteTool {
             );
 
             let exists = path.exists();
-            if exists && !has_receipt(&invocation.context.read_file_state, &path) {
-                return Ok(ToolResult::error(format!(
-                    "Write: refusing to overwrite {} — read the file first to record a receipt",
-                    path.display()
-                )));
-            }
 
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() {
@@ -152,15 +131,18 @@ impl Tool for FileWriteTool {
 pub struct FileEditTool {
     spec: ToolSpec,
     snapshots: Arc<FileSnapshotStore>,
+    /// When set, successful Edits are recorded for the reader Keep/Undo UI.
+    pool: Option<Arc<DbPool>>,
 }
 
 impl FileEditTool {
     pub fn new(snapshots: Arc<FileSnapshotStore>) -> Self {
         Self {
             snapshots,
+            pool: None,
             spec: ToolSpec {
                 name: EDIT_TOOL.to_string(),
-                description: "Replace an exact substring in a file. Read the file first (Read returns plain text). \
+                description: "Replace an exact substring in a file. \
                     Pass `path`, `old_string`, and `new_string`. `old_string` is text copied VERBATIM from the file \
                     (including whitespace and line breaks) and must be long enough to match EXACTLY ONE place — \
                     include surrounding context to disambiguate. `new_string` is what replaces it. To DELETE, pass an \
@@ -168,8 +150,8 @@ impl FileEditTool {
                     current text and make `new_string` begin with that same text, then add the new prose (e.g. the \
                     file ends with `哦哦哦` → old_string `哦哦哦`, new_string `哦哦哦。后续新内容`). If `old_string` \
                     intentionally appears multiple times and you want to replace every occurrence, set `replace_all` \
-                    to true; otherwise a non-unique match is rejected. If Edit fails (not found, not unique, or file \
-                    changed), Read the file again before retrying."
+                    to true; otherwise a non-unique match is rejected. If Edit fails (not found or not unique), \
+                    Read the file and retry with the exact current text."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -197,6 +179,11 @@ impl FileEditTool {
                 concurrency_safe: false,
             },
         }
+    }
+
+    pub fn with_pool(mut self, pool: Arc<DbPool>) -> Self {
+        self.pool = Some(pool);
+        self
     }
 }
 
@@ -248,25 +235,8 @@ impl Tool for FileEditTool {
                 ));
             }
 
-            let stored_hash = lookup_receipt(&invocation.context.read_file_state, &path);
-            if stored_hash.is_none() {
-                return Ok(ToolResult::error(format!(
-                    "Edit: read {} first — no receipt on this session",
-                    path.display()
-                )));
-            }
-
             let decoded = read_text_file(&path)
                 .map_err(|e| AppError::Other(format!("Edit: read {:?}: {e}", path)))?;
-
-            // Stale-file guard: the on-disk content must still match what the
-            // model last saw. If it drifted (user edited in the reader, a
-            // rejected diff was written back, etc.), refuse so the model
-            // re-reads instead of editing the wrong text.
-            let disk_hash = content_hash(&decoded.text);
-            if stored_hash != Some(disk_hash) {
-                return Ok(stale_error(&path));
-            }
 
             let occurrences = decoded.text.matches(&old_string).count();
             if occurrences == 0 {
@@ -301,9 +271,40 @@ impl Tool for FileEditTool {
 
             record_receipt(&invocation.context.read_file_state, &path, &updated);
 
-            Ok(ToolResult::ok(json!({
+            let path_str = {
+                let raw = path.to_string_lossy();
+                raw.strip_prefix(r"\\?\")
+                    .unwrap_or(raw.as_ref())
+                    .to_string()
+            };
+            let mut pending_diff_id: Option<String> = None;
+            if let (Some(pool), Some(sid)) = (&self.pool, invocation.context.session_id.as_deref())
+            {
+                if let Ok(conn) = pool.get() {
+                    match pending_diff::insert(
+                        &conn,
+                        sid,
+                        &path_str,
+                        &old_string,
+                        &new_string,
+                        &text_before,
+                        &updated,
+                        Some(decoded.encoding.label()),
+                        decoded.had_bom,
+                        invocation.context.correlation_id.as_deref(),
+                    ) {
+                        Ok(Some(id)) => pending_diff_id = Some(id),
+                        Ok(None) => {}
+                        Err(e) => {
+                            eprintln!("Edit: failed to record pending diff: {e}");
+                        }
+                    }
+                }
+            }
+
+            let mut body = json!({
                 "success": true,
-                "path": path.to_string_lossy(),
+                "path": path_str,
                 "old_string": old_string,
                 "new_string": new_string,
                 "replace_all": replace_all,
@@ -311,7 +312,12 @@ impl Tool for FileEditTool {
                 "match_start": match_start,
                 "text_before": text_before,
                 "text": updated,
-            })))
+            });
+            if let Some(id) = pending_diff_id {
+                body["pending_diff_id"] = json!(id);
+            }
+
+            Ok(ToolResult::ok(body))
         })
     }
 }
@@ -326,13 +332,6 @@ fn not_found_error(path: &Path) -> ToolResult {
 fn not_unique_error(occurrences: usize) -> ToolResult {
     ToolResult::error(format!(
         "Edit: `old_string` matched {occurrences} places — add more surrounding context to make it unique, or set `replace_all` to true."
-    ))
-}
-
-fn stale_error(path: &Path) -> ToolResult {
-    ToolResult::error(format!(
-        "Edit: {} changed since you last read it — Read the file again before editing.",
-        path.display()
     ))
 }
 
@@ -550,53 +549,47 @@ mod edit_tests {
     }
 
     #[tokio::test]
-    async fn stale_file_is_rejected() {
+    async fn edit_applies_even_if_disk_changed_out_of_band() {
         let (ctx, name) = seed("A\nB\nC");
         read_receipt(&ctx, &name).await;
-        // Simulate an out-of-band change (user edited in the reader, etc.).
+        // Out-of-band change must not block Edit when old_string still matches.
         std::fs::write(ctx.cwd.join(&name), "A\nB\nC\nD\nE").unwrap();
         let res = run_edit(
             &ctx,
             json!({ "path": name, "old_string": "B", "new_string": "Z" }),
         )
         .await;
-        assert!(res.is_error);
-        assert!(res.content.get("error").is_some());
-        assert!(res.content.get("window").is_none());
-        // The stale edit must not have been applied.
-        assert_eq!(disk(&ctx, &name), "A\nB\nC\nD\nE");
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "A\nZ\nC\nD\nE");
     }
 
     #[tokio::test]
-    async fn edit_without_receipt_errors() {
+    async fn edit_without_prior_read_succeeds() {
         let (ctx, name) = seed("A\nB");
-        // No read_receipt call → no receipt.
         let res = run_edit(
             &ctx,
             json!({ "path": name, "old_string": "A", "new_string": "Z" }),
         )
         .await;
-        assert!(res.is_error);
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "Z\nB");
     }
 
     #[tokio::test]
-    async fn consecutive_edits_use_refreshed_receipt() {
+    async fn consecutive_edits_work_without_reread() {
         let (ctx, name) = seed("A\nB\nC");
-        read_receipt(&ctx, &name).await;
-        // Continue by replacing the tail with its text + new.
         let r1 = run_edit(
             &ctx,
             json!({ "path": name, "old_string": "C", "new_string": "C\nD" }),
         )
         .await;
         assert!(!r1.is_error, "first edit failed: {:?}", r1.content);
-        // Second edit in the same session must not be rejected as stale.
         let r2 = run_edit(
             &ctx,
             json!({ "path": name, "old_string": "A", "new_string": "A2" }),
         )
         .await;
-        assert!(!r2.is_error, "second edit rejected: {:?}", r2.content);
+        assert!(!r2.is_error, "second edit failed: {:?}", r2.content);
         assert_eq!(disk(&ctx, &name), "A2\nB\nC\nD");
     }
 }

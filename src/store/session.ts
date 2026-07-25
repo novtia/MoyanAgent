@@ -25,6 +25,7 @@ import {
   resolveToolFilePath,
   revertStringEdit,
   inferFileType,
+  syncPendingDiffsForSession,
 } from "./reader";
 import { useFileExplorer } from "./fileExplorer";
 import { useSettings } from "./settings";
@@ -536,6 +537,20 @@ async function persistPartialStreamIfAny(sessionId: string) {
   }
 }
 
+async function refreshReaderAfterFileRollback(sessionId: string) {
+  await syncPendingDiffsForSession(sessionId);
+  const reader = useReader.getState();
+  for (const tab of reader.tabs) {
+    try {
+      const disk = await api.readProjectFile(sessionId, tab.path);
+      reader.updateTabText(tab.path, disk.text, { dirty: false });
+    } catch (e) {
+      console.warn("refreshReaderAfterFileRollback: read failed", tab.path, e);
+    }
+  }
+  useFileExplorer.getState().bumpTree();
+}
+
 export const useSession = create<SessionStore>((set, get) => {
   const setSessionBusy = (sessionId: string, busy: boolean) => {
     set((state) => {
@@ -729,6 +744,7 @@ export const useSession = create<SessionStore>((set, get) => {
     });
     void useRoleState.getState().loadLatest(id, roleStateScopeForSession(id));
     useReader.getState().bindSession(id);
+    void syncPendingDiffsForSession(id);
   },
 
   rename: async (id, title) => {
@@ -1358,6 +1374,7 @@ export const useSession = create<SessionStore>((set, get) => {
       }
     }
     await reloadActiveSessionIfViewing(sid);
+    await refreshReaderAfterFileRollback(sid);
     await get().refreshList();
   },
 
@@ -1390,6 +1407,7 @@ export const useSession = create<SessionStore>((set, get) => {
 
     bumpGenerationEpoch(sid);
     await reloadActiveSessionIfViewing(sid);
+    await refreshReaderAfterFileRollback(sid);
     const epoch = getGenerationEpoch(sid);
 
     const c = get().composer;
@@ -1822,7 +1840,8 @@ function buildStreamingToolInput(
   if (tool === "Edit") {
     return {
       path: extractJsonStringField(raw, "path"),
-      content: extractJsonStringField(raw, "content"),
+      old_string: extractJsonStringField(raw, "old_string"),
+      new_string: extractJsonStringField(raw, "new_string"),
     };
   }
   try {
@@ -1914,6 +1933,36 @@ async function handleReaderToolComplete(
 
     // Backend returns the exact strings it matched/replaced (already
     // normalized), plus the match offset and full pre/post-edit text.
+    // A `pending_diff_id` means the backend recorded a reviewable hunk.
+    const pendingDiffId =
+      typeof out.pending_diff_id === "string" ? out.pending_diff_id : null;
+    if (!pendingDiffId) {
+      // Edit applied but too large (or failed) to record — refresh tab text only.
+      const sessionId = useSession.getState().activeId;
+      if (sessionId) {
+        try {
+          const disk = await api.readProjectFile(sessionId, path);
+          if (!existing) {
+            reader.openDoc(
+              {
+                path,
+                text: disk.text,
+                fileType: inferFileType(path),
+                encoding: disk.encoding,
+                hadBom: disk.hadBom,
+              },
+              { activate: false },
+            );
+          } else {
+            reader.updateTabText(path, disk.text, { dirty: false });
+          }
+        } catch (e) {
+          console.warn("Edit: failed to refresh reader after non-reviewable edit", e);
+        }
+      }
+      return;
+    }
+
     const oldString = normalizeToolContent(
       typeof out.old_string === "string"
         ? out.old_string
@@ -1975,6 +2024,7 @@ async function handleReaderToolComplete(
     }
 
     reader.appendPendingDiff(path, {
+      id: pendingDiffId,
       before: normalizeDiffText(oldString),
       after: normalizeDiffText(newString),
       textBefore,
@@ -2045,7 +2095,7 @@ function applyToolEvent(
         // Keep streamed doc fields when the final payload fails validation
         // (e.g. content sent as non-string) so the UI can still show them.
         if (
-          (event.tool === "CreateDoc" || event.tool === "Edit") &&
+          event.tool === "CreateDoc" &&
           typeof input.content !== "string" &&
           typeof prevInput.content === "string"
         ) {
@@ -2057,6 +2107,26 @@ function applyToolEvent(
           typeof prevInput.title === "string"
         ) {
           input.title = prevInput.title;
+        }
+        if (event.tool === "Edit") {
+          if (
+            typeof input.old_string !== "string" &&
+            typeof prevInput.old_string === "string"
+          ) {
+            input.old_string = prevInput.old_string;
+          }
+          if (
+            typeof input.new_string !== "string" &&
+            typeof prevInput.new_string === "string"
+          ) {
+            input.new_string = prevInput.new_string;
+          }
+          if (
+            typeof input.path !== "string" &&
+            typeof prevInput.path === "string"
+          ) {
+            input.path = prevInput.path;
+          }
         }
         blocks[i] = {
           ...b,

@@ -3,6 +3,7 @@ import { api } from "../../../../../api/tauri";
 import {
   countWords,
   inferFileType,
+  syncPendingDiffsForPath,
   useReader,
   type ReaderFileTab,
 } from "../../../../../store/reader";
@@ -22,7 +23,7 @@ export function useLazyLoadFile(
     setLoadError(null);
     api
       .readProjectFile(activeId, path)
-      .then((file) => {
+      .then(async (file) => {
         if (cancelled) return;
         openDoc(
           {
@@ -36,6 +37,7 @@ export function useLazyLoadFile(
           },
           { activate: false },
         );
+        await syncPendingDiffsForPath(activeId, path);
       })
       .catch((err) => {
         if (!cancelled) setLoadError(String(err));

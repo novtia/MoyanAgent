@@ -403,6 +403,80 @@ fn read_project_file(
         .map_err(|e| AppError::Other(format!("read_project_file: read {:?}: {e}", resolved)))
 }
 
+fn apply_pending_diff_revert(
+    conn: &db::DbConn,
+    session_id: &str,
+    revert: &crate::data::pending_diff::PendingDiffRevert,
+) -> AppResult<()> {
+    let file_path = PathBuf::from(&revert.path);
+    let cwd = session_project_cwd(conn, session_id);
+    let resolved = validate_reader_write_path(&file_path, cwd.as_deref())?;
+    write_text_file_labeled(
+        &resolved,
+        &revert.text,
+        revert.encoding.as_deref(),
+        Some(revert.had_bom),
+    )
+    .map_err(|e| {
+        AppError::Other(format!(
+            "confirm_pending_diff: write {:?}: {e}",
+            resolved
+        ))
+    })?;
+    Ok(())
+}
+
+#[tauri::command]
+fn list_pending_diffs(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+    path: Option<String>,
+) -> Result<Vec<crate::data::pending_diff::PendingDiffRow>, AppError> {
+    let conn = state.conn()?;
+    match path {
+        Some(p) if !p.is_empty() => crate::data::pending_diff::list_for_path(&conn, &session_id, &p),
+        _ => crate::data::pending_diff::list_for_session(&conn, &session_id),
+    }
+}
+
+#[tauri::command]
+fn confirm_pending_diff(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+    id: String,
+    accept: bool,
+) -> Result<Option<crate::data::pending_diff::PendingDiffRevert>, AppError> {
+    let conn = state.conn()?;
+    if accept {
+        crate::data::pending_diff::accept(&conn, &session_id, &id)?;
+        return Ok(None);
+    }
+    let Some(revert) = crate::data::pending_diff::reject(&conn, &session_id, &id)? else {
+        return Ok(None);
+    };
+    apply_pending_diff_revert(&conn, &session_id, &revert)?;
+    Ok(Some(revert))
+}
+
+#[tauri::command]
+fn confirm_all_pending_diffs(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+    path: String,
+    accept: bool,
+) -> Result<Option<crate::data::pending_diff::PendingDiffRevert>, AppError> {
+    let conn = state.conn()?;
+    if accept {
+        crate::data::pending_diff::accept_all(&conn, &session_id, &path)?;
+        return Ok(None);
+    }
+    let Some(revert) = crate::data::pending_diff::reject_all(&conn, &session_id, &path)? else {
+        return Ok(None);
+    };
+    apply_pending_diff_revert(&conn, &session_id, &revert)?;
+    Ok(Some(revert))
+}
+
 /// Effective generation parameters for a session.
 ///
 /// If the session belongs to a project, the project's shared parameters are
@@ -1140,6 +1214,7 @@ fn persist_streamed_assistant_snapshot(
     fallback_thinking: Option<&str>,
     mut params: serde_json::Value,
     file_snapshots: &FileSnapshotStore,
+    request_message_id: Option<&str>,
 ) -> AppResult<()> {
     use crate::ai::stream_split::strip_leaked_host_tool_log;
 
@@ -1222,12 +1297,27 @@ fn persist_streamed_assistant_snapshot(
     // partial message so they roll back if the message is deleted.
     let file_changes = file_snapshots.take(session_id);
     if !file_changes.is_empty() {
-        let _ = crate::data::file_snapshot::save_changes(
+        if let Err(e) = crate::data::file_snapshot::save_changes(
             conn,
             session_id,
             &assistant.id,
             &file_changes,
-        );
+        ) {
+            eprintln!(
+                "persist_streamed: save_changes failed for session {session_id}: {e}"
+            );
+        }
+    }
+    if let Some(req_id) = request_message_id {
+        if let Err(e) =
+            crate::data::pending_diff::bind_message(conn, session_id, req_id, &assistant.id)
+        {
+            eprintln!("persist_streamed: bind_message failed for session {session_id}: {e}");
+        }
+    } else if let Err(e) =
+        crate::data::pending_diff::bind_unbound(conn, session_id, &assistant.id)
+    {
+        eprintln!("persist_streamed: bind_unbound failed for session {session_id}: {e}");
     }
 
     session::recompute_context_window_used(conn, session_id)?;
@@ -1775,6 +1865,7 @@ fn delete_session(
             state.role_states.clear(&scope);
         }
         let _ = crate::data::file_snapshot::clear_session(&conn, &id);
+        let _ = crate::data::pending_diff::clear_session(&conn, &id);
     }
     state.file_snapshots.clear(&id);
     state.session_logger.delete_session_log(&id);
@@ -2069,11 +2160,38 @@ fn delete_message(
         }
         // Roll the workspace back: restore / delete every file this message (and
         // any later ones) created, updated or removed.
+        let mut restored_paths: Vec<String> = Vec::new();
         if let Ok(restores) = crate::data::file_snapshot::rollback_from_message(&conn, &sid, &id) {
             for r in &restores {
-                apply_file_restore(r);
+                if let Err(e) = apply_file_restore(&conn, &sid, r) {
+                    eprintln!("delete_message: apply_file_restore failed: {e}");
+                }
+                let raw = r.path.to_string_lossy();
+                restored_paths.push(
+                    raw.strip_prefix(r"\\?\")
+                        .unwrap_or(raw.as_ref())
+                        .to_string(),
+                );
             }
         }
+        // Always also roll back via pending_diffs (covers missing snapshots and
+        // deletes of the originating user message via request_message_id).
+        match crate::data::pending_diff::rollback_for_message(&conn, &sid, &id) {
+            Ok(reverts) => {
+                for revert in &reverts {
+                    if let Err(e) = apply_pending_diff_revert(&conn, &sid, revert) {
+                        eprintln!("delete_message: pending_diff revert failed: {e}");
+                    }
+                    restored_paths.push(revert.path.clone());
+                }
+            }
+            Err(e) => {
+                eprintln!("delete_message: pending_diff rollback_for_message failed: {e}");
+            }
+        }
+        restored_paths.sort();
+        restored_paths.dedup();
+        let _ = crate::data::pending_diff::clear_paths(&conn, &sid, &restored_paths);
     }
     Ok(())
 }
@@ -2081,10 +2199,20 @@ fn delete_message(
 /// Apply a single file-snapshot rollback action to disk: delete a file that
 /// was created within the rolled-back range, or rewrite a file with its
 /// captured pre-image.
-fn apply_file_restore(restore: &crate::data::file_snapshot::FileRestore) {
+fn apply_file_restore(
+    conn: &db::DbConn,
+    session_id: &str,
+    restore: &crate::data::file_snapshot::FileRestore,
+) -> AppResult<()> {
+    let raw = restore.path.to_string_lossy();
+    let stripped = raw.strip_prefix(r"\\?\").unwrap_or(raw.as_ref());
+    let file_path = PathBuf::from(stripped);
+    let cwd = session_project_cwd(conn, session_id);
+    let resolved = validate_reader_write_path(&file_path, cwd.as_deref())?;
+
     if restore.delete {
-        let _ = std::fs::remove_file(&restore.path);
-        return;
+        let _ = std::fs::remove_file(&resolved);
+        return Ok(());
     }
     if let Some(content) = &restore.content {
         let encoding = restore
@@ -2092,13 +2220,17 @@ fn apply_file_restore(restore: &crate::data::file_snapshot::FileRestore) {
             .as_deref()
             .map(TextEncoding::parse_label)
             .unwrap_or(TextEncoding::Utf8);
-        let _ = write_text_file_labeled(
-            &restore.path,
+        write_text_file_labeled(
+            &resolved,
             content,
             Some(encoding.label()),
             Some(restore.had_bom),
-        );
+        )
+        .map_err(|e| {
+            AppError::Other(format!("apply_file_restore: write {:?}: {e}", resolved))
+        })?;
     }
+    Ok(())
 }
 
 /// Tell the UI to discard its in-memory role board for a scope and re-fetch
@@ -2840,12 +2972,24 @@ fn finalize_generate_assistant_message(
     // so they can be rolled back when it is deleted / regenerated.
     let file_changes = file_snapshots.take(session_id);
     if !file_changes.is_empty() {
-        let _ = crate::data::file_snapshot::save_changes(
+        if let Err(e) = crate::data::file_snapshot::save_changes(
             conn,
             session_id,
             &assistant.id,
             &file_changes,
-        );
+        ) {
+            eprintln!(
+                "finalize_generate: save_changes failed for session {session_id}: {e}"
+            );
+        }
+    }
+    if let Err(e) = crate::data::pending_diff::bind_message(
+        conn,
+        session_id,
+        user_message_id,
+        &assistant.id,
+    ) {
+        eprintln!("finalize_generate: bind_message failed for session {session_id}: {e}");
     }
 
     let summary_ctx = token_log::LogContext {
@@ -3172,6 +3316,7 @@ async fn generate_image(
                 None,
                 serde_json::json!({ "partial_before_error": true }),
                 &state.file_snapshots,
+                Some(user_msg.id.as_str()),
             )?;
             let msg_text = format!("{}", e);
             state.session_logger.log_error(
@@ -3226,6 +3371,7 @@ fn save_cancelled_message(
         Some(thinking.as_str()),
         serde_json::json!({ "cancelled": true }),
         &state.file_snapshots,
+        None,
     )
 }
 
@@ -3526,6 +3672,7 @@ async fn regenerate_image(
                 None,
                 serde_json::json!({ "partial_before_error": true }),
                 &state.file_snapshots,
+                Some(req.user_message_id.as_str()),
             )?;
             let msg_text = format!("{}", e);
             state.session_logger.log_error(
@@ -3937,9 +4084,10 @@ pub fn run() {
             tools.register(crate::ai::agent::tools::edit::FileWriteTool::new(
                 file_snapshots.clone(),
             ));
-            tools.register(crate::ai::agent::tools::edit::FileEditTool::new(
-                file_snapshots.clone(),
-            ));
+            tools.register(
+                crate::ai::agent::tools::edit::FileEditTool::new(file_snapshots.clone())
+                    .with_pool(Arc::new(pool.clone())),
+            );
             tools.register(crate::ai::agent::tools::create_doc::CreateDocTool::new(
                 file_snapshots.clone(),
             ));
@@ -4080,6 +4228,9 @@ pub fn run() {
             import_archive,
             write_project_file,
             read_project_file,
+            list_pending_diffs,
+            confirm_pending_diff,
+            confirm_all_pending_diffs,
             project_fs::list_project_dir,
             project_fs::create_project_dir,
             project_fs::create_project_file,

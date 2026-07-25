@@ -209,9 +209,9 @@ impl Tool for FileReadTool {
             if let Ok(mut s) = invocation.context.nested_memory_attachment_triggers.lock() {
                 s.insert(canonical.clone());
             }
-            // Record the receipt against the *full* file content hash so a
-            // later Edit can tell whether the file changed out-of-band, even
-            // when this Read only returned a ranged window.
+            // Record the receipt against the *full* file content hash so
+            // unchanged re-reads can be short-circuited, even when this Read
+            // only returned a ranged window.
             if let Ok(mut s) = invocation.context.read_file_state.lock() {
                 s.insert(canonical.clone(), content_hash(&text));
             }

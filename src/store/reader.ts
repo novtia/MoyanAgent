@@ -1,5 +1,7 @@
 import { create } from "zustand";
+import { api } from "../api/tauri";
 import { DEFAULT_TEXT_ENCODING } from "../types";
+import type { PendingDiffRow } from "../types";
 
 /** Renderable document kind. `.md`/`.markdown` → markdown, everything else → text. */
 export type ReaderFileType = "markdown" | "text";
@@ -71,6 +73,8 @@ interface ReaderStore {
     path: string,
     diff: Omit<ReaderPendingDiff, "id"> & { id?: string },
   ) => void;
+  /** Replace pending diffs for a path from the backend authority. */
+  hydratePendingDiffs: (path: string, diffs: ReaderPendingDiff[]) => void;
   confirmDiffBlock: (
     path: string,
     blockId: string,
@@ -609,6 +613,36 @@ export const useReader = create<ReaderStore>((set, get) => ({
     });
   },
 
+  hydratePendingDiffs: (path, diffs) => {
+    const key = normalizeReaderPath(path);
+    set((s) => {
+      const idx = s.tabs.findIndex((t) => normalizeReaderPath(t.path) === key);
+      if (idx < 0) return s;
+      const existing = s.tabs[idx];
+      const same =
+        existing.pendingDiffs.length === diffs.length &&
+        existing.pendingDiffs.every((d, i) => d.id === diffs[i]?.id);
+      if (same) return s;
+      const last = diffs[diffs.length - 1];
+      const text = last?.textAfter ?? existing.text;
+      const tabs = s.tabs.map((t, i) =>
+        i === idx
+          ? {
+              ...t,
+              pendingDiffs: diffs,
+              text,
+              chars: countWords(text),
+              lines: text.split(/\n/).length,
+              dirty: false,
+              saveError: false,
+            }
+          : t,
+      );
+      persistTabs(s.sessionId, tabs, s.activeTabId);
+      return { tabs };
+    });
+  },
+
   confirmDiffBlock: (path, blockId, accept) => {
     const s = get();
     const idx = findTabIndex(s.tabs, path);
@@ -804,6 +838,66 @@ export const useReader = create<ReaderStore>((set, get) => ({
     set({ tabs: [], activeTabId: null, lastPathOps: [] });
   },
 }));
+
+/** Map a backend pending-diff row into the reader UI hunk shape. */
+export function readerDiffFromRow(row: PendingDiffRow): ReaderPendingDiff {
+  return {
+    id: row.id,
+    before: row.beforeSnippet,
+    after: row.afterSnippet,
+    textBefore: row.textBefore,
+    textAfter: row.textAfter,
+  };
+}
+
+/**
+ * Pull pending diffs for one path from the backend and hydrate the reader tab.
+ * No-op when the session has no open tab for that path yet.
+ */
+export async function syncPendingDiffsForPath(
+  sessionId: string,
+  path: string,
+): Promise<void> {
+  if (!sessionId || !path) return;
+  try {
+    // List the whole session and match by normalized path so Windows
+    // separator / casing drift between explorer opens and Edit tool
+    // paths does not wipe the review UI.
+    const rows = await api.listPendingDiffs(sessionId);
+    const key = normalizeReaderPath(path);
+    const matched = rows.filter((r) => normalizeReaderPath(r.path) === key);
+    useReader.getState().hydratePendingDiffs(
+      path,
+      matched.map(readerDiffFromRow),
+    );
+  } catch (e) {
+    console.warn("syncPendingDiffsForPath failed", e);
+  }
+}
+
+/**
+ * Hydrate pending diffs for every currently-open reader tab in the session.
+ */
+export async function syncPendingDiffsForSession(sessionId: string): Promise<void> {
+  if (!sessionId) return;
+  try {
+    const rows = await api.listPendingDiffs(sessionId);
+    const byPath = new Map<string, ReaderPendingDiff[]>();
+    for (const row of rows) {
+      const key = normalizeReaderPath(row.path);
+      const list = byPath.get(key) ?? [];
+      list.push(readerDiffFromRow(row));
+      byPath.set(key, list);
+    }
+    const reader = useReader.getState();
+    for (const tab of reader.tabs) {
+      const key = normalizeReaderPath(tab.path);
+      reader.hydratePendingDiffs(tab.path, byPath.get(key) ?? []);
+    }
+  } catch (e) {
+    console.warn("syncPendingDiffsForSession failed", e);
+  }
+}
 
 /** Build a {@link ReaderDoc} from a tool `output` payload. */
 export function readerDocFromToolOutput(output: unknown): ReaderDoc | null {

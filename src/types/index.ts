@@ -296,6 +296,29 @@ export interface ProjectTextFile {
   hadBom: boolean;
 }
 
+/** One pending Edit review hunk from `list_pending_diffs`. */
+export interface PendingDiffRow {
+  id: string;
+  sessionId: string;
+  path: string;
+  beforeSnippet: string;
+  afterSnippet: string;
+  textBefore: string;
+  textAfter: string;
+  encoding: string | null;
+  hadBom: boolean;
+  seq: number;
+  createdAt: number;
+}
+
+/** Disk revert payload returned when rejecting a pending diff. */
+export interface PendingDiffRevert {
+  path: string;
+  text: string;
+  encoding: string | null;
+  hadBom: boolean;
+}
+
 export const DEFAULT_TEXT_ENCODING = "utf-8";
 
 export interface SessionSearchResult extends SessionSummary {

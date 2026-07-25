@@ -18,6 +18,8 @@ import type {
   ProjectDirEntry,
   ProjectRule,
   ProjectTextFile,
+  PendingDiffRow,
+  PendingDiffRevert,
   SessionSearchResult,
   SessionSummary,
   SessionWithMessagesAbs,
@@ -328,6 +330,26 @@ export const api = {
 
   readProjectFile: (sessionId: string, path: string) =>
     invoke<ProjectTextFile>("read_project_file", { sessionId, path }),
+
+  listPendingDiffs: (sessionId: string, path?: string | null) =>
+    invoke<PendingDiffRow[]>("list_pending_diffs", {
+      sessionId,
+      path: path ?? null,
+    }),
+
+  confirmPendingDiff: (sessionId: string, id: string, accept: boolean) =>
+    invoke<PendingDiffRevert | null>("confirm_pending_diff", {
+      sessionId,
+      id,
+      accept,
+    }),
+
+  confirmAllPendingDiffs: (sessionId: string, path: string, accept: boolean) =>
+    invoke<PendingDiffRevert | null>("confirm_all_pending_diffs", {
+      sessionId,
+      path,
+      accept,
+    }),
 
   listProjectDir: (sessionId: string, path?: string | null) =>
     invoke<ProjectDirEntry[]>("list_project_dir", {

@@ -29,19 +29,20 @@ export function ReaderDiffActionBar({
 
   const onConfirm = async (accept: boolean) => {
     onMouseLeave();
-    const result = confirmDiffBlock(tab.path, range.blockId, accept);
-    if (!accept && result?.revertText && sessionId) {
-      try {
-        await api.writeProjectFile(
-          sessionId,
-          tab.path,
-          result.revertText,
-          tab.encoding,
-          tab.hadBom,
-        );
-      } catch {
-        /* still update UI */
+    if (!sessionId) return;
+    try {
+      const revert = await api.confirmPendingDiff(sessionId, range.blockId, accept);
+      if (accept) {
+        confirmDiffBlock(tab.path, range.blockId, true);
+        return;
       }
+      if (!revert) return;
+      const result = confirmDiffBlock(tab.path, range.blockId, false);
+      if (result?.revertText !== revert.text) {
+        useReader.getState().updateTabText(tab.path, revert.text, { dirty: false });
+      }
+    } catch {
+      /* keep UI pending on failure */
     }
   };
 
@@ -59,7 +60,8 @@ export function ReaderDiffActionBar({
           aria-label={t("reader.diffPrevHunk")}
           onClick={() => onNavigate(-1)}
         >
-          â†?        </button>
+          {"\u2190"}
+        </button>
         <span className="reader-diff-actionbar-count">
           {t("reader.diffHunkCount", { current: hunkIndex + 1, total: hunkTotal })}
         </span>
@@ -70,7 +72,8 @@ export function ReaderDiffActionBar({
           aria-label={t("reader.diffNextHunk")}
           onClick={() => onNavigate(1)}
         >
-          â†?        </button>
+          {"\u2192"}
+        </button>
       </div>
       <button
         type="button"

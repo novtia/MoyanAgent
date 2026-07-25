@@ -97,6 +97,14 @@ const MIGRATION_022: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/migrations/022_session_provider.sql"
 ));
+const MIGRATION_023: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/023_pending_diffs.sql"
+));
+const MIGRATION_024: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/024_pending_diff_message_bind.sql"
+));
 
 pub fn open_pool(db_path: &Path) -> AppResult<DbPool> {
     if let Some(parent) = db_path.parent() {
@@ -216,6 +224,14 @@ fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
     if cur < 22 {
         conn.execute_batch(MIGRATION_022)?;
         conn.execute("INSERT INTO schema_version(version) VALUES (22)", params![])?;
+    }
+    if cur < 23 {
+        conn.execute_batch(MIGRATION_023)?;
+        conn.execute("INSERT INTO schema_version(version) VALUES (23)", params![])?;
+    }
+    if cur < 24 {
+        conn.execute_batch(MIGRATION_024)?;
+        conn.execute("INSERT INTO schema_version(version) VALUES (24)", params![])?;
     }
     Ok(())
 }
