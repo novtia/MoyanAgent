@@ -10,15 +10,278 @@ export type { ProviderSdkConfig };
 
 export const DEFAULT_PROVIDER_SDK = "openai" satisfies ModelProviderSdk;
 
-export const PROVIDER_ICON_PATHS = {
-  openrouter: "/provider-icons/openrouter.svg",
-  openai: "/provider-icons/openai.svg",
-  gemini: "/provider-icons/gemini.svg",
-  claude: "/provider-icons/claude.svg",
-  grok: "/provider-icons/grok.svg",
-  doubao: "/provider-icons/doubao-color.svg",
-  deepseek: "/provider-icons/deepseek.svg",
-} as const;
+const PROVIDER_ICON_DIR = "/provider-icons";
+
+/** Bundled brand icon filenames (basename without .svg). */
+const BUNDLED_BRAND_ICONS = [
+  "01-ai",
+  "ai21",
+  "ai360",
+  "alibaba",
+  "amazon",
+  "anthropic",
+  "aws",
+  "azure",
+  "baichuan",
+  "baidu",
+  "bedrock",
+  "bytedance",
+  "cerebras",
+  "chatglm",
+  "claude",
+  "cloudflare",
+  "cohere",
+  "deepinfra",
+  "deepseek",
+  "doubao",
+  "doubao-color",
+  "fal",
+  "fireworks",
+  "flux",
+  "gemini",
+  "gemma",
+  "google",
+  "google-ai",
+  "grok",
+  "groq",
+  "huggingface",
+  "hunyuan",
+  "hyperbolic",
+  "inflection",
+  "internlm",
+  "kimi",
+  "kling",
+  "liquid",
+  "luma",
+  "meta",
+  "meta-llama",
+  "microsoft",
+  "midjourney",
+  "minimax",
+  "mistral",
+  "mistralai",
+  "moonshot",
+  "nebius",
+  "nousresearch",
+  "novita",
+  "nvidia",
+  "ollama",
+  "openai",
+  "openrouter",
+  "palm",
+  "perplexity",
+  "qwen",
+  "replicate",
+  "runway",
+  "sambanova",
+  "siliconcloud",
+  "snowflake",
+  "spark",
+  "stability",
+  "stepfun",
+  "tencent",
+  "together",
+  "upstage",
+  "vertexai",
+  "vidu",
+  "volcengine",
+  "wenxin",
+  "workersai",
+  "x-ai",
+  "xai",
+  "xiaomi",
+  "xiaomimimo",
+  "mimo",
+  "yi",
+  "zhipu",
+] as const;
+
+const BUNDLED_ICON_SET = new Set<string>(BUNDLED_BRAND_ICONS);
+
+/** Alias → bundled icon basename. */
+const BRAND_ICON_ALIASES: Record<string, string> = {
+  // OpenRouter / common prefixes
+  "meta-llama": "meta-llama",
+  "mistralai": "mistralai",
+  "x-ai": "x-ai",
+  "01-ai": "01-ai",
+  "google-ai": "google-ai",
+  "ai21labs": "ai21",
+  "ai21-labs": "ai21",
+  "nous": "nousresearch",
+  "nous-research": "nousresearch",
+  "hf": "huggingface",
+  "hugging-face": "huggingface",
+  "amazon-bedrock": "bedrock",
+  "aws-bedrock": "bedrock",
+  "azure-openai": "azure",
+  "azureai": "azure",
+  "vertex": "vertexai",
+  "vertex-ai": "vertexai",
+  "google-vertex": "vertexai",
+  "workers-ai": "workersai",
+  "cloudflare-workers": "workersai",
+  "volc": "volcengine",
+  "volces": "volcengine",
+  "字节": "bytedance",
+  "豆包": "doubao",
+  "通义": "qwen",
+  "通义千问": "qwen",
+  "智谱": "zhipu",
+  "月之暗面": "moonshot",
+  "百川": "baichuan",
+  "零一万物": "yi",
+  "讯飞": "spark",
+  "星火": "spark",
+  "文心": "wenxin",
+  "混元": "hunyuan",
+  // name keywords → icon
+  openrouter: "openrouter",
+  openai: "openai",
+  anthropic: "anthropic",
+  claude: "claude",
+  gemini: "gemini",
+  google: "google",
+  deepseek: "deepseek",
+  doubao: "doubao-color",
+  grok: "grok",
+  xai: "xai",
+  meta: "meta",
+  llama: "meta",
+  mistral: "mistral",
+  qwen: "qwen",
+  alibaba: "alibaba",
+  dashscope: "qwen",
+  cohere: "cohere",
+  perplexity: "perplexity",
+  nvidia: "nvidia",
+  microsoft: "microsoft",
+  amazon: "amazon",
+  aws: "aws",
+  bedrock: "bedrock",
+  together: "together",
+  fireworks: "fireworks",
+  huggingface: "huggingface",
+  moonshot: "moonshot",
+  kimi: "kimi",
+  zhipu: "zhipu",
+  glm: "zhipu",
+  chatglm: "chatglm",
+  yi: "yi",
+  minimax: "minimax",
+  baichuan: "baichuan",
+  stepfun: "stepfun",
+  siliconcloud: "siliconcloud",
+  ollama: "ollama",
+  groq: "groq",
+  cerebras: "cerebras",
+  ai21: "ai21",
+  deepinfra: "deepinfra",
+  novita: "novita",
+  sambanova: "sambanova",
+  cloudflare: "cloudflare",
+  hunyuan: "hunyuan",
+  wenxin: "wenxin",
+  spark: "spark",
+  bytedance: "bytedance",
+  baidu: "baidu",
+  tencent: "tencent",
+  internlm: "internlm",
+  ai360: "ai360",
+  liquid: "liquid",
+  gemma: "gemma",
+  fal: "fal",
+  replicate: "replicate",
+  stability: "stability",
+  midjourney: "midjourney",
+  kling: "kling",
+  vidu: "vidu",
+  luma: "luma",
+  runway: "runway",
+  flux: "flux",
+  hyperbolic: "hyperbolic",
+  upstage: "upstage",
+  snowflake: "snowflake",
+  nebius: "nebius",
+  inflection: "inflection",
+  xiaomimimo: "xiaomimimo",
+  xiaomi: "xiaomimimo",
+  mimo: "xiaomimimo",
+  "xiao-mi": "xiaomimimo",
+  小米: "xiaomimimo",
+};
+
+/** Prefer these when both color and mono exist. */
+const PREFERRED_ICON_BASENAME: Record<string, string> = {
+  doubao: "doubao-color",
+};
+
+function iconPathForBasename(basename: string): string {
+  return `${PROVIDER_ICON_DIR}/${basename}.svg`;
+}
+
+function normalizeBrandKey(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9\u4e00-\u9fff./:-]/g, "");
+}
+
+/** Resolve a brand/provider/group key to a bundled icon path. */
+export function brandIconPath(key?: string | null): string {
+  if (!key?.trim()) return "";
+  const normalized = normalizeBrandKey(key);
+  if (!normalized || normalized === "custom") return "";
+
+  // Direct basename hit
+  if (BUNDLED_ICON_SET.has(normalized)) {
+    const preferred = PREFERRED_ICON_BASENAME[normalized] ?? normalized;
+    return iconPathForBasename(preferred);
+  }
+
+  // Alias exact
+  const alias = BRAND_ICON_ALIASES[normalized];
+  if (alias && BUNDLED_ICON_SET.has(alias)) {
+    return iconPathForBasename(alias);
+  }
+
+  // Strip org suffix/prefix variants: "openai-chat" → try "openai"
+  const parts = normalized.split(/[-/.:]/).filter(Boolean);
+  for (const part of parts) {
+    if (BUNDLED_ICON_SET.has(part)) {
+      const preferred = PREFERRED_ICON_BASENAME[part] ?? part;
+      return iconPathForBasename(preferred);
+    }
+    const partAlias = BRAND_ICON_ALIASES[part];
+    if (partAlias && BUNDLED_ICON_SET.has(partAlias)) {
+      return iconPathForBasename(partAlias);
+    }
+  }
+
+  // Substring alias for Chinese / compound names
+  for (const [aliasKey, basename] of Object.entries(BRAND_ICON_ALIASES)) {
+    if (aliasKey.length < 2) continue;
+    if (normalized.includes(aliasKey) && BUNDLED_ICON_SET.has(basename)) {
+      return iconPathForBasename(basename);
+    }
+  }
+
+  return "";
+}
+
+/** @deprecated Prefer brandIconPath / modelBrandIconPath. Kept for callers. */
+export const PROVIDER_ICON_PATHS: Record<string, string> = Object.fromEntries(
+  [
+    "openrouter",
+    "openai",
+    "gemini",
+    "claude",
+    "grok",
+    "doubao",
+    "deepseek",
+  ].map((k) => [k, brandIconPath(k)]),
+);
 
 /** Last-resort row if catalog has not loaded (empty list). */
 const MINIMAL_SDK_OPTION: ProviderSdkConfig = {
@@ -90,9 +353,23 @@ export function isProviderAvatarImage(avatar?: string | null) {
   );
 }
 
-export function providerAvatar(provider: Pick<ModelProvider, "avatar" | "name">) {
+export function isBundledBrandIcon(avatar?: string | null) {
+  const value = avatar?.trim() ?? "";
+  if (!value.startsWith(`${PROVIDER_ICON_DIR}/`)) return false;
+  const base = value.slice(PROVIDER_ICON_DIR.length + 1).replace(/\.svg$/i, "");
+  return BUNDLED_ICON_SET.has(base);
+}
+
+export function providerAvatar(
+  provider: Pick<ModelProvider, "avatar" | "name"> & { sdk?: string | null },
+) {
   const avatar = provider.avatar?.trim() ?? "";
-  return isProviderAvatarImage(avatar) ? avatar : "";
+  if (isProviderAvatarImage(avatar)) return avatar;
+  return (
+    brandIconPath(provider.name) ||
+    brandIconPath(provider.sdk ?? "") ||
+    ""
+  );
 }
 
 export function shortModelName(model?: string | null) {
@@ -101,8 +378,43 @@ export function shortModelName(model?: string | null) {
   return slash >= 0 ? model.slice(slash + 1) : model;
 }
 
+/** Prefix group from model ID: `openai/gpt-4` → `openai`; no `/` → `custom`. */
 export function groupFromModelId(model: string) {
-  return model.includes("/") ? model.split("/")[0] : "custom";
+  const trimmed = model.trim();
+  if (!trimmed.includes("/")) return "custom";
+  const prefix = trimmed.split("/")[0]?.trim() || "custom";
+  return prefix || "custom";
+}
+
+/** Icon for a model ID via its vendor prefix (`openai/gpt-4` → openai). */
+export function modelBrandIconPath(modelId?: string | null): string {
+  if (!modelId?.trim()) return "";
+  const group = groupFromModelId(modelId);
+  if (group !== "custom") {
+    const fromGroup = brandIconPath(group);
+    if (fromGroup) return fromGroup;
+  }
+  return brandIconPath(modelId);
+}
+
+export type ManageModelsFilter = "all" | "added" | string;
+
+export function manageGroupLabel(group: string): string {
+  if (group === "all") return "全部";
+  if (group === "added") return "已添加";
+  if (group === "custom") return "其他";
+  return group;
+}
+
+export function manageGroupMark(group: string): string {
+  if (group === "custom") return "·";
+  const ch = Array.from(group.trim())[0];
+  return ch ? ch.toUpperCase() : "·";
+}
+
+export function manageGroupIconPath(group: string): string {
+  if (group === "all" || group === "added" || group === "custom") return "";
+  return brandIconPath(group);
 }
 
 export function inferCapabilities(model: string) {

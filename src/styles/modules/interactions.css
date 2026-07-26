@@ -79,10 +79,10 @@
 }
 
 .input-affix .affix-btn {
-  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease, transform 0.12s var(--ease-out);
+  transition: background 0.14s ease, color 0.14s ease, transform 0.12s var(--ease-out);
 }
 .input-affix .affix-btn:active:not(:disabled) {
-  transform: translateY(-50%) scale(0.92);
+  transform: translateY(-50%) scale(0.96);
 }
 
 /* Full-button press highlight (replaces ripple overlay) */

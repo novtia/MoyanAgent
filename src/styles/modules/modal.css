@@ -137,30 +137,44 @@
   align-items: stretch;
 }
 .input-affix input {
-  padding-right: 64px;
+  padding-right: 3.25em;
 }
 .input-affix .affix-btn {
   position: absolute;
-  right: 5px;
+  right: 4px;
   top: 50%;
   transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.5em;
+  height: calc(100% - 8px);
+  max-height: 28px;
+  margin: 0;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-xs);
   background: transparent;
-  border: 1px solid var(--field-border);
-  color: var(--ink-soft);
-  padding: var(--field-padding-y-sm) var(--field-padding-x-sm);
+  color: var(--ink-mute);
   font-family: inherit;
-  font-size: 11.5px;
-  border-radius: var(--field-radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
   cursor: pointer;
-  transition: var(--field-transition);
+  transition: background 0.14s ease, color 0.14s ease;
 }
 .input-affix .affix-btn:hover {
   color: var(--ink);
-  border-color: var(--field-border-hover);
-  background: var(--bg-soft);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 .input-affix .affix-btn:active:not(:disabled) {
-  background: var(--bg-hover);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+.input-affix .affix-btn:focus-visible {
+  outline: none;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue-500) 35%, transparent);
 }
 
 .footnote {

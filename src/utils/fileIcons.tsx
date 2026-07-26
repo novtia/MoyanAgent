@@ -22,16 +22,27 @@ const getSetiIcon = themeIcons({
   ignore: "var(--ink-mute)",
 });
 
+/** Resolve Seti SVG markup + color for a file/folder name (DOM or React). */
+export function fileTypeIconMarkup(
+  name: string,
+  size = 16,
+): { svg: string; color: string } {
+  const { svg, color } = getSetiIcon(name || "file");
+  return {
+    svg: svg.replace("<svg ", `<svg width="${size}" height="${size}" `),
+    color,
+  };
+}
+
 /** Colored, Seti-style file icon. Falls back to the neutral default glyph. */
 export function FileTypeIcon({ name, className }: { name: string; className?: string }) {
-  const { svg, color } = useMemo(() => getSetiIcon(name || "file"), [name]);
-  const sized = useMemo(() => svg.replace("<svg ", '<svg width="16" height="16" '), [svg]);
+  const { svg, color } = useMemo(() => fileTypeIconMarkup(name || "file", 16), [name]);
   return (
     <span
       className={className}
       style={{ color, fill: color, display: "inline-flex", lineHeight: 0 }}
       aria-hidden
-      dangerouslySetInnerHTML={{ __html: sized }}
+      dangerouslySetInnerHTML={{ __html: svg }}
     />
   );
 }

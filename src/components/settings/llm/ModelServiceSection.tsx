@@ -20,14 +20,20 @@ import { toast, dialog } from "../../ui";
 import {
   CAPABILITY_OPTIONS,
   DEFAULT_PROVIDER_SDK,
+  type ManageModelsFilter,
   type ProviderSdkConfig,
   type ProviderValidationErrors,
   getProviderSdkConfig,
   groupFromModelId,
   isBuiltinProvider,
+  isBundledBrandIcon,
   isKnownProviderSdk,
   makeModel,
   makeProvider,
+  manageGroupIconPath,
+  manageGroupLabel,
+  manageGroupMark,
+  modelBrandIconPath,
   normalizeProviderSdk,
   normalizeProviders,
   providerAvatar,
@@ -53,13 +59,15 @@ const EMPTY_PROVIDER_DRAFT: ProviderDraft = {
 function ProviderAvatarDisplay({
   name,
   avatar,
+  sdk,
   className = "model-provider-avatar",
 }: {
   name: string;
   avatar?: string;
+  sdk?: string;
   className?: string;
 }) {
-  const src = providerAvatar({ name, avatar });
+  const src = providerAvatar({ name, avatar, sdk });
   return (
     <span className={`${className}${src ? " has-image" : ""}`}>
       {src ? <img src={src} alt="" /> : shortProviderMark(name)}
@@ -80,6 +88,25 @@ function readAvatarFile(file: File) {
   });
 }
 
+function BrandIcon({
+  src,
+  mark,
+  className,
+}: {
+  src?: string;
+  mark?: string;
+  className?: string;
+}) {
+  if (src) {
+    return (
+      <span className={`${className ?? ""} has-image`.trim()}>
+        <img src={src} alt="" />
+      </span>
+    );
+  }
+  return <span className={className}>{mark || "·"}</span>;
+}
+
 function ProviderAvatarPicker({
   name,
   avatar,
@@ -89,7 +116,12 @@ function ProviderAvatarPicker({
   avatar: string;
   onChange: (avatar: string) => void;
 }) {
-  const hasAvatar = !!providerAvatar({ name, avatar });
+  const customUpload =
+    !!avatar.trim() &&
+    !isBundledBrandIcon(avatar) &&
+    (avatar.startsWith("data:image/") ||
+      avatar.startsWith("http://") ||
+      avatar.startsWith("https://"));
   const pickAvatar = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
@@ -112,7 +144,7 @@ function ProviderAvatarPicker({
         上传图片
         <input type="file" accept="image/*" onChange={pickAvatar} />
       </label>
-      {hasAvatar && (
+      {customUpload && (
         <button type="button" className="btn" onClick={() => onChange("")}>
           移除
         </button>
@@ -612,6 +644,7 @@ export function ModelServiceSection() {
                     <ProviderAvatarDisplay
                       name={provider.name}
                       avatar={provider.avatar}
+                      sdk={provider.sdk}
                     />
                     <span className="model-provider-name">
                       <span className="model-provider-name-text">{provider.name}</span>
@@ -645,6 +678,7 @@ export function ModelServiceSection() {
                 <ProviderAvatarDisplay
                   name={providerDraft.name || selectedProvider.name}
                   avatar={selectedProvider.avatar}
+                  sdk={providerDraft.sdk || selectedProvider.sdk}
                 />
                 <div className="model-provider-hero-text">
                   <span className="model-provider-hero-name">
@@ -700,7 +734,9 @@ export function ModelServiceSection() {
                         className="affix-btn"
                         onClick={() => setShowKey((value) => !value)}
                       >
-                        {showKey ? "隐藏" : "显示"}
+                        {showKey
+                          ? t("settings.llm.keyHide")
+                          : t("settings.llm.keyShow")}
                       </button>
                     </div>
                     <div
@@ -736,11 +772,11 @@ export function ModelServiceSection() {
                   </div>
                   {normalizeProviderSdk(selectedProvider.sdk) ===
                     "openai-responses" && (
-                    <div className="row">
-                      <label className="field-label">
-                        {t("settings.llm.contextCacheLabel")}
-                      </label>
-                      <div className="model-provider-title-tools">
+                    <div className="row model-provider-switch-row">
+                      <div className="model-provider-switch-head">
+                        <label className="field-label">
+                          {t("settings.llm.contextCacheLabel")}
+                        </label>
                         <ProviderEnableSwitch
                           enabled={selectedProvider.context_cache_enabled === true}
                           onChange={(next) =>
@@ -800,9 +836,17 @@ export function ModelServiceSection() {
                         aria-expanded={!collapsed}
                         onClick={() => toggleGroupCollapsed(group)}
                       >
-                        <ChevronIcon />
+                        <BrandIcon
+                          className="model-group-brand"
+                          src={
+                            modelBrandIconPath(models[0]?.id) ||
+                            manageGroupIconPath(group)
+                          }
+                          mark={manageGroupMark(group)}
+                        />
                         <span>{group}</span>
                         <span className="model-group-title-count">{models.length}</span>
+                        <ChevronIcon />
                       </button>
                       {!collapsed && (
                       <div className="model-row-list">
@@ -811,6 +855,7 @@ export function ModelServiceSection() {
                             selectedProvider.enabled !== false &&
                             selectedProvider.id === activeProviderId &&
                             model.id === settings?.model;
+                          const iconSrc = modelBrandIconPath(model.id);
                           return (
                             <div
                               key={model.id}
@@ -823,7 +868,15 @@ export function ModelServiceSection() {
                                 disabled={selectedProvider.enabled === false}
                                 title={model.id}
                               >
-                                <span className="model-service-glyph">✦</span>
+                                <BrandIcon
+                                  className="model-service-glyph"
+                                  src={iconSrc}
+                                  mark={
+                                    iconSrc
+                                      ? undefined
+                                      : manageGroupMark(groupFromModelId(model.id))
+                                  }
+                                />
                                 <span className="model-service-text">
                                   <strong>{model.name || shortModelName(model.id)}</strong>
                                   <span>{model.id}</span>
@@ -1294,6 +1347,18 @@ interface ManageModelsModalProps {
   onClose: () => void;
 }
 
+type ManageModelEntry = {
+  id: string;
+  inLocal: boolean;
+  group: string;
+};
+
+type ManageGroupNav = {
+  id: string;
+  count: number;
+  hasLocal: boolean;
+};
+
 function ManageModelsModal({
   providerName,
   sdk,
@@ -1309,11 +1374,7 @@ function ManageModelsModal({
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
-
-  const localIds = useMemo(
-    () => new Set(localModels.map((m) => m.id)),
-    [localModels],
-  );
+  const [activeFilter, setActiveFilter] = useState<ManageModelsFilter>("all");
 
   const load = () => {
     setLoading(true);
@@ -1344,23 +1405,80 @@ function ManageModelsModal({
   }, []);
 
   const entries = useMemo(() => {
-    const list: { id: string; inLocal: boolean }[] = [];
+    const list: ManageModelEntry[] = [];
     const seen = new Set<string>();
     for (const model of localModels) {
       if (seen.has(model.id)) continue;
       seen.add(model.id);
-      list.push({ id: model.id, inLocal: true });
+      list.push({
+        id: model.id,
+        inLocal: true,
+        group: groupFromModelId(model.id),
+      });
     }
     for (const id of remoteModels) {
       if (seen.has(id)) continue;
       seen.add(id);
-      list.push({ id, inLocal: false });
+      list.push({ id, inLocal: false, group: groupFromModelId(id) });
     }
-    const q = search.trim().toLowerCase();
-    return q ? list.filter((e) => e.id.toLowerCase().includes(q)) : list;
-  }, [localModels, remoteModels, search]);
+    return list;
+  }, [localModels, remoteModels]);
 
-  const toggle = async (entry: { id: string; inLocal: boolean }) => {
+  const groups = useMemo(() => {
+    const map = new Map<string, ManageGroupNav>();
+    for (const entry of entries) {
+      const cur = map.get(entry.group) ?? {
+        id: entry.group,
+        count: 0,
+        hasLocal: false,
+      };
+      cur.count += 1;
+      if (entry.inLocal) cur.hasLocal = true;
+      map.set(entry.group, cur);
+    }
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.id === "custom") return 1;
+      if (b.id === "custom") return -1;
+      if (b.count !== a.count) return b.count - a.count;
+      return a.id.localeCompare(b.id);
+    });
+  }, [entries]);
+
+  useEffect(() => {
+    if (activeFilter === "all" || activeFilter === "added") return;
+    if (!groups.some((g) => g.id === activeFilter)) {
+      setActiveFilter("all");
+    }
+  }, [groups, activeFilter]);
+
+  const addedTotal = useMemo(
+    () => entries.filter((e) => e.inLocal).length,
+    [entries],
+  );
+
+  const filteredEntries = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return entries.filter((entry) => {
+      if (activeFilter === "added" && !entry.inLocal) return false;
+      if (
+        activeFilter !== "all" &&
+        activeFilter !== "added" &&
+        entry.group !== activeFilter
+      ) {
+        return false;
+      }
+      if (!q) return true;
+      const name = shortModelName(entry.id).toLowerCase();
+      return entry.id.toLowerCase().includes(q) || name.includes(q);
+    });
+  }, [entries, activeFilter, search]);
+
+  const filteredAdded = useMemo(
+    () => filteredEntries.filter((e) => e.inLocal).length,
+    [filteredEntries],
+  );
+
+  const toggle = async (entry: ManageModelEntry) => {
     setBusyId(entry.id);
     try {
       if (entry.inLocal) {
@@ -1373,7 +1491,12 @@ function ManageModelsModal({
     }
   };
 
-  const addedCount = entries.filter((e) => e.inLocal).length;
+  const filterTitle =
+    activeFilter === "all"
+      ? "全部模型"
+      : activeFilter === "added"
+        ? "已添加"
+        : manageGroupLabel(activeFilter);
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
@@ -1382,81 +1505,196 @@ function ManageModelsModal({
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="modal-head">
-          <h3>管理模型 · {providerName}</h3>
+          <h3>
+            管理模型
+            <span className="manage-models-provider-tag">{providerName}</span>
+          </h3>
           <button type="button" className="close" onClick={onClose}>
             关闭
           </button>
         </div>
         <div className="modal-body">
-          <div className="manage-models-toolbar">
-            <div className="input-affix manage-models-search">
-              <SearchIcon />
-              <input
-                type="search"
-                value={search}
-                placeholder="搜索模型 ID..."
-                autoFocus
-                spellCheck={false}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-            <button
-              type="button"
-              className="btn"
-              disabled={loading}
-              onClick={() => load()}
-            >
-              {loading ? "拉取中…" : "刷新"}
-            </button>
-          </div>
-
-          {loading ? (
-            <div className="model-empty-state model-empty-state--center">
-              正在从供应商拉取模型列表…
-            </div>
-          ) : error ? (
-            <div className="manage-models-error">
-              <div className="hint is-error">{error}</div>
-              <button type="button" className="btn" onClick={() => load()}>
-                重试
-              </button>
-            </div>
-          ) : entries.length === 0 ? (
-            <div className="model-empty-state model-empty-state--center">
-              {search.trim() ? "没有匹配的模型。" : "没有可用的模型。"}
-            </div>
-          ) : (
-            <div className="manage-models-list">
-              {entries.map((entry) => (
-                <div
-                  key={entry.id}
-                  className={`manage-models-row ${entry.inLocal ? "is-added" : ""}`}
-                >
-                  <span className="manage-models-id" title={entry.id}>
-                    {entry.id}
-                  </span>
-                  {entry.inLocal && (
-                    <span className="manage-models-tag">已添加</span>
-                  )}
+          <div className="manage-models-body">
+            <aside className="manage-models-sidebar">
+              <div className="manage-models-sidebar-head">浏览</div>
+              <nav className="manage-models-nav">
+                <div className="manage-models-nav-section">
                   <button
                     type="button"
-                    className={`manage-models-toggle ${
-                      entry.inLocal ? "remove" : "add"
+                    className={`manage-models-nav-item ${
+                      activeFilter === "all" ? "active" : ""
                     }`}
-                    disabled={busyId === entry.id}
-                    title={entry.inLocal ? "从本地删除" : "添加到本地"}
-                    onClick={() => toggle(entry)}
+                    onClick={() => setActiveFilter("all")}
                   >
-                    {entry.inLocal ? <MinusIcon /> : <PlusIcon />}
+                    <span className="manage-models-nav-icon is-all">全</span>
+                    <span className="manage-models-nav-label">全部</span>
+                    <span className="manage-models-nav-count">
+                      {entries.length}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`manage-models-nav-item ${
+                      activeFilter === "added" ? "active" : ""
+                    } ${addedTotal > 0 ? "has-added" : ""}`}
+                    onClick={() => setActiveFilter("added")}
+                  >
+                    <span className="manage-models-nav-icon is-added">✓</span>
+                    <span className="manage-models-nav-label">已添加</span>
+                    <span className="manage-models-nav-count">{addedTotal}</span>
                   </button>
                 </div>
-              ))}
+                {groups.length > 0 && (
+                  <div className="manage-models-nav-section">
+                    <div className="manage-models-nav-section-title">分组</div>
+                    {groups.map((group) => {
+                      const iconSrc = manageGroupIconPath(group.id);
+                      return (
+                        <button
+                          key={group.id}
+                          type="button"
+                          className={`manage-models-nav-item ${
+                            activeFilter === group.id ? "active" : ""
+                          } ${group.hasLocal ? "has-added" : ""}`}
+                          onClick={() => setActiveFilter(group.id)}
+                        >
+                          <BrandIcon
+                            className={`manage-models-nav-icon ${
+                              group.id === "custom"
+                                ? "is-other"
+                                : iconSrc
+                                  ? "is-brand"
+                                  : "is-group"
+                            }`}
+                            src={iconSrc}
+                            mark={manageGroupMark(group.id)}
+                          />
+                          <span className="manage-models-nav-label">
+                            {manageGroupLabel(group.id)}
+                          </span>
+                          <span className="manage-models-nav-count">
+                            {group.count}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </nav>
+              <div className="manage-models-sidebar-foot">
+                按模型 ID 前缀自动分组（如 openai/…）。
+              </div>
+            </aside>
+
+            <div className="manage-models-main">
+              <div className="manage-models-toolbar">
+                <div className="manage-models-search">
+                  <SearchIcon />
+                  <input
+                    type="search"
+                    value={search}
+                    placeholder="搜索模型 ID..."
+                    autoFocus
+                    spellCheck={false}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="btn manage-models-refresh"
+                  disabled={loading}
+                  title="刷新模型列表"
+                  onClick={() => load()}
+                >
+                  {loading ? "拉取中…" : "刷新"}
+                </button>
+              </div>
+
+              <div className="manage-models-statsbar">
+                <span className="manage-models-stats-filter">{filterTitle}</span>
+                <span className="manage-models-stats-sep">·</span>
+                <span>
+                  共 <b>{filteredEntries.length}</b> 个
+                </span>
+                <span className="manage-models-stats-sep">·</span>
+                <span>
+                  已添加 <b className="accent">{filteredAdded}</b> 个
+                </span>
+              </div>
+
+              <div className="manage-models-content">
+                {loading ? (
+                  <div className="model-empty-state model-empty-state--center">
+                    正在从供应商拉取模型列表…
+                  </div>
+                ) : error ? (
+                  <div className="manage-models-error">
+                    <div className="hint is-error">{error}</div>
+                    <button type="button" className="btn" onClick={() => load()}>
+                      重试
+                    </button>
+                  </div>
+                ) : filteredEntries.length === 0 ? (
+                  <div className="model-empty-state model-empty-state--center">
+                    {search.trim() || activeFilter !== "all"
+                      ? "没有匹配的模型。"
+                      : "没有可用的模型。"}
+                  </div>
+                ) : (
+                  <div className="manage-models-list">
+                    {filteredEntries.map((entry) => {
+                      const iconSrc = modelBrandIconPath(entry.id);
+                      return (
+                      <div
+                        key={entry.id}
+                        className={`manage-models-row ${
+                          entry.inLocal ? "is-added" : ""
+                        }`}
+                      >
+                        <BrandIcon
+                          className={`manage-models-row-icon ${
+                            iconSrc ? "has-brand" : ""
+                          }`}
+                          src={iconSrc}
+                          mark={manageGroupMark(entry.group)}
+                        />
+                        <div className="manage-models-row-text">
+                          <span className="manage-models-name">
+                            {shortModelName(entry.id)}
+                          </span>
+                          <span className="manage-models-id" title={entry.id}>
+                            {entry.id}
+                          </span>
+                        </div>
+                        <div className="manage-models-row-actions">
+                          {entry.inLocal && (
+                            <span className="manage-models-tag">已添加</span>
+                          )}
+                          <button
+                            type="button"
+                            className={`manage-models-toggle ${
+                              entry.inLocal ? "remove" : "add"
+                            }`}
+                            disabled={busyId === entry.id}
+                            title={entry.inLocal ? "从本地删除" : "添加到本地"}
+                            onClick={() => toggle(entry)}
+                          >
+                            {entry.inLocal ? <MinusIcon /> : <PlusIcon />}
+                          </button>
+                        </div>
+                      </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
-          )}
+          </div>
         </div>
         <div className="modal-foot">
           <div className="manage-models-count">
-            已添加 {addedCount} / 共 {entries.length}
+            点击 + 添加模型，点击 − 移除模型 · 已添加 {addedTotal} / 共{" "}
+            {entries.length}
           </div>
           <button type="button" className="btn primary" onClick={onClose}>
             完成

@@ -266,7 +266,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
             const nextPath = mediaMentionLabel(kind, index - 1);
             const displayLabel = mediaMentionDisplayLabel(nextPath);
             mention.dataset.path = nextPath;
-            mention.setAttribute("title", `@${displayLabel}`);
+            mention.setAttribute("title", displayLabel);
             const label = mention.querySelector<HTMLElement>(
               ".composer-mention-label",
             );

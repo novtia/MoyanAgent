@@ -28,7 +28,7 @@ export function MentionChip({
       }${
         mediaKind === "image" && previewSrc ? " has-preview" : ""
       }`}
-      title={mediaKind ? `@${displayLabel}` : path}
+      title={mediaKind ? displayLabel : path}
     >
       {mediaKind === "image" && previewSrc ? (
         <img
@@ -39,7 +39,6 @@ export function MentionChip({
         />
       ) : (
         <>
-          <span className="composer-mention-at">@</span>
           <MentionIcon path={path} />
           <span className="composer-mention-label">{displayLabel}</span>
         </>

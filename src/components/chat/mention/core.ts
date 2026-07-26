@@ -1,12 +1,12 @@
 /**
  * Single source of truth for `@file` mention "reference cards".
  *
- * All mention logic — path normalization, icon selection, serialization to/from
- * the `@\"…\"` text form, the contenteditable chip DOM node, and project-scope
- * validation — lives here so the editor, the static renderer and the drop
- * handlers all behave identically. No React in this file (pure + DOM helpers).
+ * Path normalization, Seti file icons (shared with the reader tree),
+ * serialization to/from the `@\"…\"` text form, contenteditable chip DOM, and
+ * project-scope validation. No React in this file (pure + DOM helpers).
  */
 
+import { fileTypeIconMarkup } from "../../../utils/fileIcons";
 import {
   createRoleCiteNode,
   parseRoleCiteAt,
@@ -35,13 +35,6 @@ export type MentionSegment =
   | { type: "roleCite"; id: string; name?: string };
 
 export type MediaMentionKind = "image" | "audio" | "video";
-export type MentionIconKind =
-  | "folder"
-  | "image"
-  | "audio"
-  | "video"
-  | "code"
-  | "file";
 
 export interface MentionMediaRenderData {
   previewSrc?: string;
@@ -90,24 +83,6 @@ export function mediaMentionKindFromMime(
   return null;
 }
 
-const IMAGE_EXT = /^(png|jpe?g|gif|webp|bmp|svg|ico|tiff?|avif)$/;
-const CODE_EXT =
-  /^(ts|tsx|js|jsx|mjs|cjs|rs|py|go|java|kt|c|cc|cpp|h|hpp|cs|rb|php|swift|css|scss|less|html|json|toml|yaml|yml|xml|sh|sql)$/;
-
-/** Inner SVG markup per icon kind — shared by DOM chips and the React icon. */
-export const MENTION_ICON_INNER: Record<MentionIconKind, string> = {
-  folder:
-    '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
-  image:
-    '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.35-4.35a2 2 0 0 0-2.83 0L3 21"/>',
-  audio:
-    '<path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>',
-  video:
-    '<rect x="3" y="5" width="14" height="14" rx="2"/><path d="m17 10 4-2v8l-4-2Z"/>',
-  code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
-  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
-};
-
 /** Strip the Windows extended-length prefix (`\\?\`, `\\?\UNC\`) for clean paths. */
 export function normalizeMentionPath(p: string): string {
   const t = p.trim();
@@ -128,22 +103,17 @@ export function looksLikeDir(absPath: string): boolean {
   return !mentionBasename(absPath).includes(".");
 }
 
-/** Resolve the icon kind from the path kind / file extension. */
-export function mentionIconKind(absPath: string, isDir?: boolean): MentionIconKind {
-  const mediaKind = mediaMentionKind(absPath);
-  if (mediaKind) return mediaKind;
+/**
+ * Filename fed to Seti icons (same source as the reader file tree).
+ * Media aliases map to representative extensions.
+ */
+export function mentionFileIconName(absPath: string, isDir?: boolean): string {
+  const media = mediaMentionKind(absPath);
+  if (media === "image") return "image.png";
+  if (media === "audio") return "audio.mp3";
+  if (media === "video") return "video.mp4";
   if (isDir ?? looksLikeDir(absPath)) return "folder";
-  const name = mentionBasename(absPath).toLowerCase();
-  const ext = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
-  if (IMAGE_EXT.test(ext)) return "image";
-  if (CODE_EXT.test(ext)) return "code";
-  return "file";
-}
-
-/** Full `<svg>` markup string for a path (used by the contenteditable DOM chip). */
-export function mentionIconSvg(absPath: string, isDir?: boolean): string {
-  const inner = MENTION_ICON_INNER[mentionIconKind(absPath, isDir)];
-  return `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+  return mentionBasename(absPath) || "file";
 }
 
 /** Display form for a paragraph range (`P003` or `P003–P007`). */
@@ -347,7 +317,7 @@ export function createMentionNode(
   }
   chip.setAttribute(
     "title",
-    mediaKind ? `@${displayLabel}` : normalizedRange
+    mediaKind ? displayLabel : normalizedRange
       ? `${absPath} · ${formatMentionParagraphRange(normalizedRange.from, normalizedRange.to)}`
       : absPath,
   );
@@ -360,14 +330,15 @@ export function createMentionNode(
     image.draggable = false;
     chip.appendChild(image);
   } else {
-    const at = document.createElement("span");
-    at.className = "composer-mention-at";
-    at.textContent = "@";
-    chip.appendChild(at);
-
     const icon = document.createElement("span");
     icon.className = "composer-mention-icon";
-    icon.innerHTML = mentionIconSvg(absPath, isDir);
+    const { svg, color } = fileTypeIconMarkup(
+      mentionFileIconName(absPath, isDir),
+      16,
+    );
+    icon.style.color = color;
+    icon.style.fill = color;
+    icon.innerHTML = svg;
     chip.appendChild(icon);
 
     const label = document.createElement("span");
@@ -379,6 +350,7 @@ export function createMentionNode(
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "composer-mention-remove";
+  remove.setAttribute("aria-label", "Remove");
   remove.textContent = "×";
   remove.tabIndex = -1;
   chip.appendChild(remove);
