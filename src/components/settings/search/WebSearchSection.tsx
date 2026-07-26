@@ -1,52 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "../../../store/settings";
-import type { WebSearchProviderConfig } from "../../../types";
+import type { WebSearchApiKind, WebSearchProviderConfig } from "../../../types";
+import { dialog } from "../../ui";
 import { SettingsSelectDropdown } from "../SettingsSelectDropdown";
-
-const SIDEBAR_KINDS = ["local", "tavily", "serper", "bing"] as const;
-type SidebarKind = (typeof SIDEBAR_KINDS)[number];
-type ApiKind = Exclude<SidebarKind, "local">;
-
-const API_KINDS: ApiKind[] = ["tavily", "serper", "bing"];
+import { SearchBrandIcon } from "./SearchBrandIcon";
+import {
+  SEARCH_API_KINDS,
+  SEARCH_KIND_META,
+  getSearchKindMeta,
+  isBuiltinSearchProviderId,
+  isSearchApiKind,
+  makeSearchProvider,
+  normalizeSearchProviders,
+  searchProviderDisplayName,
+} from "./searchProviders";
 
 const SAVE_DEBOUNCE_MS = 500;
 
 interface ProviderDraft {
+  name: string;
   api_key: string;
   endpoint: string;
 }
 
-function findProvider(
-  list: WebSearchProviderConfig[],
-  kind: string,
-): WebSearchProviderConfig | undefined {
-  return list.find((p) => p.kind === kind || p.id === kind);
-}
-
-function isSidebarKind(value: string): value is SidebarKind {
-  return (SIDEBAR_KINDS as readonly string[]).includes(value);
-}
-
-function providerLabel(kind: SidebarKind, localLabel: string): string {
-  if (kind === "local") return localLabel;
-  if (kind === "bing") return "Bing API";
-  return kind[0].toUpperCase() + kind.slice(1);
-}
-
-function providerGlyphLetter(kind: SidebarKind): string {
-  if (kind === "local") return "L";
-  if (kind === "bing") return "B";
-  return kind[0].toUpperCase();
-}
-
-function ProviderGlyph({ kind }: { kind: SidebarKind }) {
-  return (
-    <span className="model-provider-avatar" aria-hidden>
-      {providerGlyphLetter(kind)}
-    </span>
-  );
-}
+type SidebarId = "local" | string;
 
 function SearchIcon() {
   return (
@@ -65,6 +43,14 @@ function SearchIcon() {
   );
 }
 
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+      <path d="M12 5v14M5 12h14" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function WebSearchSection() {
   const { t } = useTranslation();
   const settings = useSettings((s) => s.settings);
@@ -72,30 +58,59 @@ export function WebSearchSection() {
 
   const backend = settings?.web_search_backend ?? "local";
   const localEngine = settings?.web_search_local_engine ?? "duckduckgo";
-  const providers = settings?.web_search_providers ?? [];
   const localLabel = t("settings.search.localProviderName");
 
-  const [selectedKind, setSelectedKind] = useState<SidebarKind>(() =>
-    isSidebarKind(backend) ? backend : "local",
+  const providers = useMemo(
+    () => normalizeSearchProviders(settings?.web_search_providers),
+    [settings?.web_search_providers],
+  );
+
+  const [selectedId, setSelectedId] = useState<SidebarId>(() =>
+    backend === "local" || !backend ? "local" : backend,
   );
   const [providerSearch, setProviderSearch] = useState("");
   const [drafts, setDrafts] = useState<Record<string, ProviderDraft>>({});
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
+  const [adding, setAdding] = useState(false);
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const seededRef = useRef(false);
+
+  // Seed builtin rows into settings once if missing.
+  useEffect(() => {
+    if (!settings || seededRef.current) return;
+    const raw = settings.web_search_providers ?? [];
+    const normalized = normalizeSearchProviders(raw);
+    const needsSeed =
+      SEARCH_API_KINDS.some((kind) => !raw.some((p) => p.id === kind || p.kind === kind)) ||
+      normalized.length !== raw.length;
+    seededRef.current = true;
+    if (needsSeed) {
+      void update({ web_search_providers: normalized });
+    }
+  }, [settings, update]);
 
   useEffect(() => {
-    if (isSidebarKind(backend)) setSelectedKind(backend);
-  }, [backend]);
+    if (backend === "local" || !backend) {
+      setSelectedId("local");
+      return;
+    }
+    if (providers.some((p) => p.id === backend || p.kind === backend)) {
+      const match = providers.find((p) => p.id === backend) ?? providers.find((p) => p.kind === backend);
+      if (match) setSelectedId(match.id);
+    }
+  }, [backend, providers]);
 
   useEffect(() => {
     const next: Record<string, ProviderDraft> = {};
-    for (const kind of API_KINDS) {
-      const p = findProvider(providers, kind);
-      next[kind] = { api_key: p?.api_key ?? "", endpoint: p?.endpoint ?? "" };
+    for (const p of providers) {
+      next[p.id] = {
+        name: searchProviderDisplayName(p),
+        api_key: p.api_key ?? "",
+        endpoint: p.endpoint ?? "",
+      };
     }
     setDrafts(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings?.web_search_providers]);
+  }, [providers]);
 
   useEffect(
     () => () => {
@@ -104,17 +119,15 @@ export function WebSearchSection() {
     [],
   );
 
-  const saveProvider = (kind: ApiKind, patch: Partial<WebSearchProviderConfig>) => {
-    const list = [...(settings?.web_search_providers ?? [])];
-    const idx = list.findIndex((p) => p.kind === kind || p.id === kind);
-    const base: WebSearchProviderConfig =
-      idx >= 0
-        ? { ...list[idx] }
-        : { id: kind, kind, api_key: "", endpoint: "", enabled: true };
-    const merged = { ...base, ...patch };
-    if (idx >= 0) list[idx] = merged;
-    else list.push(merged);
-    void update({ web_search_providers: list });
+  const persistProviders = (list: WebSearchProviderConfig[]) =>
+    update({ web_search_providers: normalizeSearchProviders(list) });
+
+  const saveProvider = (id: string, patch: Partial<WebSearchProviderConfig>) => {
+    const list = [...providers];
+    const idx = list.findIndex((p) => p.id === id);
+    if (idx < 0) return;
+    list[idx] = { ...list[idx], ...patch };
+    void persistProviders(list);
   };
 
   const scheduleSave = (key: string, fn: () => void) => {
@@ -122,22 +135,37 @@ export function WebSearchSection() {
     timers.current[key] = setTimeout(fn, SAVE_DEBOUNCE_MS);
   };
 
-  const onKeyChange = (kind: ApiKind, value: string) => {
-    setDrafts((d) => ({ ...d, [kind]: { ...d[kind], api_key: value } }));
-    scheduleSave(`${kind}:key`, () => saveProvider(kind, { api_key: value.trim() }));
+  const selectProvider = (id: SidebarId) => {
+    setSelectedId(id);
+    if (id !== backend) {
+      void update({ web_search_backend: id });
+    }
   };
 
-  const onEndpointChange = (kind: ApiKind, value: string) => {
-    setDrafts((d) => ({ ...d, [kind]: { ...d[kind], endpoint: value } }));
-    scheduleSave(`${kind}:endpoint`, () =>
-      saveProvider(kind, { endpoint: value.trim() }),
+  const addProvider = async (draft: { name: string; kind: WebSearchApiKind }) => {
+    const created = makeSearchProvider(draft.kind, { name: draft.name });
+    const next = [...providers, created];
+    await persistProviders(next);
+    setAdding(false);
+    setSelectedId(created.id);
+    await update({ web_search_backend: created.id });
+  };
+
+  const removeProvider = async (id: string) => {
+    if (isBuiltinSearchProviderId(id)) return;
+    const label =
+      drafts[id]?.name ||
+      searchProviderDisplayName(providers.find((p) => p.id === id) ?? { id, kind: "tavily" });
+    const ok = await dialog.confirm(
+      t("settings.search.deleteConfirm", { name: label }),
+      { type: "danger", confirmLabel: t("settings.search.deleteAction") },
     );
-  };
-
-  const selectProvider = (kind: SidebarKind) => {
-    setSelectedKind(kind);
-    if (kind !== backend) {
-      void update({ web_search_backend: kind });
+    if (!ok) return;
+    const next = providers.filter((p) => p.id !== id);
+    await persistProviders(next);
+    if (selectedId === id || backend === id) {
+      setSelectedId("local");
+      await update({ web_search_backend: "local" });
     }
   };
 
@@ -149,23 +177,67 @@ export function WebSearchSection() {
     [],
   );
 
-  const filteredKinds = useMemo(() => {
+  const filteredProviders = useMemo(() => {
     const q = providerSearch.trim().toLowerCase();
-    if (!q) return [...SIDEBAR_KINDS];
-    return SIDEBAR_KINDS.filter((kind) => {
-      const label = providerLabel(kind, localLabel).toLowerCase();
-      return label.includes(q) || kind.includes(q);
-    });
-  }, [providerSearch, localLabel]);
+    const items: { id: SidebarId; kind: string; label: string; secondary: string; configured: boolean; custom: boolean }[] =
+      [
+        {
+          id: "local",
+          kind: localEngine === "bing" ? "bing" : "local",
+          label: localLabel,
+          secondary: t("settings.search.localProviderTag"),
+          configured: true,
+          custom: false,
+        },
+        ...providers.map((p) => {
+          const hasKey = Boolean((drafts[p.id]?.api_key ?? p.api_key ?? "").trim());
+          return {
+            id: p.id,
+            kind: p.kind,
+            label: drafts[p.id]?.name || searchProviderDisplayName(p),
+            secondary: hasKey
+              ? t("settings.search.providerConfigured")
+              : getSearchKindMeta(p.kind).label,
+            configured: hasKey,
+            custom: !isBuiltinSearchProviderId(p.id),
+          };
+        }),
+      ];
+    if (!q) return items;
+    return items.filter(
+      (item) =>
+        item.label.toLowerCase().includes(q) ||
+        item.kind.toLowerCase().includes(q) ||
+        item.id.toLowerCase().includes(q),
+    );
+  }, [providerSearch, localLabel, localEngine, providers, drafts, t]);
 
   if (!settings) return null;
 
-  const isLocal = selectedKind === "local";
-  const draft = !isLocal
-    ? (drafts[selectedKind] ?? { api_key: "", endpoint: "" })
-    : { api_key: "", endpoint: "" };
-  const showKey = !isLocal ? (visibleKeys[selectedKind] ?? false) : false;
-  const selectedLabel = providerLabel(selectedKind, localLabel);
+  const isLocal = selectedId === "local";
+  const selectedProvider = !isLocal
+    ? providers.find((p) => p.id === selectedId)
+    : undefined;
+  const draft = selectedProvider
+    ? (drafts[selectedProvider.id] ?? {
+        name: searchProviderDisplayName(selectedProvider),
+        api_key: "",
+        endpoint: "",
+      })
+    : { name: "", api_key: "", endpoint: "" };
+  const showKey = selectedProvider ? (visibleKeys[selectedProvider.id] ?? false) : false;
+  const selectedKind = isLocal
+    ? localEngine === "bing"
+      ? "bing"
+      : "local"
+    : (selectedProvider?.kind ?? "tavily");
+  const selectedLabel = isLocal
+    ? localLabel
+    : draft.name || (selectedProvider ? searchProviderDisplayName(selectedProvider) : "");
+  const isCustom = !!selectedProvider && !isBuiltinSearchProviderId(selectedProvider.id);
+  const kindMeta = selectedProvider
+    ? getSearchKindMeta(selectedProvider.kind)
+    : null;
 
   return (
     <div className="model-service-card">
@@ -181,72 +253,84 @@ export function WebSearchSection() {
             />
           </div>
           <div className="model-provider-list">
-            {filteredKinds.map((kind) => {
-              const isActive = kind === backend;
-              const hasKey =
-                kind !== "local" &&
-                Boolean((drafts[kind]?.api_key ?? "").trim());
-              const label = providerLabel(kind, localLabel);
-              const secondary =
-                kind === "local"
-                  ? t("settings.search.localProviderTag")
-                  : hasKey
-                    ? t("settings.search.providerConfigured")
-                    : kind;
+            {filteredProviders.map((item) => {
+              const isActive = item.id === backend;
               return (
                 <div
-                  key={kind}
+                  key={item.id}
                   className={`model-provider-item ${
-                    kind === selectedKind ? "active" : ""
+                    item.id === selectedId ? "active" : ""
                   }`}
                 >
                   <button
                     type="button"
                     className="model-provider-item-body"
-                    onClick={() => selectProvider(kind)}
+                    onClick={() => selectProvider(item.id)}
                   >
-                    <span
+                    <SearchBrandIcon
+                      kind={item.kind}
                       className={`model-provider-avatar ${
-                        kind === "local" || hasKey
-                          ? "web-search-avatar--configured"
-                          : ""
+                        item.configured ? "web-search-avatar--configured" : ""
                       }`}
-                      aria-hidden
-                    >
-                      {providerGlyphLetter(kind)}
-                    </span>
+                      size={20}
+                      fallback={item.label.charAt(0).toUpperCase()}
+                    />
                     <span className="model-provider-name">
-                      <span className="model-provider-name-text">{label}</span>
+                      <span className="model-provider-name-text">{item.label}</span>
                       <span className="model-provider-sdk">
                         {isActive
                           ? t("settings.search.providerActive")
-                          : secondary}
+                          : item.secondary}
                       </span>
                     </span>
                   </button>
                 </div>
               );
             })}
-            {filteredKinds.length === 0 && (
+            {filteredProviders.length === 0 && (
               <div className="model-provider-empty">
                 {t("settings.search.providerSearchEmpty")}
               </div>
             )}
           </div>
+          <button
+            type="button"
+            className="btn model-provider-add"
+            onClick={() => setAdding(true)}
+          >
+            <PlusIcon />
+            <span>{t("settings.search.addProvider")}</span>
+          </button>
         </aside>
 
         <section className="model-provider-detail">
           <div className="model-provider-detail-inner">
             <div className="model-provider-hero">
-              <ProviderGlyph kind={selectedKind} />
+              <SearchBrandIcon
+                kind={selectedKind}
+                className="model-provider-avatar"
+                size={22}
+                fallback={selectedLabel.charAt(0).toUpperCase() || "·"}
+              />
               <div className="model-provider-hero-text">
                 <span className="model-provider-hero-name">{selectedLabel}</span>
                 <div className="model-provider-hero-meta">
                   <span className="model-provider-hero-sdk">
-                    {isLocal ? t("settings.search.localProviderTag") : selectedKind}
+                    {isLocal
+                      ? t("settings.search.localProviderTag")
+                      : kindMeta?.label ?? selectedKind}
                   </span>
                 </div>
               </div>
+              {isCustom && selectedProvider && (
+                <button
+                  type="button"
+                  className="btn danger web-search-delete-btn"
+                  onClick={() => void removeProvider(selectedProvider.id)}
+                >
+                  {t("settings.search.deleteAction")}
+                </button>
+              )}
             </div>
 
             {isLocal ? (
@@ -275,7 +359,7 @@ export function WebSearchSection() {
                   <div className="hint">{t("settings.search.localProviderHint")}</div>
                 </div>
               </div>
-            ) : (
+            ) : selectedProvider ? (
               <>
                 <div className="web-search-section-head">
                   <div className="settings-row-title">
@@ -290,6 +374,27 @@ export function WebSearchSection() {
                   <div className="model-provider-fields">
                     <div className="row">
                       <label className="field-label">
+                        {t("settings.search.nameLabel")}
+                      </label>
+                      <input
+                        type="text"
+                        value={draft.name}
+                        spellCheck={false}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          const id = selectedProvider.id;
+                          setDrafts((d) => ({
+                            ...d,
+                            [id]: { ...d[id], name: value },
+                          }));
+                          scheduleSave(`${id}:name`, () =>
+                            saveProvider(id, { name: value.trim() }),
+                          );
+                        }}
+                      />
+                    </div>
+                    <div className="row">
+                      <label className="field-label">
                         {t("settings.search.apiKeyLabel")}
                       </label>
                       <div className="input-affix">
@@ -298,10 +403,18 @@ export function WebSearchSection() {
                           value={draft.api_key}
                           spellCheck={false}
                           autoComplete="off"
-                          placeholder={t("settings.search.apiKeyPlaceholder")}
-                          onChange={(e) =>
-                            onKeyChange(selectedKind, e.target.value)
-                          }
+                          placeholder={kindMeta?.apiKeyPlaceholder}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            const id = selectedProvider.id;
+                            setDrafts((d) => ({
+                              ...d,
+                              [id]: { ...d[id], api_key: value },
+                            }));
+                            scheduleSave(`${id}:key`, () =>
+                              saveProvider(id, { api_key: value.trim() }),
+                            );
+                          }}
                         />
                         <button
                           type="button"
@@ -309,7 +422,7 @@ export function WebSearchSection() {
                           onClick={() =>
                             setVisibleKeys((v) => ({
                               ...v,
-                              [selectedKind]: !showKey,
+                              [selectedProvider.id]: !showKey,
                             }))
                           }
                         >
@@ -320,23 +433,143 @@ export function WebSearchSection() {
                       </div>
                     </div>
                     <div className="row">
+                      <label className="field-label">
+                        {t("settings.search.endpointLabel")}
+                      </label>
                       <input
                         type="text"
                         value={draft.endpoint}
                         spellCheck={false}
-                        placeholder={t("settings.search.endpointPlaceholder")}
-                        onChange={(e) =>
-                          onEndpointChange(selectedKind, e.target.value)
+                        placeholder={
+                          kindMeta?.endpointPlaceholder ||
+                          t("settings.search.endpointPlaceholder")
                         }
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          const id = selectedProvider.id;
+                          setDrafts((d) => ({
+                            ...d,
+                            [id]: { ...d[id], endpoint: value },
+                          }));
+                          scheduleSave(`${id}:endpoint`, () =>
+                            saveProvider(id, { endpoint: value.trim() }),
+                          );
+                        }}
                       />
                     </div>
                     <div className="hint">{t("settings.search.keyHint")}</div>
                   </div>
                 </div>
               </>
-            )}
+            ) : null}
           </div>
         </section>
+      </div>
+
+      {adding && (
+        <AddSearchProviderModal
+          onClose={() => setAdding(false)}
+          onAdd={addProvider}
+        />
+      )}
+    </div>
+  );
+}
+
+function AddSearchProviderModal({
+  onClose,
+  onAdd,
+}: {
+  onClose: () => void;
+  onAdd: (draft: { name: string; kind: WebSearchApiKind }) => void | Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [kind, setKind] = useState<WebSearchApiKind>("tavily");
+  const [name, setName] = useState(SEARCH_KIND_META.tavily.defaultName);
+  const [nameTouched, setNameTouched] = useState(false);
+
+  const meta = SEARCH_KIND_META[kind];
+  const canSubmit = !!name.trim() && isSearchApiKind(kind);
+
+  const changeKind = (next: string) => {
+    if (!isSearchApiKind(next)) return;
+    setKind(next);
+    if (!nameTouched) setName(SEARCH_KIND_META[next].defaultName);
+  };
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <div
+        className="modal model-settings-modal add-provider-modal"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="modal-head">
+          <h3>{t("settings.search.addProviderTitle")}</h3>
+          <button type="button" className="close" onClick={onClose}>
+            {t("settings.search.close")}
+          </button>
+        </div>
+        <div className="modal-body">
+          <div className="model-settings-form">
+            <div className="provider-avatar-preview">
+              <SearchBrandIcon
+                kind={kind}
+                className="provider-avatar-preview-image"
+                size={22}
+                fallback={meta.label.charAt(0)}
+              />
+              <div>
+                <strong>{name.trim() || meta.defaultName}</strong>
+                <em>{meta.label}</em>
+              </div>
+            </div>
+            <div className="row">
+              <label className="field-label">
+                <span className="required-star">*</span>{" "}
+                {t("settings.search.nameLabel")}
+              </label>
+              <input
+                type="text"
+                value={name}
+                autoFocus
+                onChange={(e) => {
+                  setNameTouched(true);
+                  setName(e.target.value);
+                }}
+              />
+            </div>
+            <div className="row">
+              <label className="field-label">
+                <span className="required-star">*</span>{" "}
+                {t("settings.search.kindLabel")}
+              </label>
+              <select value={kind} onChange={(e) => changeKind(e.target.value)}>
+                {SEARCH_API_KINDS.map((id) => (
+                  <option key={id} value={id}>
+                    {SEARCH_KIND_META[id].label}
+                  </option>
+                ))}
+              </select>
+              <div className="hint">{meta.description}</div>
+            </div>
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button type="button" className="btn" onClick={onClose}>
+            {t("settings.search.cancel")}
+          </button>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={!canSubmit}
+            onClick={() => {
+              if (!canSubmit) return;
+              void onAdd({ name: name.trim(), kind });
+            }}
+          >
+            {t("settings.search.addAction")}
+          </button>
+        </div>
       </div>
     </div>
   );

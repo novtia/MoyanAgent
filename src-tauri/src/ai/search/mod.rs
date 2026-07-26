@@ -52,6 +52,9 @@ pub struct WebSearchProviderConfig {
     pub id: String,
     /// Backend implementation to use: `tavily` | `serper` | `bing`.
     pub kind: String,
+    /// Optional display name. Empty ⇒ UI falls back to the kind label.
+    #[serde(default)]
+    pub name: String,
     #[serde(default)]
     pub api_key: String,
     /// Optional endpoint override. Empty ⇒ provider default.
@@ -93,10 +96,20 @@ impl Default for WebSearchConfig {
 }
 
 impl WebSearchConfig {
-    fn provider(&self, kind: &str) -> Option<&WebSearchProviderConfig> {
+    /// Resolve a provider by id first, then by kind (legacy backend values).
+    fn provider(&self, key: &str) -> Option<&WebSearchProviderConfig> {
+        let key = key.trim();
+        if key.is_empty() {
+            return None;
+        }
         self.providers
             .iter()
-            .find(|p| p.enabled && (p.kind == kind || p.id == kind))
+            .find(|p| p.enabled && p.id.eq_ignore_ascii_case(key))
+            .or_else(|| {
+                self.providers
+                    .iter()
+                    .find(|p| p.enabled && p.kind.eq_ignore_ascii_case(key))
+            })
     }
 }
 
@@ -154,31 +167,36 @@ pub(crate) fn build_search_client() -> reqwest::Result<reqwest::Client> {
 
 /// Pick the concrete backend for a config. Returns an error when the selected
 /// API provider is missing/disabled or has no API key.
+///
+/// `config.backend` may be `local`, a builtin kind (`tavily`/`serper`/`bing`),
+/// or a custom provider id.
 pub fn resolve_backend(config: &WebSearchConfig) -> AppResult<Box<dyn SearchBackend>> {
-    let backend = config.backend.trim().to_ascii_lowercase();
-    match backend.as_str() {
-        "" | "local" => Ok(Box::new(local::LocalBackend::new(&config.local_engine))),
-        kind @ ("tavily" | "serper" | "bing") => {
-            let provider = config.provider(kind).ok_or_else(|| {
-                AppError::Config(format!(
-                    "web search backend `{kind}` is selected but not configured / enabled"
-                ))
-            })?;
-            if provider.api_key.trim().is_empty() {
-                return Err(AppError::Config(format!(
-                    "web search provider `{kind}` has no API key"
-                )));
-            }
-            let endpoint = provider.endpoint.trim().to_string();
-            let api_key = provider.api_key.trim().to_string();
-            Ok(match kind {
-                "tavily" => Box::new(tavily::TavilyBackend::new(api_key, endpoint)),
-                "serper" => Box::new(serper::SerperBackend::new(api_key, endpoint)),
-                _ => Box::new(bing::BingBackend::new(api_key, endpoint)),
-            })
-        }
+    let backend = config.backend.trim();
+    if backend.is_empty() || backend.eq_ignore_ascii_case("local") {
+        return Ok(Box::new(local::LocalBackend::new(&config.local_engine)));
+    }
+
+    let provider = config.provider(backend).ok_or_else(|| {
+        AppError::Config(format!(
+            "web search backend `{backend}` is selected but not configured / enabled"
+        ))
+    })?;
+    if provider.api_key.trim().is_empty() {
+        return Err(AppError::Config(format!(
+            "web search provider `{}` has no API key",
+            provider.id
+        )));
+    }
+
+    let kind = provider.kind.trim().to_ascii_lowercase();
+    let endpoint = provider.endpoint.trim().to_string();
+    let api_key = provider.api_key.trim().to_string();
+    match kind.as_str() {
+        "tavily" => Ok(Box::new(tavily::TavilyBackend::new(api_key, endpoint))),
+        "serper" => Ok(Box::new(serper::SerperBackend::new(api_key, endpoint))),
+        "bing" => Ok(Box::new(bing::BingBackend::new(api_key, endpoint))),
         other => Err(AppError::Config(format!(
-            "unknown web search backend: {other}"
+            "unknown web search provider kind: {other}"
         ))),
     }
 }

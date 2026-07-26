@@ -102,13 +102,19 @@ export interface Settings {
   web_search_providers: WebSearchProviderConfig[];
 }
 
-/** Backend selector values for web search. */
-export type WebSearchBackend = "local" | "tavily" | "serper" | "bing";
+/** Builtin API search kinds (local scraping is separate). */
+export type WebSearchApiKind = "tavily" | "serper" | "bing";
+
+/** Backend selector: `local` or a provider id / kind string. */
+export type WebSearchBackend = "local" | string;
 
 /** Credentials/config for one API search provider (persisted in settings). */
 export interface WebSearchProviderConfig {
   id: string;
+  /** Backend implementation: `tavily` | `serper` | `bing`. */
   kind: string;
+  /** Display name; empty ⇒ fall back to kind label. */
+  name?: string;
   api_key: string;
   endpoint?: string;
   enabled?: boolean;
