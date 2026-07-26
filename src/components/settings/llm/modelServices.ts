@@ -10,11 +10,13 @@ export type { ProviderSdkConfig };
 
 export const DEFAULT_PROVIDER_SDK = "openai" satisfies ModelProviderSdk;
 
-const PROVIDER_ICON_DIR = "/provider-icons";
+const LEGACY_PROVIDER_ICON_DIR = "/provider-icons";
 
-/** Bundled brand icon filenames (basename without .svg). */
-const BUNDLED_BRAND_ICONS = [
-  "01-ai",
+/**
+ * Known @lobehub/icons brand ids we can render (ProviderIcon keywords + named extras).
+ * Values are lowercase ids passed to ProviderBrandIcon.
+ */
+const KNOWN_BRAND_IDS = new Set<string>([
   "ai21",
   "ai360",
   "alibaba",
@@ -22,6 +24,7 @@ const BUNDLED_BRAND_ICONS = [
   "anthropic",
   "aws",
   "azure",
+  "azureai",
   "baichuan",
   "baidu",
   "bedrock",
@@ -34,14 +37,12 @@ const BUNDLED_BRAND_ICONS = [
   "deepinfra",
   "deepseek",
   "doubao",
-  "doubao-color",
   "fal",
-  "fireworks",
+  "fireworksai",
   "flux",
   "gemini",
   "gemma",
   "google",
-  "google-ai",
   "grok",
   "groq",
   "huggingface",
@@ -54,15 +55,12 @@ const BUNDLED_BRAND_ICONS = [
   "liquid",
   "luma",
   "meta",
-  "meta-llama",
   "microsoft",
   "midjourney",
   "minimax",
   "mistral",
-  "mistralai",
   "moonshot",
   "nebius",
-  "nousresearch",
   "novita",
   "nvidia",
   "ollama",
@@ -80,62 +78,57 @@ const BUNDLED_BRAND_ICONS = [
   "stability",
   "stepfun",
   "tencent",
-  "together",
+  "tencentcloud",
+  "togetherai",
   "upstage",
   "vertexai",
   "vidu",
   "volcengine",
   "wenxin",
   "workersai",
-  "x-ai",
   "xai",
-  "xiaomi",
-  "xiaomimimo",
-  "mimo",
   "yi",
+  "zeroone",
   "zhipu",
-] as const;
+]);
 
-const BUNDLED_ICON_SET = new Set<string>(BUNDLED_BRAND_ICONS);
-
-/** Alias → bundled icon basename. */
+/** Alias → lobehub brand id. */
 const BRAND_ICON_ALIASES: Record<string, string> = {
-  // OpenRouter / common prefixes
-  "meta-llama": "meta-llama",
-  "mistralai": "mistralai",
-  "x-ai": "x-ai",
-  "01-ai": "01-ai",
-  "google-ai": "google-ai",
-  "ai21labs": "ai21",
+  "meta-llama": "meta",
+  mistralai: "mistral",
+  "x-ai": "xai",
+  "01-ai": "yi",
+  "google-ai": "google",
+  ai21labs: "ai21",
   "ai21-labs": "ai21",
-  "nous": "nousresearch",
-  "nous-research": "nousresearch",
-  "hf": "huggingface",
+  hf: "huggingface",
   "hugging-face": "huggingface",
   "amazon-bedrock": "bedrock",
   "aws-bedrock": "bedrock",
   "azure-openai": "azure",
-  "azureai": "azure",
-  "vertex": "vertexai",
+  azureai: "azureai",
+  vertex: "vertexai",
   "vertex-ai": "vertexai",
   "google-vertex": "vertexai",
   "workers-ai": "workersai",
   "cloudflare-workers": "workersai",
-  "volc": "volcengine",
-  "volces": "volcengine",
-  "字节": "bytedance",
-  "豆包": "doubao",
-  "通义": "qwen",
-  "通义千问": "qwen",
-  "智谱": "zhipu",
-  "月之暗面": "moonshot",
-  "百川": "baichuan",
-  "零一万物": "yi",
-  "讯飞": "spark",
-  "星火": "spark",
-  "文心": "wenxin",
-  "混元": "hunyuan",
-  // name keywords → icon
+  volc: "volcengine",
+  volces: "volcengine",
+  together: "togetherai",
+  fireworks: "fireworksai",
+  "fireworks-ai": "fireworksai",
+  字节: "bytedance",
+  豆包: "doubao",
+  通义: "qwen",
+  通义千问: "qwen",
+  智谱: "zhipu",
+  月之暗面: "moonshot",
+  百川: "baichuan",
+  零一万物: "yi",
+  讯飞: "spark",
+  星火: "spark",
+  文心: "wenxin",
+  混元: "hunyuan",
   openrouter: "openrouter",
   openai: "openai",
   anthropic: "anthropic",
@@ -143,7 +136,8 @@ const BRAND_ICON_ALIASES: Record<string, string> = {
   gemini: "gemini",
   google: "google",
   deepseek: "deepseek",
-  doubao: "doubao-color",
+  doubao: "doubao",
+  "doubao-color": "doubao",
   grok: "grok",
   xai: "xai",
   meta: "meta",
@@ -159,8 +153,6 @@ const BRAND_ICON_ALIASES: Record<string, string> = {
   amazon: "amazon",
   aws: "aws",
   bedrock: "bedrock",
-  together: "together",
-  fireworks: "fireworks",
   huggingface: "huggingface",
   moonshot: "moonshot",
   kimi: "kimi",
@@ -168,6 +160,7 @@ const BRAND_ICON_ALIASES: Record<string, string> = {
   glm: "zhipu",
   chatglm: "chatglm",
   yi: "yi",
+  zeroone: "zeroone",
   minimax: "minimax",
   baichuan: "baichuan",
   stepfun: "stepfun",
@@ -186,6 +179,7 @@ const BRAND_ICON_ALIASES: Record<string, string> = {
   bytedance: "bytedance",
   baidu: "baidu",
   tencent: "tencent",
+  tencentcloud: "tencentcloud",
   internlm: "internlm",
   ai360: "ai360",
   liquid: "liquid",
@@ -204,21 +198,15 @@ const BRAND_ICON_ALIASES: Record<string, string> = {
   snowflake: "snowflake",
   nebius: "nebius",
   inflection: "inflection",
-  xiaomimimo: "xiaomimimo",
-  xiaomi: "xiaomimimo",
-  mimo: "xiaomimimo",
-  "xiao-mi": "xiaomimimo",
-  小米: "xiaomimimo",
+  workersai: "workersai",
+  togetherai: "togetherai",
+  fireworksai: "fireworksai",
+  xiaomi: "kimi",
+  xiaomimimo: "kimi",
+  mimo: "kimi",
+  "xiao-mi": "kimi",
+  小米: "kimi",
 };
-
-/** Prefer these when both color and mono exist. */
-const PREFERRED_ICON_BASENAME: Record<string, string> = {
-  doubao: "doubao-color",
-};
-
-function iconPathForBasename(basename: string): string {
-  return `${PROVIDER_ICON_DIR}/${basename}.svg`;
-}
 
 function normalizeBrandKey(raw: string): string {
   return raw
@@ -228,60 +216,37 @@ function normalizeBrandKey(raw: string): string {
     .replace(/[^a-z0-9\u4e00-\u9fff./:-]/g, "");
 }
 
-/** Resolve a brand/provider/group key to a bundled icon path. */
-export function brandIconPath(key?: string | null): string {
+function lookupBrandId(normalized: string): string {
+  if (KNOWN_BRAND_IDS.has(normalized)) return normalized;
+  const alias = BRAND_ICON_ALIASES[normalized];
+  if (alias && KNOWN_BRAND_IDS.has(alias)) return alias;
+  return "";
+}
+
+/** Resolve a brand/provider/group key to a @lobehub/icons brand id. */
+export function resolveBrandIconId(key?: string | null): string {
   if (!key?.trim()) return "";
   const normalized = normalizeBrandKey(key);
   if (!normalized || normalized === "custom") return "";
 
-  // Direct basename hit
-  if (BUNDLED_ICON_SET.has(normalized)) {
-    const preferred = PREFERRED_ICON_BASENAME[normalized] ?? normalized;
-    return iconPathForBasename(preferred);
-  }
+  const direct = lookupBrandId(normalized);
+  if (direct) return direct;
 
-  // Alias exact
-  const alias = BRAND_ICON_ALIASES[normalized];
-  if (alias && BUNDLED_ICON_SET.has(alias)) {
-    return iconPathForBasename(alias);
-  }
-
-  // Strip org suffix/prefix variants: "openai-chat" → try "openai"
   const parts = normalized.split(/[-/.:]/).filter(Boolean);
   for (const part of parts) {
-    if (BUNDLED_ICON_SET.has(part)) {
-      const preferred = PREFERRED_ICON_BASENAME[part] ?? part;
-      return iconPathForBasename(preferred);
-    }
-    const partAlias = BRAND_ICON_ALIASES[part];
-    if (partAlias && BUNDLED_ICON_SET.has(partAlias)) {
-      return iconPathForBasename(partAlias);
-    }
+    const hit = lookupBrandId(part);
+    if (hit) return hit;
   }
 
-  // Substring alias for Chinese / compound names
-  for (const [aliasKey, basename] of Object.entries(BRAND_ICON_ALIASES)) {
+  for (const [aliasKey, brandId] of Object.entries(BRAND_ICON_ALIASES)) {
     if (aliasKey.length < 2) continue;
-    if (normalized.includes(aliasKey) && BUNDLED_ICON_SET.has(basename)) {
-      return iconPathForBasename(basename);
+    if (normalized.includes(aliasKey) && KNOWN_BRAND_IDS.has(brandId)) {
+      return brandId;
     }
   }
 
   return "";
 }
-
-/** @deprecated Prefer brandIconPath / modelBrandIconPath. Kept for callers. */
-export const PROVIDER_ICON_PATHS: Record<string, string> = Object.fromEntries(
-  [
-    "openrouter",
-    "openai",
-    "gemini",
-    "claude",
-    "grok",
-    "doubao",
-    "deepseek",
-  ].map((k) => [k, brandIconPath(k)]),
-);
 
 /** Last-resort row if catalog has not loaded (empty list). */
 const MINIMAL_SDK_OPTION: ProviderSdkConfig = {
@@ -341,35 +306,31 @@ export function shortProviderMark(name: string) {
   return `${first}${last}`.toUpperCase();
 }
 
-export function isProviderAvatarImage(avatar?: string | null) {
+/** User-uploaded or remote avatar image (not a legacy bundled path). */
+export function isCustomAvatarImage(avatar?: string | null) {
   const value = avatar?.trim() ?? "";
-  const lower = value.toLowerCase();
   return (
-    lower.startsWith("data:image/") ||
-    lower.startsWith("/") ||
-    lower.startsWith("http://") ||
-    lower.startsWith("https://") ||
-    /\.(apng|avif|gif|jpe?g|png|svg|webp)(\?.*)?$/.test(lower)
+    value.startsWith("data:image/") ||
+    value.startsWith("http://") ||
+    value.startsWith("https://")
   );
 }
 
+/** Legacy `/provider-icons/*.svg` paths stored in DB / settings. */
 export function isBundledBrandIcon(avatar?: string | null) {
-  const value = avatar?.trim() ?? "";
-  if (!value.startsWith(`${PROVIDER_ICON_DIR}/`)) return false;
-  const base = value.slice(PROVIDER_ICON_DIR.length + 1).replace(/\.svg$/i, "");
-  return BUNDLED_ICON_SET.has(base);
+  return (avatar?.trim() ?? "").startsWith(`${LEGACY_PROVIDER_ICON_DIR}/`);
 }
 
+/**
+ * Persist only custom avatar images. Bundled brands resolve at render time
+ * from name/sdk via @lobehub/icons.
+ */
 export function providerAvatar(
   provider: Pick<ModelProvider, "avatar" | "name"> & { sdk?: string | null },
 ) {
   const avatar = provider.avatar?.trim() ?? "";
-  if (isProviderAvatarImage(avatar)) return avatar;
-  return (
-    brandIconPath(provider.name) ||
-    brandIconPath(provider.sdk ?? "") ||
-    ""
-  );
+  if (isCustomAvatarImage(avatar)) return avatar;
+  return "";
 }
 
 export function shortModelName(model?: string | null) {
@@ -386,15 +347,15 @@ export function groupFromModelId(model: string) {
   return prefix || "custom";
 }
 
-/** Icon for a model ID via its vendor prefix (`openai/gpt-4` → openai). */
-export function modelBrandIconPath(modelId?: string | null): string {
+/** Brand id for a model ID via its vendor prefix (`openai/gpt-4` → openai). */
+export function resolveModelBrandIconId(modelId?: string | null): string {
   if (!modelId?.trim()) return "";
   const group = groupFromModelId(modelId);
   if (group !== "custom") {
-    const fromGroup = brandIconPath(group);
+    const fromGroup = resolveBrandIconId(group);
     if (fromGroup) return fromGroup;
   }
-  return brandIconPath(modelId);
+  return resolveBrandIconId(modelId);
 }
 
 export type ManageModelsFilter = "all" | "added" | string;
@@ -412,9 +373,9 @@ export function manageGroupMark(group: string): string {
   return ch ? ch.toUpperCase() : "·";
 }
 
-export function manageGroupIconPath(group: string): string {
+export function resolveManageGroupIconId(group: string): string {
   if (group === "all" || group === "added" || group === "custom") return "";
-  return brandIconPath(group);
+  return resolveBrandIconId(group);
 }
 
 export function inferCapabilities(model: string) {

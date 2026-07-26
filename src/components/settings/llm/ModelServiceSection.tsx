@@ -27,21 +27,25 @@ import {
   groupFromModelId,
   isBuiltinProvider,
   isBundledBrandIcon,
+  isCustomAvatarImage,
   isKnownProviderSdk,
   makeModel,
   makeProvider,
-  manageGroupIconPath,
   manageGroupLabel,
   manageGroupMark,
-  modelBrandIconPath,
   normalizeProviderSdk,
   normalizeProviders,
   providerAvatar,
   providerSdkLabel,
-  shortProviderMark,
+  resolveManageGroupIconId,
+  resolveModelBrandIconId,
   shortModelName,
   validateProviderConfig,
 } from "./modelServices";
+import {
+  ProviderAvatarDisplay,
+  ProviderBrandIcon,
+} from "./ProviderBrandIcon";
 
 type ProviderDraft = Pick<ModelProvider, "name" | "endpoint" | "api_key"> & {
   sdk: string;
@@ -56,25 +60,6 @@ const EMPTY_PROVIDER_DRAFT: ProviderDraft = {
   api_key: "",
 };
 
-function ProviderAvatarDisplay({
-  name,
-  avatar,
-  sdk,
-  className = "model-provider-avatar",
-}: {
-  name: string;
-  avatar?: string;
-  sdk?: string;
-  className?: string;
-}) {
-  const src = providerAvatar({ name, avatar, sdk });
-  return (
-    <span className={`${className}${src ? " has-image" : ""}`}>
-      {src ? <img src={src} alt="" /> : shortProviderMark(name)}
-    </span>
-  );
-}
-
 function readAvatarFile(file: File) {
   return new Promise<string>((resolve, reject) => {
     if (!file.type.startsWith("image/")) {
@@ -86,25 +71,6 @@ function readAvatarFile(file: File) {
     reader.onerror = () => reject(new Error("头像图片读取失败。"));
     reader.readAsDataURL(file);
   });
-}
-
-function BrandIcon({
-  src,
-  mark,
-  className,
-}: {
-  src?: string;
-  mark?: string;
-  className?: string;
-}) {
-  if (src) {
-    return (
-      <span className={`${className ?? ""} has-image`.trim()}>
-        <img src={src} alt="" />
-      </span>
-    );
-  }
-  return <span className={className}>{mark || "·"}</span>;
 }
 
 function ProviderAvatarPicker({
@@ -119,9 +85,7 @@ function ProviderAvatarPicker({
   const customUpload =
     !!avatar.trim() &&
     !isBundledBrandIcon(avatar) &&
-    (avatar.startsWith("data:image/") ||
-      avatar.startsWith("http://") ||
-      avatar.startsWith("https://"));
+    isCustomAvatarImage(avatar);
   const pickAvatar = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
@@ -836,13 +800,12 @@ export function ModelServiceSection() {
                         aria-expanded={!collapsed}
                         onClick={() => toggleGroupCollapsed(group)}
                       >
-                        <BrandIcon
+                        <ProviderBrandIcon
                           className="model-group-brand"
-                          src={
-                            modelBrandIconPath(models[0]?.id) ||
-                            manageGroupIconPath(group)
-                          }
-                          mark={manageGroupMark(group)}
+                          model={models[0]?.id}
+                          group={group}
+                          fallback={manageGroupMark(group)}
+                          size={16}
                         />
                         <span>{group}</span>
                         <span className="model-group-title-count">{models.length}</span>
@@ -855,7 +818,7 @@ export function ModelServiceSection() {
                             selectedProvider.enabled !== false &&
                             selectedProvider.id === activeProviderId &&
                             model.id === settings?.model;
-                          const iconSrc = modelBrandIconPath(model.id);
+                          const hasBrand = !!resolveModelBrandIconId(model.id);
                           return (
                             <div
                               key={model.id}
@@ -868,14 +831,15 @@ export function ModelServiceSection() {
                                 disabled={selectedProvider.enabled === false}
                                 title={model.id}
                               >
-                                <BrandIcon
+                                <ProviderBrandIcon
                                   className="model-service-glyph"
-                                  src={iconSrc}
-                                  mark={
-                                    iconSrc
+                                  model={model.id}
+                                  fallback={
+                                    hasBrand
                                       ? undefined
                                       : manageGroupMark(groupFromModelId(model.id))
                                   }
+                                  size={16}
                                 />
                                 <span className="model-service-text">
                                   <strong>{model.name || shortModelName(model.id)}</strong>
@@ -1548,7 +1512,7 @@ function ManageModelsModal({
                   <div className="manage-models-nav-section">
                     <div className="manage-models-nav-section-title">分组</div>
                     {groups.map((group) => {
-                      const iconSrc = manageGroupIconPath(group.id);
+                      const hasBrand = !!resolveManageGroupIconId(group.id);
                       return (
                         <button
                           key={group.id}
@@ -1558,16 +1522,17 @@ function ManageModelsModal({
                           } ${group.hasLocal ? "has-added" : ""}`}
                           onClick={() => setActiveFilter(group.id)}
                         >
-                          <BrandIcon
+                          <ProviderBrandIcon
                             className={`manage-models-nav-icon ${
                               group.id === "custom"
                                 ? "is-other"
-                                : iconSrc
+                                : hasBrand
                                   ? "is-brand"
                                   : "is-group"
                             }`}
-                            src={iconSrc}
-                            mark={manageGroupMark(group.id)}
+                            group={group.id}
+                            fallback={manageGroupMark(group.id)}
+                            size={14}
                           />
                           <span className="manage-models-nav-label">
                             {manageGroupLabel(group.id)}
@@ -1643,7 +1608,7 @@ function ManageModelsModal({
                 ) : (
                   <div className="manage-models-list">
                     {filteredEntries.map((entry) => {
-                      const iconSrc = modelBrandIconPath(entry.id);
+                      const hasBrand = !!resolveModelBrandIconId(entry.id);
                       return (
                       <div
                         key={entry.id}
@@ -1651,12 +1616,13 @@ function ManageModelsModal({
                           entry.inLocal ? "is-added" : ""
                         }`}
                       >
-                        <BrandIcon
+                        <ProviderBrandIcon
                           className={`manage-models-row-icon ${
-                            iconSrc ? "has-brand" : ""
+                            hasBrand ? "has-brand" : ""
                           }`}
-                          src={iconSrc}
-                          mark={manageGroupMark(entry.group)}
+                          model={entry.id}
+                          fallback={manageGroupMark(entry.group)}
+                          size={15}
                         />
                         <div className="manage-models-row-text">
                           <span className="manage-models-name">
