@@ -317,6 +317,7 @@ async fn parse_and_fetch_images(
                 thinking_content: None,
                 usage: TokenUsage::default(),
                 tool_calls: Vec::new(),
+                response_id: None,
             });
         }
         return Err(AppError::Upstream(format!(
@@ -352,6 +353,7 @@ async fn parse_and_fetch_images(
         thinking_content: None,
         usage: TokenUsage::default(),
         tool_calls: Vec::new(),
+        response_id: None,
     })
 }
 

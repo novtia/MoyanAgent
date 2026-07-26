@@ -9,7 +9,7 @@ mod claude;
 mod gemini;
 mod grok;
 pub mod model_list;
-mod openai;
+pub mod openai;
 
 use crate::ai::chat::{ChatRequest, GenerateResponse, TextDeltaCallback};
 use crate::error::{AppError, AppResult};

@@ -38,6 +38,11 @@ export interface ModelProvider {
   api_key: string;
   /** When false, hidden from chat model picker and not used for requests. Default true. */
   enabled?: boolean;
+  /**
+   * When true and SDK is `openai-responses` on a Volcengine Ark endpoint,
+   * enable explicit Session caching (`caching` + `previous_response_id`).
+   */
+  context_cache_enabled?: boolean;
   models: ModelServiceModel[];
 }
 
@@ -181,6 +186,10 @@ export interface Session {
   is_temporary?: boolean;
   /** Task id of the Agent tool run that spawned this temp session. */
   spawn_task_id?: string | null;
+  /** Latest Volcengine Responses API response id for Session cache chaining. */
+  last_response_id?: string | null;
+  /** Thinking key used when the cache chain was created. */
+  cache_thinking_key?: string | null;
   created_at: number;
   updated_at: number;
 }

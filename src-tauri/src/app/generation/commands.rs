@@ -37,6 +37,51 @@ pub fn cancel_generation(
     Ok(())
 }
 
+/// Attach Volcengine Session-cache chain tip to the outgoing request, or clear
+/// it when thinking settings no longer match the chain that created the tip.
+fn apply_session_response_cache(
+    conn: &db::DbConn,
+    session_id: &str,
+    session_config: &session::Session,
+    chat_request: &mut chat::ChatRequest,
+) -> AppResult<()> {
+    if !chat_request.context_cache_enabled {
+        return Ok(());
+    }
+    let thinking_key = parameters::thinking_cache_key(&chat_request.parameters);
+    if session_config
+        .cache_thinking_key
+        .as_deref()
+        .map(|k| k != thinking_key.as_str())
+        .unwrap_or(false)
+    {
+        let _ = session::clear_response_cache(conn, session_id);
+        chat_request.previous_response_id = None;
+        return Ok(());
+    }
+    chat_request.previous_response_id = session_config
+        .last_response_id
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    Ok(())
+}
+
+fn persist_session_response_cache(
+    conn: &db::DbConn,
+    session_id: &str,
+    chat_cache_enabled: bool,
+    params: &parameters::GenerationParameters,
+    response_id: Option<&str>,
+) {
+    if !chat_cache_enabled {
+        return;
+    }
+    let thinking_key = parameters::thinking_cache_key(params);
+    let id = response_id.map(str::trim).filter(|s| !s.is_empty());
+    let _ = session::set_response_cache(conn, session_id, id, Some(thinking_key.as_str()));
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct GenerateReq {
     pub(crate) session_id: String,
@@ -354,7 +399,7 @@ pub async fn generate_image(
             None,
             history_turns.max(0) as usize,
         )?;
-        let chat_request = router::build_chat_request(
+        let mut chat_request = router::build_chat_request(
             &resolved.provider,
             &resolved.model,
             req.prompt.clone(),
@@ -363,6 +408,7 @@ pub async fn generate_image(
             hist,
             params.clone(),
         )?;
+        apply_session_response_cache(&conn, &req.session_id, &session_config, &mut chat_request)?;
         (
             chat_request,
             params,
@@ -378,6 +424,7 @@ pub async fn generate_image(
     };
     let params_json = params.to_message_params_json().to_string();
     let is_video_generation = chat_request.provider.sdk == crate::ai::providers::ARK_VIDEO_SDK;
+    let chat_request_cache_enabled = chat_request.context_cache_enabled;
 
     // 2) insert user message + bind input attachments
     let user_msg = {
@@ -437,6 +484,7 @@ pub async fn generate_image(
                         sdk: crate::ai::providers::normalize_sdk(&provider.sdk),
                         endpoint: provider.endpoint.clone(),
                         api_key: provider.api_key.clone(),
+                        context_cache_enabled: false,
                     };
                     tokio::spawn(generate_title_with_quick_model(
                         app.clone(),
@@ -545,6 +593,13 @@ pub async fn generate_image(
             maybe_extract_session_memory(&state, &app, &req.session_id, &resp.usage);
             let blocks = snapshot_stream_blocks(&stream_blocks);
             let conn = state.conn()?;
+            persist_session_response_cache(
+                &conn,
+                &req.session_id,
+                chat_request_cache_enabled,
+                &params,
+                resp.response_id.as_deref(),
+            );
             finalize_generate_assistant_message(
                 &app,
                 &conn,
@@ -756,7 +811,7 @@ pub async fn regenerate_image(
             Some(user_msg_existing.created_at),
             history_turns.max(0) as usize,
         )?;
-        let chat_request = router::build_chat_request(
+        let mut chat_request = router::build_chat_request(
             &resolved.provider,
             &resolved.model,
             prompt.to_string(),
@@ -765,6 +820,9 @@ pub async fn regenerate_image(
             hist,
             params.clone(),
         )?;
+        // Regeneration rewrites history; always start a fresh cache chain.
+        let _ = session::clear_response_cache(&conn, &req.session_id);
+        chat_request.previous_response_id = None;
         (
             chat_request,
             params,
@@ -778,6 +836,7 @@ pub async fn regenerate_image(
     };
     let params_json = params.to_message_params_json().to_string();
     let is_video_generation = chat_request.provider.sdk == crate::ai::providers::ARK_VIDEO_SDK;
+    let chat_request_cache_enabled = chat_request.context_cache_enabled;
 
     // Session content log: snapshot the effective settings + the (re-run)
     // user turn at the start of every regeneration, for debugging.
@@ -901,6 +960,13 @@ pub async fn regenerate_image(
             maybe_extract_session_memory(&state, &app, &req.session_id, &resp.usage);
             let blocks = snapshot_stream_blocks(&stream_blocks);
             let conn = state.conn()?;
+            persist_session_response_cache(
+                &conn,
+                &req.session_id,
+                chat_request_cache_enabled,
+                &params,
+                resp.response_id.as_deref(),
+            );
             finalize_generate_assistant_message(
                 &app,
                 &conn,
@@ -1028,6 +1094,8 @@ pub(crate) async fn generate_title_with_quick_model(
         tool_chain: Vec::new(),
         tool_results: Vec::new(),
         pending_assistant_turn: None,
+        previous_response_id: None,
+        context_cache_enabled: false,
     };
 
     let factory = crate::ai::providers::ProviderFactory::default();

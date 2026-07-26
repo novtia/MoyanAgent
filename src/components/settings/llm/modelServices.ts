@@ -267,6 +267,7 @@ export function makeProvider(
     endpoint: patch.endpoint ?? sdkConfig.defaultEndpoint,
     api_key: patch.api_key ?? "",
     enabled: patch.enabled !== false,
+    context_cache_enabled: patch.context_cache_enabled === true,
     models: patch.models ?? [],
   };
 }
@@ -275,6 +276,7 @@ export function normalizeProviders(providers: ModelProvider[]) {
   return providers.map((provider) => ({
     ...provider,
     enabled: provider.enabled !== false,
+    context_cache_enabled: provider.context_cache_enabled === true,
     id: provider.id || makeLocalId("provider"),
     name: provider.name || "未命名供应商",
     sdk: normalizeProviderSdk(provider.sdk),

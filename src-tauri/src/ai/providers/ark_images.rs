@@ -545,6 +545,7 @@ async fn parse_response(
         thinking_content: None,
         usage: TokenUsage::default(),
         tool_calls: Vec::new(),
+        response_id: None,
     })
 }
 

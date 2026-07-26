@@ -4,8 +4,9 @@ use reqwest::StatusCode;
 use serde_json::{json, Map, Value};
 
 use crate::ai::chat::{
-    emit_thinking_deltas, AttachmentBytes, ChatRequest, GenerateResponse, HistoryTurn, ImageResult,
-    PendingAssistantTurn, StreamDelta, TextDeltaCallback, ToolResultMessage,
+    emit_text_deltas, emit_thinking_deltas, AttachmentBytes, ChatRequest, GenerateResponse,
+    HistoryTurn, ImageResult, PendingAssistantTurn, StreamDelta, TextDeltaCallback,
+    ToolResultMessage,
 };
 use crate::ai::providers::{ChatProvider, ProviderFuture, OPENAI_RESPONSES_SDK, OPENAI_SDK};
 use crate::ai::{tokens, tokens::TokenUsage};
@@ -168,29 +169,81 @@ async fn generate_chat_stream(
 }
 
 async fn generate_responses(request: ChatRequest) -> AppResult<GenerateResponse> {
-    let body = build_responses_body(&request);
     let provider_label = provider_label(&request);
-
     let client = crate::ai::providers::build_chat_client()?;
-
-    let final_txt = post_with_retries(&client, &request, &body, &provider_label).await?;
-    parse_responses_response(&final_txt)
+    let mut request = request;
+    let body = build_responses_body(&request);
+    match post_with_retries(&client, &request, &body, &provider_label).await {
+        Ok(final_txt) => parse_responses_response(&final_txt),
+        Err(err) if should_reset_responses_cache(&err, &request) => {
+            request.previous_response_id = None;
+            let body = build_responses_body(&request);
+            let final_txt = post_with_retries(&client, &request, &body, &provider_label).await?;
+            parse_responses_response(&final_txt)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 async fn generate_responses_stream(
     request: ChatRequest,
     on_text_delta: TextDeltaCallback,
 ) -> AppResult<GenerateResponse> {
+    let provider_label = provider_label(&request);
+    let client = crate::ai::providers::build_chat_client()?;
+    let mut request = request;
     let mut body = build_responses_body(&request);
     // Responses API reports usage on `response.completed`; do not send
-    // chat-completions-only `stream_options`.
+    // chat-completions-only `stream_options`. Ark rejects unknown fields and
+    // the error text often contains "stream", which would falsely trigger the
+    // non-streaming fallback (`upstream_rejects_streaming`).
     set_streaming(&mut body, false);
-    let provider_label = provider_label(&request);
+    match post_responses_stream_with_retries(
+        &client,
+        &request,
+        &body,
+        &provider_label,
+        on_text_delta.clone(),
+    )
+    .await
+    {
+        Ok(resp) => Ok(resp),
+        Err(err) if should_reset_responses_cache(&err, &request) => {
+            request.previous_response_id = None;
+            let mut body = build_responses_body(&request);
+            set_streaming(&mut body, false);
+            post_responses_stream_with_retries(
+                &client,
+                &request,
+                &body,
+                &provider_label,
+                on_text_delta,
+            )
+            .await
+        }
+        Err(err) => Err(err),
+    }
+}
 
-    let client = crate::ai::providers::build_chat_client()?;
-
-    post_responses_stream_with_retries(&client, &request, &body, &provider_label, on_text_delta)
-        .await
+fn should_reset_responses_cache(err: &AppError, request: &ChatRequest) -> bool {
+    if !responses_cache_active(request)
+        || request
+            .previous_response_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .is_none()
+    {
+        return false;
+    }
+    let msg = err.to_string().to_ascii_lowercase();
+    msg.contains("previous_response")
+        || msg.contains("response_id")
+        || msg.contains("caching")
+        || msg.contains("context cache")
+        || msg.contains("not found")
+        || msg.contains("expired")
+        || msg.contains("invalid")
 }
 
 async fn post_openrouter_chat(
@@ -631,6 +684,7 @@ async fn consume_responses_stream(
     let mut images = Vec::new();
     let mut usage = TokenUsage::default();
     let mut final_response: Option<Value> = None;
+    let mut pending_tools: Vec<PendingStreamToolCall> = Vec::new();
     let mut sse_debug_emitted = 0u32;
 
     while let Some(chunk) = stream.next().await {
@@ -647,6 +701,7 @@ async fn consume_responses_stream(
                 &mut images,
                 &mut usage,
                 &mut final_response,
+                &mut pending_tools,
                 &on_text_delta,
             )?;
         }
@@ -662,10 +717,13 @@ async fn consume_responses_stream(
             &mut images,
             &mut usage,
             &mut final_response,
+            &mut pending_tools,
             &on_text_delta,
         )?;
     }
 
+    let mut response_id = None;
+    let mut tool_calls = finalize_pending_tool_calls(pending_tools);
     if let Some(response) = final_response {
         let mut final_images = Vec::new();
         collect_response_images(&response, &mut final_images);
@@ -676,29 +734,75 @@ async fn consume_responses_stream(
         let final_usage = tokens::extract_usage(&response);
         merge_usage(&mut usage, final_usage);
 
+        // Prefer emitting recovered reasoning before any late text so UIs that
+        // only append (without reorder) still see think→answer order.
         if let Some(extra) = extract_responses_reasoning(&response) {
-            if thinking.trim().is_empty() {
-                thinking = extra;
-            } else if !extra.trim().is_empty() {
-                thinking.push_str("\n\n");
-                thinking.push_str(&extra);
+            let extra = extra.trim();
+            if !extra.is_empty() {
+                if thinking.trim().is_empty() {
+                    thinking = extra.to_string();
+                    emit_thinking_deltas(&on_text_delta, &thinking);
+                } else if !thinking.contains(extra) {
+                    thinking.push_str("\n\n");
+                    thinking.push_str(extra);
+                }
             }
         }
 
         if text.trim().is_empty() {
             if let Some(final_text) = extract_responses_text(&response) {
-                (on_text_delta)(StreamDelta::text(final_text.clone()));
+                emit_text_deltas(&on_text_delta, &final_text);
                 text = final_text;
             }
+        } else if let Some(final_text) = extract_responses_text(&response) {
+            // Cover any trailing body that only appeared on `response.completed`.
+            apply_committed_text(&mut text, &final_text, &on_text_delta);
         }
+
+        // Prefer live-accumulated tool calls; fall back to the completed payload
+        // when the stream skipped function_call argument events entirely.
+        if tool_calls.is_empty() {
+            tool_calls = extract_responses_tool_calls(&response);
+        }
+        response_id = response
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
     }
 
-    // OpenAI Responses API surfaces tool calls inside the final response
-    // object (`response.output[*].type == "function_call"`), not inside
-    // streamed `delta.tool_calls`. They're parsed at the call site that
-    // consumes `final_response`; the chat-completions accumulator here
-    // is unused for this path.
-    finalize_stream_response(text, thinking, images, usage, Vec::new())
+    if !text.is_empty() {
+        collect_inline_data_urls(&text, &mut images);
+    }
+    let text_opt = if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    };
+    let thinking_opt = if thinking.trim().is_empty() {
+        None
+    } else {
+        Some(thinking)
+    };
+    if images.is_empty()
+        && text_opt.as_deref().map(str::is_empty).unwrap_or(true)
+        && thinking_opt.as_deref().map(str::is_empty).unwrap_or(true)
+        && tool_calls.is_empty()
+    {
+        return Err(AppError::Upstream(
+            "upstream stream did not contain generated image, text, or tool_calls".into(),
+        ));
+    }
+    Ok(GenerateResponse {
+        images,
+        videos: Vec::new(),
+        text: text_opt,
+        thinking_content: thinking_opt,
+        usage,
+        tool_calls,
+        response_id,
+    })
 }
 
 fn set_streaming(body: &mut Value, include_usage: bool) {
@@ -802,18 +906,42 @@ fn find_sse_event_end(buffer: &[u8]) -> Option<(usize, usize)> {
 }
 
 fn sse_data_payload(event: &str) -> Option<String> {
+    sse_event_name_and_data(event).map(|(_, data)| data)
+}
+
+/// Parse SSE `event:` / `data:` lines. Ark may put the event type only on the
+/// `event:` line while `data:` omits `type`.
+fn sse_event_name_and_data(event: &str) -> Option<(Option<String>, String)> {
+    let mut event_name = None;
     let mut data = Vec::new();
     for raw_line in event.lines() {
         let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
-        if let Some(rest) = line.strip_prefix("data:") {
+        if let Some(rest) = line.strip_prefix("event:") {
+            let name = rest.strip_prefix(' ').unwrap_or(rest).trim();
+            if !name.is_empty() {
+                event_name = Some(name.to_string());
+            }
+        } else if let Some(rest) = line.strip_prefix("data:") {
             data.push(rest.strip_prefix(' ').unwrap_or(rest));
         }
     }
     if data.is_empty() {
         None
     } else {
-        Some(data.join("\n"))
+        Some((event_name, data.join("\n")))
     }
+}
+
+fn ensure_responses_event_type(v: &mut Value, event_name: Option<&str>) {
+    let Some(name) = event_name.map(str::trim).filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let Some(obj) = v.as_object_mut() else {
+        return;
+    };
+    // SSE `event:` is authoritative. Ark sometimes omits `type` in `data:`,
+    // or puts a shorter alias that would miss our matchers.
+    obj.insert("type".into(), Value::String(name.to_string()));
 }
 
 fn handle_openai_chat_sse_event(
@@ -867,9 +995,10 @@ fn handle_responses_sse_event(
     images: &mut Vec<ImageResult>,
     usage: &mut TokenUsage,
     final_response: &mut Option<Value>,
+    pending_tools: &mut Vec<PendingStreamToolCall>,
     on_text_delta: &TextDeltaCallback,
 ) -> AppResult<()> {
-    let Some(data) = sse_data_payload(event) else {
+    let Some((event_name, data)) = sse_event_name_and_data(event) else {
         return Ok(());
     };
     let data = data.trim();
@@ -877,23 +1006,35 @@ fn handle_responses_sse_event(
         return Ok(());
     }
 
-    let v: Value = serde_json::from_str(data).map_err(|err| {
+    let mut v: Value = serde_json::from_str(data).map_err(|err| {
         AppError::Upstream(format!(
             "failed to parse upstream SSE event: {err}; data={data}"
         ))
     })?;
+    ensure_responses_event_type(&mut v, event_name.as_deref());
     if let Some(msg) = top_level_error_message(&v) {
         return Err(AppError::Upstream(msg));
     }
 
-    if let Some(delta) = responses_stream_text_delta(&v) {
-        text.push_str(&delta);
-        (on_text_delta)(StreamDelta::text(delta));
-    }
+    // Live stream: reasoning deltas first (docs: response.reasoning_summary_text.delta).
     if let Some(delta) = responses_stream_reasoning_delta(&v) {
         thinking.push_str(&delta);
         emit_thinking_deltas(on_text_delta, &delta);
+    } else if let Some(committed) = responses_stream_reasoning_committed(&v) {
+        // Part/item done events: surface thinking as soon as the reasoning
+        // item finishes, before output_text starts (even if deltas were skipped).
+        apply_committed_thinking(thinking, &committed, on_text_delta);
     }
+    if let Some(delta) = responses_stream_text_delta(&v) {
+        text.push_str(&delta);
+        emit_text_deltas(on_text_delta, &delta);
+    } else if let Some(committed) = responses_stream_text_committed(&v) {
+        // Ark may skip `output_text.delta` and only ship the body on
+        // `output_text.done` / `content_part.done` / `output_item.done`.
+        apply_committed_text(text, &committed, on_text_delta);
+    }
+
+    merge_responses_tool_events(&v, pending_tools, on_text_delta);
 
     collect_response_images(&v, images);
     merge_usage(usage, tokens::extract_usage(&v));
@@ -912,18 +1053,183 @@ fn handle_responses_sse_event(
 
 fn responses_stream_text_delta(v: &Value) -> Option<String> {
     let typ = v.get("type").and_then(Value::as_str).unwrap_or("");
-    if matches!(typ, "response.output_text.delta" | "response.refusal.delta") {
-        return v.get("delta").and_then(Value::as_str).map(str::to_string);
+    if is_responses_output_text_delta(typ) {
+        return sse_delta_text(v);
     }
     None
 }
 
+fn is_responses_output_text_delta(typ: &str) -> bool {
+    matches!(
+        typ,
+        "response.output_text.delta"
+            | "response.refusal.delta"
+            | "output_text.delta"
+            | "refusal.delta"
+    ) || typ.ends_with(".output_text.delta")
+        || typ.ends_with(".refusal.delta")
+}
+
+/// Non-delta events that still carry finished assistant body mid-stream.
+fn responses_stream_text_committed(v: &Value) -> Option<String> {
+    let typ = v.get("type").and_then(Value::as_str).unwrap_or("");
+    match typ {
+        "response.output_text.done" | "response.refusal.done" | "output_text.done" => v
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .filter(|s| !s.is_empty()),
+        "response.content_part.done" | "content_part.done" => {
+            let part = v.get("part")?;
+            let part_typ = part.get("type").and_then(Value::as_str).unwrap_or("");
+            if matches!(part_typ, "output_text" | "refusal" | "text") {
+                part.get("text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .filter(|s| !s.is_empty())
+            } else {
+                None
+            }
+        }
+        "response.output_item.done" | "output_item.done" => {
+            let item = v.get("item")?;
+            let item_typ = item.get("type").and_then(Value::as_str).unwrap_or("");
+            if item_typ == "message" || item_typ.ends_with("message") {
+                extract_responses_text(&json!({ "output": [item] }))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn responses_stream_reasoning_delta(v: &Value) -> Option<String> {
     let typ = v.get("type").and_then(Value::as_str).unwrap_or("");
-    if typ == "response.reasoning_text.delta" {
-        return v.get("delta").and_then(Value::as_str).map(str::to_string);
+    // https://console.volcengine.com/ark/region:cn-beijing/docs/82379/1599499
+    if matches!(
+        typ,
+        "response.reasoning_summary_text.delta"
+            | "response.reasoning_text.delta"
+            | "response.reasoning.delta"
+    ) {
+        return sse_delta_text(v);
     }
     None
+}
+
+/// Non-delta events that still carry finished reasoning text mid-stream.
+fn responses_stream_reasoning_committed(v: &Value) -> Option<String> {
+    let typ = v.get("type").and_then(Value::as_str).unwrap_or("");
+    match typ {
+        "response.reasoning_summary_text.done" | "response.reasoning_text.done" => v
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        "response.reasoning_summary_part.done" => v
+            .pointer("/part/text")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        "response.content_part.done" => {
+            let part = v.get("part")?;
+            let part_typ = part.get("type").and_then(Value::as_str).unwrap_or("");
+            if matches!(part_typ, "summary_text" | "reasoning_text") {
+                part.get("text")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            } else {
+                None
+            }
+        }
+        "response.output_item.done" => {
+            let item = v.get("item")?;
+            let item_typ = item.get("type").and_then(Value::as_str).unwrap_or("");
+            if item_typ == "reasoning" || item_typ.starts_with("reasoning") {
+                extract_responses_reasoning(&json!({ "output": [item] }))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn sse_delta_text(v: &Value) -> Option<String> {
+    match v.get("delta") {
+        Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        Some(Value::Object(map)) => map
+            .get("text")
+            .or_else(|| map.get("content"))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        // Some gateways put the fragment in top-level `text` even on *.delta.
+        _ => v
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+    }
+}
+
+fn apply_committed_thinking(
+    thinking: &mut String,
+    committed: &str,
+    on_text_delta: &TextDeltaCallback,
+) {
+    let committed = committed.trim();
+    if committed.is_empty() {
+        return;
+    }
+    if thinking.is_empty() {
+        *thinking = committed.to_string();
+        emit_thinking_deltas(on_text_delta, thinking);
+        return;
+    }
+    if committed.starts_with(thinking.as_str()) {
+        let rest = &committed[thinking.len()..];
+        if !rest.is_empty() {
+            thinking.push_str(rest);
+            emit_thinking_deltas(on_text_delta, rest);
+        }
+        return;
+    }
+    // Deltas already covered this snapshot (or a superset).
+    if thinking.contains(committed) || committed.contains(thinking.as_str()) {
+        return;
+    }
+}
+
+fn apply_committed_text(
+    text: &mut String,
+    committed: &str,
+    on_text_delta: &TextDeltaCallback,
+) {
+    if committed.is_empty() {
+        return;
+    }
+    if text.is_empty() {
+        *text = committed.to_string();
+        emit_text_deltas(on_text_delta, text);
+        return;
+    }
+    if committed.starts_with(text.as_str()) {
+        let rest = &committed[text.len()..];
+        if !rest.is_empty() {
+            text.push_str(rest);
+            emit_text_deltas(on_text_delta, rest);
+        }
+        return;
+    }
+    if text.contains(committed) || committed.contains(text.as_str()) {
+        return;
+    }
 }
 
 fn extract_openai_chat_stream_update(v: &Value) -> (String, Vec<ImageResult>, String) {
@@ -1027,11 +1333,15 @@ fn merge_usage(target: &mut TokenUsage, next: TokenUsage) {
 /// OpenAI chat completions stream tool_calls as a sequence of deltas
 /// indexed by `index`: the first delta carries `id` / `type` /
 /// `function.name`, later deltas append more `function.arguments`
-/// fragments. We accumulate them here and emit a final
+/// fragments. Responses API uses `item_id` / `output_index` instead.
+/// We accumulate them here and emit a final
 /// [`crate::ai::chat::ProviderToolCall`] list when the stream ends.
 #[derive(Debug, Default, Clone)]
 struct PendingStreamToolCall {
+    /// Call id forwarded to the UI / tool loop (`call_id` on Responses).
     id: String,
+    /// Responses output-item id (`item.id`); used to match argument deltas.
+    item_id: String,
     name: String,
     arguments: String,
 }
@@ -1100,6 +1410,227 @@ fn merge_tool_call_deltas(
                 ));
             }
         }
+    }
+}
+
+/// Responses API tool streaming:
+/// `output_item.added` (function_call) → `function_call_arguments.delta`* →
+/// `function_call_arguments.done` → `output_item.done`.
+fn merge_responses_tool_events(
+    v: &Value,
+    out: &mut Vec<PendingStreamToolCall>,
+    on_text_delta: &TextDeltaCallback,
+) {
+    let typ = v.get("type").and_then(Value::as_str).unwrap_or("");
+    if typ.ends_with("output_item.added") || typ.ends_with("output_item.done") {
+        let Some(item) = v.get("item") else {
+            return;
+        };
+        let item_typ = item.get("type").and_then(Value::as_str).unwrap_or("");
+        if item_typ != "function_call" {
+            return;
+        }
+        let output_index = v
+            .get("output_index")
+            .and_then(Value::as_u64)
+            .map(|i| i as usize);
+        let item_id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let call_id = item
+            .get("call_id")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .or_else(|| item.get("id").and_then(Value::as_str))
+            .unwrap_or("")
+            .to_string();
+        let name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let args = item
+            .get("arguments")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+
+        let idx = find_responses_tool_slot(out, output_index, &item_id, &call_id);
+        if idx >= out.len() {
+            out.resize_with(idx + 1, PendingStreamToolCall::default);
+        }
+        let slot = &mut out[idx];
+        let mut identity_changed = false;
+        if !item_id.is_empty() && slot.item_id != item_id {
+            slot.item_id = item_id;
+            identity_changed = true;
+        }
+        if !call_id.is_empty() && slot.id != call_id {
+            slot.id = call_id;
+            identity_changed = true;
+        }
+        if !name.is_empty() && slot.name != name {
+            slot.name = name;
+            identity_changed = true;
+        }
+
+        let mut fragment = String::new();
+        if !args.is_empty() {
+            if slot.arguments.is_empty() {
+                slot.arguments = args.clone();
+                fragment = args;
+            } else if args.starts_with(slot.arguments.as_str()) {
+                fragment = args[slot.arguments.len()..].to_string();
+                if !fragment.is_empty() {
+                    slot.arguments.push_str(&fragment);
+                }
+            } else if slot.arguments.starts_with(args.as_str()) {
+                // Already have a superset from deltas.
+            } else if !slot.arguments.contains(&args) {
+                // Replace with the authoritative snapshot from done/added.
+                fragment = args.clone();
+                slot.arguments = args;
+            }
+        }
+
+        if slot.id.is_empty() || slot.name.is_empty() {
+            return;
+        }
+        if identity_changed {
+            // Open the card; replay any args buffered before name/call_id landed.
+            emit_tool_arg_deltas(on_text_delta, &slot.id, &slot.name, &slot.arguments);
+        } else if !fragment.is_empty() {
+            emit_tool_arg_deltas(on_text_delta, &slot.id, &slot.name, &fragment);
+        }
+        return;
+    }
+
+    if typ.ends_with("function_call_arguments.delta") {
+        let fragment = v
+            .get("delta")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("");
+        if fragment.is_empty() {
+            return;
+        }
+        let item_id = v.get("item_id").and_then(Value::as_str).unwrap_or("");
+        let output_index = v
+            .get("output_index")
+            .and_then(Value::as_u64)
+            .map(|i| i as usize);
+        let idx = find_responses_tool_slot(out, output_index, item_id, item_id);
+        if idx >= out.len() {
+            out.resize_with(idx + 1, PendingStreamToolCall::default);
+        }
+        let slot = &mut out[idx];
+        if slot.item_id.is_empty() && !item_id.is_empty() {
+            slot.item_id = item_id.to_string();
+        }
+        if slot.id.is_empty() && !item_id.is_empty() {
+            // Until output_item.added supplies call_id, use item_id so the UI
+            // can open a pending card; later identity updates keep the same slot.
+            slot.id = item_id.to_string();
+        }
+        slot.arguments.push_str(fragment);
+        // Frontend ignores tool deltas until `name` is known.
+        if !slot.id.is_empty() && !slot.name.is_empty() {
+            emit_tool_arg_deltas(on_text_delta, &slot.id, &slot.name, fragment);
+        }
+        return;
+    }
+
+    if typ.ends_with("function_call_arguments.done") {
+        let args = v
+            .get("arguments")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if args.is_empty() {
+            return;
+        }
+        let item_id = v.get("item_id").and_then(Value::as_str).unwrap_or("");
+        let output_index = v
+            .get("output_index")
+            .and_then(Value::as_u64)
+            .map(|i| i as usize);
+        let idx = find_responses_tool_slot(out, output_index, item_id, item_id);
+        if idx >= out.len() {
+            out.resize_with(idx + 1, PendingStreamToolCall::default);
+        }
+        let slot = &mut out[idx];
+        if slot.item_id.is_empty() && !item_id.is_empty() {
+            slot.item_id = item_id.to_string();
+        }
+        if slot.id.is_empty() && !item_id.is_empty() {
+            slot.id = item_id.to_string();
+        }
+        let fragment = if slot.arguments.is_empty() {
+            slot.arguments = args.to_string();
+            args.to_string()
+        } else if args.starts_with(slot.arguments.as_str()) {
+            let rest = args[slot.arguments.len()..].to_string();
+            slot.arguments.push_str(&rest);
+            rest
+        } else {
+            String::new()
+        };
+        if !slot.id.is_empty() && !slot.name.is_empty() && !fragment.is_empty() {
+            emit_tool_arg_deltas(on_text_delta, &slot.id, &slot.name, &fragment);
+        }
+    }
+}
+
+fn find_responses_tool_slot(
+    out: &[PendingStreamToolCall],
+    output_index: Option<usize>,
+    item_id: &str,
+    call_id: &str,
+) -> usize {
+    if !item_id.is_empty() {
+        if let Some(i) = out.iter().position(|p| {
+            (!p.item_id.is_empty() && p.item_id == item_id)
+                || (!p.id.is_empty() && (p.id == item_id || p.id == call_id))
+        }) {
+            return i;
+        }
+    }
+    if !call_id.is_empty() {
+        if let Some(i) = out.iter().position(|p| p.id == call_id) {
+            return i;
+        }
+    }
+    if let Some(idx) = output_index {
+        return idx;
+    }
+    out.len()
+}
+
+/// Typewriter-split tool argument fragments so large CreateDoc/Write payloads
+/// don't appear as a one-shot dump when Ark batches them.
+fn emit_tool_arg_deltas(cb: &TextDeltaCallback, id: &str, name: &str, chunk: &str) {
+    if id.is_empty() {
+        return;
+    }
+    // Card creation with unknown name is deferred until name arrives.
+    if name.is_empty() && chunk.is_empty() {
+        return;
+    }
+    if chunk.is_empty() {
+        (cb)(StreamDelta::tool_call(
+            id.to_string(),
+            name.to_string(),
+            String::new(),
+        ));
+        return;
+    }
+    for ch in chunk.chars() {
+        (cb)(StreamDelta::tool_call(
+            id.to_string(),
+            name.to_string(),
+            ch.to_string(),
+        ));
     }
 }
 
@@ -1356,6 +1887,7 @@ fn finalize_stream_response(
         thinking_content,
         usage,
         tool_calls,
+        response_id: None,
     })
 }
 
@@ -1369,6 +1901,51 @@ fn stream_read_error(err: reqwest::Error) -> AppError {
         "connection interrupted while streaming upstream response: {}",
         crate::error::describe_reqwest_error(&err)
     ))
+}
+
+/// Best-effort DELETE of a stored Responses API object (Session cache tip).
+/// Failures are logged and ignored — local DB is the source of truth for clearing.
+pub async fn delete_stored_response(endpoint: &str, api_key: &str, response_id: &str) {
+    let id = response_id.trim();
+    if id.is_empty() || api_key.trim().is_empty() {
+        return;
+    }
+    let Some(url) = responses_object_url(endpoint, id) else {
+        return;
+    };
+    let Ok(client) = crate::ai::providers::build_chat_client() else {
+        return;
+    };
+    match client.delete(&url).bearer_auth(api_key).send().await {
+        Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 404 => {}
+        Ok(resp) => {
+            eprintln!(
+                "[atelier] delete stored response {} failed: HTTP {}",
+                id,
+                resp.status()
+            );
+        }
+        Err(err) => {
+            eprintln!("[atelier] delete stored response {id} failed: {err}");
+        }
+    }
+}
+
+fn responses_object_url(endpoint: &str, response_id: &str) -> Option<String> {
+    let ep = endpoint.trim().trim_end_matches('/');
+    if ep.is_empty() {
+        return None;
+    }
+    // Typical: .../api/v3/responses  or  .../v1/responses
+    if ep.ends_with("/responses") {
+        return Some(format!("{ep}/{response_id}"));
+    }
+    // .../chat/completions → sibling /responses/{id}
+    if let Some(base) = ep.strip_suffix("/chat/completions") {
+        return Some(format!("{base}/responses/{response_id}"));
+    }
+    // Bare API root: .../api/v3
+    Some(format!("{ep}/responses/{response_id}"))
 }
 
 fn provider_label(request: &ChatRequest) -> String {
@@ -1618,30 +2195,233 @@ fn history_turn_to_chat_message(turn: &HistoryTurn, allow_image_parts: bool) -> 
     Some(msg)
 }
 
+fn responses_cache_active(request: &ChatRequest) -> bool {
+    (request.context_cache_enabled || request.provider.context_cache_enabled)
+        && crate::ai::parameters::is_volcengine_endpoint(&request.provider.endpoint)
+}
+
 fn build_responses_body(request: &ChatRequest) -> Value {
-    let mut input: Vec<Value> = Vec::new();
-    for turn in &request.history {
-        if let Some(message) = history_turn_to_responses_message(turn) {
-            input.push(message);
-        }
-    }
-    input.push(responses_message(
-        "user",
-        Some(&request.prompt),
-        &request.attachments,
-    ));
+    let cache = responses_cache_active(request);
+    let continuing = cache
+        && request
+            .previous_response_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .is_some();
+
+    let input = if continuing {
+        build_responses_delta_input(request)
+    } else {
+        build_responses_full_input(request, cache)
+    };
 
     let mut body = json!({
         "model": request.model,
         "input": input,
     });
     let map = body.as_object_mut().unwrap();
-    let sys = request.system_prompt.trim();
-    if !sys.is_empty() {
-        map.insert("instructions".into(), Value::String(sys.to_string()));
+
+    if continuing {
+        if let Some(prev) = request
+            .previous_response_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            map.insert("previous_response_id".into(), Value::String(prev.to_string()));
+        }
+    } else if !cache {
+        // Non-cache mode keeps system prompt in `instructions`.
+        let sys = request.system_prompt.trim();
+        if !sys.is_empty() {
+            map.insert("instructions".into(), Value::String(sys.to_string()));
+        }
     }
+
+    // Tools only on chain head (Volcengine Session cache constraint).
+    if !continuing && !request.tools.is_empty() {
+        let tools: Vec<Value> = request
+            .tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.schema,
+                })
+            })
+            .collect();
+        map.insert("tools".into(), Value::Array(tools));
+    }
+
+    if cache {
+        map.insert("store".into(), Value::Bool(true));
+        map.insert("caching".into(), json!({ "type": "enabled" }));
+        let expire_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64 + 86_400)
+            .unwrap_or(0);
+        if expire_at > 0 {
+            map.insert("expire_at".into(), json!(expire_at));
+        }
+    }
+
     apply_responses_params(map, request);
     body
+}
+
+/// Full request input: system (cache head) + history + user + in-turn tool rounds.
+fn build_responses_full_input(request: &ChatRequest, cache_head: bool) -> Vec<Value> {
+    let mut input: Vec<Value> = Vec::new();
+    if cache_head {
+        let sys = request.system_prompt.trim();
+        if !sys.is_empty() {
+            input.push(responses_message("system", Some(sys), &[]));
+        }
+    }
+    for turn in &request.history {
+        append_responses_history_turn(&mut input, turn);
+    }
+    input.push(responses_message(
+        "user",
+        Some(&request.prompt),
+        &request.attachments,
+    ));
+    for round in &request.tool_chain {
+        append_responses_tool_round(&mut input, round);
+    }
+    if let Some(pending) = &request.pending_assistant_turn {
+        append_responses_pending_assistant(&mut input, pending);
+    }
+    append_responses_tool_results(&mut input, &request.tool_results);
+    input
+}
+
+/// Cache continuation: only the latest tool outputs, or the new user turn.
+fn build_responses_delta_input(request: &ChatRequest) -> Vec<Value> {
+    let mut input: Vec<Value> = Vec::new();
+    if let Some(pending) = &request.pending_assistant_turn {
+        // Should be rare (engine commits before the next call); keep for safety.
+        append_responses_tool_results(&mut input, &request.tool_results);
+        if input.is_empty() && !pending.tool_calls.is_empty() {
+            append_responses_pending_assistant(&mut input, pending);
+            append_responses_tool_results(&mut input, &request.tool_results);
+        }
+        if !input.is_empty() {
+            return input;
+        }
+    }
+    if let Some(round) = request.tool_chain.last() {
+        append_responses_tool_results(&mut input, &round.results);
+        if !input.is_empty() {
+            return input;
+        }
+    }
+    // New user turn continuing a prior session cache chain.
+    input.push(responses_message(
+        "user",
+        Some(&request.prompt),
+        &request.attachments,
+    ));
+    input
+}
+
+fn append_responses_history_turn(input: &mut Vec<Value>, turn: &HistoryTurn) {
+    if turn.role == "assistant" && !turn.timeline.is_empty() {
+        for seg in &turn.timeline {
+            match seg {
+                crate::ai::chat::TimelineSegment::Text { text, .. } => {
+                    if !text.trim().is_empty() {
+                        input.push(responses_message("assistant", Some(text), &[]));
+                    }
+                }
+                crate::ai::chat::TimelineSegment::ToolRound { .. } => {
+                    if let Some(round) = seg.to_tool_round() {
+                        append_responses_tool_round(input, &round);
+                    }
+                }
+                crate::ai::chat::TimelineSegment::AgentStage { .. } => {}
+            }
+        }
+        return;
+    }
+    if let Some(message) = history_turn_to_responses_message(turn) {
+        input.push(message);
+    }
+}
+
+fn append_responses_tool_round(input: &mut Vec<Value>, round: &crate::ai::chat::ToolChainRound) {
+    append_responses_pending_assistant(input, &round.assistant);
+    append_responses_tool_results(input, &round.results);
+}
+
+fn append_responses_pending_assistant(input: &mut Vec<Value>, pending: &PendingAssistantTurn) {
+    if let Some(text) = pending.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        input.push(responses_message("assistant", Some(text), &[]));
+    }
+    for call in &pending.tool_calls {
+        input.push(json!({
+            "type": "function_call",
+            "call_id": call.id,
+            "name": call.name,
+            "arguments": serde_json::to_string(&call.arguments).unwrap_or_else(|_| "{}".into()),
+        }));
+    }
+}
+
+fn append_responses_tool_results(
+    input: &mut Vec<Value>,
+    tool_results: &[crate::ai::chat::ToolResultMessage],
+) {
+    for tr in tool_results {
+        let output = match &tr.content {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        input.push(json!({
+            "type": "function_call_output",
+            "call_id": tr.tool_call_id,
+            "output": output,
+        }));
+    }
+}
+
+fn extract_responses_tool_calls(v: &Value) -> Vec<crate::ai::chat::ProviderToolCall> {
+    let Some(arr) = v.get("output").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|item| {
+            let typ = item.get("type").and_then(Value::as_str).unwrap_or("");
+            if typ != "function_call" {
+                return None;
+            }
+            let id = item
+                .get("call_id")
+                .and_then(Value::as_str)
+                .or_else(|| item.get("id").and_then(Value::as_str))?
+                .to_string();
+            let name = item.get("name").and_then(Value::as_str)?.to_string();
+            let raw_args = item
+                .get("arguments")
+                .and_then(|a| {
+                    if let Some(s) = a.as_str() {
+                        Some(s.to_string())
+                    } else {
+                        Some(a.to_string())
+                    }
+                })
+                .unwrap_or_else(|| "{}".into());
+            let arguments = serde_json::from_str(&raw_args).unwrap_or_else(|_| json!({}));
+            Some(crate::ai::chat::ProviderToolCall {
+                id,
+                name,
+                arguments,
+            })
+        })
+        .collect()
 }
 
 fn history_turn_to_responses_message(turn: &HistoryTurn) -> Option<Value> {
@@ -1689,7 +2469,14 @@ fn apply_responses_params(body: &mut Map<String, Value>, request: &ChatRequest) 
     if let Some(v) = params.model.max_tokens {
         body.insert("max_output_tokens".into(), json!(v));
     }
-    params.apply_thinking_params(body, &request.provider.endpoint);
+    // Volcengine Ark Responses uses `reasoning.effort` (minimal/low/medium/
+    // high/max). Chat Completions fields `thinking` / `reasoning_effort`
+    // are rejected on this path.
+    if crate::ai::parameters::is_volcengine_endpoint(&request.provider.endpoint) {
+        params.apply_volcengine_responses_reasoning(body);
+    } else {
+        params.apply_thinking_params(body, &request.provider.endpoint);
+    }
 }
 
 fn data_url(att: &AttachmentBytes) -> String {
@@ -1785,13 +2572,21 @@ fn is_empty_stream_upstream_error(err: &AppError) -> bool {
 
 fn upstream_rejects_streaming(status: StatusCode, msg: &str) -> bool {
     let m = msg.to_ascii_lowercase();
-    matches!(
+    if !matches!(
         status,
         StatusCode::BAD_REQUEST
             | StatusCode::METHOD_NOT_ALLOWED
             | StatusCode::NOT_IMPLEMENTED
             | StatusCode::UNPROCESSABLE_ENTITY
-    ) && (m.contains("stream") || m.contains("sse"))
+    ) {
+        return false;
+    }
+    // Ignore unknown-parameter complaints about `stream_options` — that means
+    // we should drop the field, not disable streaming entirely.
+    if m.contains("stream_options") {
+        return false;
+    }
+    m.contains("stream") || m.contains("sse")
 }
 
 fn is_image_only_model(model: &str) -> bool {
@@ -1868,6 +2663,7 @@ fn parse_openai_like_response(final_txt: &str) -> AppResult<GenerateResponse> {
         thinking_content,
         usage: tokens::extract_usage(&v),
         tool_calls,
+        response_id: None,
     })
 }
 
@@ -1887,14 +2683,21 @@ fn parse_responses_response(final_txt: &str) -> AppResult<GenerateResponse> {
     collect_response_images(&v, &mut images);
     let text = extract_responses_text(&v);
     let thinking_content = extract_responses_reasoning(&v);
+    let tool_calls = extract_responses_tool_calls(&v);
+    let response_id = v
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     let has_text = text.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
     let has_thinking = thinking_content
         .as_deref()
         .map(|s| !s.is_empty())
         .unwrap_or(false);
-    if images.is_empty() && !has_text && !has_thinking {
+    if images.is_empty() && !has_text && !has_thinking && tool_calls.is_empty() {
         return Err(AppError::Upstream(format!(
-            "upstream response did not contain generated image, text, or reasoning. {}",
+            "upstream response did not contain generated image, text, tool_calls, or reasoning. {}",
             empty_response_details(&v)
         )));
     }
@@ -1905,7 +2708,8 @@ fn parse_responses_response(final_txt: &str) -> AppResult<GenerateResponse> {
         text,
         thinking_content,
         usage: tokens::extract_usage(&v),
-        tool_calls: Vec::new(),
+        tool_calls,
+        response_id,
     })
 }
 
@@ -2076,21 +2880,51 @@ fn collect_reasoning_values(v: &Value, out: &mut Vec<String>) {
         }
         Value::Object(map) => {
             let typ = map.get("type").and_then(Value::as_str).unwrap_or("");
-            if typ.contains("reasoning") {
-                if let Some(text) = map.get("text").and_then(Value::as_str) {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        out.push(trimmed.to_string());
-                    }
+            // Reasoning item: `{ type: "reasoning", summary: [{type:summary_text,text}], content? }`
+            if typ == "reasoning" || typ.starts_with("reasoning") {
+                push_trimmed_text(map.get("text"), out);
+                if let Some(summary) = map.get("summary") {
+                    collect_reasoning_text_parts(summary, out);
                 }
+                if let Some(content) = map.get("content") {
+                    collect_reasoning_text_parts(content, out);
+                }
+                return;
             }
-            for key in ["content", "summary"] {
-                if let Some(value) = map.get(key) {
-                    collect_reasoning_values(value, out);
-                }
+            if matches!(typ, "summary_text" | "reasoning_text") {
+                push_trimmed_text(map.get("text"), out);
             }
         }
         _ => {}
+    }
+}
+
+fn collect_reasoning_text_parts(v: &Value, out: &mut Vec<String>) {
+    match v {
+        Value::Array(items) => {
+            for item in items {
+                collect_reasoning_text_parts(item, out);
+            }
+        }
+        Value::Object(map) => {
+            let typ = map.get("type").and_then(Value::as_str).unwrap_or("");
+            if matches!(typ, "summary_text" | "reasoning_text" | "") {
+                push_trimmed_text(map.get("text"), out);
+            }
+        }
+        Value::String(s) => {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                out.push(trimmed.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_trimmed_text(v: Option<&Value>, out: &mut Vec<String>) {
+    if let Some(text) = v.and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) {
+        out.push(text.to_string());
     }
 }
 
@@ -2103,18 +2937,15 @@ fn collect_text_values(v: &Value, out: &mut Vec<String>) {
         }
         Value::Object(map) => {
             let typ = map.get("type").and_then(Value::as_str).unwrap_or("");
-            if matches!(typ, "output_text" | "text" | "summary_text") {
-                if let Some(text) = map.get("text").and_then(Value::as_str) {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        out.push(trimmed.to_string());
-                    }
-                }
+            // Reasoning items / summary_text belong to thinking, never assistant body.
+            if typ == "reasoning" || typ.starts_with("reasoning") || typ == "summary_text" {
+                return;
             }
-            for key in ["content", "summary"] {
-                if let Some(value) = map.get(key) {
-                    collect_text_values(value, out);
-                }
+            if matches!(typ, "output_text" | "text") {
+                push_trimmed_text(map.get("text"), out);
+            }
+            if let Some(content) = map.get("content") {
+                collect_text_values(content, out);
             }
         }
         _ => {}
@@ -2374,6 +3205,265 @@ mod tests {
     }
 
     #[test]
+    fn responses_object_url_from_responses_endpoint() {
+        assert_eq!(
+            responses_object_url("https://ark.cn-beijing.volces.com/api/v3/responses", "resp_1")
+                .as_deref(),
+            Some("https://ark.cn-beijing.volces.com/api/v3/responses/resp_1")
+        );
+    }
+
+    #[test]
+    fn responses_cache_continue_omits_tools_and_instructions() {
+        let mut request = ChatRequest {
+            provider: crate::ai::chat::ProviderConfig {
+                id: "p".into(),
+                name: "p".into(),
+                sdk: OPENAI_RESPONSES_SDK.into(),
+                endpoint: "https://ark.cn-beijing.volces.com/api/v3/responses".into(),
+                api_key: "k".into(),
+                context_cache_enabled: true,
+            },
+            model: "doubao-seed".into(),
+            prompt: "follow up".into(),
+            attachments: Vec::new(),
+            system_prompt: "you are helpful".into(),
+            history: Vec::new(),
+            parameters: crate::ai::parameters::factory().build(
+                "auto".into(),
+                "auto".into(),
+                crate::data::settings::ModelParamSettings {
+                    thinking_enabled: Some(true),
+                    thinking_effort: Some("high".into()),
+                    ..Default::default()
+                },
+            ),
+            tools: vec![crate::ai::chat::ToolDefinition {
+                name: "Bash".into(),
+                description: "run".into(),
+                schema: json!({ "type": "object" }),
+            }],
+            tool_chain: Vec::new(),
+            tool_results: Vec::new(),
+            pending_assistant_turn: None,
+            previous_response_id: Some("resp_prev".into()),
+            context_cache_enabled: true,
+        };
+        let body = build_responses_body(&request);
+        assert_eq!(body["previous_response_id"], "resp_prev");
+        assert!(body.get("tools").is_none());
+        assert!(body.get("instructions").is_none());
+        assert_eq!(body["caching"]["type"], "enabled");
+        assert_eq!(body["input"][0]["role"], "user");
+        // Ark Responses: thinking.type + reasoning.effort (not Chat Completions fields).
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["reasoning"]["effort"], "high");
+        assert!(body["reasoning"].get("summary").is_none());
+
+        request.previous_response_id = None;
+        let head = build_responses_body(&request);
+        assert!(head.get("previous_response_id").is_none());
+        assert!(head.get("tools").is_some());
+        assert!(head.get("instructions").is_none()); // cache head uses system message
+        assert_eq!(head["input"][0]["role"], "system");
+        assert!(head.get("reasoning_effort").is_none());
+        assert_eq!(head["thinking"]["type"], "enabled");
+        assert_eq!(head["reasoning"]["effort"], "high");
+        assert!(head["reasoning"].get("summary").is_none());
+    }
+
+    #[test]
+    fn responses_reasoning_summary_delta_is_thinking() {
+        let v = json!({
+            "type": "response.reasoning_summary_text.delta",
+            "delta": "先判断意图"
+        });
+        assert_eq!(
+            responses_stream_reasoning_delta(&v).as_deref(),
+            Some("先判断意图")
+        );
+        assert!(responses_stream_text_delta(&v).is_none());
+    }
+
+    #[test]
+    fn responses_output_text_delta_and_done_are_body() {
+        let delta = json!({
+            "type": "response.output_text.delta",
+            "delta": "你好"
+        });
+        assert_eq!(responses_stream_text_delta(&delta).as_deref(), Some("你好"));
+        assert!(responses_stream_reasoning_delta(&delta).is_none());
+
+        let done = json!({
+            "type": "response.output_text.done",
+            "text": "你好，世界"
+        });
+        assert_eq!(
+            responses_stream_text_committed(&done).as_deref(),
+            Some("你好，世界")
+        );
+
+        let item_done = json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "完整正文" }]
+            }
+        });
+        assert_eq!(
+            responses_stream_text_committed(&item_done).as_deref(),
+            Some("完整正文")
+        );
+    }
+
+    #[test]
+    fn responses_reasoning_output_item_done_is_committed() {
+        let v = json!({
+            "type": "response.output_item.done",
+            "item": {
+                "type": "reasoning",
+                "summary": [{ "type": "summary_text", "text": "推理摘要" }]
+            }
+        });
+        assert_eq!(
+            responses_stream_reasoning_committed(&v).as_deref(),
+            Some("推理摘要")
+        );
+    }
+
+    #[test]
+    fn sse_event_line_fills_missing_type() {
+        let raw = "event: response.reasoning_summary_text.delta\ndata: {\"delta\":\"and\"}\n\n";
+        let (name, data) = sse_event_name_and_data(raw).unwrap();
+        assert_eq!(name.as_deref(), Some("response.reasoning_summary_text.delta"));
+        let mut v: Value = serde_json::from_str(&data).unwrap();
+        ensure_responses_event_type(&mut v, name.as_deref());
+        assert_eq!(
+            responses_stream_reasoning_delta(&v).as_deref(),
+            Some("and")
+        );
+    }
+
+    #[test]
+    fn responses_extract_keeps_summary_out_of_body() {
+        let v = json!({
+            "output": [
+                {
+                    "type": "reasoning",
+                    "summary": [{ "type": "summary_text", "text": "这是思考" }]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "output_text", "text": "这是正文" }]
+                }
+            ]
+        });
+        assert_eq!(extract_responses_reasoning(&v).as_deref(), Some("这是思考"));
+        assert_eq!(extract_responses_text(&v).as_deref(), Some("这是正文"));
+    }
+
+    #[test]
+    fn responses_function_call_arguments_stream_live() {
+        use std::sync::{Arc, Mutex};
+        let seen: Arc<Mutex<Vec<(String, String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen_cb = seen.clone();
+        let cb: TextDeltaCallback = Arc::new(move |d| {
+            if let Some(tc) = d.tool_call {
+                seen_cb
+                    .lock()
+                    .unwrap()
+                    .push((tc.id, tc.name, tc.arguments));
+            }
+        });
+        let mut pending = Vec::new();
+
+        merge_responses_tool_events(
+            &json!({
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": {
+                    "id": "fc_1",
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "CreateDoc",
+                    "arguments": "",
+                    "status": "in_progress"
+                }
+            }),
+            &mut pending,
+            &cb,
+        );
+        merge_responses_tool_events(
+            &json!({
+                "type": "response.function_call_arguments.delta",
+                "item_id": "fc_1",
+                "output_index": 0,
+                "delta": "{\"title\":\""
+            }),
+            &mut pending,
+            &cb,
+        );
+        merge_responses_tool_events(
+            &json!({
+                "type": "response.function_call_arguments.delta",
+                "item_id": "fc_1",
+                "output_index": 0,
+                "delta": "第二章\"}"
+            }),
+            &mut pending,
+            &cb,
+        );
+        merge_responses_tool_events(
+            &json!({
+                "type": "response.function_call_arguments.done",
+                "item_id": "fc_1",
+                "output_index": 0,
+                "arguments": "{\"title\":\"第二章\"}"
+            }),
+            &mut pending,
+            &cb,
+        );
+
+        let calls = finalize_pending_tool_calls(pending);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].name, "CreateDoc");
+        assert_eq!(calls[0].arguments["title"], "第二章");
+
+        let events = seen.lock().unwrap();
+        assert!(events.iter().any(|e| e.0 == "call_1" && e.1 == "CreateDoc"));
+        let streamed: String = events
+            .iter()
+            .filter(|e| e.0 == "call_1")
+            .map(|e| e.2.as_str())
+            .collect();
+        assert!(streamed.contains("第二章"));
+    }
+
+    #[test]
+    fn extract_responses_function_calls() {
+        let v = json!({
+            "id": "resp_x",
+            "output": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "Bash",
+                    "arguments": "{\"command\":\"ls\"}"
+                }
+            ]
+        });
+        let calls = extract_responses_tool_calls(&v);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[0].name, "Bash");
+        assert_eq!(calls[0].arguments["command"], "ls");
+    }
+
+    #[test]
     fn repair_recovers_duplicated_payload() {
         let raw = r#"{"title":"a","content":"b"}{"title":"a","content":"b"}"#;
         let v = parse_tool_call_arguments("CreateDoc", raw);
@@ -2453,11 +3543,33 @@ mod tests {
     }
 
     #[test]
-    fn set_streaming_skips_stream_options_for_responses() {
+    fn set_streaming_can_omit_stream_options() {
         let mut body = json!({ "model": "gpt", "input": [] });
         set_streaming(&mut body, false);
         assert_eq!(body["stream"], true);
         assert!(body.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn responses_streaming_omits_stream_options() {
+        let mut body = json!({ "model": "doubao", "input": [] });
+        // Responses path must keep usage via `response.completed`, not chat
+        // `stream_options` (rejected by Ark / OpenAI Responses).
+        set_streaming(&mut body, false);
+        assert_eq!(body["stream"], true);
+        assert!(body.get("stream_options").is_none());
+    }
+
+    #[test]
+    fn upstream_rejects_streaming_ignores_stream_options_param_errors() {
+        assert!(!upstream_rejects_streaming(
+            StatusCode::BAD_REQUEST,
+            "Unknown parameter: 'stream_options'",
+        ));
+        assert!(upstream_rejects_streaming(
+            StatusCode::BAD_REQUEST,
+            "streaming is not supported for this model",
+        ));
     }
 
     #[test]

@@ -734,6 +734,9 @@ const zhCN = {
       presencePenalty: "Presence Penalty",
       presencePenaltyHint: "-2 到 2，鼓励引入新话题",
       paramInvalid: "无效数值，已忽略",
+      contextCacheLabel: "上下文缓存（Session）",
+      contextCacheHint:
+        "仅火山方舟 Responses API 生效：多轮对话用 previous_response_id 接力，命中缓存可降费。生产环境可能需单独开通。",
     },
     system: {
       notifySoundTitle: "提示音",

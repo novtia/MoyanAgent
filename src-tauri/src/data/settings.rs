@@ -107,6 +107,10 @@ pub struct ModelProvider {
     pub api_key: String,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// When true and SDK is `openai-responses` on a Volcengine endpoint,
+    /// use explicit Session caching (`caching` + `previous_response_id`).
+    #[serde(default)]
+    pub context_cache_enabled: bool,
     pub models: Vec<ModelServiceModel>,
 }
 

@@ -164,6 +164,7 @@ pub fn supplier_presets_as_providers(conn: &DbConn) -> AppResult<Vec<ModelProvid
             endpoint,
             api_key: String::new(),
             enabled,
+            context_cache_enabled: false,
             models,
         });
     }

@@ -734,6 +734,28 @@ export function ModelServiceSection() {
                         selectedSdkConfig.endpointHint}
                     </div>
                   </div>
+                  {normalizeProviderSdk(selectedProvider.sdk) ===
+                    "openai-responses" && (
+                    <div className="row">
+                      <label className="field-label">
+                        {t("settings.llm.contextCacheLabel")}
+                      </label>
+                      <div className="model-provider-title-tools">
+                        <ProviderEnableSwitch
+                          enabled={selectedProvider.context_cache_enabled === true}
+                          onChange={(next) =>
+                            void patchProvider(selectedProvider.id, {
+                              context_cache_enabled: next,
+                            })
+                          }
+                          title={t("settings.llm.contextCacheLabel")}
+                        />
+                      </div>
+                      <div className="hint">
+                        {t("settings.llm.contextCacheHint")}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 

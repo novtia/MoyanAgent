@@ -27,8 +27,11 @@ export const streamingBuffers = new Map<string, StreamBuffer>();
 export const cancellingSessions = new Set<string>();
 
 /**
- * Append a text/thinking delta to a block list following the rule
- * "merge with last block when it's the same kind, otherwise push new".
+ * Append a text/thinking delta to a block list.
+ * Text: merge with trailing text block, else push.
+ * Thinking: merge into the current segment's thinking block (after the last
+ * tool_use / agent_stage), or insert at the segment head so late-arriving
+ * reasoning (common on Volcengine Responses) still appears above the answer.
  * Mutates `blocks` in place.
  */
 export function appendDelta(
@@ -37,12 +40,33 @@ export function appendDelta(
   delta: string,
 ) {
   if (!delta) return;
+
+  if (kind === "thinking") {
+    let segmentStart = 0;
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const t = blocks[i].type;
+      if (t === "tool_use" || t === "agent_stage") {
+        segmentStart = i + 1;
+        break;
+      }
+    }
+    for (let i = segmentStart; i < blocks.length; i++) {
+      const b = blocks[i];
+      if (b.type === "thinking") {
+        b.content = `${b.content}${delta}`;
+        return;
+      }
+    }
+    blocks.splice(segmentStart, 0, { type: "thinking", content: delta });
+    return;
+  }
+
   const last = blocks[blocks.length - 1];
-  if (last && last.type === kind) {
+  if (last && last.type === "text") {
     last.content = `${last.content}${delta}`;
     return;
   }
-  blocks.push({ type: kind, content: delta });
+  blocks.push({ type: "text", content: delta });
 }
 
 /** Accumulated raw `arguments` JSON string per streaming tool call. */

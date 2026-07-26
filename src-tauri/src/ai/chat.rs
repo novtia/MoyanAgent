@@ -66,6 +66,16 @@ pub fn emit_thinking_deltas(cb: &TextDeltaCallback, chunk: &str) {
     }
 }
 
+/// Same typewriter split for assistant body text. Volcengine Responses often
+/// batches `output_text` into large chunks (or only on `*.done` /
+/// `response.completed`); without this the UI looks like a one-shot dump
+/// while thinking still appears to stream.
+pub fn emit_text_deltas(cb: &TextDeltaCallback, chunk: &str) {
+    for ch in chunk.chars() {
+        (cb)(StreamDelta::text(ch.to_string()));
+    }
+}
+
 pub type TextDeltaCallback = Arc<dyn Fn(StreamDelta) + Send + Sync + 'static>;
 
 #[derive(Debug, Clone)]
@@ -131,6 +141,9 @@ pub struct GenerateResponse {
     /// calling (`claude`, `openai-responses`) populate it so the agent
     /// query loop can dispatch into [`crate::ai::agent::tools::ToolPool`].
     pub tool_calls: Vec<ProviderToolCall>,
+    /// Upstream Responses API `response.id` when the provider returns one
+    /// (used for Volcengine Session cache chaining via `previous_response_id`).
+    pub response_id: Option<String>,
 }
 
 /// A model-emitted tool invocation request. Mirrors the OpenAI
@@ -178,6 +191,8 @@ pub struct ProviderConfig {
     pub sdk: String,
     pub endpoint: String,
     pub api_key: String,
+    /// See [`crate::data::settings::ModelProvider::context_cache_enabled`].
+    pub context_cache_enabled: bool,
 }
 
 /// Tool description exposed to the model. Provider-agnostic — each
@@ -351,4 +366,10 @@ pub struct ChatRequest {
     /// be threaded back into the message stream — see
     /// [`PendingAssistantTurn`].
     pub pending_assistant_turn: Option<PendingAssistantTurn>,
+    /// When set, Volcengine Responses Session-cache continuations send only
+    /// delta input under this `previous_response_id`.
+    pub previous_response_id: Option<String>,
+    /// Request-level mirror of provider `context_cache_enabled` after
+    /// Volcengine / SDK gating in the router.
+    pub context_cache_enabled: bool,
 }

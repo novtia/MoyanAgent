@@ -207,6 +207,27 @@ impl GenerationParameters {
         }
     }
 
+    /// Volcengine Ark Responses API thinking controls.
+    ///
+    /// Docs use both:
+    /// - `thinking.type`: `enabled` / `disabled` / `auto` (whether to think)
+    /// - `reasoning.effort`: `minimal` | `low` | `medium` | `high` | `max`
+    ///
+    /// Without `thinking.type: "enabled"`, Ark may still bill reasoning tokens but
+    /// only dump the chain on `response.completed` — skipping live
+    /// `response.reasoning_summary_text.delta` SSE events.
+    /// Ark rejects OpenAI-style `reasoning.summary` (`unknown field "summary"`)
+    /// and Chat Completions top-level `reasoning_effort`.
+    pub fn apply_volcengine_responses_reasoning(&self, body: &mut Map<String, Value>) {
+        if let Some(effort) = self.model.resolved_thinking_effort() {
+            body.insert("thinking".into(), json!({ "type": "enabled" }));
+            body.insert("reasoning".into(), json!({ "effort": effort }));
+        } else {
+            body.insert("thinking".into(), json!({ "type": "disabled" }));
+            body.insert("reasoning".into(), json!({ "effort": "minimal" }));
+        }
+    }
+
     /// Moonshot / Kimi: enable thinking and preserved thinking (`keep: "all"`)
     /// so historical `reasoning_content` is consumed across turns.
     pub fn apply_moonshot_thinking_object(&self, body: &mut Map<String, Value>) {
@@ -335,9 +356,18 @@ fn is_deepseek_endpoint(endpoint: &str) -> bool {
     e.contains("deepseek.com") || e.contains("deepseek.ai")
 }
 
-fn is_volcengine_endpoint(endpoint: &str) -> bool {
+pub fn is_volcengine_endpoint(endpoint: &str) -> bool {
     let e = endpoint.trim().to_ascii_lowercase();
     e.contains("volces.com") || e.contains("volcengine.com") || e.contains("volcengine.cn")
+}
+
+/// Stable key for Volcengine Session-cache thinking consistency checks.
+/// Matches Responses `reasoning.effort` (or `minimal` when thinking is off).
+pub fn thinking_cache_key(params: &GenerationParameters) -> String {
+    params
+        .model
+        .resolved_thinking_effort()
+        .unwrap_or_else(|| "minimal".into())
 }
 
 fn is_moonshot_endpoint(endpoint: &str) -> bool {
@@ -382,6 +412,48 @@ mod tests {
                 .and_then(|v| v.get("type"))
                 .and_then(Value::as_str),
             Some("enabled")
+        );
+    }
+
+    #[test]
+    fn volcengine_responses_uses_reasoning_effort_object() {
+        let p = params(true);
+        let mut body = Map::new();
+        p.apply_volcengine_responses_reasoning(&mut body);
+        assert_eq!(
+            body.get("reasoning")
+                .and_then(|v| v.get("effort"))
+                .and_then(Value::as_str),
+            Some("high")
+        );
+        assert_eq!(
+            body.get("thinking")
+                .and_then(|v| v.get("type"))
+                .and_then(Value::as_str),
+            Some("enabled")
+        );
+        assert!(body
+            .get("reasoning")
+            .and_then(|v| v.get("summary"))
+            .is_none());
+        assert!(!body.contains_key("reasoning_effort"));
+
+        let off = params(false);
+        let mut body_off = Map::new();
+        off.apply_volcengine_responses_reasoning(&mut body_off);
+        assert_eq!(
+            body_off
+                .get("reasoning")
+                .and_then(|v| v.get("effort"))
+                .and_then(Value::as_str),
+            Some("minimal")
+        );
+        assert_eq!(
+            body_off
+                .get("thinking")
+                .and_then(|v| v.get("type"))
+                .and_then(Value::as_str),
+            Some("disabled")
         );
     }
 

@@ -177,6 +177,12 @@ pub struct Session {
     /// Task id of the Agent tool run that spawned this temp session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawn_task_id: Option<String>,
+    /// Latest Volcengine Responses API `response.id` for Session cache chaining.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_response_id: Option<String>,
+    /// Thinking type (`enabled`/`disabled`) used when the cache chain was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_thinking_key: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -291,6 +297,8 @@ pub fn create(conn: &DbConn, title: Option<String>, model: Option<String>) -> Ap
         parent_session_id: None,
         is_temporary: false,
         spawn_task_id: None,
+        last_response_id: None,
+        cache_thinking_key: None,
         created_at: now,
         updated_at: now,
     })
@@ -356,6 +364,8 @@ pub fn create_temp(
         parent_session_id: Some(parent_id.to_string()),
         is_temporary: true,
         spawn_task_id: spawn_task_id.map(|s| s.to_string()),
+        last_response_id: None,
+        cache_thinking_key: None,
         created_at: now,
         updated_at: now,
     })
@@ -456,6 +466,7 @@ pub fn update_config(
         ));
     }
     validate_model_param_settings(llm_params)?;
+    let prev = get(conn, id)?;
     let params_json = serde_json::to_string(llm_params)
         .map_err(|e| AppError::Invalid(format!("failed to serialize llm_params: {e}")))?;
     let updated = now_ms();
@@ -465,6 +476,13 @@ pub fn update_config(
     )?;
     if n == 0 {
         return Err(AppError::NotFound(format!("session {id}")));
+    }
+    // System prompt or thinking changes break the Volcengine cache chain.
+    let thinking_changed = prev.llm_params.thinking_enabled != llm_params.thinking_enabled
+        || prev.llm_params.thinking_effort != llm_params.thinking_effort;
+    let prompt_changed = prev.system_prompt != system_prompt;
+    if thinking_changed || prompt_changed {
+        let _ = clear_response_cache(conn, id);
     }
     Ok(())
 }
@@ -482,14 +500,39 @@ pub fn set_provider_model_and_context(
     let trimmed_provider = provider_id.map(str::trim).filter(|s| !s.is_empty());
     let trimmed_model = model.map(str::trim).filter(|s| !s.is_empty());
     let updated = now_ms();
+    // Provider/model changes invalidate any in-flight Responses cache chain.
     let n = conn.execute(
-        "UPDATE sessions SET provider_id=?1, model=?2, context_window=?3, updated_at=?4 WHERE id=?5",
+        "UPDATE sessions SET provider_id=?1, model=?2, context_window=?3,
+                last_response_id=NULL, cache_thinking_key=NULL, updated_at=?4 WHERE id=?5",
         params![trimmed_provider, trimmed_model, context_window, updated, id],
     )?;
     if n == 0 {
         return Err(AppError::NotFound(format!("session {id}")));
     }
     Ok(())
+}
+
+/// Persist the latest Responses API cache chain tip for this session.
+pub fn set_response_cache(
+    conn: &DbConn,
+    id: &str,
+    last_response_id: Option<&str>,
+    cache_thinking_key: Option<&str>,
+) -> AppResult<()> {
+    let updated = now_ms();
+    let n = conn.execute(
+        "UPDATE sessions SET last_response_id=?1, cache_thinking_key=?2, updated_at=?3 WHERE id=?4",
+        params![last_response_id, cache_thinking_key, updated, id],
+    )?;
+    if n == 0 {
+        return Err(AppError::NotFound(format!("session {id}")));
+    }
+    Ok(())
+}
+
+/// Drop the local Session-cache chain tip (does not call the remote DELETE API).
+pub fn clear_response_cache(conn: &DbConn, id: &str) -> AppResult<()> {
+    set_response_cache(conn, id, None, None)
 }
 
 /// Recompute `sessions.context_window_used` from stored messages.
@@ -733,7 +776,7 @@ fn map_search_result(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSearchR
 pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
     let mut stmt = conn.prepare(
         "SELECT id, title, model, system_prompt, history_turns, llm_params, context_window, context_window_used, agent_type, project_id, created_at, updated_at, agent_chain, provider_id,
-                parent_session_id, is_temporary, spawn_task_id
+                parent_session_id, is_temporary, spawn_task_id, last_response_id, cache_thinking_key
          FROM sessions WHERE id=?1",
     )?;
     let mut rows = stmt.query(params![id])?;
@@ -757,6 +800,8 @@ pub fn get(conn: &DbConn, id: &str) -> AppResult<Session> {
             parent_session_id: row.get(14)?,
             is_temporary: is_temporary != 0,
             spawn_task_id: row.get(16)?,
+            last_response_id: row.get(17)?,
+            cache_thinking_key: row.get(18)?,
             created_at: row.get(10)?,
             updated_at: row.get(11)?,
         })

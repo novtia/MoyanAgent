@@ -239,6 +239,7 @@ impl SubagentSessionHost for TauriSubagentHost {
             thinking_content: result.thinking_content.clone(),
             usage: result.usage.clone(),
             tool_calls: Vec::new(),
+            response_id: result.response_id.clone(),
         };
         let _ = finalize_generate_assistant_message(
             &self.app,

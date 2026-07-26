@@ -37,13 +37,19 @@ pub fn build_chat_request(
         return Err(AppError::Config("missing active model".into()));
     }
 
+    let sdk = providers::normalize_sdk(&provider.sdk);
+    let context_cache_enabled = provider.context_cache_enabled
+        && sdk == providers::OPENAI_RESPONSES_SDK
+        && crate::ai::parameters::is_volcengine_endpoint(&provider.endpoint);
+
     Ok(ChatRequest {
         provider: ProviderConfig {
             id: provider.id.clone(),
             name: provider.name.clone(),
-            sdk: providers::normalize_sdk(&provider.sdk),
+            sdk,
             endpoint: provider.endpoint.clone(),
             api_key: provider.api_key.clone(),
+            context_cache_enabled,
         },
         model: model.to_string(),
         prompt,
@@ -55,5 +61,7 @@ pub fn build_chat_request(
         tool_chain: Vec::new(),
         tool_results: Vec::new(),
         pending_assistant_turn: None,
+        previous_response_id: None,
+        context_cache_enabled,
     })
 }

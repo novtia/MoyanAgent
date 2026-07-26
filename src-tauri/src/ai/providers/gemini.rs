@@ -342,6 +342,7 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
         thinking_content: None,
         usage: usage(&v),
         tool_calls,
+        response_id: None,
     })
 }
 

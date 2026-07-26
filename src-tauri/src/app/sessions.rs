@@ -195,6 +195,48 @@ pub fn delete_session(
         let conn = state.conn()?;
         session::list_temp_child_ids(&conn, &id).unwrap_or_default()
     };
+    // Best-effort remote Responses cache cleanup before rows disappear.
+    {
+        let conn = state.conn()?;
+        let s = settings::read(&conn).ok();
+        let mut ids = child_ids.clone();
+        ids.push(id.clone());
+        for sid in ids {
+            if let Ok(sess) = session::get(&conn, &sid) {
+                if let Some(resp_id) = sess
+                    .last_response_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|x| !x.is_empty())
+                {
+                    let provider = s.as_ref().and_then(|settings| {
+                        sess.provider_id
+                            .as_ref()
+                            .and_then(|pid| {
+                                settings.model_services.iter().find(|p| p.id == *pid)
+                            })
+                            .or_else(|| {
+                                settings
+                                    .model_services
+                                    .iter()
+                                    .find(|p| p.id == settings.active_provider_id)
+                            })
+                    });
+                    if let Some(p) = provider {
+                        let endpoint = p.endpoint.clone();
+                        let api_key = p.api_key.clone();
+                        let resp_id = resp_id.to_string();
+                        tauri::async_runtime::spawn(async move {
+                            crate::ai::providers::openai::delete_stored_response(
+                                &endpoint, &api_key, &resp_id,
+                            )
+                            .await;
+                        });
+                    }
+                }
+            }
+        }
+    }
     {
         let conn = state.conn()?;
         // Explicitly remove temp children first (FK CASCADE is best-effort

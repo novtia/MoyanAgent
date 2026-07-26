@@ -30,7 +30,9 @@ use crate::ai::agent::exec::query::{
 };
 use crate::ai::agent::tools::{ToolInvocation, ToolPool, ToolResult};
 use crate::ai::agent::types::{AgentId, MessageEvent, MessageId};
-use crate::ai::chat::{ChatRequest, GenerateResponse, StreamDelta, TextDeltaCallback};
+use crate::ai::chat::{
+    emit_text_deltas, emit_thinking_deltas, ChatRequest, GenerateResponse, TextDeltaCallback,
+};
 use crate::ai::providers::ProviderFactory;
 use crate::ai::token_log::{ApiCallLog, LogContext, ToolCallLog};
 use crate::error::{AppError, AppResult};
@@ -240,6 +242,17 @@ impl QueryEngine for ProviderQueryEngine {
                     tool_uses,
                 } = turn;
 
+                // Volcengine Session cache: relay response.id into the next
+                // provider call as previous_response_id.
+                if let Some(id) = response
+                    .response_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    chat.previous_response_id = Some(id.to_string());
+                }
+
                 if let (Some(cb), Some(tracker)) = (on_text_delta.as_ref(), tracker.as_ref()) {
                     if tracker.thinking_chars.load(Ordering::Relaxed) == 0 {
                         if let Some(t) = response
@@ -248,12 +261,12 @@ impl QueryEngine for ProviderQueryEngine {
                             .map(str::trim)
                             .filter(|s| !s.is_empty())
                         {
-                            cb(StreamDelta::thinking(t.to_string()));
+                            emit_thinking_deltas(cb, t);
                         }
                     }
                     if tracker.text_chars.load(Ordering::Relaxed) == 0 {
                         if let Some(t) = response.text.as_deref().filter(|s| !s.is_empty()) {
-                            cb(StreamDelta::text(t.to_string()));
+                            emit_text_deltas(cb, t);
                         }
                     }
                 }
@@ -336,6 +349,7 @@ impl QueryEngine for ProviderQueryEngine {
                         tool_call_count,
                         images: final_images,
                         videos: final_videos,
+                        response_id: chat.previous_response_id.clone(),
                     });
                 }
 

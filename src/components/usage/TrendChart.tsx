@@ -65,6 +65,7 @@ export function TrendChart({ rows, fromLabel, toLabel }: TrendChartProps) {
     const width = 800;
     const height = 190;
     const baseline = 164;
+    const labelY = baseline + 16;
     const topPad = 20;
     const usable = baseline - topPad;
     const n = Math.max(plotRows.length, 1);
@@ -106,7 +107,7 @@ export function TrendChart({ rows, fromLabel, toLabel }: TrendChartProps) {
         cx: x + barW / 2,
       };
     });
-    return { width, height, baseline, bars };
+    return { width, height, baseline, labelY, bars };
   }, [plotRows]);
 
   // Only show tip while hovering — never pin to the last bar.
@@ -293,11 +294,34 @@ export function TrendChart({ rows, fromLabel, toLabel }: TrendChartProps) {
               </g>
             </>
           )}
+          {/* Axis dates sit on bar centers so they stay aligned with columns. */}
+          {chart.bars[0] && firstDate && (
+            <text
+              x={chart.bars[0].cx}
+              y={chart.labelY}
+              textAnchor="middle"
+              fontSize="10.5"
+              fill="var(--ink-mute)"
+              fontFamily="Instrument Sans, sans-serif"
+              style={{ fontVariantNumeric: "tabular-nums" }}
+            >
+              {formatMdAxis(firstDate)}
+            </text>
+          )}
+          {!sameDay && chart.bars.length > 1 && lastDate && (
+            <text
+              x={chart.bars[chart.bars.length - 1].cx}
+              y={chart.labelY}
+              textAnchor="middle"
+              fontSize="10.5"
+              fill="var(--ink-mute)"
+              fontFamily="Instrument Sans, sans-serif"
+              style={{ fontVariantNumeric: "tabular-nums" }}
+            >
+              {formatMdAxis(lastDate)}
+            </text>
+          )}
         </svg>
-      </div>
-      <div className={`usage-chart-x ${sameDay ? "usage-chart-x--single" : "usage-chart-x--ends"}`}>
-        <span>{formatMdAxis(firstDate)}</span>
-        {!sameDay && <span>{formatMdAxis(lastDate)}</span>}
       </div>
     </div>
   );

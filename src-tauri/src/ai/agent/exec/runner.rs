@@ -97,6 +97,8 @@ pub struct RunAgentResult {
     pub tool_call_count: u32,
     pub images: Vec<ImageResult>,
     pub videos: Vec<MediaResult>,
+    /// Latest Responses API `response.id` for Session cache chaining.
+    pub response_id: Option<String>,
 }
 
 /// Drive a single sub-agent end-to-end.
@@ -255,6 +257,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
                 tool_call_count: qr.tool_call_count,
                 images: qr.images,
                 videos: qr.videos,
+                response_id: qr.response_id,
             })
         }
         Err(e) => {

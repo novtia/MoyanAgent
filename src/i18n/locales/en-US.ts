@@ -751,6 +751,9 @@ const enUS: Resource = {
       presencePenalty: "Presence penalty",
       presencePenaltyHint: "-2 to 2, encourages new topics",
       paramInvalid: "Invalid number, ignored",
+      contextCacheLabel: "Context cache (Session)",
+      contextCacheHint:
+        "Volcengine Ark Responses API only: chain turns with previous_response_id for cheaper cached input. Production may require enabling the feature separately.",
     },
     system: {
       notifySoundTitle: "Notification sound",

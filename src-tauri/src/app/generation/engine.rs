@@ -199,6 +199,9 @@ pub(crate) async fn run_agent_chain(
         merged.usage = resp.usage;
         merged.images.extend(resp.images);
         merged.videos.extend(resp.videos);
+        if resp.response_id.is_some() {
+            merged.response_id = resp.response_id;
+        }
         if !passthrough {
             prev_text = resp.text.clone();
             merged.text = resp.text;
@@ -361,6 +364,7 @@ pub(crate) async fn run_cancellable_generation(
         thinking_content: run.thinking_content,
         usage: run.usage,
         tool_calls: Vec::new(),
+        response_id: run.response_id,
     })
 }
 

@@ -164,23 +164,46 @@ pub(crate) fn append_text_delta_block(blocks: &mut Vec<serde_json::Value>, delta
     blocks.push(serde_json::json!({ "type": "text", "content": delta }));
 }
 
-/// Same as [`append_text_delta_block`] but for `thinking` blocks.
+/// Append a thinking delta, keeping thinking **before** text in the current
+/// segment (after the last `tool_use` / `agent_stage`).
+///
+/// Some providers (e.g. Volcengine Responses) stream `output_text` first and
+/// only surface reasoning on `response.completed`. A naive push would place
+/// thinking after the answer; we insert/merge at the segment head instead.
 pub(crate) fn append_thinking_delta_block(blocks: &mut Vec<serde_json::Value>, delta: &str) {
     if delta.is_empty() {
         return;
     }
-    if let Some(last) = blocks.last_mut() {
-        if last.get("type").and_then(|v| v.as_str()) == Some("thinking") {
-            if let Some(content) = last.get_mut("content").and_then(|c| c.as_str()) {
-                let merged = format!("{content}{delta}");
-                if let Some(obj) = last.as_object_mut() {
-                    obj.insert("content".into(), serde_json::Value::String(merged));
-                }
-                return;
+
+    let segment_start = blocks
+        .iter()
+        .rposition(|b| {
+            matches!(
+                b.get("type").and_then(|v| v.as_str()),
+                Some("tool_use" | "agent_stage")
+            )
+        })
+        .map(|i| i + 1)
+        .unwrap_or(0);
+
+    if let Some(rel) = blocks[segment_start..]
+        .iter()
+        .position(|b| b.get("type").and_then(|v| v.as_str()) == Some("thinking"))
+    {
+        let idx = segment_start + rel;
+        if let Some(content) = blocks[idx].get("content").and_then(|c| c.as_str()) {
+            let merged = format!("{content}{delta}");
+            if let Some(obj) = blocks[idx].as_object_mut() {
+                obj.insert("content".into(), serde_json::Value::String(merged));
             }
+            return;
         }
     }
-    blocks.push(serde_json::json!({ "type": "thinking", "content": delta }));
+
+    blocks.insert(
+        segment_start,
+        serde_json::json!({ "type": "thinking", "content": delta }),
+    );
 }
 
 /// Push a new `tool_use` block in `pending` state.
@@ -252,11 +275,12 @@ pub(crate) fn stream_text_callback(
                 .unwrap_or_else(|_| t.to_string())
         });
         if let Ok(mut g) = blocks.lock() {
-            if let Some(t) = cleaned_text.as_deref() {
-                append_text_delta_block(&mut g, t);
-            }
+            // Thinking first so late/same-chunk reasoning stays above answer text.
             if let Some(t) = delta.thinking.as_deref() {
                 append_thinking_delta_block(&mut g, t);
+            }
+            if let Some(t) = cleaned_text.as_deref() {
+                append_text_delta_block(&mut g, t);
             }
         }
         // Live tool-call argument fragments are renderer-only: the shared
@@ -276,13 +300,14 @@ pub(crate) fn stream_text_callback(
             Some("") => None,
             other => other.map(|s| s.to_string()),
         };
+        // Frontend applies thinking_delta before text_delta for the same event.
         let _ = app.emit(
             "gen://stream",
             serde_json::json!({
                 "session_id": &session_id,
                 "request_message_id": &request_message_id,
-                "text_delta": emit_text,
                 "thinking_delta": delta.thinking,
+                "text_delta": emit_text,
                 "tool_call_delta": tool_call_delta,
             }),
         );

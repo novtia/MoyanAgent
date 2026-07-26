@@ -96,6 +96,7 @@ async fn generate(request: ChatRequest) -> AppResult<GenerateResponse> {
         thinking_content: None,
         usage: tokens::extract_usage(&task),
         tool_calls: Vec::new(),
+        response_id: None,
     })
 }
 

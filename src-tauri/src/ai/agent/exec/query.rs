@@ -70,6 +70,9 @@ pub struct QueryResult {
     pub images: Vec<crate::ai::chat::ImageResult>,
     /// Videos emitted on the final turn by asynchronous video providers.
     pub videos: Vec<crate::ai::chat::MediaResult>,
+    /// Latest Responses API `response.id` from the final provider call
+    /// (Volcengine Session cache chain tip).
+    pub response_id: Option<String>,
 }
 
 /// Async return type used by [`QueryEngine`].
