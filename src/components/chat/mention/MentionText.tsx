@@ -4,10 +4,11 @@ import {
   type MentionMediaRenderData,
 } from "./core";
 import { MentionChip } from "./MentionChip";
+import { RoleCiteChip } from "./RoleCiteChip";
 
 /**
- * Render plain message text, turning serialized `@<absolutePath>` mentions into
- * static reference cards ({@link MentionChip}).
+ * Render plain message text, turning serialized `@file` / `@role` tokens into
+ * static reference cards.
  */
 export function MentionText({
   text,
@@ -24,16 +25,20 @@ export function MentionText({
     return text;
   }
 
-  return segments.map((seg, i) =>
-    seg.type === "text" ? (
-      <Fragment key={`t${i}`}>{seg.value}</Fragment>
-    ) : (
+  return segments.map((seg, i) => {
+    if (seg.type === "text") {
+      return <Fragment key={`t${i}`}>{seg.value}</Fragment>;
+    }
+    if (seg.type === "roleCite") {
+      return <RoleCiteChip key={`r${i}`} id={seg.id} name={seg.name} />;
+    }
+    return (
       <MentionChip
         key={`m${i}`}
         path={seg.path}
         range={seg.range}
         previewSrc={mediaByPath[seg.path]?.previewSrc}
       />
-    ),
-  );
+    );
+  });
 }

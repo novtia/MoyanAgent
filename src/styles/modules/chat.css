@@ -642,16 +642,28 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
 }
 .right-panel-body > .chat-gallery-grid,
 .right-panel-body > .agent-flow,
 .right-panel-body > .afc,
 .right-panel-body > .reader-workspace {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
   min-width: 0;
   width: 100%;
+}
+/* Role archive grows with content; body is the scrollport (not an inner flex clip). */
+.right-panel-body > .arc-panel {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: min-content;
+  overflow: visible;
 }
 
 /* ───── right panel: type picker (empty state) ───── */
@@ -940,13 +952,14 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
   background: var(--bg);
-  color: var(--ink-1);
+  color: var(--ink);
   font-size: 11px;
   padding: 2px 8px;
   cursor: pointer;
 }
 .agent-flow-tools-toggle:hover:not(:disabled) {
-  border-color: var(--blue-500);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .agent-flow-tools-toggle:disabled {
   opacity: 0.5;
@@ -959,7 +972,7 @@
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  background: var(--field-bg, var(--bg-soft));
   max-height: 160px;
   overflow-y: auto;
 }
@@ -988,18 +1001,63 @@
   border-bottom: none;
 }
 .agent-flow-tool-row:hover {
-  background: var(--bg-sunk);
+  background: var(--bg-hover);
 }
-.agent-flow-tool-row input {
+.agent-flow-tool-row input[type="checkbox"],
+.agent-flow-tool input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 15px;
+  height: 15px;
   margin: 0;
   flex-shrink: 0;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+  color: var(--bg);
   cursor: pointer;
+  accent-color: var(--accent);
+  transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.agent-flow-tool-row input[type="checkbox"]:hover,
+.agent-flow-tool input[type="checkbox"]:hover {
+  border-color: var(--accent-soft);
+}
+.agent-flow-tool-row input[type="checkbox"]:checked,
+.agent-flow-tool input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23ffffff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.2l2.8 2.8 6.2-6.2'/%3E%3C/svg%3E");
+  background-size: 11px 11px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+/* Dark theme accent is near-white; invert the check glyph for contrast. */
+:root[data-theme="dark"] .agent-flow-tool-row input[type="checkbox"]:checked,
+:root[data-theme="dark"] .agent-flow-tool input[type="checkbox"]:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23101112' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.2l2.8 2.8 6.2-6.2'/%3E%3C/svg%3E");
+}
+.agent-flow-tool-row input[type="checkbox"]:checked:hover,
+.agent-flow-tool input[type="checkbox"]:checked:hover {
+  background-color: var(--accent-soft);
+  border-color: var(--accent-soft);
+}
+.agent-flow-tool-row input[type="checkbox"]:focus-visible,
+.agent-flow-tool input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.agent-flow-tool-row input[type="checkbox"]:disabled,
+.agent-flow-tool input[type="checkbox"]:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .agent-flow-tool-name {
   flex-shrink: 0;
   font-size: 13px;
   font-weight: 500;
-  color: var(--ink-1);
+  color: var(--ink);
   white-space: nowrap;
 }
 .agent-flow-tool-desc {
@@ -1014,19 +1072,15 @@
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--ink-1);
+  color: var(--ink);
   padding: 3px 8px;
   border: 1px solid var(--line);
   border-radius: 999px;
   cursor: pointer;
   user-select: none;
 }
-.agent-flow-tool input {
-  margin: 0;
-  cursor: pointer;
-}
 .agent-flow-tool:hover {
-  border-color: var(--blue-500);
+  border-color: var(--accent);
 }
 .agent-flow-tools-empty,
 .agent-flow-tools-hint {

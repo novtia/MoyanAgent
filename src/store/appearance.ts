@@ -44,7 +44,7 @@ export const UI_FONT_PRESETS: {
   {
     id: "sans",
     value:
-      "'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif",
+      "system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
   },
   {
     id: "serif",

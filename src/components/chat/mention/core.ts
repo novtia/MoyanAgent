@@ -7,6 +7,12 @@
  * handlers all behave identically. No React in this file (pure + DOM helpers).
  */
 
+import {
+  createRoleCiteNode,
+  parseRoleCiteAt,
+  serializeRoleCite,
+} from "./roleCite";
+
 export const MENTION_PREFIX = "@";
 
 /**
@@ -25,7 +31,8 @@ export interface MentionRange {
 
 export type MentionSegment =
   | { type: "text"; value: string }
-  | { type: "mention"; path: string; range?: MentionRange };
+  | { type: "mention"; path: string; range?: MentionRange }
+  | { type: "roleCite"; id: string; name?: string };
 
 export type MediaMentionKind = "image" | "audio" | "video";
 export type MentionIconKind =
@@ -243,7 +250,7 @@ export function parseMentionAt(
   return null;
 }
 
-/** Split plain text into alternating text / mention segments. */
+/** Split plain text into alternating text / mention / role-cite segments. */
 export function parseMentionSegments(text: string): MentionSegment[] {
   const segments: MentionSegment[] = [];
   if (!text) return segments;
@@ -257,6 +264,16 @@ export function parseMentionSegments(text: string): MentionSegment[] {
     }
     if (at > i) {
       segments.push({ type: "text", value: text.slice(i, at) });
+    }
+    const roleCite = parseRoleCiteAt(text, at);
+    if (roleCite) {
+      segments.push({
+        type: "roleCite",
+        id: roleCite.id,
+        name: roleCite.name,
+      });
+      i = at + roleCite.length;
+      continue;
     }
     const parsed = parseMentionAt(text, at);
     if (parsed) {
@@ -369,7 +386,7 @@ export function createMentionNode(
   return chip;
 }
 
-/** Serialize the editor DOM into plain text (mentions -> `@<path>`). */
+/** Serialize the editor DOM into plain text (mentions / role cites -> tokens). */
 export function serializeMentions(root: HTMLElement): string {
   let out = "";
   const walk = (node: Node) => {
@@ -380,7 +397,12 @@ export function serializeMentions(root: HTMLElement): string {
       }
       if (child.nodeType !== Node.ELEMENT_NODE) return;
       const el = child as HTMLElement;
-      if (el.dataset.path) {
+      if (el.dataset.roleId) {
+        out += serializeRoleCite({
+          id: el.dataset.roleId,
+          name: el.dataset.roleName,
+        });
+      } else if (el.dataset.path) {
         out += serializeMentionPath(el.dataset.path, rangeFromDataset(el));
       } else if (el.tagName === "BR") {
         out += "\n";
@@ -431,6 +453,15 @@ export function buildMentionNodes(
   };
   while (i < text.length) {
     if (text[i] === MENTION_PREFIX) {
+      const roleCite = parseRoleCiteAt(text, i);
+      if (roleCite) {
+        flush();
+        nodes.push(
+          createRoleCiteNode({ id: roleCite.id, name: roleCite.name }),
+        );
+        i += roleCite.length;
+        continue;
+      }
       const parsed = parseMentionAt(text, i);
       if (parsed) {
         flush();

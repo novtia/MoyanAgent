@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 import { dialog } from "../../../ui";
@@ -16,11 +16,37 @@ import {
   useRoleState,
 } from "../../../../store/roleState";
 import { RoleStateEditModal } from "./RoleStateEditModal";
-import { ChevronIcon } from "./icons";
+import { ChevronIcon, LocIcon, MoodIcon, OutfitIcon, StampStarIcon } from "./icons";
 import { useChangedKeys, useChangedString } from "./hooks/useChangeFlash";
 import { genderLabel, nsfwLabel } from "./utils/labels";
 import { asMeter, pct } from "./utils/meters";
 import type { RadarDatum, RoleStateCardProps } from "./types";
+
+function portraitGlyph(nameOrId: string): string {
+  const s = nameOrId.trim();
+  if (!s) return "?";
+  const cjk = s.match(/[\u4e00-\u9fff]/);
+  if (cjk) return cjk[0];
+  const letter = s.match(/[A-Za-z0-9]/);
+  if (letter) return letter[0].toUpperCase();
+  return s[0];
+}
+
+function fileNo(id: string): string {
+  const raw = id.trim() || "unknown";
+  const clipped = raw.length > 18 ? `${raw.slice(0, 16)}...` : raw;
+  return `MY-${clipped}`;
+}
+
+function GaugeTicks() {
+  return (
+    <>
+      <span className="tick" style={{ left: "25%" }} />
+      <span className="tick" style={{ left: "50%" }} />
+      <span className="tick" style={{ left: "75%" }} />
+    </>
+  );
+}
 
 function RadarChart({
   data,
@@ -29,10 +55,10 @@ function RadarChart({
   data: Array<RadarDatum>;
   changed: Set<string>;
 }) {
-  const size = 168;
+  const size = 200;
   const cx = size / 2;
   const cy = size / 2;
-  const radius = size / 2 - 26;
+  const radius = size / 2 - 36;
   const n = data.length;
 
   const points = useMemo(() => {
@@ -44,16 +70,15 @@ function RadarChart({
         y: cy + Math.sin(angle) * r,
         ax: cx + Math.cos(angle) * radius,
         ay: cy + Math.sin(angle) * radius,
-        lx: cx + Math.cos(angle) * (radius + 14),
-        ly: cy + Math.sin(angle) * (radius + 14),
+        lx: cx + Math.cos(angle) * (radius + 16),
+        ly: cy + Math.sin(angle) * (radius + 16),
       };
     });
   }, [data, n, radius, cx, cy]);
 
   if (n < 3) {
-    // A polygon needs at least 3 vertices; fall back to bars for 1-2 dims.
     return (
-      <div className="rs-bars">
+      <div className="arc-gauges">
         {data.map(([k, v, max]) => (
           <MeterBar key={k} label={k} value={v} max={max ?? 100} flash={changed.has(k)} />
         ))}
@@ -61,16 +86,16 @@ function RadarChart({
     );
   }
 
-  const rings = [0.25, 0.5, 0.75, 1];
+  const rings = [0.33, 0.66, 1];
   const polygon = points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
   const areaChanged = data.some(([k]) => changed.has(k));
 
   return (
-    <svg className="rs-radar" viewBox={`0 0 ${size} ${size}`} role="img">
-      {rings.map((ring) => (
+    <svg className="arc-radar" viewBox={`0 0 ${size} ${size}`} role="img">
+      {rings.map((ring, idx) => (
         <polygon
           key={ring}
-          className="rs-radar-ring"
+          className={`arc-radar-ring ${idx === rings.length - 1 ? "is-outer" : ""}`}
           points={data
             .map((_, i) => {
               const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
@@ -81,20 +106,23 @@ function RadarChart({
         />
       ))}
       {points.map((p, i) => (
-        <line key={i} className="rs-radar-spoke" x1={cx} y1={cy} x2={p.ax} y2={p.ay} />
+        <line key={i} className="arc-radar-spoke" x1={cx} y1={cy} x2={p.ax} y2={p.ay} />
       ))}
-      <polygon className={`rs-radar-area ${areaChanged ? "is-changed" : ""}`} points={polygon} />
+      <polygon className={`arc-radar-area ${areaChanged ? "is-changed" : ""}`} points={polygon} />
+      {points.map((p, i) => (
+        <circle key={`d-${i}`} className="arc-radar-dot" cx={p.x} cy={p.y} r={2.4} />
+      ))}
       {points.map((p, i) => (
         <text
           key={i}
-          className="rs-radar-label"
+          className="arc-radar-label"
           x={p.lx}
           y={p.ly}
           textAnchor={p.lx < cx - 4 ? "end" : p.lx > cx + 4 ? "start" : "middle"}
           dominantBaseline="middle"
         >
           {data[i][0]}
-          <tspan className="rs-radar-value" dx="4">
+          <tspan className="arc-radar-value" dx="4">
             {Math.round(data[i][1])}
           </tspan>
         </text>
@@ -116,22 +144,22 @@ function MeterBar({
 }) {
   const percentage = pct(value, max);
   return (
-    <div className={`rs-meter ${flash ? "is-changed" : ""}`}>
-      <div className="rs-meter-head">
-        <span className="rs-meter-label">{label}</span>
-        <span className="rs-meter-value">
+    <div className={`arc-gauge ${flash ? "is-changed" : ""}`}>
+      <div className="arc-gauge-head">
+        <span className="arc-gauge-label">{label}</span>
+        <span className="arc-gauge-value">
           {Math.round(value)}
-          {max !== 100 ? <span className="rs-meter-max">/{Math.round(max)}</span> : null}
+          {max !== 100 ? <span className="arc-gauge-max">/{Math.round(max)}</span> : null}
         </span>
       </div>
-      <div className="rs-meter-track">
-        <div className="rs-meter-fill" style={{ width: `${percentage}%` }} />
+      <div className="arc-gauge-track">
+        <GaugeTicks />
+        <div className="arc-gauge-fill" style={{ width: `${percentage}%` }} />
       </div>
     </div>
   );
 }
 
-/** Millilitre readout — raw volume, not normalised to 0-100. */
 function MlGauge({
   label,
   valueMl,
@@ -143,17 +171,41 @@ function MlGauge({
 }) {
   const display = Number.isInteger(valueMl) ? String(valueMl) : valueMl.toFixed(1);
   return (
-    <div className={`rs-ml-gauge ${flash ? "is-changed" : ""}`}>
-      <span className="rs-ml-label">{label}</span>
-      <span className="rs-ml-value">
+    <div className={`arc-ml ${flash ? "is-changed" : ""}`}>
+      <span className="arc-ml-label">{label}</span>
+      <span className="arc-ml-value">
         {display}
-        <span className="rs-ml-unit">ml</span>
+        <span className="arc-ml-unit">ml</span>
       </span>
     </div>
   );
 }
 
-/** Structured NSFW panel: arousal bars ? gender-specific semen ? status / chips. */
+function RegistryRow({
+  icon,
+  label,
+  value,
+  emptyLabel,
+}: {
+  icon: ReactNode;
+  label: string;
+  value?: string | null;
+  emptyLabel: string;
+}) {
+  const filled = Boolean(value && String(value).trim());
+  return (
+    <div className="arc-row">
+      <span className="arc-row-key">
+        <span className="ti">{icon}</span>
+        {label}
+      </span>
+      <span className={`arc-row-val ${filled ? "" : "is-empty"}`}>
+        {filled ? value : emptyLabel}
+      </span>
+    </div>
+  );
+}
+
 function NsfwPanel({
   nsfw,
   gender,
@@ -170,10 +222,8 @@ function NsfwPanel({
   const isFemale = gender === "female";
   const unknownGender = gender == null;
 
-  const textureText =
-    isMale || unknownGender ? semenText(semen, "texture") : null;
-  const exteriorText =
-    isFemale || unknownGender ? semenText(semen, "exterior") : null;
+  const textureText = isMale || unknownGender ? semenText(semen, "texture") : null;
+  const exteriorText = isFemale || unknownGender ? semenText(semen, "exterior") : null;
 
   const mlEntries =
     isFemale || unknownGender
@@ -206,9 +256,9 @@ function NsfwPanel({
   const extras = Object.entries(nsfw).filter(([k]) => !reserved.has(k));
 
   return (
-    <div className="rs-nsfw-body">
+    <div className="arc-sealed-body">
       {scalarEntries.length > 0 && (
-        <div className="rs-bars">
+        <div className="arc-gauges">
           {scalarEntries.map(([k, v]) => (
             <MeterBar
               key={k}
@@ -222,22 +272,21 @@ function NsfwPanel({
       )}
 
       {hasSemenSection && (
-        <div className="rs-nsfw-semen">
-          <div className="rs-nsfw-semen-title">{t("roleState.nsfwSemenSection")}</div>
+        <>
           {textureText && (
-            <div className={`rs-kv rs-kv-exterior ${textureChanged ? "is-changed" : ""}`}>
-              <span className="rs-kv-key">{nsfwLabel(t, "texture", true)}</span>
-              <span className="rs-kv-value">{textureText}</span>
+            <div className={`arc-kv arc-kv-exterior ${textureChanged ? "is-changed" : ""}`}>
+              <span className="arc-kv-key">{nsfwLabel(t, "texture", true)}</span>
+              <span className="arc-kv-value">{textureText}</span>
             </div>
           )}
           {exteriorText && (
-            <div className={`rs-kv rs-kv-exterior ${exteriorChanged ? "is-changed" : ""}`}>
-              <span className="rs-kv-key">{nsfwLabel(t, "exterior", true)}</span>
-              <span className="rs-kv-value">{exteriorText}</span>
+            <div className={`arc-kv arc-kv-exterior ${exteriorChanged ? "is-changed" : ""}`}>
+              <span className="arc-kv-key">{nsfwLabel(t, "exterior", true)}</span>
+              <span className="arc-kv-value">{exteriorText}</span>
             </div>
           )}
           {mlEntries.length > 0 && (
-            <div className="rs-ml-list">
+            <div className="arc-ml-list">
               {mlEntries.map(([k, v]) => (
                 <MlGauge
                   key={k}
@@ -248,22 +297,22 @@ function NsfwPanel({
               ))}
             </div>
           )}
-        </div>
+        </>
       )}
 
       {status && (
-        <div className="rs-kv">
-          <span className="rs-kv-key">{nsfwLabel(t, "status")}</span>
-          <span className="rs-kv-value">{status}</span>
+        <div className="arc-sealed-note">
+          <span className="k">{nsfwLabel(t, "status")}</span>
+          <span>{status}</span>
         </div>
       )}
 
       {sensitive.length > 0 && (
-        <div className="rs-kv rs-kv-chips">
-          <span className="rs-kv-key">{nsfwLabel(t, "sensitive_spots")}</span>
-          <span className="rs-chips">
+        <div className="arc-sealed-note">
+          <span className="k">{nsfwLabel(t, "sensitive_spots")}</span>
+          <span className="arc-sealed-chips">
             {sensitive.map((it, i) => (
-              <span key={i} className="rs-chip">
+              <span key={i} className="arc-sealed-chip">
                 {it}
               </span>
             ))}
@@ -281,7 +330,6 @@ function NsfwPanel({
   );
 }
 
-/** Render leftover nsfw keys: numbers?bars, arrays?chips, strings?text. */
 function FieldGroup({ data, changed }: { data: Record<string, unknown>; changed: Set<string> }) {
   const entries = Object.entries(data);
   const numbers = entries.filter(([, v]) => typeof v === "number") as Array<[string, number]>;
@@ -291,26 +339,26 @@ function FieldGroup({ data, changed }: { data: Record<string, unknown>; changed:
   );
 
   return (
-    <div className="rs-fieldgroup">
+    <div className="arc-fieldgroup">
       {numbers.length > 0 && (
-        <div className="rs-bars">
+        <div className="arc-gauges">
           {numbers.map(([k, v]) => (
             <MeterBar key={k} label={k} value={v} max={100} flash={changed.has(k)} />
           ))}
         </div>
       )}
       {texts.map(([k, v]) => (
-        <div key={k} className="rs-kv">
-          <span className="rs-kv-key">{k}</span>
-          <span className="rs-kv-value">{String(v)}</span>
+        <div key={k} className="arc-sealed-note">
+          <span className="k">{k}</span>
+          <span>{String(v)}</span>
         </div>
       ))}
       {arrays.map(([k, arr]) => (
-        <div key={k} className="rs-kv rs-kv-chips">
-          <span className="rs-kv-key">{k}</span>
-          <span className="rs-chips">
+        <div key={k} className="arc-sealed-note">
+          <span className="k">{k}</span>
+          <span className="arc-sealed-chips">
             {arr.map((it, i) => (
-              <span key={i} className="rs-chip">
+              <span key={i} className="arc-sealed-chip">
                 {String(it)}
               </span>
             ))}
@@ -325,6 +373,8 @@ export const RoleStateCard = memo(function RoleStateCard({
   role,
   sessionId,
   scopeId,
+  isDragging,
+  onCardPointerDown,
 }: RoleStateCardProps) {
   const { t } = useTranslation();
   const [nsfwOpen, setNsfwOpen] = useState(false);
@@ -345,7 +395,9 @@ export const RoleStateCard = memo(function RoleStateCard({
     return Object.entries(m).map(([k, v]) => [k, asMeter(v as RoleMeter | number)] as [string, RoleMeter]);
   }, [role.meters]);
 
-  // Snapshot of every scalar we track, for change flashing.
+  const vitals = attributes.slice(0, 3);
+  const leftoverAttrs = attributes.slice(3);
+
   const scalarSnapshot = useMemo(() => {
     const snap: Record<string, number> = {};
     attributes.forEach(([k, v]) => (snap[`attr:${k}`] = v));
@@ -379,18 +431,9 @@ export const RoleStateCard = memo(function RoleStateCard({
     [changedRaw],
   );
 
-  // attributes (0-100) + meters (own max) merged into one radar dataset; the
-  // graph kicks in once the combined dimension count exceeds 3.
-  const scalars = useMemo<Array<RadarDatum>>(
-    () => [
-      ...attributes.map(([k, v]) => [k, v, 100] as RadarDatum),
-      ...meters.map(([k, m]) => [k, m.value, m.max ?? 100] as RadarDatum),
-    ],
-    [attributes, meters],
-  );
-  const changedScalar = useMemo(
-    () => new Set<string>([...changedAttr, ...changedMeter]),
-    [changedAttr, changedMeter],
+  const radarData = useMemo<Array<RadarDatum>>(
+    () => leftoverAttrs.map(([k, v]) => [k, v, 100] as RadarDatum),
+    [leftoverAttrs],
   );
 
   const tags = Array.isArray(role.tags) ? role.tags : [];
@@ -398,6 +441,8 @@ export const RoleStateCard = memo(function RoleStateCard({
   const appearance = resolveAppearance(role);
   const appearanceChanged = useChangedString(appearance);
   const hasNsfw = role.nsfw && typeof role.nsfw === "object" && Object.keys(role.nsfw).length > 0;
+  const displayName = role.name || role.id;
+  const hasGauges = meters.length > 0 || (leftoverAttrs.length > 0 && leftoverAttrs.length < 3);
 
   const onDelete = async () => {
     const label = role.name || role.id;
@@ -414,102 +459,161 @@ export const RoleStateCard = memo(function RoleStateCard({
   };
 
   return (
-    <article className="rs-card">
-      <header className="rs-card-head">
-        <div className="rs-card-id">
-          <span className="rs-name">
-            {role.name || role.id}
+    <article
+      className={`arc ${isDragging ? "is-dragging" : ""}`}
+      title={onCardPointerDown ? t("roleState.dragHint") : undefined}
+      onPointerDown={onCardPointerDown}
+    >
+      <div className="arc-binding" aria-hidden>
+        <span className="arc-hole" />
+        <span className="arc-hole" />
+      </div>
+
+      <div className="arc-filemeta">
+        <span className="arc-class">{t("roleState.classification")}</span>
+        <span className="arc-fileno" title={fileNo(role.id)}>
+          {t("roleState.fileNo", { id: fileNo(role.id) })}
+        </span>
+        <span className="arc-barcode" aria-hidden />
+      </div>
+
+      <header className="arc-cover">
+        <div className="arc-portrait" aria-hidden>
+          {portraitGlyph(displayName)}
+          <span className="pc tl" />
+          <span className="pc tr" />
+          <span className="pc bl" />
+          <span className="pc br" />
+        </div>
+        <div className="arc-cover-id">
+          <div className="arc-name">
+            {displayName}
             {gender && (
-              <span className="rs-gender" title={genderLabel(t, gender)}>
+              <span className="arc-gender" title={genderLabel(t, gender)}>
                 {genderLabel(t, gender)}
+                {gender === "female" ? " / F" : " / M"}
               </span>
             )}
-          </span>
+          </div>
+          <span className="arc-alias">{role.id}</span>
           {tags.length > 0 && (
-            <span className="rs-chips rs-head-chips">
+            <div className="arc-tags">
               {tags.map((tg, i) => (
-                <span key={i} className="rs-chip">
+                <span key={i} className="arc-tag">
                   {tg}
                 </span>
               ))}
-            </span>
+            </div>
           )}
         </div>
-        <div className="rs-card-actions">
-          <button type="button" className="rs-card-action" onClick={() => setEditing(true)}>
+        <div className="arc-actions">
+          <button type="button" className="arc-act" onClick={() => setEditing(true)}>
             {t("roleState.edit")}
           </button>
-          <button type="button" className="rs-card-action is-danger" onClick={() => void onDelete()}>
+          <button type="button" className="arc-act is-danger" onClick={() => void onDelete()}>
             {t("roleState.delete")}
           </button>
         </div>
+        <span className="arc-stamp" aria-hidden>
+          <StampStarIcon />
+          <span>{t("roleState.stampLine1")}</span>
+          <span className="st-t">{t("roleState.stampLine2")}</span>
+        </span>
       </header>
 
-      {(role.mood || role.location || role.outfit || appearance) && (
-        <div className="rs-meta">
-          {role.location && (
-            <div className="rs-kv">
-              <span className="rs-kv-key">{t("roleState.location")}</span>
-              <span className="rs-kv-value">{role.location}</span>
-            </div>
-          )}
-          {role.mood && (
-            <div className="rs-kv">
-              <span className="rs-kv-key">{t("roleState.mood")}</span>
-              <span className="rs-kv-value">{role.mood}</span>
-            </div>
-          )}
-          {role.outfit && (
-            <div className="rs-kv">
-              <span className="rs-kv-key">{t("roleState.outfit")}</span>
-              <span className="rs-kv-value">{role.outfit}</span>
-            </div>
-          )}
-          {appearance && (
-            <div className={`rs-kv rs-kv-appearance ${appearanceChanged ? "is-changed" : ""}`}>
-              <span className="rs-kv-key">{t("roleState.appearance")}</span>
-              <span className="rs-kv-value">{appearance}</span>
-            </div>
-          )}
+      <div className="arc-registry">
+        <RegistryRow
+          icon={<LocIcon />}
+          label={t("roleState.location")}
+          value={role.location}
+          emptyLabel={t("roleState.unset")}
+        />
+        <RegistryRow
+          icon={<MoodIcon />}
+          label={t("roleState.mood")}
+          value={role.mood}
+          emptyLabel={t("roleState.unset")}
+        />
+        <RegistryRow
+          icon={<OutfitIcon />}
+          label={t("roleState.outfit")}
+          value={role.outfit}
+          emptyLabel={t("roleState.unset")}
+        />
+      </div>
+
+      {appearance && (
+        <div className={`arc-appearance ${appearanceChanged ? "is-changed" : ""}`}>
+          <div className="arc-field-label">
+            <span className="no">01</span>
+            {t("roleState.sectionAppearance")}
+          </div>
+          <p>{appearance}</p>
         </div>
       )}
 
-      {scalars.length > 3 ? (
-        // >3 numeric dimensions ? single radar polygon (attributes + meters).
-        <div className="rs-section">
-          <RadarChart data={scalars} changed={changedScalar} />
+      {vitals.length > 0 && (
+        <div className={`arc-vitals ${vitals.length < 3 ? "is-sparse" : ""}`}>
+          {vitals.map(([k, v]) => (
+            <div key={k} className={`arc-vital ${changedAttr.has(k) ? "is-changed" : ""}`}>
+              <div className="arc-vital-label">{k}</div>
+              <div className="arc-vital-value">{Math.round(v)}</div>
+              <div className="arc-vital-bar">
+                <i style={{ width: `${pct(v, 100)}%` }} />
+              </div>
+            </div>
+          ))}
         </div>
-      ) : (
-        // ?3 ? keep the previous look: attribute radar/bars + meter bars.
+      )}
+
+      {leftoverAttrs.length >= 3 && (
+        <div className="arc-radar-sec">
+          <div className="arc-field-label">
+            <span className="no">02</span>
+            {t("roleState.sectionRadar")}
+          </div>
+          <RadarChart data={radarData} changed={changedAttr} />
+        </div>
+      )}
+
+      {hasGauges && (
         <>
-          {attributes.length > 0 && (
-            <div className="rs-section">
-              <RadarChart
-                data={attributes.map(([k, v]) => [k, v] as RadarDatum)}
-                changed={changedAttr}
-              />
+          <div className="arc-sec-pad">
+            <div className="arc-field-label">
+              <span className="no">03</span>
+              {t("roleState.sectionStatus")}
             </div>
-          )}
-          {meters.length > 0 && (
-            <div className="rs-section rs-bars">
-              {meters.map(([k, m]) => (
-                <MeterBar key={k} label={k} value={m.value} max={m.max ?? 100} flash={changedMeter.has(k)} />
+          </div>
+          <div className="arc-gauges">
+            {leftoverAttrs.length > 0 &&
+              leftoverAttrs.length < 3 &&
+              leftoverAttrs.map(([k, v]) => (
+                <MeterBar key={k} label={k} value={v} max={100} flash={changedAttr.has(k)} />
               ))}
-            </div>
-          )}
+            {meters.map(([k, m]) => (
+              <MeterBar
+                key={k}
+                label={k}
+                value={m.value}
+                max={m.max ?? 100}
+                flash={changedMeter.has(k)}
+              />
+            ))}
+          </div>
         </>
       )}
 
       {hasNsfw && (
-        <div className={`rs-nsfw ${nsfwOpen ? "is-open" : ""}`}>
+        <div className={`arc-sealed ${nsfwOpen ? "is-open" : ""}`}>
           <button
             type="button"
-            className="rs-nsfw-toggle"
+            className="arc-sealed-toggle"
             onClick={() => setNsfwOpen((v) => !v)}
             aria-expanded={nsfwOpen}
           >
-            <span className="rs-nsfw-badge">NSFW</span>
-            <span className="rs-nsfw-title">{t("roleState.nsfwSection")}</span>
+            <span className="arc-wax">{t("roleState.waxSeal")}</span>
+            <span className="arc-sealed-title">{t("roleState.sealedSection")}</span>
+            <span className="arc-sealed-hint">{nsfwOpen ? "OPENED" : "SEALED"}</span>
             <ChevronIcon open={nsfwOpen} />
           </button>
           {nsfwOpen && (
@@ -517,6 +621,10 @@ export const RoleStateCard = memo(function RoleStateCard({
           )}
         </div>
       )}
+
+      <div className="arc-foot">
+        <span className="pg">P.1/1</span>
+      </div>
 
       {editing && (
         <RoleStateEditModal
@@ -529,4 +637,3 @@ export const RoleStateCard = memo(function RoleStateCard({
     </article>
   );
 });
-

@@ -3,6 +3,8 @@ import {
   CHAT_FONT_FAMILY_PRESETS,
   CHAT_FONT_SIZE_RANGE,
   CHAT_LINE_HEIGHT_RANGE,
+  chatFontFamilyPresetId,
+  resolveChatFontFamily,
   useChatFont,
 } from "../../store/chatFont";
 
@@ -46,11 +48,13 @@ export function ChatFontControls({
         <span className="chat-font-label">{t("chat.fontFamily")}</span>
         <select
           className="chat-font-select"
-          value={fontFamily}
-          onChange={(e) => set({ fontFamily: e.target.value })}
+          value={chatFontFamilyPresetId(fontFamily)}
+          onChange={(e) =>
+            set({ fontFamily: resolveChatFontFamily(e.target.value) })
+          }
         >
           {CHAT_FONT_FAMILY_PRESETS.map((preset) => (
-            <option key={preset.id} value={preset.value}>
+            <option key={preset.id} value={preset.id}>
               {t(`chat.${preset.labelKey}`)}
             </option>
           ))}

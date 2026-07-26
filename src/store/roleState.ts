@@ -170,6 +170,11 @@ interface RoleStateStore {
   setRoles: (scopeId: string, roles: Role[]) => void;
   loadLatest: (sessionId: string, scopeId: string) => Promise<void>;
   updateRole: (sessionId: string, scopeId: string, role: Role) => Promise<Role>;
+  reorderRoles: (
+    sessionId: string,
+    scopeId: string,
+    orderedIds: string[],
+  ) => Promise<void>;
   deleteRole: (sessionId: string, scopeId: string, id: string) => Promise<boolean>;
   rolesOf: (scopeId: string | null | undefined) => Role[];
 }
@@ -236,6 +241,24 @@ export const useRoleState = create<RoleStateStore>((set, get) => ({
     const updated = await api.updateRoleState(sessionId, role);
     get().applyOp(scopeId, { op: "update", id: updated.id, role: updated });
     return updated;
+  },
+
+  reorderRoles: async (sessionId, scopeId, orderedIds) => {
+    const prev = get().orderByScope[scopeId] ?? [];
+    set((s) => ({
+      orderByScope: { ...s.orderByScope, [scopeId]: dedupeOrder(orderedIds) },
+    }));
+    try {
+      const roles = await api.reorderRoleStates(sessionId, orderedIds);
+      get().setRoles(scopeId, Array.isArray(roles) ? roles : []);
+    } catch (e) {
+      console.warn("[roleState] reorder failed", e);
+      set((s) => ({
+        orderByScope: { ...s.orderByScope, [scopeId]: prev },
+      }));
+      await get().loadLatest(sessionId, scopeId);
+      throw e;
+    }
   },
 
   deleteRole: async (sessionId, scopeId, id) => {

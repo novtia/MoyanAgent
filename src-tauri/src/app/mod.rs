@@ -203,6 +203,7 @@ pub fn run() {
             agents::list_agent_tools,
             role_state::get_role_states,
             role_state::update_role_state,
+            role_state::reorder_role_states,
             role_state::delete_role_state,
             agents::extract_session_memory,
             tokens::get_token_usage_summary,

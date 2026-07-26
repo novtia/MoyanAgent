@@ -5,11 +5,16 @@ import {
   useAppearance,
   type UiFontOption,
 } from "../../../store/appearance";
+import { useChatFont } from "../../../store/chatFont";
 
 export function TypographyCard() {
   const { t } = useTranslation();
   const uiFont = useAppearance((s) => s.uiFont);
   const set = useAppearance((s) => s.set);
+  const chatFontFamily = useChatFont((s) => s.fontFamily);
+  const chatFontSize = useChatFont((s) => s.fontSize);
+  const chatLineHeight = useChatFont((s) => s.lineHeight);
+  const chatColor = useChatFont((s) => s.color);
 
   return (
     <div className="settings-card">
@@ -47,6 +52,17 @@ export function TypographyCard() {
           className="appearance-chat-font-controls"
           hideReset
         />
+        <div
+          className="appearance-chat-font-preview"
+          style={{
+            fontFamily: chatFontFamily,
+            fontSize: `${chatFontSize}px`,
+            lineHeight: chatLineHeight,
+            color: chatColor === "default" ? undefined : chatColor,
+          }}
+        >
+          {t("settings.appearance.chatFontPreview")}
+        </div>
       </div>
     </div>
   );

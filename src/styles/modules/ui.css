@@ -198,7 +198,7 @@
 
 .dialog-title {
   margin: 0;
-  font-family: 'Instrument Sans', sans-serif;
+  font-family: var(--app-font-family, inherit);
   font-size: 16px;
   font-weight: 600;
   letter-spacing: -0.01em;

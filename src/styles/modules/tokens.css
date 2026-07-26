@@ -78,6 +78,17 @@
   --field-line-height: 1.5;
   --field-transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
   --field-error: #c0392b;
+
+  /* Role archive — light theme stays cool/neutral like the rest of the app */
+  --arc-paper: #ffffff;
+  --arc-paper-2: #f7f8fa;
+  --arc-line: #ececec;
+  --arc-line-strong: #d8d8d8;
+  --arc-500: #3a3a3a;
+  --arc-600: #5a5a5a;
+  --arc-700: #0d0d0d;
+  --arc-tint: #f1f3f6;
+  --arc-ink: #5a5a5a;
 }
 
 :root[data-theme="dark"] {
@@ -126,6 +137,17 @@
   --field-border-focus: #f3f5f7;
   --field-focus-ring: 0 0 0 3px rgba(243, 245, 247, 0.1);
   --field-error: #ff7a91;
+
+  /* 暗色档 — 冷炭纸面 + 琥珀印泥 */
+  --arc-paper: #181a1c;
+  --arc-paper-2: #1f2226;
+  --arc-line: #2e333a;
+  --arc-line-strong: #454b55;
+  --arc-500: #f0a05a;
+  --arc-600: #f5b67a;
+  --arc-700: #f9cda0;
+  --arc-tint: #2a2218;
+  --arc-ink: #e8c8a8;
 }
 
 /* ───── paper · 古风宣纸 ───── */
@@ -175,6 +197,17 @@
   --field-border-focus: #6b5d3f;
   --field-focus-ring: 0 0 0 3px rgba(158, 43, 37, 0.12);
   --field-error: #9e2b25;
+
+  /* 宣纸朱砂档 — 跟 paper 主题朱红走，不再用橘 */
+  --arc-paper: #f3ebe0;
+  --arc-paper-2: #ebe0ce;
+  --arc-line: #d9cbb0;
+  --arc-line-strong: #c4b08a;
+  --arc-500: #9e2b25;
+  --arc-600: #b04a42;
+  --arc-700: #7a1f1a;
+  --arc-tint: #f0ddd4;
+  --arc-ink: #6b2a22;
 }
 
 /* ───── mist · 青瓷雾色 ───── */
@@ -224,6 +257,17 @@
   --field-border-focus: #3d5a57;
   --field-focus-ring: 0 0 0 3px rgba(47, 107, 110, 0.12);
   --field-error: #a85d5d;
+
+  /* 青瓷档 — 冷灰纸面 + Mist 青墨，明显区别于暖橘 */
+  --arc-paper: #eef3f1;
+  --arc-paper-2: #e2ebe8;
+  --arc-line: #cfdad6;
+  --arc-line-strong: #aebfba;
+  --arc-500: #2f6b6e;
+  --arc-600: #3d7d80;
+  --arc-700: #1f4f52;
+  --arc-tint: #d9e8e6;
+  --arc-ink: #2a4a48;
 }
 
 /* ───── ink · 墨夜 ───── */
@@ -273,6 +317,17 @@
   --field-border-focus: #c9a227;
   --field-focus-ring: 0 0 0 3px rgba(201, 162, 39, 0.12);
   --field-error: #c97b6e;
+
+  /* 墨夜档 — 跟 ink 主题金箔走 */
+  --arc-paper: #1a1712;
+  --arc-paper-2: #221e16;
+  --arc-line: #342e22;
+  --arc-line-strong: #4e4634;
+  --arc-500: #c9a227;
+  --arc-600: #d4b84a;
+  --arc-700: #e0cc6e;
+  --arc-tint: #2e2818;
+  --arc-ink: #e0d2a8;
 }
 
 /* ───── density / radius data attributes ───── */

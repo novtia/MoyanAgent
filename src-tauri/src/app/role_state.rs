@@ -51,6 +51,26 @@ pub fn update_role_state(
     Ok(updated)
 }
 
+/// Persist a new board order for the session's role-state scope.
+#[tauri::command]
+pub fn reorder_role_states(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+    ordered_ids: Vec<String>,
+) -> Result<Vec<serde_json::Value>, AppError> {
+    let conn = state.conn()?;
+    let scope = crate::data::role_state::resolve_role_state_scope(&conn, &session_id)?;
+    let live = state.role_states.snapshot(&scope);
+    if live.is_empty() {
+        let roles = crate::data::role_state::latest_roles(&conn, &scope)?;
+        state.role_states.load(&scope, roles);
+    }
+    let board = state.role_states.reorder(&scope, &ordered_ids)?;
+    let message_id = format!("manual-{}", db::now_ms());
+    crate::data::role_state::save_snapshot(&conn, &scope, &session_id, &message_id, &board)?;
+    Ok(board)
+}
+
 /// Remove one role from the board and persist a snapshot (including empty).
 #[tauri::command]
 pub fn delete_role_state(

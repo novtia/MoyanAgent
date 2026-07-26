@@ -482,9 +482,11 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
           const removeBtn = target.closest(".composer-mention-remove");
           if (removeBtn) {
             e.preventDefault();
-            const mention = removeBtn.closest<HTMLElement>(".composer-mention");
-            const path = mention?.dataset.path;
-            mention?.remove();
+            const chip = removeBtn.closest<HTMLElement>(
+              ".composer-mention, .composer-role-cite",
+            );
+            const path = chip?.dataset.path;
+            chip?.remove();
             const hasRemaining =
               !!path &&
               Array.from(

@@ -501,6 +501,85 @@
   transform: scale(1.1);
 }
 
+/* Role-state cite — single-line chip, same height as composer text / @mention */
+.composer-role-cite {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: min(320px, 100%);
+  height: calc(1.55em + 4px);
+  margin: 0 2px;
+  padding: 0 6px 0 7px;
+  box-sizing: border-box;
+  vertical-align: middle;
+  border: 1px solid var(--arc-line-strong, var(--line));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--arc-tint, var(--ink)) 14%, var(--bg-soft));
+  color: var(--arc-ink, var(--ink));
+  font-family: var(--chat-font-family, var(--app-font-family, inherit));
+  font-size: inherit;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+.composer-role-cite-body {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.composer-role-cite-eyebrow {
+  flex-shrink: 0;
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--arc-700, var(--accent));
+}
+.composer-role-cite-name {
+  min-width: 0;
+  max-width: 9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--arc-ink, var(--ink));
+}
+.composer-role-cite-id {
+  min-width: 0;
+  max-width: 8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: inherit;
+  font-size: 0.85em;
+  color: var(--arc-500, var(--ink-mute));
+}
+.composer-role-cite-id::before {
+  content: "(";
+}
+.composer-role-cite-id::after {
+  content: ")";
+}
+.composer-role-cite .composer-mention-remove {
+  flex-shrink: 0;
+  opacity: 0.55;
+}
+.composer-role-cite:hover .composer-mention-remove,
+.composer-role-cite:focus-within .composer-mention-remove {
+  opacity: 1;
+}
+.composer-role-cite--static {
+  padding-right: 8px;
+  cursor: default;
+}
+.composer-role-cite--static .composer-mention-remove {
+  display: none;
+}
+
 /* ───── @ mention file-tree pull-up panel ───── */
 .composer-mention-wrap {
   position: relative;

@@ -275,7 +275,7 @@ export function RoleStateEditModal({
                 <span>{t("roleState.tags")}</span>
                 <div className="rs-edit-tags">
                   {tags.map((tg) => (
-                    <span key={tg} className="rs-chip rs-edit-tag">
+                    <span key={tg} className="rs-edit-tag">
                       {tg}
                       <button
                         type="button"
@@ -283,7 +283,7 @@ export function RoleStateEditModal({
                         aria-label={t("roleState.removeRow")}
                         onClick={() => setTags(tags.filter((x) => x !== tg))}
                       >
-                        ×
+                        x
                       </button>
                     </span>
                   ))}

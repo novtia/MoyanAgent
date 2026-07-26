@@ -45,7 +45,16 @@ export {
 } from "./core";
 export { MentionIcon } from "./MentionIcon";
 export { MentionChip } from "./MentionChip";
+export { RoleCiteChip } from "./RoleCiteChip";
 export { MentionText } from "./MentionText";
+export {
+  ROLE_CITE_PREFIX,
+  serializeRoleCite,
+  parseRoleCiteAt,
+  createRoleCiteNode,
+  roleCiteDisplayName,
+  type RoleCiteRef,
+} from "./roleCite";
 export {
   MentionEditor,
   type MentionEditorHandle,

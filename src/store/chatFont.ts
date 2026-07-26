@@ -62,6 +62,24 @@ export const DEFAULT_CHAT_FONT: ChatFontSettings = {
 export const CHAT_FONT_SIZE_RANGE = { min: 12, max: 22 } as const;
 export const CHAT_LINE_HEIGHT_RANGE = { min: 1.2, max: 2.2 } as const;
 
+/** Resolve a stored preset id or legacy CSS stack to the CSS font-family value. */
+export function resolveChatFontFamily(value: string): string {
+  const byId = CHAT_FONT_FAMILY_PRESETS.find((p) => p.id === value);
+  if (byId) return byId.value;
+  const byValue = CHAT_FONT_FAMILY_PRESETS.find((p) => p.value === value);
+  if (byValue) return byValue.value;
+  return value || DEFAULT_CHAT_FONT.fontFamily;
+}
+
+/** Map a stored CSS stack (or id) to the stable preset id for <select> binding. */
+export function chatFontFamilyPresetId(value: string): string {
+  const byId = CHAT_FONT_FAMILY_PRESETS.find((p) => p.id === value);
+  if (byId) return byId.id;
+  const byValue = CHAT_FONT_FAMILY_PRESETS.find((p) => p.value === value);
+  if (byValue) return byValue.id;
+  return "system";
+}
+
 function clamp(value: number, min: number, max: number): number {
   if (Number.isNaN(value)) return min;
   return Math.min(max, Math.max(min, value));
@@ -71,7 +89,7 @@ function normalize(settings: Partial<ChatFontSettings>): ChatFontSettings {
   return {
     fontFamily:
       typeof settings.fontFamily === "string" && settings.fontFamily
-        ? settings.fontFamily
+        ? resolveChatFontFamily(settings.fontFamily)
         : DEFAULT_CHAT_FONT.fontFamily,
     fontSize: clamp(
       typeof settings.fontSize === "number"

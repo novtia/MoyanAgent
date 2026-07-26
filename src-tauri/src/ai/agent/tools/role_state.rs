@@ -50,7 +50,7 @@
 //! - **female** → `exterior` (TEXT: external residue) plus `swallowed` /
 //!   `vaginal` / `anal` as millilitre amounts (ml, NOT 0-100).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Map, Value};
@@ -205,6 +205,57 @@ impl RoleStateStore {
             g.remove(scope_id);
         }
         Ok(removed)
+    }
+
+    /// Reorder roles by id list. Known ids appear in the given order; any
+    /// board roles missing from `ordered_ids` keep their relative order at the end.
+    pub fn reorder(&self, scope_id: &str, ordered_ids: &[String]) -> AppResult<Vec<Value>> {
+        let mut g = self
+            .boards
+            .lock()
+            .map_err(|_| AppError::Other("RoleState: store lock poisoned".into()))?;
+        let Some(list) = g.get_mut(scope_id) else {
+            return Ok(Vec::new());
+        };
+
+        let mut by_id: HashMap<String, Value> = HashMap::new();
+        let mut original_order: Vec<String> = Vec::new();
+        let mut idless: Vec<Value> = Vec::new();
+        for role in list.iter() {
+            match role_id(role).map(str::to_string) {
+                Some(id) => {
+                    original_order.push(id.clone());
+                    by_id.insert(id, role.clone());
+                }
+                None => idless.push(role.clone()),
+            }
+        }
+
+        let mut next = Vec::with_capacity(by_id.len() + idless.len());
+        let mut placed: HashSet<String> = HashSet::new();
+        for id in ordered_ids {
+            if let Some(role) = by_id.remove(id) {
+                placed.insert(id.clone());
+                next.push(role);
+            }
+        }
+        for id in &original_order {
+            if placed.contains(id) {
+                continue;
+            }
+            if let Some(role) = by_id.remove(id) {
+                next.push(role);
+            }
+        }
+        next.extend(idless);
+
+        let snapshot = next.clone();
+        if next.is_empty() {
+            g.remove(scope_id);
+        } else {
+            *list = next;
+        }
+        Ok(snapshot)
     }
 }
 
