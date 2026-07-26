@@ -342,6 +342,7 @@ const zhCN = {
     customGroup: "自定义 agent",
     builtinNames: {
       "general-purpose": "通用",
+      chat: "普通对话",
       Explore: "探索",
       Plan: "规划",
       "claude-code-guide": "使用向导",
@@ -892,13 +893,14 @@ const zhCN = {
     pageOf: "{{page}} / {{pages}}",
     pricingTitle: "成本估算单价",
     pricingMeta:
-      "每百万 tokens · 仅用于本页估算，不影响计费。缓存读填 0 时按输入价计；OpenAI 类会从输入中拆出缓存命中部分。",
+      "每百万 tokens · 仅用于本页估算。优先本页覆盖价，否则用模型配置单价；缓存读填 0 时按输入价计。",
     pricingInput: "输入",
     pricingCacheRead: "缓存读",
     pricingCacheWrite: "缓存写",
     pricingOutput: "输出",
     pricingPerMillion: "/百万",
     pricingUnset: "未填写单价的模型不参与成本估算",
+    pricingFromModel: "来自模型配置 · 编辑后将作为本页覆盖价",
     emptyTitle: "该范围内还没有用量记录",
     emptyDesc: "开始一段对话后，API 调用与工具调用会实时写入本地 SQLite，这里按天聚合展示。",
     privacy:

@@ -347,6 +347,7 @@ const enUS: Resource = {
     customGroup: "Custom agents",
     builtinNames: {
       "general-purpose": "General",
+      chat: "Chat",
       Explore: "Explore",
       Plan: "Plan",
       "claude-code-guide": "Guide",
@@ -911,13 +912,14 @@ const enUS: Resource = {
     pageOf: "{{page}} / {{pages}}",
     pricingTitle: "Cost estimate rates",
     pricingMeta:
-      "Per 1M tokens · estimate only. Cache read at 0 uses the input rate; OpenAI-style splits cache hits out of prompt.",
+      "Per 1M tokens · estimate only. Page overrides win; otherwise model config rates. Cache read at 0 uses the input rate.",
     pricingInput: "Input",
     pricingCacheRead: "Cache↓",
     pricingCacheWrite: "Cache↑",
     pricingOutput: "Output",
     pricingPerMillion: "/M",
     pricingUnset: "Models without rates are excluded from estimates",
+    pricingFromModel: "From model config · editing saves a page override",
     emptyTitle: "No usage in this range",
     emptyDesc: "After you chat, API and tool calls are recorded in local SQLite and aggregated here by day.",
     privacy:

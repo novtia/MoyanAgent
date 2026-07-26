@@ -202,6 +202,7 @@ pub(crate) struct AgentDefinitionInfo {
     pub(crate) system_prompt: String,
     pub(crate) model: Option<String>,
     pub(crate) tools: Vec<String>,
+    pub(crate) disallowed_tools: Vec<String>,
     pub(crate) background: bool,
     pub(crate) passthrough_output: bool,
 }
@@ -218,6 +219,7 @@ pub fn get_agent_definition(
         system_prompt: d.system_prompt,
         model: d.model,
         tools: d.tools,
+        disallowed_tools: d.disallowed_tools,
         background: d.background,
         passthrough_output: d.passthrough_output,
     })

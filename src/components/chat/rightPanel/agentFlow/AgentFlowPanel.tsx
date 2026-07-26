@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../../api/tauri";
-import { SESSION_AGENT_GENERAL } from "../../../../config/chatMode";
+import { SESSION_AGENT_CHAT } from "../../../../config/chatMode";
 import { dialog } from "../../../ui";
 import { useSession } from "../../../../store/session";
 import { useSettings } from "../../../../store/settings";
@@ -37,6 +37,8 @@ const EMPTY_FORM: FormState = {
   systemPrompt: "",
   model: "",
   tools: [],
+  toolsPool: undefined,
+  toolsAllowStar: true,
   loading: false,
 };
 
@@ -73,7 +75,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
   const projectId = active?.session.project_id ?? null;
   const flowScopeId = projectId ?? sessionId;
   const chain = useMemo(() => active?.session.agent_chain ?? [], [active]);
-  const sessionAgentType = active?.session.agent_type ?? SESSION_AGENT_GENERAL;
+  const sessionAgentType = active?.session.agent_type ?? SESSION_AGENT_CHAT;
 
   const [builtins, setBuiltins] = useState<AgentSummary[]>([]);
   const [customs, setCustoms] = useState<CustomAgent[]>([]);
@@ -159,13 +161,23 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
         systemPrompt: "",
         model: "",
         tools: [],
+        toolsPool: [],
+        toolsAllowStar: false,
         loading: true,
       });
       try {
         const defAgentType = resolveDefinitionAgentType(target.agentType, sessionAgentType);
         const def = await api.getAgentDefinition(defAgentType);
         const defAll = def.tools.includes("*");
-        const defTools = resolveDefTools(def.tools, defAll, allTools);
+        // Node config only offers tools the agent definition already allows.
+        // Main session `chat` → AskUser / WebSearch / WebFetch only.
+        const defTools = resolveDefTools(
+          def.tools,
+          defAll,
+          allTools,
+          def.disallowed_tools ?? [],
+        );
+        const toolsPool = defTools;
         const ov =
           canvasRef.current?.getNodeOverrides(target.nodeId) ?? target.overrides;
         setForm((f) =>
@@ -174,7 +186,9 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
                 ...f,
                 systemPrompt: ov?.system_prompt ?? def.system_prompt,
                 model: (ov?.model !== undefined ? ov.model ?? "" : def.model ?? "") || "",
-                tools: resolveSelectedTools(ov, defTools, allTools),
+                toolsPool,
+                toolsAllowStar: defAll,
+                tools: resolveSelectedTools(ov, defTools, toolsPool),
                 loading: false,
               }
             : f,
@@ -197,7 +211,13 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
 
   const openNew = () => {
     setFormSection("basic");
-    setForm({ ...EMPTY_FORM, mode: "new", tools: [...allTools] });
+    setForm({
+      ...EMPTY_FORM,
+      mode: "new",
+      tools: [...allTools],
+      toolsPool: [...allTools],
+      toolsAllowStar: true,
+    });
   };
 
   const openEditByType = useCallback(
@@ -214,37 +234,61 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
         systemPrompt: c.system_prompt,
         model: c.model ?? "",
         tools,
+        toolsPool: [...allTools],
+        toolsAllowStar: true,
         loading: false,
       });
     },
     [customs, allTools],
   );
 
+  const formToolsPool = form.toolsPool ?? allTools;
+
   const toggleTool = useCallback((tool: string) => {
     setForm((f) => {
+      const pool = f.toolsPool ?? allTools;
+      if (!pool.includes(tool)) return f;
       const has = f.tools.includes(tool);
       return {
         ...f,
         tools: has ? f.tools.filter((t) => t !== tool) : [...f.tools, tool],
       };
     });
-  }, []);
+  }, [allTools]);
 
-  const allToolsSelected = allTools.length > 0 && form.tools.length === allTools.length;
+  const allToolsSelected =
+    formToolsPool.length > 0 &&
+    formToolsPool.every((tn) => form.tools.includes(tn)) &&
+    form.tools.every((tn) => formToolsPool.includes(tn));
   const toggleAllTools = useCallback(() => {
-    setForm((f) => ({
-      ...f,
-      tools: f.tools.length === allTools.length ? [] : [...allTools],
-    }));
+    setForm((f) => {
+      const pool = f.toolsPool ?? allTools;
+      const selectedAll =
+        pool.length > 0 &&
+        pool.every((tn) => f.tools.includes(tn)) &&
+        f.tools.every((tn) => pool.includes(tn));
+      return {
+        ...f,
+        tools: selectedAll ? [] : [...pool],
+      };
+    });
   }, [allTools]);
 
   const submitForm = async () => {
     if (form.mode === "edit-node") {
       if (!form.nodeId || form.loading) return;
-      // All selected → ["*"] (canonical wildcard). Otherwise persist the exact
-      // selection verbatim, so an empty selection means "no tools" rather than
-      // silently falling back to full access.
-      const tools = allToolsSelected ? ["*"] : [...form.tools];
+      const pool = form.toolsPool ?? allTools;
+      // Clamp to the agent definition pool so a stale override cannot re-enable
+      // tools the definition never allowed (e.g. Read on main `chat`).
+      const selected = form.tools.filter((tn) => pool.includes(tn));
+      const selectedAll =
+        pool.length > 0 &&
+        pool.every((tn) => selected.includes(tn)) &&
+        selected.length === pool.length;
+      // Only wildcard definitions may persist ["*"]. Whitelist agents must
+      // store concrete names — backend treats ["*"] as the global tool pool.
+      const tools =
+        selectedAll && form.toolsAllowStar ? ["*"] : selected;
       const overrides: NodeOverrides = {
         system_prompt: form.systemPrompt,
         model: form.model.trim() || null,
@@ -456,18 +500,18 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
                           type="button"
                           className="agent-flow-tools-toggle"
                           onClick={toggleAllTools}
-                          disabled={allTools.length === 0 || form.loading}
+                          disabled={formToolsPool.length === 0 || form.loading}
                         >
                           {allToolsSelected
                             ? t("agentFlow.toolsDeselectAll")
                             : t("agentFlow.toolsSelectAll")}
                         </button>
                       </div>
-                      {allTools.length === 0 ? (
+                      {formToolsPool.length === 0 ? (
                         <p className="agent-flow-tools-empty">{t("agentFlow.toolsEmpty")}</p>
                       ) : (
                         <AgentToolsList
-                          tools={allTools}
+                          tools={formToolsPool}
                           selected={form.tools}
                           onToggle={toggleTool}
                           disabled={form.loading}

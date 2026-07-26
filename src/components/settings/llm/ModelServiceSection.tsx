@@ -10,8 +10,10 @@ import { openContextMenu } from "../../context-menu";
 import { useSettings } from "../../../store/settings";
 import type {
   LlmModelCatalog,
+  ModelPricing,
   ModelProvider,
   ModelServiceModel,
+  RemoteModelInfo,
 } from "../../../types";
 import { api } from "../../../api/tauri";
 import { copyText } from "../../../utils/clipboard";
@@ -37,6 +39,7 @@ import {
   normalizeProviders,
   providerAvatar,
   providerSdkLabel,
+  remoteInfoToModelPatch,
   resolveManageGroupIconId,
   resolveModelBrandIconId,
   shortModelName,
@@ -529,12 +532,14 @@ export function ModelServiceSection() {
     );
   };
 
-  const addModelById = async (modelId: string) => {
+  const addModelFromRemote = async (info: RemoteModelInfo | string) => {
     if (!selectedProvider) return;
-    const trimmed = modelId.trim();
-    if (!trimmed || selectedProvider.models.some((m) => m.id === trimmed)) return;
+    const id = typeof info === "string" ? info.trim() : info.id.trim();
+    if (!id || selectedProvider.models.some((m) => m.id === id)) return;
+    const patch =
+      typeof info === "string" ? {} : remoteInfoToModelPatch(info);
     await patchProvider(selectedProvider.id, {
-      models: [...selectedProvider.models, makeModel(trimmed)],
+      models: [...selectedProvider.models, makeModel(id, patch)],
     });
   };
 
@@ -936,7 +941,7 @@ export function ModelServiceSection() {
           endpoint={providerDraft.endpoint || selectedProvider.endpoint}
           apiKey={providerDraft.api_key || selectedProvider.api_key}
           localModels={selectedProvider.models}
-          onAdd={addModelById}
+          onAdd={addModelFromRemote}
           onRemove={removeModelById}
           onClose={() => setManageModelsOpen(false)}
         />
@@ -1183,6 +1188,167 @@ function EditProviderModal({ sdkOptions, provider, onClose, onSave }: EditProvid
   );
 }
 
+type PricingDraft = {
+  inputPer1M: string;
+  outputPer1M: string;
+  cacheReadPer1M: string;
+  cacheWritePer1M: string;
+};
+
+const EMPTY_PRICING_DRAFT: PricingDraft = {
+  inputPer1M: "",
+  outputPer1M: "",
+  cacheReadPer1M: "",
+  cacheWritePer1M: "",
+};
+
+function pricingToDraft(p?: ModelPricing | null): PricingDraft {
+  const s = (v?: number | null) =>
+    v != null && Number.isFinite(v) ? String(v) : "";
+  return {
+    inputPer1M: s(p?.inputPer1M),
+    outputPer1M: s(p?.outputPer1M),
+    cacheReadPer1M: s(p?.cacheReadPer1M),
+    cacheWritePer1M: s(p?.cacheWritePer1M),
+  };
+}
+
+function draftToPricing(d: PricingDraft): ModelPricing | null {
+  const n = (raw: string): number | null => {
+    const t = raw.trim();
+    if (!t) return null;
+    const v = Number(t);
+    return Number.isFinite(v) && v >= 0 ? v : null;
+  };
+  const pricing: ModelPricing = {
+    inputPer1M: n(d.inputPer1M),
+    outputPer1M: n(d.outputPer1M),
+    cacheReadPer1M: n(d.cacheReadPer1M),
+    cacheWritePer1M: n(d.cacheWritePer1M),
+  };
+  if (
+    pricing.inputPer1M == null &&
+    pricing.outputPer1M == null &&
+    pricing.cacheReadPer1M == null &&
+    pricing.cacheWritePer1M == null
+  ) {
+    return null;
+  }
+  return pricing;
+}
+
+function parseOptionalInt(raw: string): number | null | undefined {
+  const t = raw.trim();
+  if (!t) return null;
+  const v = Number(t);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  return Math.round(v);
+}
+
+function ModelMetaFields({
+  contextWindow,
+  maxOutput,
+  pricing,
+  capabilities,
+  onContextWindow,
+  onMaxOutput,
+  onPricing,
+  onToggleCapability,
+}: {
+  contextWindow: string;
+  maxOutput: string;
+  pricing: PricingDraft;
+  capabilities: string[];
+  onContextWindow: (v: string) => void;
+  onMaxOutput: (v: string) => void;
+  onPricing: (patch: Partial<PricingDraft>) => void;
+  onToggleCapability: (id: string) => void;
+}) {
+  return (
+    <>
+      <div className="model-modal-section">
+        <div className="model-modal-section-title">上下文与输出</div>
+        <div className="model-meta-grid">
+          <div className="row">
+            <label className="field-label">上下文窗口</label>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={contextWindow}
+              placeholder="如 128000"
+              onChange={(e) => onContextWindow(e.target.value)}
+            />
+            <div className="hint">tokens · 用于上下文占用环</div>
+          </div>
+          <div className="row">
+            <label className="field-label">最大输出</label>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={maxOutput}
+              placeholder="可选"
+              onChange={(e) => onMaxOutput(e.target.value)}
+            />
+            <div className="hint">tokens · 仅记录，不强制写入请求</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="model-modal-section">
+        <div className="model-modal-section-title">价格（每百万 tokens）</div>
+        <div className="hint model-pricing-hint">
+          用于统计页成本估算；币种按供应商账单自行换算，不做汇率转换。
+        </div>
+        <div className="model-pricing-grid">
+          {(
+            [
+              ["inputPer1M", "输入"],
+              ["outputPer1M", "输出"],
+              ["cacheReadPer1M", "缓存读"],
+              ["cacheWritePer1M", "缓存写"],
+            ] as const
+          ).map(([key, label]) => (
+            <span className="model-price-field" key={key}>
+              <label>{label}</label>
+              <span className="box">
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={pricing[key]}
+                  placeholder="0"
+                  onChange={(e) => onPricing({ [key]: e.target.value })}
+                />
+                <span className="per">/百万</span>
+              </span>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="model-modal-section">
+        <div className="model-modal-section-title">模型类型</div>
+        <div className="model-capability-row">
+          {CAPABILITY_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={`model-capability-chip ${
+                capabilities.includes(option.id) ? "active" : ""
+              }`}
+              onClick={() => onToggleCapability(option.id)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
 interface AddModelModalProps {
   sdkConfig: ProviderSdkConfig;
   existingIds: string[];
@@ -1199,6 +1365,10 @@ function AddModelModal({
   const [draftId, setDraftId] = useState("");
   const [draftName, setDraftName] = useState("");
   const [draftGroup, setDraftGroup] = useState("");
+  const [contextWindow, setContextWindow] = useState("");
+  const [maxOutput, setMaxOutput] = useState("");
+  const [pricing, setPricing] = useState<PricingDraft>(EMPTY_PRICING_DRAFT);
+  const [capabilities, setCapabilities] = useState<string[]>([]);
 
   const trimmedId = draftId.trim();
   const duplicate = !!trimmedId && existingIds.includes(trimmedId);
@@ -1221,7 +1391,37 @@ function AddModelModal({
       }
       return prev;
     });
+    setCapabilities((prev) => {
+      const prevAuto = prevTrimmed
+        ? makeModel(prevTrimmed).capabilities.join(",")
+        : "";
+      if (prev.length === 0 || prev.join(",") === prevAuto) {
+        return nextTrimmed ? makeModel(nextTrimmed).capabilities : [];
+      }
+      return prev;
+    });
     setDraftId(raw);
+  };
+
+  const effectiveCaps =
+    capabilities.length > 0
+      ? capabilities
+      : trimmedId
+        ? makeModel(trimmedId).capabilities
+        : [];
+
+  const toggleCapability = (cap: string) => {
+    setCapabilities((cur) => {
+      const base =
+        cur.length > 0
+          ? cur
+          : trimmedId
+            ? makeModel(trimmedId).capabilities
+            : [];
+      return base.includes(cap)
+        ? base.filter((c) => c !== cap)
+        : [...base, cap];
+    });
   };
 
   const submit = () => {
@@ -1229,6 +1429,10 @@ function AddModelModal({
     const model = makeModel(trimmedId, {
       name: draftName.trim() || shortModelName(trimmedId),
       group: draftGroup.trim() || groupFromModelId(trimmedId),
+      capabilities: effectiveCaps,
+      context_window: parseOptionalInt(contextWindow) ?? null,
+      max_output_tokens: parseOptionalInt(maxOutput) ?? null,
+      pricing: draftToPricing(pricing),
     });
     void onAdd(model);
   };
@@ -1280,6 +1484,16 @@ function AddModelModal({
                 onChange={(e) => setDraftGroup(e.target.value)}
               />
             </div>
+            <ModelMetaFields
+              contextWindow={contextWindow}
+              maxOutput={maxOutput}
+              pricing={pricing}
+              capabilities={effectiveCaps}
+              onContextWindow={setContextWindow}
+              onMaxOutput={setMaxOutput}
+              onPricing={(patch) => setPricing((p) => ({ ...p, ...patch }))}
+              onToggleCapability={toggleCapability}
+            />
           </div>
         </div>
         <div className="modal-foot">
@@ -1306,7 +1520,7 @@ interface ManageModelsModalProps {
   endpoint: string;
   apiKey: string;
   localModels: ModelServiceModel[];
-  onAdd: (modelId: string) => void | Promise<void>;
+  onAdd: (info: RemoteModelInfo | string) => void | Promise<void>;
   onRemove: (modelId: string) => void | Promise<void>;
   onClose: () => void;
 }
@@ -1315,6 +1529,10 @@ type ManageModelEntry = {
   id: string;
   inLocal: boolean;
   group: string;
+  name?: string | null;
+  context_window?: number | null;
+  pricing?: ModelPricing | null;
+  remote?: RemoteModelInfo | null;
 };
 
 type ManageGroupNav = {
@@ -1333,7 +1551,7 @@ function ManageModelsModal({
   onRemove,
   onClose,
 }: ManageModelsModalProps) {
-  const [remoteModels, setRemoteModels] = useState<string[]>([]);
+  const [remoteModels, setRemoteModels] = useState<RemoteModelInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -1346,8 +1564,8 @@ function ManageModelsModal({
     let cancelled = false;
     void api
       .fetchProviderModels(normalizeProviderSdk(sdk), endpoint, apiKey)
-      .then((ids) => {
-        if (!cancelled) setRemoteModels(ids);
+      .then((list) => {
+        if (!cancelled) setRemoteModels(list);
       })
       .catch((err) => {
         if (!cancelled) {
@@ -1368,25 +1586,44 @@ function ManageModelsModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const remoteById = useMemo(() => {
+    const map = new Map<string, RemoteModelInfo>();
+    for (const m of remoteModels) map.set(m.id, m);
+    return map;
+  }, [remoteModels]);
+
   const entries = useMemo(() => {
     const list: ManageModelEntry[] = [];
     const seen = new Set<string>();
     for (const model of localModels) {
       if (seen.has(model.id)) continue;
       seen.add(model.id);
+      const remote = remoteById.get(model.id) ?? null;
       list.push({
         id: model.id,
         inLocal: true,
-        group: groupFromModelId(model.id),
+        group: model.group || groupFromModelId(model.id),
+        name: model.name,
+        context_window: model.context_window ?? remote?.context_window ?? null,
+        pricing: model.pricing ?? remote?.pricing ?? null,
+        remote,
       });
     }
-    for (const id of remoteModels) {
-      if (seen.has(id)) continue;
-      seen.add(id);
-      list.push({ id, inLocal: false, group: groupFromModelId(id) });
+    for (const remote of remoteModels) {
+      if (seen.has(remote.id)) continue;
+      seen.add(remote.id);
+      list.push({
+        id: remote.id,
+        inLocal: false,
+        group: groupFromModelId(remote.id),
+        name: remote.name,
+        context_window: remote.context_window ?? null,
+        pricing: remote.pricing ?? null,
+        remote,
+      });
     }
     return list;
-  }, [localModels, remoteModels]);
+  }, [localModels, remoteModels, remoteById]);
 
   const groups = useMemo(() => {
     const map = new Map<string, ManageGroupNav>();
@@ -1432,7 +1669,7 @@ function ManageModelsModal({
         return false;
       }
       if (!q) return true;
-      const name = shortModelName(entry.id).toLowerCase();
+      const name = (entry.name || shortModelName(entry.id)).toLowerCase();
       return entry.id.toLowerCase().includes(q) || name.includes(q);
     });
   }, [entries, activeFilter, search]);
@@ -1448,7 +1685,7 @@ function ManageModelsModal({
       if (entry.inLocal) {
         await onRemove(entry.id);
       } else {
-        await onAdd(entry.id);
+        await onAdd(entry.remote ?? entry.id);
       }
     } finally {
       setBusyId(null);
@@ -1609,6 +1846,7 @@ function ManageModelsModal({
                   <div className="manage-models-list">
                     {filteredEntries.map((entry) => {
                       const hasBrand = !!resolveModelBrandIconId(entry.id);
+                      const meta = formatManageMeta(entry);
                       return (
                       <div
                         key={entry.id}
@@ -1626,11 +1864,14 @@ function ManageModelsModal({
                         />
                         <div className="manage-models-row-text">
                           <span className="manage-models-name">
-                            {shortModelName(entry.id)}
+                            {entry.name?.trim() || shortModelName(entry.id)}
                           </span>
                           <span className="manage-models-id" title={entry.id}>
                             {entry.id}
                           </span>
+                          {meta ? (
+                            <span className="manage-models-meta">{meta}</span>
+                          ) : null}
                         </div>
                         <div className="manage-models-row-actions">
                           {entry.inLocal && (
@@ -1689,9 +1930,25 @@ function ModelSettingsModal({
   onDelete,
 }: ModelSettingsModalProps) {
   const [draft, setDraft] = useState<ModelServiceModel>(() => ({ ...model }));
+  const [contextWindow, setContextWindow] = useState(() =>
+    model.context_window != null ? String(model.context_window) : "",
+  );
+  const [maxOutput, setMaxOutput] = useState(() =>
+    model.max_output_tokens != null ? String(model.max_output_tokens) : "",
+  );
+  const [pricing, setPricing] = useState<PricingDraft>(() =>
+    pricingToDraft(model.pricing),
+  );
 
   useEffect(() => {
     setDraft({ ...model });
+    setContextWindow(
+      model.context_window != null ? String(model.context_window) : "",
+    );
+    setMaxOutput(
+      model.max_output_tokens != null ? String(model.max_output_tokens) : "",
+    );
+    setPricing(pricingToDraft(model.pricing));
   }, [model]);
 
   const trimmedId = draft.id.trim();
@@ -1764,23 +2021,16 @@ function ModelSettingsModal({
               />
             </div>
 
-            <div className="model-modal-section">
-              <div className="model-modal-section-title">模型类型</div>
-              <div className="model-capability-row">
-                {CAPABILITY_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    type="button"
-                    className={`model-capability-chip ${
-                      draft.capabilities.includes(option.id) ? "active" : ""
-                    }`}
-                    onClick={() => toggleCapability(option.id)}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <ModelMetaFields
+              contextWindow={contextWindow}
+              maxOutput={maxOutput}
+              pricing={pricing}
+              capabilities={draft.capabilities}
+              onContextWindow={setContextWindow}
+              onMaxOutput={setMaxOutput}
+              onPricing={(patch) => setPricing((p) => ({ ...p, ...patch }))}
+              onToggleCapability={toggleCapability}
+            />
           </div>
         </div>
         <div className="modal-foot">
@@ -1795,12 +2045,17 @@ function ModelSettingsModal({
             className="btn primary"
             disabled={!canSave}
             onClick={() =>
-              onSave({
-                ...draft,
-                id: trimmedId,
-                name: draft.name.trim() || shortModelName(trimmedId),
-                group: draft.group.trim() || "custom",
-              })
+              onSave(
+                makeModel(trimmedId, {
+                  ...draft,
+                  id: trimmedId,
+                  name: draft.name.trim() || shortModelName(trimmedId),
+                  group: draft.group.trim() || "custom",
+                  context_window: parseOptionalInt(contextWindow) ?? null,
+                  max_output_tokens: parseOptionalInt(maxOutput) ?? null,
+                  pricing: draftToPricing(pricing),
+                }),
+              )
             }
           >
             保存
@@ -1809,6 +2064,43 @@ function ModelSettingsModal({
       </div>
     </div>
   );
+}
+
+function formatManageMeta(entry: ManageModelEntry): string {
+  const parts: string[] = [];
+  if (entry.context_window != null && entry.context_window > 0) {
+    parts.push(formatTokenCount(entry.context_window));
+  }
+  const p = entry.pricing;
+  if (p) {
+    const inP = p.inputPer1M;
+    const outP = p.outputPer1M;
+    if (inP != null || outP != null) {
+      const a = inP != null ? formatPriceShort(inP) : "—";
+      const b = outP != null ? formatPriceShort(outP) : "—";
+      parts.push(`${a}/${b}`);
+    }
+  }
+  return parts.join(" · ");
+}
+
+function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    return `${Number.isInteger(m) ? m : m.toFixed(1)}M ctx`;
+  }
+  if (n >= 1000) {
+    const k = n / 1000;
+    return `${Number.isInteger(k) ? k : k.toFixed(0)}K ctx`;
+  }
+  return `${n} ctx`;
+}
+
+function formatPriceShort(n: number): string {
+  if (n >= 100) return n.toFixed(0);
+  if (n >= 10) return n.toFixed(1);
+  if (n >= 1) return n.toFixed(2);
+  return n.toFixed(3);
 }
 
 function ProviderEnableSwitch({

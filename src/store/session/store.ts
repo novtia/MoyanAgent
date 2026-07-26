@@ -178,7 +178,7 @@ export const useSession = create<SessionStore>((set, get) => {
     watermark: false,
     thinkingEnabled: false,
     thinkingEffort: "",
-    chatMode: "agent",
+    chatMode: "chat",
   },
   pendingAskUser: null,
 

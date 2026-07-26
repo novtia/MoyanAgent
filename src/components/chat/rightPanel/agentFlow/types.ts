@@ -88,6 +88,19 @@ export interface FormState {
   systemPrompt: string;
   model: string;
   tools: string[];
+  /**
+   * Checkbox pool for the tools section. For node config this is the agent
+   * definition's effective allow-list (e.g. chat → AskUser/Web only), not the
+   * global ToolPool. Empty / omitted falls back to the panel's `allTools`.
+   */
+  toolsPool?: string[];
+  /**
+   * When true, selecting every tool in `toolsPool` may persist as `["*"]`.
+   * Only safe for definitions that already use the wildcard (full tool access).
+   * Whitelist agents must persist concrete names so a node override cannot
+   * expand to the global pool at generation time.
+   */
+  toolsAllowStar?: boolean;
   loading: boolean;
 }
 

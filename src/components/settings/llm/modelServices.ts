@@ -428,16 +428,103 @@ export function inferCapabilities(model: string) {
   return Array.from(caps);
 }
 
+function normalizePricing(
+  pricing?: ModelServiceModel["pricing"] | null,
+): ModelServiceModel["pricing"] | null {
+  if (!pricing || typeof pricing !== "object") return null;
+  const num = (v: unknown): number | null => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  const inputPer1M = num(pricing.inputPer1M);
+  const outputPer1M = num(pricing.outputPer1M);
+  const cacheReadPer1M = num(pricing.cacheReadPer1M);
+  const cacheWritePer1M = num(pricing.cacheWritePer1M);
+  if (
+    inputPer1M == null &&
+    outputPer1M == null &&
+    cacheReadPer1M == null &&
+    cacheWritePer1M == null
+  ) {
+    return null;
+  }
+  return { inputPer1M, outputPer1M, cacheReadPer1M, cacheWritePer1M };
+}
+
+function normalizeModalities(v: unknown): string[] | null {
+  if (!Array.isArray(v)) return null;
+  const out = v
+    .filter((x): x is string => typeof x === "string")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return out.length > 0 ? out : null;
+}
+
 export function makeModel(
   id: string,
   patch: Partial<ModelServiceModel> = {},
 ): ModelServiceModel {
+  const baseCaps =
+    Array.isArray(patch.capabilities) && patch.capabilities.length > 0
+      ? patch.capabilities
+      : inferCapabilities(id);
+  const context =
+    typeof patch.context_window === "number" &&
+    Number.isFinite(patch.context_window) &&
+    patch.context_window > 0
+      ? Math.round(patch.context_window)
+      : patch.context_window === null
+        ? null
+        : undefined;
+  const maxOut =
+    typeof patch.max_output_tokens === "number" &&
+    Number.isFinite(patch.max_output_tokens) &&
+    patch.max_output_tokens > 0
+      ? Math.round(patch.max_output_tokens)
+      : patch.max_output_tokens === null
+        ? null
+        : undefined;
+  const pricing = normalizePricing(patch.pricing);
+  const input_modalities = normalizeModalities(patch.input_modalities);
+  const output_modalities = normalizeModalities(patch.output_modalities);
+
   return {
     id,
-    name: shortModelName(id),
-    group: groupFromModelId(id),
-    capabilities: inferCapabilities(id),
-    ...patch,
+    name: patch.name?.trim() || shortModelName(id),
+    group: patch.group?.trim() || groupFromModelId(id),
+    capabilities: baseCaps,
+    ...(context !== undefined ? { context_window: context } : {}),
+    ...(maxOut !== undefined ? { max_output_tokens: maxOut } : {}),
+    ...(pricing ? { pricing } : {}),
+    ...(input_modalities ? { input_modalities } : {}),
+    ...(output_modalities ? { output_modalities } : {}),
+  };
+}
+
+/** Map a remote catalog entry into a local model patch for `makeModel`. */
+export function remoteInfoToModelPatch(
+  info: {
+    id: string;
+    name?: string | null;
+    context_window?: number | null;
+    max_output_tokens?: number | null;
+    pricing?: ModelServiceModel["pricing"] | null;
+    capabilities?: string[] | null;
+    input_modalities?: string[] | null;
+    output_modalities?: string[] | null;
+  },
+): Partial<ModelServiceModel> {
+  const inferred = inferCapabilities(info.id);
+  const remoteCaps = Array.isArray(info.capabilities) ? info.capabilities : [];
+  const caps = Array.from(new Set([...inferred, ...remoteCaps]));
+  return {
+    name: info.name?.trim() || undefined,
+    capabilities: caps,
+    context_window: info.context_window ?? undefined,
+    max_output_tokens: info.max_output_tokens ?? undefined,
+    pricing: info.pricing ?? undefined,
+    input_modalities: info.input_modalities ?? undefined,
+    output_modalities: info.output_modalities ?? undefined,
   };
 }
 

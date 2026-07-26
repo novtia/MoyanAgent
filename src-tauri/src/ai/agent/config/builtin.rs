@@ -6,6 +6,7 @@
 //! reviewed / diffed independently of the wiring code here.
 //!
 //! - `general-purpose` — multi-step research/execution, full tool access.
+//! - `chat`            — main-session normal chat; AskUser + web tools only.
 //! - `Explore`         — read-only investigation agent (fast).
 //! - `Plan`            — read-only planning agent (architect).
 //! - `claude-code-guide` — in-app guide; answers questions about this codebase.
@@ -18,6 +19,7 @@ use crate::ai::agent::core::permission::PermissionMode;
 use crate::ai::agent::tools::agent_tool::AGENT_TOOL_NAME;
 
 pub const AGENT_GENERAL_PURPOSE: &str = "general-purpose";
+pub const AGENT_CHAT: &str = "chat";
 pub const AGENT_EXPLORE: &str = "Explore";
 pub const AGENT_PLAN: &str = "Plan";
 pub const AGENT_GUIDE: &str = "claude-code-guide";
@@ -53,6 +55,7 @@ fn read_only_deny() -> Vec<String> {
 pub fn builtin_definitions() -> Vec<AgentDefinition> {
     vec![
         general_purpose(),
+        chat(),
         explore(),
         plan(),
         guide(),
@@ -67,6 +70,19 @@ fn general_purpose() -> AgentDefinition {
     let mut d = AgentDefinition::builtin(AGENT_GENERAL_PURPOSE, prompts::GENERAL_PURPOSE_PROMPT);
     d.when_to_use = prompts::GENERAL_PURPOSE_WHEN_TO_USE.into();
     d.tools = vec!["*".into()];
+    d
+}
+
+fn chat() -> AgentDefinition {
+    // Main-session normal conversation: no local file / shell / agent tools.
+    let mut d = AgentDefinition::builtin(AGENT_CHAT, prompts::CHAT_PROMPT);
+    d.when_to_use = prompts::CHAT_WHEN_TO_USE.into();
+    d.tools = vec![
+        "AskUser".into(),
+        "WebSearch".into(),
+        "WebFetch".into(),
+    ];
+    d.omit_claude_md = true;
     d
 }
 

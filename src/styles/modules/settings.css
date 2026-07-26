@@ -1480,9 +1480,16 @@
 .model-settings-modal {
   width: min(680px, 92vw);
 }
-.add-provider-modal.model-settings-modal,
-.add-model-modal.model-settings-modal {
+.add-provider-modal.model-settings-modal {
   width: min(440px, 92vw);
+}
+.add-model-modal.model-settings-modal {
+  width: min(520px, 92vw);
+  max-height: min(86vh, 720px);
+}
+.add-model-modal .modal-body,
+.model-settings-modal .modal-body {
+  overflow-y: auto;
 }
 .manage-models-modal.model-settings-modal {
   width: min(860px, 92vw);
@@ -2046,6 +2053,103 @@
   color: var(--blue-500);
   border-color: color-mix(in srgb, var(--blue-500) 45%, var(--line));
   background: var(--blue-50);
+}
+
+.model-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 560px) {
+  .model-meta-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.model-pricing-hint {
+  margin: -4px 0 10px;
+  font-size: 11.5px;
+  color: var(--ink-mute);
+  line-height: 1.45;
+}
+.model-pricing-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr);
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 8px;
+}
+.model-price-field {
+  display: contents;
+}
+.model-price-field label {
+  font-size: 10.5px;
+  color: var(--ink-mute);
+  letter-spacing: 0.04em;
+  text-align: right;
+  white-space: nowrap;
+}
+.model-price-field .box {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  min-height: 28px;
+  width: 100%;
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-xs);
+  background: var(--field-bg);
+  padding: 0 8px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.model-price-field .box:focus-within {
+  border-color: var(--field-border-focus);
+  box-shadow: var(--field-focus-ring);
+}
+.model-price-field .box .per {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--ink-mute);
+  user-select: none;
+}
+.model-price-field .box input[type="number"] {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  width: 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none !important;
+  border-radius: 0;
+  outline: none;
+  background: transparent !important;
+  box-shadow: none !important;
+  font: inherit;
+  font-size: 11.5px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  color: var(--ink);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.model-price-field .box input[type="number"]::-webkit-outer-spin-button,
+.model-price-field .box input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.model-price-field:nth-child(odd) .box {
+  margin-right: 10px;
+}
+
+.manage-models-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* misc legacy hooks kept for other settings surfaces */

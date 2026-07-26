@@ -1,8 +1,17 @@
 import type { NodeOverrides } from "../../../../types";
 import { MAIN } from "./constants";
 
-export function resolveDefTools(defToolsRaw: string[], defAll: boolean, allTools: string[]): string[] {
-  return defAll ? [...allTools] : defToolsRaw.filter((tn) => allTools.includes(tn));
+export function resolveDefTools(
+  defToolsRaw: string[],
+  defAll: boolean,
+  allTools: string[],
+  disallowed: string[] = [],
+): string[] {
+  const deny = new Set(disallowed);
+  const base = defAll
+    ? allTools.filter((tn) => !deny.has(tn))
+    : defToolsRaw.filter((tn) => allTools.includes(tn) && !deny.has(tn));
+  return base;
 }
 
 export function resolveSelectedTools(

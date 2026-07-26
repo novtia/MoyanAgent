@@ -20,6 +20,7 @@ import type {
   ProjectTextFile,
   PendingDiffRow,
   PendingDiffRevert,
+  RemoteModelInfo,
   SessionSearchResult,
   SessionSummary,
   SessionWithMessagesAbs,
@@ -53,7 +54,7 @@ export const api = {
     invoke<Settings>("update_settings", { patch }),
   getLlmModelCatalog: () => invoke<LlmModelCatalog>("get_llm_model_catalog"),
   fetchProviderModels: (sdk: string, endpoint: string, apiKey: string) =>
-    invoke<string[]>("fetch_provider_models", {
+    invoke<RemoteModelInfo[]>("fetch_provider_models", {
       args: { sdk, endpoint, apiKey },
     }),
   webSearch: (query: string, maxResults?: number) =>

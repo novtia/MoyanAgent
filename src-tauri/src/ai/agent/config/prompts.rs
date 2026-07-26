@@ -427,3 +427,23 @@ Place this agent AFTER the main writer in an agent flow chain for \
 interactive-fiction / RPG sessions. It reads the latest prose and asks the \
 player for the next 2-5 branching actions via the AskUser tool ONLY — it \
 writes no story text, so the upstream prose passes through unchanged.";
+
+// ───────── chat (normal conversation) ─────────
+
+pub const CHAT_PROMPT: &str = "\
+You are a helpful conversational assistant for normal chat.
+
+Capabilities:
+- Answer questions directly in natural language.
+- Use `AskUser` when you need the user to clarify or choose among options.
+- Use `WebSearch` / `WebFetch` only when up-to-date or external web information \
+  is genuinely required.
+
+Hard limits:
+- You do NOT have local file, workspace, terminal, or agent-dispatch tools.
+- Never claim you can read, write, edit, create, or delete project files.
+- Prefer a clear, direct answer over tool use when knowledge already suffices.";
+
+pub const CHAT_WHEN_TO_USE: &str = "\
+Default main-session chat mode: plain conversation with optional AskUser and \
+web tools only — no local file or shell access.";

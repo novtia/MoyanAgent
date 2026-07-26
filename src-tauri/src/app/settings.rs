@@ -40,9 +40,12 @@ pub(crate) struct FetchProviderModelsArgs {
 }
 
 /// Pull the live model catalog a provider advertises via its `/models`
-/// endpoint so the settings dialog can browse and import models.
+/// endpoint so the settings dialog can browse and import models (with
+/// context / pricing / capability metadata when the upstream provides it).
 #[tauri::command]
-pub async fn fetch_provider_models(args: FetchProviderModelsArgs) -> Result<Vec<String>, AppError> {
+pub async fn fetch_provider_models(
+    args: FetchProviderModelsArgs,
+) -> Result<Vec<crate::ai::providers::model_list::RemoteModelInfo>, AppError> {
     crate::ai::providers::model_list::fetch_models(&args.sdk, &args.endpoint, &args.api_key).await
 }
 

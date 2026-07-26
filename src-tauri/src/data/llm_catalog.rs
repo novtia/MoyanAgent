@@ -61,6 +61,10 @@ fn load_sdk_models(conn: &DbConn, sdk_id: &str) -> AppResult<Vec<ModelServiceMod
             group,
             capabilities: parse_capabilities(&caps_json)?,
             context_window,
+            max_output_tokens: None,
+            pricing: None,
+            input_modalities: None,
+            output_modalities: None,
         });
     }
     Ok(out)
@@ -91,6 +95,10 @@ fn load_supplier_models(conn: &DbConn, supplier_id: &str) -> AppResult<Vec<Model
             group,
             capabilities: parse_capabilities(&caps_json)?,
             context_window,
+            max_output_tokens: None,
+            pricing: None,
+            input_modalities: None,
+            output_modalities: None,
         });
     }
     Ok(out)

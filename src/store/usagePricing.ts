@@ -1,10 +1,10 @@
 import { create } from "zustand";
-import type { ModelUsageRow } from "../types";
+import type { ModelPricing, ModelProvider, ModelUsageRow } from "../types";
 
 export const USAGE_PRICING_STORAGE_KEY = "atelier.usage.modelPricing";
 
 export interface ModelPrice {
-  /** Uncached / fresh input tokens, CNY per 1M. */
+  /** Uncached / fresh input tokens, per 1M. */
   inputPer1M: number;
   outputPer1M: number;
   /** Cache-hit (read) tokens. `0` = bill at {@link inputPer1M}. */
@@ -32,7 +32,7 @@ export const EMPTY_MODEL_PRICE: ModelPrice = {
   cacheWritePer1M: 0,
 };
 
-/** Defaults match design/usage-page.html (CNY per 1M tokens). */
+/** Defaults match design/usage-page.html (per 1M tokens). */
 export const DEFAULT_MODEL_PRICES: Record<string, ModelPrice> = {
   "claude-sonnet-4": {
     inputPer1M: 21.6,
@@ -74,6 +74,65 @@ function normalizePrice(v: unknown): ModelPrice | null {
     cacheReadPer1M: Number.isFinite(cacheRead) ? Math.max(0, cacheRead) : 0,
     cacheWritePer1M: Number.isFinite(cacheWrite) ? Math.max(0, cacheWrite) : 0,
   };
+}
+
+export function isPriceSet(price?: ModelPrice | null): boolean {
+  if (!price) return false;
+  return (
+    price.inputPer1M > 0 ||
+    price.outputPer1M > 0 ||
+    price.cacheReadPer1M > 0 ||
+    price.cacheWritePer1M > 0
+  );
+}
+
+function modelPricingToPrice(p?: ModelPricing | null): ModelPrice | null {
+  if (!p) return null;
+  const n = (v?: number | null) =>
+    v != null && Number.isFinite(v) && v >= 0 ? v : 0;
+  const price: ModelPrice = {
+    inputPer1M: n(p.inputPer1M),
+    outputPer1M: n(p.outputPer1M),
+    cacheReadPer1M: n(p.cacheReadPer1M),
+    cacheWritePer1M: n(p.cacheWritePer1M),
+  };
+  return isPriceSet(price) ? price : null;
+}
+
+/** Flatten model_services pricing keyed by model id (prefer non-empty rates). */
+export function catalogPricesFromProviders(
+  providers: ModelProvider[] | null | undefined,
+): Record<string, ModelPrice> {
+  const out: Record<string, ModelPrice> = {};
+  if (!providers) return out;
+  for (const provider of providers) {
+    for (const model of provider.models ?? []) {
+      if (!model?.id) continue;
+      const price = modelPricingToPrice(model.pricing);
+      if (!price) continue;
+      const existing = out[model.id];
+      if (!existing || !isPriceSet(existing)) {
+        out[model.id] = price;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Resolve the effective rate for a model:
+ * localStorage override (any non-zero) → model_services catalog → empty.
+ */
+export function resolveModelPrice(
+  modelId: string,
+  prices: Record<string, ModelPrice>,
+  catalog?: Record<string, ModelPrice> | null,
+): ModelPrice {
+  const local = prices[modelId];
+  if (isPriceSet(local)) return local!;
+  const fromCatalog = catalog?.[modelId];
+  if (isPriceSet(fromCatalog)) return fromCatalog!;
+  return local ?? EMPTY_MODEL_PRICE;
 }
 
 function readStored(): UsagePricingState {
@@ -144,13 +203,14 @@ export interface CostEstimate {
 export function estimateCost(
   byModel: ModelUsageRow[],
   prices: Record<string, ModelPrice>,
+  catalog?: Record<string, ModelPrice> | null,
 ): CostEstimate {
   let input = 0;
   let output = 0;
   let cache = 0;
   for (const row of byModel) {
-    const price = prices[row.model];
-    if (!price) continue;
+    const price = resolveModelPrice(row.model, prices, catalog);
+    if (!isPriceSet(price)) continue;
 
     const prompt = row.prompt_tokens ?? 0;
     const completion = row.completion_tokens ?? 0;
@@ -167,7 +227,6 @@ export function estimateCost(
       const fresh = Math.max(0, prompt - cachedInPrompt);
       input += (fresh / 1_000_000) * price.inputPer1M;
       cache += (cachedInPrompt / 1_000_000) * cacheReadRate;
-      // Extra cache beyond prompt (rare) still billed as cache read.
       const cacheExtra = Math.max(0, cacheRead - cachedInPrompt);
       cache += (cacheExtra / 1_000_000) * cacheReadRate;
     } else {

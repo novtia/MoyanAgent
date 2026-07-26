@@ -76,6 +76,45 @@ impl Default for ModelParamSettings {
     }
 }
 
+/// Per-1M-token rates for cost estimates (same unit as the usage page).
+/// JSON keys match the frontend / usage store (`inputPer1M`, …).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelPricing {
+    #[serde(
+        default,
+        rename = "inputPer1M",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub input_per_1m: Option<f64>,
+    #[serde(
+        default,
+        rename = "outputPer1M",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub output_per_1m: Option<f64>,
+    #[serde(
+        default,
+        rename = "cacheReadPer1M",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cache_read_per_1m: Option<f64>,
+    #[serde(
+        default,
+        rename = "cacheWritePer1M",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cache_write_per_1m: Option<f64>,
+}
+
+impl ModelPricing {
+    pub fn is_empty(&self) -> bool {
+        self.input_per_1m.is_none()
+            && self.output_per_1m.is_none()
+            && self.cache_read_per_1m.is_none()
+            && self.cache_write_per_1m.is_none()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelServiceModel {
     pub id: String,
@@ -85,6 +124,18 @@ pub struct ModelServiceModel {
     /// Max context window (tokens) when known; persisted for user-defined models in settings JSON.
     #[serde(default)]
     pub context_window: Option<i64>,
+    /// Max completion / output tokens when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<i64>,
+    /// Optional per-1M rates used by the usage cost estimate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing: Option<ModelPricing>,
+    /// Input modalities from upstream catalogs (text|image|file|…).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_modalities: Option<Vec<String>>,
+    /// Output modalities from upstream catalogs (text|image|video|…).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_modalities: Option<Vec<String>>,
 }
 
 fn default_enabled() -> bool {

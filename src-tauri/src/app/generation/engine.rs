@@ -254,12 +254,32 @@ pub(crate) async fn run_cancellable_generation(
         }
         if let Some(tools) = &ov.tools {
             // Per-node override tool semantics:
-            //   ["*"]   → all (non-denied) tools
-            //   [names] → exactly those tools
+            //   ["*"]   → all (non-denied) tools — only when the base definition
+            //             already allows `*`. Whitelist agents (e.g. main `chat`)
+            //             must not be expandable via a stale `["*"]` override.
+            //   [names] → exactly those tools, intersected with the base allow
+            //             list when the base is not `*`.
             //   []      → NO tools (empty allow-list; the agent runs with zero
             //             tools). This lets a node — including the main agent —
             //             be configured for pure generation without tool access.
-            definition.tools = tools.clone();
+            let base_wildcard = definition.tools.iter().any(|t| t == "*");
+            if tools.iter().any(|t| t == "*") {
+                if !base_wildcard {
+                    // Keep the definition's whitelist (no expansion).
+                } else {
+                    definition.tools = tools.clone();
+                }
+            } else if base_wildcard {
+                definition.tools = tools.clone();
+            } else {
+                let allow: std::collections::HashSet<&str> =
+                    definition.tools.iter().map(|s| s.as_str()).collect();
+                definition.tools = tools
+                    .iter()
+                    .filter(|t| allow.contains(t.as_str()))
+                    .cloned()
+                    .collect();
+            }
         }
     }
 

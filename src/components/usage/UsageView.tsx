@@ -8,7 +8,12 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/tauri";
-import { estimateCost, useUsagePricing } from "../../store/usagePricing";
+import { useSettings } from "../../store/settings";
+import {
+  catalogPricesFromProviders,
+  estimateCost,
+  useUsagePricing,
+} from "../../store/usagePricing";
 import type {
   DailyUsageRow,
   TokenUsageEventRow,
@@ -55,6 +60,11 @@ export function UsageView() {
   const costEnabled = useUsagePricing((s) => s.enabled);
   const currency = useUsagePricing((s) => s.currency);
   const ensureModels = useUsagePricing((s) => s.ensureModels);
+  const modelServices = useSettings((s) => s.settings?.model_services);
+  const catalogPrices = useMemo(
+    () => catalogPricesFromProviders(modelServices),
+    [modelServices],
+  );
 
   const range = useMemo(() => rangeForScope(scope), [scope]);
   const prev = useMemo(() => previousRange(scope), [scope]);
@@ -155,8 +165,8 @@ export function UsageView() {
 
   const cost = useMemo(() => {
     if (!summary || !costEnabled) return null;
-    return estimateCost(summary.by_model, prices);
-  }, [summary, costEnabled, prices]);
+    return estimateCost(summary.by_model, prices, catalogPrices);
+  }, [summary, costEnabled, prices, catalogPrices]);
 
   const toolErrorCount = useMemo(
     () => tools.reduce((s, r) => s + r.error_count, 0),
@@ -216,7 +226,7 @@ export function UsageView() {
           onPageChange={setPage}
           loading={refreshing && !overview}
         />
-        <PricingCard models={modelNames} />
+        <PricingCard models={modelNames} catalogPrices={catalogPrices} />
 
         <div className="usage-privacy">{t("usage.privacy")}</div>
       </div>

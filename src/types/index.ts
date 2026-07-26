@@ -10,6 +10,14 @@ export interface ModelParamSettings {
   thinking_effort: string | null;
 }
 
+/** Per-1M-token rates for cost estimates (same unit as usage pricing). */
+export interface ModelPricing {
+  inputPer1M?: number | null;
+  outputPer1M?: number | null;
+  cacheReadPer1M?: number | null;
+  cacheWritePer1M?: number | null;
+}
+
 export interface ModelServiceModel {
   id: string;
   name: string;
@@ -17,6 +25,26 @@ export interface ModelServiceModel {
   capabilities: string[];
   /** Max context window (tokens); omit or null when unknown. */
   context_window?: number | null;
+  /** Max completion / output tokens when known. */
+  max_output_tokens?: number | null;
+  /** Optional per-1M rates used by the usage cost estimate. */
+  pricing?: ModelPricing | null;
+  /** Input modalities from upstream catalogs (text|image|file|…). */
+  input_modalities?: string[] | null;
+  /** Output modalities from upstream catalogs (text|image|video|…). */
+  output_modalities?: string[] | null;
+}
+
+/** Rich model entry returned by `fetch_provider_models`. */
+export interface RemoteModelInfo {
+  id: string;
+  name?: string | null;
+  context_window?: number | null;
+  max_output_tokens?: number | null;
+  pricing?: ModelPricing | null;
+  capabilities: string[];
+  input_modalities?: string[] | null;
+  output_modalities?: string[] | null;
 }
 
 export type ModelProviderSdk =
@@ -232,6 +260,8 @@ export interface AgentDefinitionInfo {
   system_prompt: string;
   model: string | null;
   tools: string[];
+  /** Tools removed from the allow-list even when `tools` is `["*"]`. */
+  disallowed_tools?: string[];
   background: boolean;
   passthrough_output: boolean;
 }

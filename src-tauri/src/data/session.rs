@@ -17,6 +17,8 @@ fn decode_llm_params(raw: Option<String>) -> ModelParamSettings {
 /// Persisted `sessions.agent_type` values the UI may set for main-chat generation.
 pub const SESSION_AGENT_GENERAL: &str = "general-purpose";
 pub const SESSION_AGENT_PLAN: &str = "Plan";
+/// Default main-session mode: normal chat with AskUser + web tools only.
+pub const SESSION_AGENT_CHAT: &str = "chat";
 
 /// Sentinel used inside `agent_chain` to mark the session's default main agent.
 /// Resolved at generation time to [`generation_agent_definition_key`] of the
@@ -28,6 +30,7 @@ pub const AGENT_CHAIN_MAIN: &str = "__main__";
 /// agent run ([`crate::ai::agent::run_agent`]).
 pub fn generation_agent_definition_key(stored: &str) -> &'static str {
     match stored.trim() {
+        SESSION_AGENT_CHAT => SESSION_AGENT_CHAT,
         SESSION_AGENT_PLAN => SESSION_AGENT_PLAN,
         _ => SESSION_AGENT_GENERAL,
     }
@@ -278,8 +281,8 @@ pub fn create(conn: &DbConn, title: Option<String>, model: Option<String>) -> Ap
     let now = now_ms();
     let title = title.unwrap_or_else(|| "New session".into());
     conn.execute(
-        "INSERT INTO sessions(id, title, model, system_prompt, created_at, updated_at) VALUES(?1, ?2, ?3, '', ?4, ?4)",
-        params![id, title, model, now],
+        "INSERT INTO sessions(id, title, model, system_prompt, agent_type, created_at, updated_at) VALUES(?1, ?2, ?3, '', ?4, ?5, ?5)",
+        params![id, title, model, SESSION_AGENT_CHAT, now],
     )?;
     Ok(Session {
         id,
@@ -291,7 +294,7 @@ pub fn create(conn: &DbConn, title: Option<String>, model: Option<String>) -> Ap
         llm_params: ModelParamSettings::default(),
         context_window: None,
         context_window_used: 0,
-        agent_type: SESSION_AGENT_GENERAL.into(),
+        agent_type: SESSION_AGENT_CHAT.into(),
         agent_chain: None,
         project_id: None,
         parent_session_id: None,
@@ -420,9 +423,9 @@ pub fn set_agent_chain(conn: &DbConn, id: &str, chain: &[ChainNode]) -> AppResul
 
 pub fn set_agent_type(conn: &DbConn, id: &str, agent_type: &str) -> AppResult<()> {
     let t = agent_type.trim();
-    if t != SESSION_AGENT_GENERAL && t != SESSION_AGENT_PLAN {
+    if t != SESSION_AGENT_GENERAL && t != SESSION_AGENT_PLAN && t != SESSION_AGENT_CHAT {
         return Err(AppError::Invalid(format!(
-            "agent_type must be \"{SESSION_AGENT_GENERAL}\" or \"{SESSION_AGENT_PLAN}\""
+            "agent_type must be \"{SESSION_AGENT_GENERAL}\", \"{SESSION_AGENT_PLAN}\", or \"{SESSION_AGENT_CHAT}\""
         )));
     }
     let updated = now_ms();

@@ -1,9 +1,16 @@
 import { useTranslation } from "react-i18next";
-import { EMPTY_MODEL_PRICE, useUsagePricing } from "../../store/usagePricing";
+import {
+  EMPTY_MODEL_PRICE,
+  isPriceSet,
+  resolveModelPrice,
+  useUsagePricing,
+} from "../../store/usagePricing";
 import type { ModelPrice } from "../../store/usagePricing";
 
 interface PricingCardProps {
   models: string[];
+  /** Rates from model_services (used when local override is unset). */
+  catalogPrices?: Record<string, ModelPrice>;
 }
 
 type PriceField = keyof ModelPrice;
@@ -22,7 +29,10 @@ const FIELD_LABEL: Record<PriceField, string> = {
   outputPer1M: "usage.pricingOutput",
 };
 
-export function PricingCard({ models }: PricingCardProps) {
+export function PricingCard({
+  models,
+  catalogPrices = {},
+}: PricingCardProps) {
   const { t } = useTranslation();
   const enabled = useUsagePricing((s) => s.enabled);
   const prices = useUsagePricing((s) => s.prices);
@@ -30,7 +40,12 @@ export function PricingCard({ models }: PricingCardProps) {
   const setEnabled = useUsagePricing((s) => s.setEnabled);
   const setPrice = useUsagePricing((s) => s.setPrice);
 
-  const list = models.length > 0 ? models : Object.keys(prices);
+  const list =
+    models.length > 0
+      ? models
+      : Array.from(
+          new Set([...Object.keys(prices), ...Object.keys(catalogPrices)]),
+        );
 
   return (
     <div className="usage-card">
@@ -49,12 +64,20 @@ export function PricingCard({ models }: PricingCardProps) {
         </button>
       </div>
       {list.map((model, idx) => {
-        const price = prices[model] ?? EMPTY_MODEL_PRICE;
+        const local = prices[model];
+        const effective = resolveModelPrice(model, prices, catalogPrices);
+        const fromCatalog =
+          !isPriceSet(local) && isPriceSet(catalogPrices[model]);
+        const price = effective ?? EMPTY_MODEL_PRICE;
         return (
           <div className="usage-set-row" key={model}>
             <div className="usage-set-main">
               <div className="usage-set-title">{model}</div>
-              {idx === list.length - 1 ? (
+              {fromCatalog ? (
+                <div className="usage-set-desc">
+                  {t("usage.pricingFromModel")}
+                </div>
+              ) : idx === list.length - 1 ? (
                 <div className="usage-set-desc">{t("usage.pricingUnset")}</div>
               ) : null}
             </div>
@@ -72,6 +95,8 @@ export function PricingCard({ models }: PricingCardProps) {
                       disabled={!enabled}
                       onChange={(e) =>
                         setPrice(model, {
+                          // Seed other fields from effective so first edit keeps catalog rates.
+                          ...effective,
                           [field]: Number(e.target.value) || 0,
                         })
                       }
