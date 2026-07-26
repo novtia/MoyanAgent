@@ -241,7 +241,7 @@ pub(crate) fn apply_responses_params(body: &mut Map<String, Value>, request: &Ch
     if let Some(v) = params.model.max_tokens {
         body.insert("max_output_tokens".into(), json!(v));
     }
-    // Volcengine Ark Responses uses `reasoning.effort` (minimal/low/medium/
+    // Volcengine / BytePlus Ark Responses uses `reasoning.effort` (minimal/low/medium/
     // high/max). Chat Completions fields `thinking` / `reasoning_effort`
     // are rejected on this path.
     if crate::ai::parameters::is_volcengine_endpoint(&request.provider.endpoint) {

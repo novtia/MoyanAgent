@@ -594,17 +594,19 @@
 /* ───── pricing ───── */
 .usage-set-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
+  gap: 16px 24px;
   padding: 13px 18px;
+  flex-wrap: wrap;
 }
 .usage-set-row + .usage-set-row {
   border-top: 1px solid var(--line);
 }
 .usage-set-main {
   min-width: 0;
-  flex: 1;
+  flex: 1 1 140px;
+  padding-top: 4px;
 }
 .usage-set-title {
   font-size: 13px;
@@ -617,30 +619,43 @@
   line-height: 1.5;
 }
 .usage-set-inputs {
-  display: flex;
-  gap: 8px;
-  flex: none;
+  /* label | box | label | box — labels share columns, boxes share columns */
+  display: grid;
+  grid-template-columns: max-content 7.5rem max-content 7.5rem;
+  justify-content: end;
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 8px;
+  flex: 0 1 auto;
+  margin-left: auto;
 }
 .usage-price-field {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  display: contents;
 }
 .usage-price-field label {
   font-size: 10.5px;
   color: var(--ink-mute);
   letter-spacing: 0.04em;
+  text-align: right;
+  white-space: nowrap;
+  line-height: 1.2;
 }
 .usage-price-field .box {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  box-sizing: border-box;
+  width: 7.5rem;
   min-height: 28px;
   border: 1px solid var(--field-border);
   border-radius: var(--radius-xs);
   background: var(--field-bg);
   padding: 0 8px;
   transition: border-color 0.15s, box-shadow 0.15s;
+}
+/* Extra space between the two field pairs (after first box column). */
+.usage-price-field:nth-child(odd) .box {
+  margin-right: 10px;
 }
 .usage-price-field .box:focus-within {
   border-color: var(--field-border-focus);
@@ -660,7 +675,8 @@
 /* Reset global input[type=number] chrome — the .box is the only frame. */
 .usage-price-field .box input[type="number"] {
   box-sizing: border-box;
-  width: 56px;
+  flex: 1 1 auto;
+  width: 0;
   min-width: 0;
   margin: 0;
   padding: 0;

@@ -1,9 +1,26 @@
 import { useTranslation } from "react-i18next";
-import { useUsagePricing } from "../../store/usagePricing";
+import { EMPTY_MODEL_PRICE, useUsagePricing } from "../../store/usagePricing";
+import type { ModelPrice } from "../../store/usagePricing";
 
 interface PricingCardProps {
   models: string[];
 }
+
+type PriceField = keyof ModelPrice;
+
+const FIELDS: PriceField[] = [
+  "inputPer1M",
+  "outputPer1M",
+  "cacheReadPer1M",
+  "cacheWritePer1M",
+];
+
+const FIELD_LABEL: Record<PriceField, string> = {
+  inputPer1M: "usage.pricingInput",
+  cacheReadPer1M: "usage.pricingCacheRead",
+  cacheWritePer1M: "usage.pricingCacheWrite",
+  outputPer1M: "usage.pricingOutput",
+};
 
 export function PricingCard({ models }: PricingCardProps) {
   const { t } = useTranslation();
@@ -32,7 +49,7 @@ export function PricingCard({ models }: PricingCardProps) {
         </button>
       </div>
       {list.map((model, idx) => {
-        const price = prices[model] ?? { inputPer1M: 0, outputPer1M: 0 };
+        const price = prices[model] ?? EMPTY_MODEL_PRICE;
         return (
           <div className="usage-set-row" key={model}>
             <div className="usage-set-main">
@@ -42,42 +59,27 @@ export function PricingCard({ models }: PricingCardProps) {
               ) : null}
             </div>
             <div className="usage-set-inputs">
-              <span className="usage-price-field">
-                <label>{t("usage.pricingInput")}</label>
-                <span className="box">
-                  <span className="cur">{currency}</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={price.inputPer1M}
-                    disabled={!enabled}
-                    onChange={(e) =>
-                      setPrice(model, { inputPer1M: Number(e.target.value) || 0 })
-                    }
-                  />
-                  <span className="per">{t("usage.pricingPerMillion")}</span>
+              {FIELDS.map((field) => (
+                <span className="usage-price-field" key={field}>
+                  <label>{t(FIELD_LABEL[field])}</label>
+                  <span className="box">
+                    <span className="cur">{currency}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={price[field]}
+                      disabled={!enabled}
+                      onChange={(e) =>
+                        setPrice(model, {
+                          [field]: Number(e.target.value) || 0,
+                        })
+                      }
+                    />
+                    <span className="per">{t("usage.pricingPerMillion")}</span>
+                  </span>
                 </span>
-              </span>
-              <span className="usage-price-field">
-                <label>{t("usage.pricingOutput")}</label>
-                <span className="box">
-                  <span className="cur">{currency}</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={price.outputPer1M}
-                    disabled={!enabled}
-                    onChange={(e) =>
-                      setPrice(model, {
-                        outputPer1M: Number(e.target.value) || 0,
-                      })
-                    }
-                  />
-                  <span className="per">{t("usage.pricingPerMillion")}</span>
-                </span>
-              </span>
+              ))}
             </div>
           </div>
         );

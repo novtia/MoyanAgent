@@ -9,11 +9,17 @@ export const tokenUsageFormatter = new Intl.NumberFormat();
 export function resolveMessageTokenUsage(usage: MessageTokenUsageData): {
   prompt: number;
   completion: number;
+  cacheRead: number;
+  cacheWrite: number;
 } | null {
   const prompt = usage.prompt_tokens ?? 0;
   const completion = usage.completion_tokens ?? 0;
-  if (prompt <= 0 && completion <= 0) return null;
-  return { prompt, completion };
+  const cacheRead = usage.cache_read_tokens ?? 0;
+  const cacheWrite = usage.cache_write_tokens ?? 0;
+  if (prompt <= 0 && completion <= 0 && cacheRead <= 0 && cacheWrite <= 0) {
+    return null;
+  }
+  return { prompt, completion, cacheRead, cacheWrite };
 }
 
 export function nativeFilePath(file: File) {

@@ -14,7 +14,7 @@ interface StatStripProps {
   summary: TokenUsageSummary | null;
   prevSummary: TokenUsageSummary | null;
   toolErrorCount: number;
-  cost: { total: number; input: number; output: number } | null;
+  cost: { total: number; input: number; output: number; cache: number } | null;
   costEnabled: boolean;
   currency: string;
 }
@@ -132,10 +132,16 @@ export function StatStrip({
         <div className="usage-stat-sub">
           {costEnabled && cost ? (
             <span className="mono">
-              {t("usage.costSplit", {
-                input: formatMoney(cost.input, ""),
-                output: formatMoney(cost.output, ""),
-              })}
+              {cost.cache > 0
+                ? t("usage.costSplitWithCache", {
+                    input: formatMoney(cost.input, ""),
+                    cache: formatMoney(cost.cache, ""),
+                    output: formatMoney(cost.output, ""),
+                  })
+                : t("usage.costSplit", {
+                    input: formatMoney(cost.input, ""),
+                    output: formatMoney(cost.output, ""),
+                  })}
             </span>
           ) : (
             <span className="mono">—</span>

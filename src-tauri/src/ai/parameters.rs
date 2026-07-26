@@ -358,7 +358,13 @@ fn is_deepseek_endpoint(endpoint: &str) -> bool {
 
 pub fn is_volcengine_endpoint(endpoint: &str) -> bool {
     let e = endpoint.trim().to_ascii_lowercase();
-    e.contains("volces.com") || e.contains("volcengine.com") || e.contains("volcengine.cn")
+    // Domestic Ark (`*.volces.com`) and international BytePlus Ark
+    // (`*.bytepluses.com` / `*.byteplus.com`).
+    e.contains("volces.com")
+        || e.contains("volcengine.com")
+        || e.contains("volcengine.cn")
+        || e.contains("bytepluses.com")
+        || e.contains("byteplus.com")
 }
 
 /// Stable key for Volcengine Session-cache thinking consistency checks.
@@ -413,6 +419,17 @@ mod tests {
                 .and_then(Value::as_str),
             Some("enabled")
         );
+    }
+
+    #[test]
+    fn byteplus_is_volcengine_endpoint() {
+        assert!(is_volcengine_endpoint(
+            "https://ark.ap-southeast.bytepluses.com/api/v3/responses"
+        ));
+        assert!(is_volcengine_endpoint(
+            "https://ark.ap-southeast.byteplus.com/api/v3/responses"
+        ));
+        assert!(!is_volcengine_endpoint("https://api.openai.com/v1/responses"));
     }
 
     #[test]
