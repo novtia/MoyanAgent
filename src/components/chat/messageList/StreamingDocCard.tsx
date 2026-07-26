@@ -171,7 +171,7 @@ export function StreamingDocCard({
   }, [open]);
 
   const showProseExpand =
-    !isEdit && (isCreateDoc || isWrite) && open && hasContent && !streaming;
+    !isEdit && (isCreateDoc || isWrite) && open && hasContent;
 
   useEffect(() => {
     if (!showProseExpand || contentExpanded) {

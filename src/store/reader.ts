@@ -3,8 +3,33 @@ import { api } from "../api/tauri";
 import { DEFAULT_TEXT_ENCODING } from "../types";
 import type { PendingDiffRow } from "../types";
 
-/** Renderable document kind. `.md`/`.markdown` → markdown, everything else → text. */
-export type ReaderFileType = "markdown" | "text";
+/**
+ * Renderable document kind.
+ * - markdown / text → CodeMirror (and markdown preview)
+ * - image / video / audio → inline media viewer (no decoded text)
+ */
+export type ReaderFileType = "markdown" | "text" | "image" | "video" | "audio";
+
+export type ReaderMediaFileType = Extract<ReaderFileType, "image" | "video" | "audio">;
+
+const IMAGE_EXTS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".bmp",
+  ".svg",
+]);
+const VIDEO_EXTS = new Set([".mp4", ".mov", ".webm", ".mkv"]);
+const AUDIO_EXTS = new Set([".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"]);
+
+/** True when the tab should render an inline media viewer (not a text editor). */
+export function isMediaFileType(
+  fileType: ReaderFileType | null | undefined,
+): fileType is ReaderMediaFileType {
+  return fileType === "image" || fileType === "video" || fileType === "audio";
+}
 
 /** Payload used when opening a document in the reader. */
 export interface ReaderDoc {
@@ -195,12 +220,23 @@ export function resolveToolFilePath(input: unknown, output: unknown): string {
   return raw ? sanitizeReaderPath(raw) : "";
 }
 
+function fileExt(path: string): string {
+  const base = path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "";
+  const dot = base.lastIndexOf(".");
+  if (dot <= 0) return "";
+  return base.slice(dot).toLowerCase();
+}
+
 /** Infer the renderable file type from a path's extension. */
 export function inferFileType(path: string): ReaderFileType {
   const lower = path.toLowerCase();
   if (lower.endsWith(".md") || lower.endsWith(".markdown") || lower.endsWith(".mdx")) {
     return "markdown";
   }
+  const ext = fileExt(path);
+  if (IMAGE_EXTS.has(ext)) return "image";
+  if (VIDEO_EXTS.has(ext)) return "video";
+  if (AUDIO_EXTS.has(ext)) return "audio";
   return "text";
 }
 
@@ -296,7 +332,8 @@ export function stripParagraphLabels(text: string): string {
 }
 
 function docToTab(doc: ReaderDoc): ReaderFileTab {
-  const text = stripParagraphLabels(doc.text);
+  const media = isMediaFileType(doc.fileType);
+  const text = media ? "" : stripParagraphLabels(doc.text);
   return {
     id: newTabId(),
     path: sanitizeReaderPath(doc.path),
@@ -304,8 +341,8 @@ function docToTab(doc: ReaderDoc): ReaderFileTab {
     fileType: doc.fileType,
     encoding: doc.encoding ?? DEFAULT_TEXT_ENCODING,
     hadBom: doc.hadBom ?? false,
-    chars: countWords(text),
-    lines: doc.lines ?? text.split(/\n/).length,
+    chars: media ? 0 : countWords(text),
+    lines: media ? 0 : (doc.lines ?? text.split(/\n/).length),
     bytes: doc.bytes,
     truncated: doc.truncated,
     pendingDiffs: [],
@@ -341,16 +378,29 @@ function loadPersisted(sessionId: string | null): {
       tabs?: PersistedTab[];
       activePath?: string | null;
     };
-    const tabs: ReaderFileTab[] = (parsed.tabs ?? []).map((t) => ({
-      ...t,
-      path: sanitizeReaderPath(t.path),
-      encoding: t.encoding ?? DEFAULT_TEXT_ENCODING,
-      hadBom: t.hadBom ?? false,
-      id: newTabId(),
-      pendingDiffs: [],
-      dirty: false,
-      saveError: false,
-    }));
+    const tabs: ReaderFileTab[] = (parsed.tabs ?? []).map((t) => {
+      const inferred = inferFileType(t.path);
+      // Prefer extension-based media detection over a stale persisted "text" type.
+      const fileType = isMediaFileType(inferred)
+        ? inferred
+        : (t.fileType ?? inferred);
+      const media = isMediaFileType(fileType);
+      return {
+        ...t,
+        path: sanitizeReaderPath(t.path),
+        fileType,
+        // Never persist/restore decoded binary blobs as text.
+        text: media ? "" : (t.text ?? ""),
+        chars: media ? 0 : t.chars,
+        lines: media ? 0 : t.lines,
+        encoding: t.encoding ?? DEFAULT_TEXT_ENCODING,
+        hadBom: t.hadBom ?? false,
+        id: newTabId(),
+        pendingDiffs: [],
+        dirty: false,
+        saveError: false,
+      };
+    });
     const activePath = parsed.activePath ?? null;
     const activeTabId =
       activePath != null
@@ -379,17 +429,20 @@ function persistTabs(sessionId: string | null, tabs: ReaderFileTab[], activeTabI
         lines,
         bytes,
         truncated,
-      }): PersistedTab => ({
-        path,
-        text,
-        fileType,
-        encoding,
-        hadBom,
-        chars,
-        lines,
-        bytes,
-        truncated,
-      }),
+      }): PersistedTab => {
+        const media = isMediaFileType(fileType);
+        return {
+          path,
+          text: media ? "" : text,
+          fileType,
+          encoding,
+          hadBom,
+          chars: media ? 0 : chars,
+          lines: media ? 0 : lines,
+          bytes,
+          truncated,
+        };
+      },
     ),
     activePath: active?.path ?? null,
   };
@@ -505,7 +558,8 @@ export const useReader = create<ReaderStore>((set, get) => ({
           };
         }
 
-        const cleanText = stripParagraphLabels(doc.text);
+        const media = isMediaFileType(doc.fileType);
+        const cleanText = media ? "" : stripParagraphLabels(doc.text);
         tabs = s.tabs.map((t, i) =>
           i === idx
             ? {
@@ -514,8 +568,8 @@ export const useReader = create<ReaderStore>((set, get) => ({
                 fileType: doc.fileType,
                 encoding: doc.encoding ?? t.encoding,
                 hadBom: doc.hadBom ?? t.hadBom,
-                chars: countWords(cleanText),
-                lines: doc.lines ?? cleanText.split(/\n/).length,
+                chars: media ? 0 : countWords(cleanText),
+                lines: media ? 0 : (doc.lines ?? cleanText.split(/\n/).length),
                 bytes: doc.bytes,
                 truncated: doc.truncated,
                 pendingDiffs: [],

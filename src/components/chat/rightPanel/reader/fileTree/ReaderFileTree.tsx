@@ -2,7 +2,9 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type CSSProperties,
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -24,12 +26,25 @@ import {
   joinPath,
   parentDir,
   siblingPath,
+  uniqueName,
 } from "../../../../../store/fileExplorer";
 import type { ProjectDirEntry } from "../../../../../types";
 import type { ReaderFileTreeProps } from "../types";
 import { TreeContext, useTree, type TreeCtx } from "./context";
 import { ChevronIcon, NewFileIcon, NewFolderIcon, RefreshIcon } from "./icons";
-import { pasteInto, splitNameExt, toggleRule } from "./ops";
+import { pasteInto, toggleRule } from "./ops";
+import {
+  getVisibleTreeEntries,
+  getVisibleTreePaths,
+  isModifierClick,
+  isPathSelected,
+  resolveBulkPaths,
+  selectVisibleRange,
+  TREE_IS_DIR_ATTR,
+  TREE_PATH_ATTR,
+} from "./selection";
+import { useTreeDropTarget } from "./useTreeDropTarget";
+import { useTreeMarquee } from "./useTreeMarquee";
 
 export type { ReaderFileTreeProps } from "../types";
 
@@ -51,6 +66,12 @@ export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) 
   }, [projectId, projects]);
 
   const refresh = useCallback(() => bumpTree(), [bumpTree]);
+  const bindSession = useFileExplorer((s) => s.bindSession);
+
+  useEffect(() => {
+    bindSession(activeId, root);
+  }, [activeId, root, bindSession]);
+
   const expand = useCallback((dir: string) => {
     setExpanded((prev) => {
       if (prev.has(dir)) return prev;
@@ -100,10 +121,19 @@ export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) 
     [activeId, expand, refresh, t],
   );
 
+  const onImported = useCallback(
+    (targetDir: string) => {
+      expand(targetDir);
+      refresh();
+    },
+    [expand, refresh],
+  );
+
   const ctx = useMemo<TreeCtx | null>(() => {
     if (!activeId || !root) return null;
     return {
       sessionId: activeId,
+      root,
       refreshNonce,
       activePath: activePath ?? null,
       onOpenFile,
@@ -124,8 +154,61 @@ export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) 
 
   return (
     <TreeContext.Provider value={ctx}>
+      <ReaderFileTreeShell
+        root={root}
+        sessionId={activeId}
+        clipboard={clipboard}
+        setClipboard={setClipboard}
+        newFile={newFile}
+        newFolder={newFolder}
+        refresh={refresh}
+        onImported={onImported}
+        expanded={expanded}
+        setExpanded={setExpanded}
+      />
+    </TreeContext.Provider>
+  );
+}
+
+interface ReaderFileTreeShellProps {
+  root: string;
+  sessionId: string;
+  clipboard: ReturnType<typeof useFileExplorer.getState>["clipboard"];
+  setClipboard: ReturnType<typeof useFileExplorer.getState>["setClipboard"];
+  newFile: (dir: string) => Promise<void>;
+  newFolder: (dir: string) => Promise<void>;
+  refresh: () => void;
+  onImported: (targetDir: string) => void;
+  expanded: Set<string>;
+  setExpanded: React.Dispatch<React.SetStateAction<Set<string>>>;
+}
+
+function ReaderFileTreeShell({
+  root,
+  sessionId,
+  clipboard,
+  setClipboard,
+  newFile,
+  newFolder,
+  refresh,
+  onImported,
+  expanded,
+  setExpanded,
+}: ReaderFileTreeShellProps) {
+  const { t } = useTranslation();
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const clearSelection = useFileExplorer((s) => s.clearSelection);
+  const { isDropTarget, dropHandlers } = useTreeDropTarget({
+    sessionId,
+    root,
+    onImported,
+  });
+  const { marquee, marqueeHandlers } = useTreeMarquee(bodyRef);
+
+  return (
       <div
-        className="reader-file-tree"
+        className={`reader-file-tree${isDropTarget ? " is-drop-target" : ""}`}
+        {...dropHandlers}
         onContextMenu={(e) => {
           e.preventDefault();
           openContextMenu(e, [
@@ -135,7 +218,7 @@ export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) 
               id: "paste",
               label: t("fileExplorer.paste"),
               disabled: !clipboard,
-              onSelect: () => void pasteInto(activeId, clipboard, setClipboard, root, refresh, t),
+              onSelect: () => void pasteInto(sessionId, clipboard, setClipboard, root, refresh, t),
             },
             { type: "separator" },
             { id: "refresh", label: t("fileExplorer.refresh"), onSelect: () => refresh() },
@@ -170,11 +253,28 @@ export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) 
             </button>
           </div>
         </div>
-        <div className="reader-file-tree-body">
+        <div
+          ref={bodyRef}
+          className="reader-file-tree-body"
+          {...marqueeHandlers}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) clearSelection();
+          }}
+        >
           <TreeLevel dirPath={root} depth={0} expanded={expanded} setExpanded={setExpanded} />
+          {marquee && (
+            <div
+              className="reader-tree-marquee"
+              style={{
+                left: marquee.left,
+                top: marquee.top,
+                width: marquee.width,
+                height: marquee.height,
+              }}
+            />
+          )}
         </div>
       </div>
-    </TreeContext.Provider>
   );
 }
 
@@ -279,12 +379,33 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
   const tree = useTree();
   const clipboard = useFileExplorer((s) => s.clipboard);
   const setClipboard = useFileExplorer((s) => s.setClipboard);
+  const selectedPaths = useFileExplorer((s) => s.selectedPaths);
+  const setSelection = useFileExplorer((s) => s.setSelection);
+  const toggleSelection = useFileExplorer((s) => s.toggleSelection);
+  const deleteEntries = useFileExplorer((s) => s.deleteEntries);
   const indent = 8 + depth * 14;
   const open = expanded.has(entry.path);
+  const isSelected = isPathSelected(entry.path, selectedPaths);
   const isActive =
     !entry.isDir &&
     tree.activePath != null &&
     normalizeReaderPath(entry.path) === normalizeReaderPath(tree.activePath);
+
+  const onImported = useCallback(
+    (targetDir: string) => {
+      tree.expand(targetDir);
+      tree.refresh();
+    },
+    [tree],
+  );
+
+  const { isDropTarget, dropHandlers } = useTreeDropTarget({
+    sessionId: tree.sessionId,
+    root: tree.root,
+    entryPath: entry.path,
+    isDir: entry.isDir,
+    onImported,
+  });
 
   const toggleOpen = useCallback(() => {
     setExpanded((prev) => {
@@ -295,20 +416,63 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
     });
   }, [entry.path, setExpanded]);
 
+  const onRowClick = useCallback(
+    (e: ReactMouseEvent) => {
+      e.stopPropagation();
+      const body = (e.currentTarget as HTMLElement).closest(
+        ".reader-file-tree-body",
+      ) as HTMLElement | null;
+
+      if (e.shiftKey) {
+        e.preventDefault();
+        selectVisibleRange(entry.path, getVisibleTreePaths(body));
+        return;
+      }
+      if (isModifierClick(e)) {
+        e.preventDefault();
+        toggleSelection(entry.path);
+        return;
+      }
+
+      setSelection(entry.path);
+      if (entry.isDir) toggleOpen();
+      else tree.onOpenFile(entry.path);
+    },
+    [entry.isDir, entry.path, setSelection, toggleOpen, toggleSelection, tree],
+  );
+
   const onDragStart = useCallback(
     (e: ReactDragEvent) => {
-      e.dataTransfer.effectAllowed = "copy";
+      e.dataTransfer.effectAllowed = "copyMove";
+      const body = (e.currentTarget as HTMLElement).closest(
+        ".reader-file-tree-body",
+      ) as HTMLElement | null;
+      const bulk = resolveBulkPaths(entry.path, useFileExplorer.getState().selectedPaths);
+      const visible = getVisibleTreeEntries(body);
+      const byPath = new Map(
+        visible.map((v) => [normalizeReaderPath(v.path), v] as const),
+      );
+      const items = bulk.map((path) => {
+        const hit = byPath.get(normalizeReaderPath(path));
+        return {
+          path,
+          isDir: hit?.isDir ?? (path === entry.path ? entry.isDir : false),
+        };
+      });
+      // Ensure the dragged row is selected when starting a multi-drag.
+      if (bulk.length > 1) {
+        useFileExplorer.getState().setSelectedPaths(bulk);
+      } else {
+        setSelection(entry.path);
+      }
       try {
-        e.dataTransfer.setData("text/plain", entry.path);
-        e.dataTransfer.setData(
-          READER_FILE_DRAG_TYPE,
-          JSON.stringify([{ path: entry.path, isDir: entry.isDir }]),
-        );
+        e.dataTransfer.setData("text/plain", items.map((i) => i.path).join("\n"));
+        e.dataTransfer.setData(READER_FILE_DRAG_TYPE, JSON.stringify(items));
       } catch {
         /* ignore */
       }
     },
-    [entry.isDir, entry.path],
+    [entry.isDir, entry.path, setSelection],
   );
 
   const rename = useCallback(async () => {
@@ -329,9 +493,13 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
   }, [entry.name, entry.path, t, tree]);
 
   const del = useCallback(async () => {
-    const message = entry.isDir
-      ? t("fileExplorer.deleteFolderConfirm", { name: entry.name })
-      : t("fileExplorer.deleteFileConfirm", { name: entry.name });
+    const paths = resolveBulkPaths(entry.path, useFileExplorer.getState().selectedPaths);
+    const message =
+      paths.length > 1
+        ? t("fileExplorer.deleteSelectedConfirm", { count: paths.length })
+        : entry.isDir
+          ? t("fileExplorer.deleteFolderConfirm", { name: entry.name })
+          : t("fileExplorer.deleteFileConfirm", { name: entry.name });
     const ok = await dialog.confirm(message, {
       type: "danger",
       confirmLabel: t("fileExplorer.delete"),
@@ -339,44 +507,65 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
     });
     if (!ok) return;
     try {
-      await api.deleteProjectPath(tree.sessionId, entry.path);
-      useReader.getState().closeByPaths([entry.path]);
+      await deleteEntries(paths);
       toast.success(t("fileExplorer.deleted"));
       tree.refresh();
     } catch (err) {
       toast.error(t("fileExplorer.deleteFailed"), { description: String(err) });
     }
-  }, [entry.isDir, entry.name, entry.path, t, tree]);
+  }, [deleteEntries, entry.isDir, entry.name, entry.path, t, tree]);
 
   const duplicate = useCallback(async () => {
-    const parent = parentDir(entry.path);
-    if (!parent) return;
-    const { base, ext } = splitNameExt(entry.name);
+    const paths = resolveBulkPaths(entry.path, useFileExplorer.getState().selectedPaths);
     try {
-      await api.copyProjectPath(
-        tree.sessionId,
-        entry.path,
-        joinPath(parent, `${base} (2)${ext}`),
-      );
+      const existingByParent = new Map<string, Set<string>>();
+      for (const from of paths) {
+        const parent = parentDir(from);
+        if (!parent) continue;
+        let existing = existingByParent.get(parent);
+        if (!existing) {
+          try {
+            const list = await api.listProjectDir(tree.sessionId, parent);
+            existing = new Set(list.map((e) => e.name));
+          } catch {
+            existing = new Set();
+          }
+          existingByParent.set(parent, existing);
+        }
+        const finalName = uniqueName(existing, baseName(from));
+        existing.add(finalName);
+        await api.copyProjectPath(tree.sessionId, from, joinPath(parent, finalName));
+      }
       toast.success(t("fileExplorer.duplicated"));
       tree.refresh();
     } catch (err) {
       toast.error(t("fileExplorer.duplicateFailed"), { description: String(err) });
     }
-  }, [entry.name, entry.path, t, tree]);
+  }, [entry.path, t, tree]);
 
   const openMenu = useCallback(
     (e: ReactMouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      const selected = useFileExplorer.getState().selectedPaths;
+      if (!isPathSelected(entry.path, selected)) {
+        setSelection(entry.path);
+      }
+      const bulk = resolveBulkPaths(entry.path, useFileExplorer.getState().selectedPaths);
       const pasteDir = entry.isDir ? entry.path : parentDir(entry.path) ?? entry.path;
       openContextMenu(e, [
         {
           id: "open",
           label: t("fileExplorer.open"),
+          disabled: bulk.length > 1,
           onSelect: () => (entry.isDir ? toggleOpen() : tree.onOpenFile(entry.path)),
         },
-        { id: "rename", label: t("fileExplorer.rename"), onSelect: () => void rename() },
+        {
+          id: "rename",
+          label: t("fileExplorer.rename"),
+          disabled: bulk.length > 1,
+          onSelect: () => void rename(),
+        },
         { type: "separator" },
         {
           id: "new-file",
@@ -393,7 +582,7 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
           id: "copy",
           label: t("fileExplorer.copy"),
           onSelect: () => {
-            setClipboard({ mode: "copy", paths: [entry.path] });
+            setClipboard({ mode: "copy", paths: bulk });
             toast.success(t("fileExplorer.copied"));
           },
         },
@@ -401,7 +590,7 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
           id: "cut",
           label: t("fileExplorer.cut"),
           onSelect: () => {
-            setClipboard({ mode: "cut", paths: [entry.path] });
+            setClipboard({ mode: "cut", paths: bulk });
             toast.success(t("fileExplorer.cutToClipboard"));
           },
         },
@@ -418,9 +607,11 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
           id: "copy-path",
           label: t("fileExplorer.copyPath"),
           onSelect: () => {
-            copyText(entry.path)
+            copyText(bulk.join("\n"))
               .then(() => toast.success(t("fileExplorer.copiedPath")))
-              .catch((err) => toast.error(t("fileExplorer.copyFailed"), { description: String(err) }));
+              .catch((err) =>
+                toast.error(t("fileExplorer.copyFailed"), { description: String(err) }),
+              );
           },
         },
         {
@@ -436,21 +627,43 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
         { id: "delete", label: t("fileExplorer.delete"), danger: true, onSelect: () => void del() },
       ]);
     },
-    [clipboard, del, duplicate, entry.isDir, entry.path, rename, setClipboard, t, toggleOpen, tree],
+    [
+      clipboard,
+      del,
+      duplicate,
+      entry.isDir,
+      entry.path,
+      rename,
+      setClipboard,
+      setSelection,
+      t,
+      toggleOpen,
+      tree,
+    ],
   );
+
+  const rowProps = {
+    style: { paddingLeft: indent } as CSSProperties,
+    onClick: onRowClick,
+    onContextMenu: openMenu,
+    draggable: true as const,
+    onDragStart,
+    title: entry.path,
+    [TREE_PATH_ATTR]: entry.path,
+    [TREE_IS_DIR_ATTR]: entry.isDir ? "1" : "0",
+    "aria-selected": isSelected as boolean | "true" | "false",
+    ...dropHandlers,
+  };
 
   if (entry.isDir) {
     return (
       <div className="reader-file-branch" role="treeitem" aria-expanded={open}>
         <button
           type="button"
-          className="reader-file-row is-dir"
-          style={{ paddingLeft: indent }}
-          onClick={toggleOpen}
-          onContextMenu={openMenu}
-          draggable
-          onDragStart={onDragStart}
-          title={entry.path}
+          className={`reader-file-row is-dir${isSelected ? " is-selected" : ""}${
+            isDropTarget ? " is-drop-target" : ""
+          }`}
+          {...rowProps}
         >
           <span className={`reader-file-chevron ${open ? "is-open" : ""}`}>
             <ChevronIcon />
@@ -475,15 +688,12 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
     <button
       type="button"
       className={`reader-file-row is-file${isActive ? " is-active" : ""}${
-        isRule && !ruleEnabled ? " is-rule-disabled" : ""
+        isSelected ? " is-selected" : ""
+      }${isRule && !ruleEnabled ? " is-rule-disabled" : ""}${
+        isDropTarget ? " is-drop-target" : ""
       }`}
       role="treeitem"
-      style={{ paddingLeft: indent }}
-      onClick={() => tree.onOpenFile(entry.path)}
-      onContextMenu={openMenu}
-      draggable
-      onDragStart={onDragStart}
-      title={entry.path}
+      {...rowProps}
     >
       <span className="reader-file-chevron" aria-hidden />
       <FileTypeIcon name={entry.name} className="reader-file-icon" />

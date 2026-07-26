@@ -1152,12 +1152,12 @@
 
 .send-btn {
   flex-shrink: 0;
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   background: color-mix(in srgb, var(--ink) 88%, var(--bg));
   color: var(--bg);
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -1191,16 +1191,105 @@
   cursor: not-allowed;
 }
 .send-btn svg {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
 }
 .send-spinner {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border: 2px solid currentColor;
   border-top-color: transparent;
   border-radius: 50%;
   animation: spin 0.75s linear infinite;
+  position: relative;
+  box-sizing: border-box;
+}
+.send-spinner > span {
+  display: none;
+}
+/* Sharp radius: snake crawls the square perimeter, 90° turns, cell by cell */
+:root[data-radius="sharp"] .send-spinner {
+  --snake-cell: 3px;
+  --snake-max: 9px; /* 12 − 3 */
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  animation: none;
+}
+:root[data-radius="sharp"] .send-spinner > span {
+  display: block;
+  position: absolute;
+  width: var(--snake-cell);
+  height: var(--snake-cell);
+  border-radius: 0.5px;
+  background: currentColor;
+  top: 0;
+  left: 0;
+  /* Hold each cell; path only moves one axis at a time → 90° corners */
+  animation: send-snake-edge 0.96s linear infinite;
+}
+:root[data-radius="sharp"] .send-spinner > span:nth-child(1) {
+  opacity: 1;
+  animation-delay: 0s;
+}
+:root[data-radius="sharp"] .send-spinner > span:nth-child(2) {
+  opacity: 0.72;
+  animation-delay: -0.12s; /* 1 cell behind */
+}
+:root[data-radius="sharp"] .send-spinner > span:nth-child(3) {
+  opacity: 0.45;
+  animation-delay: -0.24s;
+}
+:root[data-radius="sharp"] .send-spinner > span:nth-child(4) {
+  opacity: 0.22;
+  animation-delay: -0.36s;
+}
+/* Perimeter: top → right → bottom → left (ASCII: 1---2 / | v | / 4---3) */
+@keyframes send-snake-edge {
+  0%,
+  11.999% {
+    top: 0;
+    left: 0;
+  }
+  12.5%,
+  24.499% {
+    top: 0;
+    left: calc(var(--snake-max) / 2);
+  }
+  25%,
+  36.999% {
+    top: 0;
+    left: var(--snake-max);
+  }
+  37.5%,
+  49.499% {
+    top: calc(var(--snake-max) / 2);
+    left: var(--snake-max);
+  }
+  50%,
+  61.999% {
+    top: var(--snake-max);
+    left: var(--snake-max);
+  }
+  62.5%,
+  74.499% {
+    top: var(--snake-max);
+    left: calc(var(--snake-max) / 2);
+  }
+  75%,
+  86.999% {
+    top: var(--snake-max);
+    left: 0;
+  }
+  87.5%,
+  99.999% {
+    top: calc(var(--snake-max) / 2);
+    left: 0;
+  }
+  100% {
+    top: 0;
+    left: 0;
+  }
 }
 .send-stop-icon {
   display: none;

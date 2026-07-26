@@ -375,6 +375,30 @@ export const api = {
   copyProjectPath: (sessionId: string, from: string, to: string) =>
     invoke<void>("copy_project_path", { sessionId, from, to }),
 
+  /** Copy an OS file/folder into the project at an exact destination path. */
+  importExternalPathToProject: (
+    sessionId: string,
+    srcPath: string,
+    destPath: string,
+  ) =>
+    invoke<void>("import_external_path_to_project", {
+      sessionId,
+      srcPath,
+      destPath,
+    }),
+
+  /** Write raw bytes to a new project file (drop fallback without native path). */
+  writeProjectFileBytes: (
+    sessionId: string,
+    path: string,
+    bytes: Uint8Array,
+  ) =>
+    invoke<void>("write_project_file_bytes", {
+      sessionId,
+      path,
+      bytes,
+    }),
+
   deleteProjectPath: (sessionId: string, path: string) =>
     invoke<void>("delete_project_path", { sessionId, path }),
 

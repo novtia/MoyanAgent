@@ -553,7 +553,8 @@
 }
 
 .msg-thinking-content {
-  margin: 6px 0 12px 6px;
+  /* 14px = 8 pad + (14 icon − 2 border) / 2 → rail centered under icon; text under label */
+  margin: 6px 0 12px 14px;
   padding-left: 12px;
   border-left: 2px solid var(--line);
   font-size: 13.5px;

@@ -228,6 +228,8 @@ pub fn run() {
             project_fs::create_project_file,
             project_fs::rename_project_path,
             project_fs::copy_project_path,
+            project_fs::import_external_path_to_project,
+            project_fs::write_project_file_bytes,
             project_fs::delete_project_path,
             project_rules::list_project_rules,
             project_rules::set_project_rule_enabled,

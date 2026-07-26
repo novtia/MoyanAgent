@@ -2,6 +2,8 @@ import { createContext, useContext } from "react";
 
 export interface TreeCtx {
   sessionId: string;
+  /** Absolute project root path. */
+  root: string;
   refreshNonce: number;
   activePath: string | null;
   onOpenFile: (path: string) => void;

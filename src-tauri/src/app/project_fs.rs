@@ -138,6 +138,20 @@ fn copy_path_recursive(from: &Path, to: &Path) -> AppResult<()> {
     Ok(())
 }
 
+/// True when `child` is the same as `parent` or nested under it.
+fn path_is_within(parent: &Path, child: &Path) -> bool {
+    let Ok(parent) = fs::canonicalize(parent) else {
+        return false;
+    };
+    let Ok(child) = fs::canonicalize(child) else {
+        // Destination may not exist yet — compare lexical parents when possible.
+        let parent_s = parent.to_string_lossy().replace('\\', "/").to_lowercase();
+        let child_s = child.to_string_lossy().replace('\\', "/").to_lowercase();
+        return child_s == parent_s || child_s.starts_with(&format!("{parent_s}/"));
+    };
+    child == parent || child.starts_with(&parent)
+}
+
 #[tauri::command]
 pub fn list_project_dir(
     state: State<'_, std::sync::Arc<AppState>>,
@@ -257,6 +271,99 @@ pub fn copy_project_path(
         )));
     }
     copy_path_recursive(&from_path, &to_path)
+}
+
+/// Copy an OS path (file or folder) into the project at `dest_path`.
+///
+/// `src_path` is not required to live under the project root. `dest_path` must
+/// pass [`validate_reader_write_path`] and must not already exist.
+#[tauri::command]
+pub fn import_external_path_to_project(
+    state: State<'_, std::sync::Arc<AppState>>,
+    session_id: String,
+    src_path: String,
+    dest_path: String,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    let src = PathBuf::from(src_path.trim());
+    if src_path.trim().is_empty() || !src.exists() {
+        return Err(AppError::Invalid(format!(
+            "import_external_path_to_project: source does not exist: {}",
+            src.display()
+        )));
+    }
+
+    let dest = resolve_validated_path(&conn, &session_id, &dest_path)?;
+    if dest.exists() {
+        return Err(AppError::Invalid(format!(
+            "import_external_path_to_project: destination already exists: {}",
+            dest.display()
+        )));
+    }
+
+    if src.is_dir() {
+        // Reject copying a folder into itself or a descendant path.
+        if let Some(parent) = dest.parent() {
+            if path_is_within(&src, parent) || path_is_within(&src, &dest) {
+                return Err(AppError::Invalid(
+                    "import_external_path_to_project: cannot import a folder into itself".into(),
+                ));
+            }
+        }
+    }
+
+    if let Some(parent) = dest.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| {
+                AppError::Other(format!(
+                    "import_external_path_to_project: mkdir {:?}: {e}",
+                    parent
+                ))
+            })?;
+        }
+    }
+
+    copy_path_recursive(&src, &dest).map_err(|e| match e {
+        AppError::Other(msg) => AppError::Other(
+            msg.replace("copy_project_path:", "import_external_path_to_project:"),
+        ),
+        other => other,
+    })
+}
+
+/// Write raw bytes to a new project file (HTML5 drop fallback when `File.path` is unavailable).
+#[tauri::command]
+pub fn write_project_file_bytes(
+    state: State<'_, std::sync::Arc<AppState>>,
+    session_id: String,
+    path: String,
+    bytes: Vec<u8>,
+) -> Result<(), AppError> {
+    let conn = state.conn()?;
+    let resolved = resolve_validated_path(&conn, &session_id, &path)?;
+    if resolved.exists() {
+        return Err(AppError::Invalid(format!(
+            "write_project_file_bytes: destination already exists: {}",
+            resolved.display()
+        )));
+    }
+    if let Some(parent) = resolved.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| {
+                AppError::Other(format!(
+                    "write_project_file_bytes: mkdir {:?}: {e}",
+                    parent
+                ))
+            })?;
+        }
+    }
+    fs::write(&resolved, &bytes).map_err(|e| {
+        AppError::Other(format!(
+            "write_project_file_bytes: write {:?}: {e}",
+            resolved
+        ))
+    })?;
+    Ok(())
 }
 
 #[tauri::command]

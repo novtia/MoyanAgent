@@ -3,6 +3,7 @@ import { api } from "../../../../../api/tauri";
 import {
   countWords,
   inferFileType,
+  isMediaFileType,
   syncPendingDiffsForPath,
   useReader,
   type ReaderFileTab,
@@ -18,9 +19,38 @@ export function useLazyLoadFile(
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!path || tab || !activeId) return;
+    if (!path || !activeId) return;
+
+    const fileType = inferFileType(path);
+    // Upgrade a stale text tab that was incorrectly opened for a media file.
+    if (tab && isMediaFileType(fileType) && !isMediaFileType(tab.fileType)) {
+      openDoc(
+        { path, text: "", fileType, chars: 0, lines: 0 },
+        { activate: true },
+      );
+      return;
+    }
+
+    if (tab) return;
+
     let cancelled = false;
     setLoadError(null);
+
+    if (isMediaFileType(fileType)) {
+      // Media tabs do not decode bytes — the viewer loads via asset protocol.
+      openDoc(
+        {
+          path,
+          text: "",
+          fileType,
+          chars: 0,
+          lines: 0,
+        },
+        { activate: true },
+      );
+      return;
+    }
+
     api
       .readProjectFile(activeId, path)
       .then(async (file) => {

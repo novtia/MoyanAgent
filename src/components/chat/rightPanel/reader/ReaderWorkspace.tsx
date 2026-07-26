@@ -11,6 +11,7 @@ import { copyText } from "../../../../utils/clipboard";
 import { openContextMenu } from "../../../context-menu";
 import { toast } from "../../../ui/Toast";
 import {
+  isMediaFileType,
   normalizeReaderPath,
   readerFileName,
   syncPendingDiffsForPath,
@@ -40,7 +41,8 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
   }, [path, tabs]);
 
   const isMarkdown = tab?.fileType === "markdown";
-  const hasPendingDiff = (tab?.pendingDiffs.length ?? 0) > 0;
+  const isMedia = isMediaFileType(tab?.fileType);
+  const hasPendingDiff = !isMedia && (tab?.pendingDiffs.length ?? 0) > 0;
 
   useReaderFindShortcuts(!!tab);
 
@@ -73,9 +75,9 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
 
   // Re-open / switch path: restore Keep/Undo from backend (authoritative).
   useEffect(() => {
-    if (!path || !tab || !activeId) return;
+    if (!path || !tab || !activeId || isMedia) return;
     void syncPendingDiffsForPath(activeId, path);
-  }, [path, tab?.id, activeId]);
+  }, [path, tab?.id, activeId, isMedia]);
 
   useEffect(() => {
     if (loadError) toast.error(t("fileExplorer.openFailed"), { description: loadError });
@@ -149,6 +151,7 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
         onForward={goForward}
         preview={preview}
         isMarkdown={!!isMarkdown}
+        isMedia={!!isMedia}
         hasPendingDiff={hasPendingDiff}
         hasFile={hasFile}
         findOpen={findOpen}

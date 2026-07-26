@@ -108,7 +108,8 @@ function splitNameExt(name: string): { base: string; ext: string } {
   return { base: name.slice(0, dot), ext: name.slice(dot) };
 }
 
-function uniqueName(existing: Set<string>, name: string): string {
+/** Pick a non-colliding name within `existing` basenames (`name (2).ext`). */
+export function uniqueName(existing: Set<string>, name: string): string {
   if (!existing.has(name)) return name;
   const { base, ext } = splitNameExt(name);
   let i = 2;
@@ -176,10 +177,11 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
 
   toggleSelection: (path) => {
     const { selectedPaths } = get();
-    const has = selectedPaths.includes(path);
+    const key = normPath(path);
+    const has = selectedPaths.some((p) => normPath(p) === key);
     set({
       selectedPaths: has
-        ? selectedPaths.filter((p) => p !== path)
+        ? selectedPaths.filter((p) => normPath(p) !== key)
         : [...selectedPaths, path],
       selectedPath: path,
     });

@@ -21,6 +21,8 @@ export interface ReaderToolbarProps {
   onForward: () => void;
   preview: boolean;
   isMarkdown: boolean;
+  /** Media tabs hide Preview/Source and disable file-scoped find. */
+  isMedia: boolean;
   hasPendingDiff: boolean;
   hasFile: boolean;
   findOpen: boolean;
@@ -43,6 +45,7 @@ export function ReaderToolbar({
   onForward,
   preview,
   isMarkdown,
+  isMedia,
   hasPendingDiff,
   hasFile,
   findOpen,
@@ -84,24 +87,28 @@ export function ReaderToolbar({
         {tab?.saveError && <span className="reader-tab-error" title={t("reader.saveFailed")} />}
       </div>
       <div className="reader-toolbar-actions">
-        <button
-          type="button"
-          className={`reader-toolbar-btn${preview && isMarkdown ? " is-active" : ""}`}
-          title={t("reader.preview")}
-          disabled={!isMarkdown || hasPendingDiff}
-          onClick={onPreview}
-        >
-          <EyeIcon />
-        </button>
-        <button
-          type="button"
-          className={`reader-toolbar-btn${!preview ? " is-active" : ""}`}
-          title={t("reader.source")}
-          disabled={!hasFile}
-          onClick={onSource}
-        >
-          <SourceIcon />
-        </button>
+        {!isMedia && (
+          <>
+            <button
+              type="button"
+              className={`reader-toolbar-btn${preview && isMarkdown ? " is-active" : ""}`}
+              title={t("reader.preview")}
+              disabled={!isMarkdown || hasPendingDiff}
+              onClick={onPreview}
+            >
+              <EyeIcon />
+            </button>
+            <button
+              type="button"
+              className={`reader-toolbar-btn${!preview ? " is-active" : ""}`}
+              title={t("reader.source")}
+              disabled={!hasFile}
+              onClick={onSource}
+            >
+              <SourceIcon />
+            </button>
+          </>
+        )}
         <button
           type="button"
           className="reader-toolbar-btn"
@@ -115,8 +122,9 @@ export function ReaderToolbar({
         <button
           type="button"
           className={`reader-toolbar-btn${findOpen ? " is-active" : ""}`}
-          title={t("reader.search")}
+          title={isMedia ? t("reader.mediaFindDisabled") : t("reader.search")}
           aria-pressed={findOpen}
+          disabled={isMedia}
           onClick={onToggleSearch}
         >
           <SearchIcon />

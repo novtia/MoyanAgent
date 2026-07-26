@@ -1411,7 +1411,12 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
             >
               {busy && !answeringAskUser ? (
                 <>
-                  <span className="send-spinner" aria-hidden />
+                  <span className="send-spinner" aria-hidden>
+                    <span />
+                    <span />
+                    <span />
+                    <span />
+                  </span>
                   <StopIcon />
                 </>
               ) : (

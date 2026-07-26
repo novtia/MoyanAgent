@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ReaderFileTab } from "../../../../../store/reader";
+import {
+  isMediaFileType,
+  type ReaderFileTab,
+} from "../../../../../store/reader";
 import { ReaderDiffHeaderBar } from "../ReaderDiffHeaderBar";
 import { ReaderEditor } from "../ReaderEditor";
 import { ReaderMarkdownPreview } from "../ReaderMarkdownPreview";
+import { MediaReader } from "./MediaReader";
 
-/** Editor pane body: rendered markdown preview or the source/diff editor. */
+/** Editor pane body: media viewer, markdown preview, or the source/diff editor. */
 export function ReaderFilePane({ tab, preview }: { tab: ReaderFileTab; preview: boolean }) {
   const [activeHunkIndex, setActiveHunkIndex] = useState(0);
-  const hasPendingDiff = tab.pendingDiffs.length > 0;
+  const media = isMediaFileType(tab.fileType);
+  const hasPendingDiff = !media && tab.pendingDiffs.length > 0;
   // Keep preview + source mounted together so toggling does not reset scroll.
   const canPreview = tab.fileType === "markdown" && !hasPendingDiff;
   const showPreview = preview && canPreview;
@@ -34,6 +39,16 @@ export function ReaderFilePane({ tab, preview }: { tab: ReaderFileTab; preview: 
     },
     [tab.pendingDiffs.length],
   );
+
+  if (isMediaFileType(tab.fileType)) {
+    return (
+      <div className="document-reader reader-file-pane reader-file-pane--media">
+        <div className="document-reader-body reader-file-body">
+          <MediaReader path={tab.path} fileType={tab.fileType} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="document-reader reader-file-pane">
