@@ -1137,7 +1137,8 @@ button.flow-head:disabled {
 }
 
 .web-search-body {
-  margin: 2px 0 8px 6px;
+  /* 14px = 8 pad + (14 icon − 2 border) / 2 → rail centered under icon; text under label */
+  margin: 2px 0 8px 14px;
   padding-left: 12px;
   border-left: 2px solid var(--line);
 }
