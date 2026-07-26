@@ -495,6 +495,32 @@
   flex-shrink: 0;
 }
 
+.lang-dropdown--settings {
+  min-width: 200px;
+  max-width: 300px;
+}
+.lang-dropdown--settings .lang-dropdown-trigger {
+  min-width: 100%;
+}
+.lang-dropdown-menu--scroll {
+  max-height: min(320px, 50vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.lang-dropdown-group-label {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-mute);
+  user-select: none;
+}
+.lang-dropdown-group:not(:first-of-type) .lang-dropdown-group-label {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
 /* ═════════════ appearance tab ═════════════ */
 
 /* Theme preview tiles */
@@ -781,16 +807,19 @@
   border-color: var(--ink-mute);
 }
 
-/* ═════════════ llm tab (master–detail) ═════════════ */
-.settings--llm .settings-main {
+/* ═════════════ llm / search tabs (master–detail) ═════════════ */
+.settings--llm .settings-main,
+.settings--search .settings-main {
   overflow: hidden;
 }
-.settings--llm .settings-panel {
+.settings--llm .settings-panel,
+.settings--search .settings-panel {
   max-width: none;
   height: 100%;
   padding: 0;
 }
-.settings--llm .settings-panel > * {
+.settings--llm .settings-panel > *,
+.settings--search .settings-panel > * {
   animation: none;
 }
 
@@ -1394,36 +1423,31 @@
 }
 
 /* ═════════════ search tab ═════════════ */
-.search-provider-head {
+.web-search-global {
+  padding: 4px 12px;
+}
+.web-search-global .settings-row {
+  padding: 14px 8px;
+}
+.web-search-global .settings-row + .settings-row {
+  border-top: 1px solid var(--line);
+}
+.web-search-section-head {
+  margin-bottom: 12px;
+}
+.web-search-section-head .settings-row-desc {
+  max-width: none;
+}
+.web-search-avatar--configured {
+  background: color-mix(in srgb, var(--green-500) 28%, var(--bg));
+  color: color-mix(in srgb, var(--green-600) 70%, var(--ink));
+}
+.web-search-local-engine-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 14px 20px 0;
-}
-.search-provider-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
-}
-.search-provider-tag {
-  color: var(--ink-mute);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  background: var(--bg-soft);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 2px 8px;
-}
-.search-provider-fields {
-  display: grid;
-  gap: 10px;
-  padding: 12px 20px 16px;
-}
-.search-provider-fields .row {
-  margin-bottom: 0;
+  justify-content: space-between;
+  gap: 28px;
+  padding-bottom: 4px;
 }
 
 /* ═════════════ llm modals ═════════════ */

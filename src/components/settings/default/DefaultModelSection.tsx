@@ -2,13 +2,10 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "../../../store/settings";
 import { normalizeProviders } from "../llm/modelServices";
-
-interface QuickModelOption {
-  providerId: string;
-  providerName: string;
-  modelId: string;
-  modelName: string;
-}
+import {
+  QuickModelDropdown,
+  type QuickModelOption,
+} from "./QuickModelDropdown";
 
 export function DefaultModelSection() {
   const { t } = useTranslation();
@@ -35,7 +32,7 @@ export function DefaultModelSection() {
     [providers],
   );
 
-  const grouped = useMemo(() => {
+  const groups = useMemo(() => {
     const map = new Map<
       string,
       { name: string; items: { option: QuickModelOption; index: number }[] }
@@ -48,7 +45,10 @@ export function DefaultModelSection() {
       entry.items.push({ option, index });
       map.set(option.providerId, entry);
     });
-    return Array.from(map.entries());
+    return Array.from(map.entries()).map(([providerId, group]) => ({
+      providerId,
+      ...group,
+    }));
   }, [options]);
 
   const selectedIndex = useMemo(() => {
@@ -60,12 +60,11 @@ export function DefaultModelSection() {
     );
   }, [options, settings?.quick_model_provider_id, settings?.quick_model]);
 
-  const onChange = (value: string) => {
-    if (value === "") {
+  const onChange = (index: number | null) => {
+    if (index === null || index < 0) {
       void update({ quick_model_provider_id: "", quick_model: "" });
       return;
     }
-    const index = Number(value);
     const option = options[index];
     if (!option) return;
     void update({
@@ -92,26 +91,14 @@ export function DefaultModelSection() {
         </div>
         {options.length > 0 && (
           <div className="settings-row-control">
-            <select
-              className="settings-select"
-              aria-label={t("settings.default.quickModelTitle")}
-              value={selectedIndex >= 0 ? String(selectedIndex) : ""}
-              onChange={(event) => onChange(event.target.value)}
-            >
-              <option value="">{t("settings.default.quickModelNone")}</option>
-              {grouped.map(([providerId, group]) => (
-                <optgroup key={providerId} label={group.name}>
-                  {group.items.map(({ option, index }) => (
-                    <option
-                      key={`${option.providerId}:${option.modelId}`}
-                      value={String(index)}
-                    >
-                      {option.modelName}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
+            <QuickModelDropdown
+              groups={groups}
+              options={options}
+              selectedIndex={selectedIndex}
+              noneLabel={t("settings.default.quickModelNone")}
+              ariaLabel={t("settings.default.quickModelTitle")}
+              onChange={onChange}
+            />
           </div>
         )}
       </div>

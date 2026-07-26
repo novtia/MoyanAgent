@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "../../../store/settings";
 import type { WebSearchProviderConfig } from "../../../types";
+import { SettingsSelectDropdown } from "../SettingsSelectDropdown";
 
-const API_KINDS = ["tavily", "serper", "bing"] as const;
-type ApiKind = (typeof API_KINDS)[number];
+const SIDEBAR_KINDS = ["local", "tavily", "serper", "bing"] as const;
+type SidebarKind = (typeof SIDEBAR_KINDS)[number];
+type ApiKind = Exclude<SidebarKind, "local">;
+
+const API_KINDS: ApiKind[] = ["tavily", "serper", "bing"];
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -20,26 +24,68 @@ function findProvider(
   return list.find((p) => p.kind === kind || p.id === kind);
 }
 
+function isSidebarKind(value: string): value is SidebarKind {
+  return (SIDEBAR_KINDS as readonly string[]).includes(value);
+}
+
+function providerLabel(kind: SidebarKind, localLabel: string): string {
+  if (kind === "local") return localLabel;
+  if (kind === "bing") return "Bing API";
+  return kind[0].toUpperCase() + kind.slice(1);
+}
+
+function providerGlyphLetter(kind: SidebarKind): string {
+  if (kind === "local") return "L";
+  if (kind === "bing") return "B";
+  return kind[0].toUpperCase();
+}
+
+function ProviderGlyph({ kind }: { kind: SidebarKind }) {
+  return (
+    <span className="model-provider-avatar" aria-hidden>
+      {providerGlyphLetter(kind)}
+    </span>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="11" cy="11" r="7" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
 export function WebSearchSection() {
   const { t } = useTranslation();
   const settings = useSettings((s) => s.settings);
   const update = useSettings((s) => s.update);
 
-  const enabled = settings?.web_search_enabled ?? true;
   const backend = settings?.web_search_backend ?? "local";
   const localEngine = settings?.web_search_local_engine ?? "duckduckgo";
   const providers = settings?.web_search_providers ?? [];
+  const localLabel = t("settings.search.localProviderName");
 
-  const [maxResults, setMaxResults] = useState(
-    String(settings?.web_search_max_results ?? 5),
+  const [selectedKind, setSelectedKind] = useState<SidebarKind>(() =>
+    isSidebarKind(backend) ? backend : "local",
   );
+  const [providerSearch, setProviderSearch] = useState("");
   const [drafts, setDrafts] = useState<Record<string, ProviderDraft>>({});
   const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   useEffect(() => {
-    setMaxResults(String(settings?.web_search_max_results ?? 5));
-  }, [settings?.web_search_max_results]);
+    if (isSidebarKind(backend)) setSelectedKind(backend);
+  }, [backend]);
 
   useEffect(() => {
     const next: Record<string, ProviderDraft> = {};
@@ -88,193 +134,210 @@ export function WebSearchSection() {
     );
   };
 
-  const onMaxResultsChange = (value: string) => {
-    setMaxResults(value);
-    const n = Number.parseInt(value, 10);
-    if (Number.isFinite(n) && n >= 1) {
-      scheduleSave("maxResults", () =>
-        void update({ web_search_max_results: Math.min(n, 20) }),
-      );
+  const selectProvider = (kind: SidebarKind) => {
+    setSelectedKind(kind);
+    if (kind !== backend) {
+      void update({ web_search_backend: kind });
     }
   };
 
+  const localEngineOptions = useMemo(
+    () => [
+      { value: "duckduckgo", label: "DuckDuckGo" },
+      { value: "bing", label: "Bing" },
+    ],
+    [],
+  );
+
+  const filteredKinds = useMemo(() => {
+    const q = providerSearch.trim().toLowerCase();
+    if (!q) return [...SIDEBAR_KINDS];
+    return SIDEBAR_KINDS.filter((kind) => {
+      const label = providerLabel(kind, localLabel).toLowerCase();
+      return label.includes(q) || kind.includes(q);
+    });
+  }, [providerSearch, localLabel]);
+
   if (!settings) return null;
 
-  const backendOptions: { value: string; label: string }[] = [
-    { value: "local", label: t("settings.search.backendLocal") },
-    { value: "tavily", label: "Tavily" },
-    { value: "serper", label: "Serper" },
-    { value: "bing", label: "Bing API" },
-  ];
+  const isLocal = selectedKind === "local";
+  const draft = !isLocal
+    ? (drafts[selectedKind] ?? { api_key: "", endpoint: "" })
+    : { api_key: "", endpoint: "" };
+  const showKey = !isLocal ? (visibleKeys[selectedKind] ?? false) : false;
+  const selectedLabel = providerLabel(selectedKind, localLabel);
 
   return (
-    <>
-      <div className="settings-card">
-        <div className="settings-row">
-          <div className="settings-row-main">
-            <div className="settings-row-title">
-              {t("settings.search.enableTitle")}
-            </div>
-            <div className="settings-row-desc">
-              {t("settings.search.enableDesc")}
-            </div>
-          </div>
-          <div className="settings-row-control">
-            <button
-              type="button"
-              className={`settings-toggle ${enabled ? "settings-toggle--on" : ""}`}
-              role="switch"
-              aria-checked={enabled}
-              aria-label={t("settings.search.enableTitle")}
-              onClick={() => void update({ web_search_enabled: !enabled })}
-            >
-              <span className="settings-toggle-thumb" />
-            </button>
-          </div>
-        </div>
-
-        <div className="settings-row">
-          <div className="settings-row-main">
-            <div className="settings-row-title">
-              {t("settings.search.backendTitle")}
-            </div>
-            <div className="settings-row-desc">
-              {t("settings.search.backendDesc")}
-            </div>
-          </div>
-          <div className="settings-row-control">
-            <select
-              className="settings-select"
-              aria-label={t("settings.search.backendTitle")}
-              value={backend}
-              onChange={(e) => void update({ web_search_backend: e.target.value })}
-            >
-              {backendOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {backend === "local" && (
-          <div className="settings-row">
-            <div className="settings-row-main">
-              <div className="settings-row-title">
-                {t("settings.search.localEngineTitle")}
-              </div>
-              <div className="settings-row-desc">
-                {t("settings.search.localEngineDesc")}
-              </div>
-            </div>
-            <div className="settings-row-control">
-              <select
-                className="settings-select"
-                aria-label={t("settings.search.localEngineTitle")}
-                value={localEngine}
-                onChange={(e) =>
-                  void update({ web_search_local_engine: e.target.value })
-                }
-              >
-                <option value="duckduckgo">DuckDuckGo</option>
-                <option value="bing">Bing</option>
-              </select>
-            </div>
-          </div>
-        )}
-
-        <div className="settings-row">
-          <div className="settings-row-main">
-            <div className="settings-row-title">
-              {t("settings.search.maxResultsTitle")}
-            </div>
-            <div className="settings-row-desc">
-              {t("settings.search.maxResultsDesc")}
-            </div>
-          </div>
-          <div className="settings-row-control">
+    <div className="model-service-card">
+      <div className="model-service-layout">
+        <aside className="model-provider-pane">
+          <div className="model-provider-search-wrap">
+            <SearchIcon />
             <input
-              type="number"
-              min={1}
-              max={20}
-              className="settings-number"
-              value={maxResults}
-              onChange={(e) => onMaxResultsChange(e.target.value)}
+              type="search"
+              value={providerSearch}
+              placeholder={t("settings.search.providerSearchPlaceholder")}
+              onChange={(e) => setProviderSearch(e.target.value)}
             />
           </div>
-        </div>
-      </div>
-
-      <div className="settings-card">
-        <div className="settings-block">
-          <div className="settings-block-head">
-            <div className="settings-row-title">
-              {t("settings.search.providersTitle")}
-            </div>
-            <div className="settings-row-desc">
-              {t("settings.search.providersDesc")}
-            </div>
-          </div>
-        </div>
-
-        {API_KINDS.map((kind) => {
-          const draft = drafts[kind] ?? { api_key: "", endpoint: "" };
-          const label =
-            kind === "bing"
-              ? "Bing API"
-              : kind[0].toUpperCase() + kind.slice(1);
-          const show = visibleKeys[kind] ?? false;
-          return (
-            <div className="search-provider" key={kind}>
-              <div className="search-provider-head">
-                <span className="search-provider-name">{label}</span>
-                <span className="search-provider-tag">{kind}</span>
-              </div>
-              <div className="search-provider-fields">
-                <div className="row">
-                  <label className="field-label">
-                    {t("settings.search.apiKeyLabel")}
-                  </label>
-                  <div className="input-affix">
-                    <input
-                      type={show ? "text" : "password"}
-                      value={draft.api_key}
-                      spellCheck={false}
-                      placeholder={t("settings.search.apiKeyPlaceholder")}
-                      onChange={(e) => onKeyChange(kind, e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="affix-btn"
-                      onClick={() =>
-                        setVisibleKeys((v) => ({ ...v, [kind]: !show }))
-                      }
+          <div className="model-provider-list">
+            {filteredKinds.map((kind) => {
+              const isActive = kind === backend;
+              const hasKey =
+                kind !== "local" &&
+                Boolean((drafts[kind]?.api_key ?? "").trim());
+              const label = providerLabel(kind, localLabel);
+              const secondary =
+                kind === "local"
+                  ? t("settings.search.localProviderTag")
+                  : hasKey
+                    ? t("settings.search.providerConfigured")
+                    : kind;
+              return (
+                <div
+                  key={kind}
+                  className={`model-provider-item ${
+                    kind === selectedKind ? "active" : ""
+                  }`}
+                >
+                  <button
+                    type="button"
+                    className="model-provider-item-body"
+                    onClick={() => selectProvider(kind)}
+                  >
+                    <span
+                      className={`model-provider-avatar ${
+                        kind === "local" || hasKey
+                          ? "web-search-avatar--configured"
+                          : ""
+                      }`}
+                      aria-hidden
                     >
-                      {show
-                        ? t("settings.llm.keyHide")
-                        : t("settings.llm.keyShow")}
-                    </button>
+                      {providerGlyphLetter(kind)}
+                    </span>
+                    <span className="model-provider-name">
+                      <span className="model-provider-name-text">{label}</span>
+                      <span className="model-provider-sdk">
+                        {isActive
+                          ? t("settings.search.providerActive")
+                          : secondary}
+                      </span>
+                    </span>
+                  </button>
+                </div>
+              );
+            })}
+            {filteredKinds.length === 0 && (
+              <div className="model-provider-empty">
+                {t("settings.search.providerSearchEmpty")}
+              </div>
+            )}
+          </div>
+        </aside>
+
+        <section className="model-provider-detail">
+          <div className="model-provider-detail-inner">
+            <div className="model-provider-hero">
+              <ProviderGlyph kind={selectedKind} />
+              <div className="model-provider-hero-text">
+                <span className="model-provider-hero-name">{selectedLabel}</span>
+                <div className="model-provider-hero-meta">
+                  <span className="model-provider-hero-sdk">
+                    {isLocal ? t("settings.search.localProviderTag") : selectedKind}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {isLocal ? (
+              <div className="model-provider-config">
+                <div className="model-provider-fields">
+                  <div className="web-search-local-engine-row">
+                    <div className="settings-row-main">
+                      <div className="settings-row-title">
+                        {t("settings.search.localEngineTitle")}
+                      </div>
+                      <div className="settings-row-desc">
+                        {t("settings.search.localEngineDesc")}
+                      </div>
+                    </div>
+                    <div className="settings-row-control">
+                      <SettingsSelectDropdown
+                        ariaLabel={t("settings.search.localEngineTitle")}
+                        value={localEngine}
+                        options={localEngineOptions}
+                        onChange={(value) =>
+                          void update({ web_search_local_engine: value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="hint">{t("settings.search.localProviderHint")}</div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="web-search-section-head">
+                  <div className="settings-row-title">
+                    {t("settings.search.providersTitle")}
+                  </div>
+                  <div className="settings-row-desc">
+                    {t("settings.search.providersDesc")}
                   </div>
                 </div>
-                <div className="row">
-                  <input
-                    type="text"
-                    value={draft.endpoint}
-                    spellCheck={false}
-                    placeholder={t("settings.search.endpointPlaceholder")}
-                    onChange={(e) => onEndpointChange(kind, e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          );
-        })}
 
-        <div className="settings-block">
-          <div className="settings-row-desc">{t("settings.search.keyHint")}</div>
-        </div>
+                <div className="model-provider-config">
+                  <div className="model-provider-fields">
+                    <div className="row">
+                      <label className="field-label">
+                        {t("settings.search.apiKeyLabel")}
+                      </label>
+                      <div className="input-affix">
+                        <input
+                          type={showKey ? "text" : "password"}
+                          value={draft.api_key}
+                          spellCheck={false}
+                          autoComplete="off"
+                          placeholder={t("settings.search.apiKeyPlaceholder")}
+                          onChange={(e) =>
+                            onKeyChange(selectedKind, e.target.value)
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="affix-btn"
+                          onClick={() =>
+                            setVisibleKeys((v) => ({
+                              ...v,
+                              [selectedKind]: !showKey,
+                            }))
+                          }
+                        >
+                          {showKey
+                            ? t("settings.llm.keyHide")
+                            : t("settings.llm.keyShow")}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="row">
+                      <input
+                        type="text"
+                        value={draft.endpoint}
+                        spellCheck={false}
+                        placeholder={t("settings.search.endpointPlaceholder")}
+                        onChange={(e) =>
+                          onEndpointChange(selectedKind, e.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="hint">{t("settings.search.keyHint")}</div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </section>
       </div>
-    </>
+    </div>
   );
 }
