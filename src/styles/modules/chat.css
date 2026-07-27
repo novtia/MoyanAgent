@@ -432,6 +432,15 @@
   filter: brightness(1.02);
   z-index: 2;
 }
+.chat-gallery-tile.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent), var(--shadow-2);
+  z-index: 3;
+}
+.chat-gallery-tile.is-selected:hover {
+  border-color: var(--accent);
+  filter: brightness(1.02);
+}
 .chat-gallery-tile:active {
   cursor: grabbing;
   filter: brightness(0.97);

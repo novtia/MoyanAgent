@@ -254,6 +254,12 @@ export const api = {
     invoke<void>("export_image", { args: { image_id: imageId, dest_path: destPath } }),
   exportMedia: (mediaId: string, destPath: string) =>
     invoke<void>("export_media", { args: { image_id: mediaId, dest_path: destPath } }),
+  exportMediaZip: (imageIds: string[], destPath: string) =>
+    invoke<void>("export_media_zip", {
+      args: { image_ids: imageIds, dest_path: destPath },
+    }),
+  deleteMedia: (imageIds: string[]) =>
+    invoke<void>("delete_media", { args: { image_ids: imageIds } }),
 
   // project / session transfer
   exportProjectsArchive: (projectIds: string[], destPath: string) =>

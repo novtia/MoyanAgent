@@ -1075,6 +1075,44 @@ pub fn get_image(conn: &DbConn, id: &str) -> AppResult<ImageRef> {
     }
 }
 
+/// Delete message_images rows by id. Does not delete the parent message.
+/// Returns (rel_path, thumb_path) pairs that should be cleaned from disk.
+pub fn delete_images(
+    conn: &DbConn,
+    ids: &[String],
+) -> AppResult<Vec<(String, Option<String>)>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut removed: Vec<(String, Option<String>)> = Vec::new();
+    let mut session_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for id in ids {
+        let row: Result<(String, String, Option<String>), rusqlite::Error> = conn.query_row(
+            "SELECT session_id, rel_path, thumb_path FROM message_images WHERE id=?1",
+            params![id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        );
+        match row {
+            Ok((sid, rel, thumb)) => {
+                session_ids.insert(sid);
+                conn.execute("DELETE FROM message_images WHERE id=?1", params![id])?;
+                removed.push((rel, thumb));
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                // Already gone — skip.
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    for sid in session_ids {
+        touch(conn, &sid)?;
+    }
+    Ok(removed)
+}
+
 pub fn image_session_id(conn: &DbConn, id: &str) -> AppResult<String> {
     let mut stmt = conn.prepare("SELECT session_id FROM message_images WHERE id=?1")?;
     let mut rows = stmt.query(params![id])?;

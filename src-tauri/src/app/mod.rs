@@ -216,6 +216,8 @@ pub fn run() {
             media_cmds::edit_image,
             media_cmds::export_image,
             media_cmds::export_media,
+            media_cmds::export_media_zip,
+            media_cmds::delete_media,
             transfer::export_projects_archive,
             transfer::export_session_archive,
             transfer::import_archive,
