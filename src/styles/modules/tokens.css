@@ -56,6 +56,13 @@
   --msg-list-gap: 18px;
   --msg-bubble-padding-y: 14px;
   --msg-bubble-padding-x: 18px;
+  --msg-timeline-width: 48px;
+  /* Match .chat-topbar horizontal padding so timeline left aligns with title */
+  --chat-topbar-padding-x: 18px;
+  --tl-tick-h: 3px;
+  --tl-tick-color: #8a8a8a;
+  --tl-tick-peak: #0d0d0d;
+  --tl-gap: 9px;
   --density-scale: 1;
 
   /* Unified form field tokens — used by all <input>, <textarea>, <select>
@@ -310,6 +317,9 @@
   --shadow-pop: 0 18px 44px -12px rgba(0, 0, 0, 0.72);
   --shadow-card: 0 14px 34px -16px rgba(0, 0, 0, 0.66), 0 1px 2px rgba(0, 0, 0, 0.38);
 
+  --tl-tick-color: #8a929c;
+  --tl-tick-peak: #f3f5f7;
+
   --field-bg: #1c1914;
   --field-bg-soft: #242019;
   --field-border: #3d372b;
@@ -337,6 +347,8 @@
   --field-padding-y: 6px;
   --field-padding-x: 9px;
   --field-padding-y-sm: 3px;
+  --tl-gap: 7px;
+  --msg-timeline-width: 40px;
   --field-padding-x-sm: 6px;
   --field-padding-y-lg: 8px;
   --field-padding-x-lg: 10px;

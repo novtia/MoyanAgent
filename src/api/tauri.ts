@@ -24,6 +24,7 @@ import type {
   SessionSearchResult,
   SessionSummary,
   SessionWithMessagesAbs,
+  MessageOutlineItem,
   DailyUsageRow,
   TokenUsageEventRow,
   TokenUsageSummary,
@@ -116,6 +117,36 @@ export const api = {
   deleteSession: (id: string) => invoke<void>("delete_session", { id }),
   loadSession: (id: string) =>
     invoke<SessionWithMessagesAbs>("load_session", { id }),
+  listMessageOutline: (sessionId: string) =>
+    invoke<MessageOutlineItem[]>("list_message_outline", { sessionId }),
+  listMessagesWindow: (args: {
+    sessionId: string;
+    aroundMessageId?: string | null;
+    beforeCreatedAt?: number | null;
+    afterCreatedAt?: number | null;
+    limit?: number;
+  }) =>
+    invoke<MessageAbs[]>("list_messages_window", {
+      args: {
+        sessionId: args.sessionId,
+        aroundMessageId: args.aroundMessageId ?? null,
+        beforeCreatedAt: args.beforeCreatedAt ?? null,
+        afterCreatedAt: args.afterCreatedAt ?? null,
+        limit: args.limit ?? null,
+      },
+    }),
+  loadSessionWindow: (
+    id: string,
+    aroundMessageId?: string | null,
+    limit = 60,
+  ) =>
+    invoke<SessionWithMessagesAbs>("load_session_window", {
+      id,
+      aroundMessageId: aroundMessageId ?? null,
+      limit,
+    }),
+  listSessionMedia: (sessionId: string) =>
+    invoke<ImageRefAbs[]>("list_session_media", { sessionId }),
   assignSessionToProject: (sessionId: string, projectId: string | null) =>
     invoke<void>("assign_session_to_project", { sessionId, projectId }),
 

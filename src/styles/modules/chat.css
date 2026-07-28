@@ -22,7 +22,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 18px;
+  padding: 10px var(--chat-topbar-padding-x, 18px);
   background: var(--bg);
   flex-shrink: 0;
   min-height: 48px;

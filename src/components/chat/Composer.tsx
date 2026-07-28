@@ -103,6 +103,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const watermark = useSession((s) => s.composer.watermark);
   const thinkingEnabled = useSession((s) => s.composer.thinkingEnabled);
   const thinkingEffort = useSession((s) => s.composer.thinkingEffort);
+  const chatMode = useSession((s) => s.composer.chatMode);
   const promptEmpty = useSession((s) => s.composer.prompt.trim().length === 0);
   const setAspectRatio = useSession((s) => s.setAspectRatio);
   const setImageSize = useSession((s) => s.setImageSize);
@@ -134,6 +135,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const activeId = useSession((s) => s.activeId);
   const refreshList = useSession((s) => s.refreshList);
   const reloadActiveSession = useSession((s) => s.reloadActiveSession);
+  const setChatMode = useSession((s) => s.setChatMode);
   const settings = useSettings((s) => s.settings);
   const update = useSettings((s) => s.update);
   const projects = useProject((s) => s.projects);
@@ -148,6 +150,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const paramsRef = useRef<HTMLDivElement | null>(null);
   const thinkingRef = useRef<HTMLDivElement | null>(null);
+  const modeRef = useRef<HTMLDivElement | null>(null);
   const modelRef = useRef<HTMLDivElement | null>(null);
   const mentionRef = useRef<HTMLDivElement | null>(null);
 
@@ -159,6 +162,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     CSSProperties | undefined
   >(undefined);
   const [thinkingOpen, setThinkingOpen] = useState(false);
+  const [modeOpen, setModeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [modelPopoverMaxPx, setModelPopoverMaxPx] = useState(480);
   const [modelPopoverBelow, setModelPopoverBelow] = useState(false);
@@ -434,6 +438,17 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     window.addEventListener("mousedown", onDoc);
     return () => window.removeEventListener("mousedown", onDoc);
   }, [thinkingOpen]);
+
+  useEffect(() => {
+    if (!modeOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (modeRef.current && !modeRef.current.contains(e.target as Node)) {
+        setModeOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onDoc);
+    return () => window.removeEventListener("mousedown", onDoc);
+  }, [modeOpen]);
 
   useEffect(() => {
     if (!mentionOpen) return;
@@ -891,6 +906,72 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
 
         <div className="composer-bar">
           <div className="composer-bar-left">
+            {!!active?.session.project_id && (
+              <div className="composer-mode-wrap" ref={modeRef}>
+                <button
+                  type="button"
+                  className={`composer-pill composer-mode-pill ${
+                    chatMode === "plan" ? "is-plan" : chatMode === "chat" ? "is-ask" : ""
+                  } ${modeOpen ? "active" : ""}`}
+                  title={t("composer.modePickerTitle")}
+                  onClick={() => setModeOpen((v) => !v)}
+                >
+                  <span className="composer-mode-label">
+                    {chatMode === "plan"
+                      ? t("composer.modePlan")
+                      : chatMode === "chat"
+                        ? t("composer.modeAsk")
+                        : t("composer.modeAgent")}
+                  </span>
+                  <CaretIcon />
+                </button>
+                {modeOpen && (
+                  <div
+                    className="composer-mode-popover"
+                    role="listbox"
+                    aria-label={t("composer.modePickerTitle")}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      role="option"
+                      className={`composer-mode-option ${chatMode === "chat" ? "active" : ""}`}
+                      onClick={() => {
+                        void setChatMode("chat");
+                        setModeOpen(false);
+                      }}
+                    >
+                      <span className="composer-mode-option-title">{t("composer.modeAsk")}</span>
+                      <span className="composer-mode-option-desc">{t("composer.modeAskHint")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="option"
+                      className={`composer-mode-option ${chatMode === "agent" ? "active" : ""}`}
+                      onClick={() => {
+                        void setChatMode("agent");
+                        setModeOpen(false);
+                      }}
+                    >
+                      <span className="composer-mode-option-title">{t("composer.modeAgent")}</span>
+                      <span className="composer-mode-option-desc">{t("composer.modeAgentHint")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="option"
+                      className={`composer-mode-option ${chatMode === "plan" ? "active" : ""}`}
+                      onClick={() => {
+                        void setChatMode("plan");
+                        setModeOpen(false);
+                      }}
+                    >
+                      <span className="composer-mode-option-title">{t("composer.modePlan")}</span>
+                      <span className="composer-mode-option-desc">{t("composer.modePlanHint")}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             {(showImageParams ||
               showVideoParams ||
               activeCapabilities.includes("vision")) && (

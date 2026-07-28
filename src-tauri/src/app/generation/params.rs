@@ -132,6 +132,10 @@ pub(crate) fn effective_agent_chain(
     conn: &db::DbConn,
     sess: &session::Session,
 ) -> Option<Vec<session::ChainNode>> {
+    // Standalone sessions are ask-only — never run a multi-agent chain.
+    if sess.project_id.is_none() {
+        return None;
+    }
     if let Some(ref pid) = sess.project_id {
         if let Ok(proj) = project::get(conn, pid) {
             return proj.agent_chain;

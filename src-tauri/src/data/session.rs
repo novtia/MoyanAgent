@@ -190,6 +190,17 @@ pub struct Session {
     pub updated_at: i64,
 }
 
+/// Resolve the main agent for a generation turn.
+/// Standalone (no project) sessions always run in ask/`chat` mode.
+/// Project sessions honour the session's stored `agent_type` (ask / plan / agent).
+pub fn session_generation_agent(sess: &Session) -> &'static str {
+    if sess.project_id.is_none() {
+        SESSION_AGENT_CHAT
+    } else {
+        generation_agent_definition_key(&sess.agent_type)
+    }
+}
+
 fn decode_agent_chain(raw: Option<String>) -> Option<Vec<ChainNode>> {
     let raw = raw?;
     let parsed: Vec<ChainNode> = serde_json::from_str(&raw).ok()?;
@@ -240,6 +251,17 @@ pub struct SessionSearchResult {
     pub match_count: i64,
     pub title_match: bool,
 }
+
+/// Lightweight message index row for in-session timeline / virtual list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageOutlineItem {
+    pub id: String,
+    pub role: String,
+    pub preview: Option<String>,
+    pub created_at: i64,
+}
+
+const OUTLINE_PREVIEW_CHARS: usize = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageRef {
@@ -427,6 +449,21 @@ pub fn set_agent_type(conn: &DbConn, id: &str, agent_type: &str) -> AppResult<()
         return Err(AppError::Invalid(format!(
             "agent_type must be \"{SESSION_AGENT_GENERAL}\", \"{SESSION_AGENT_PLAN}\", or \"{SESSION_AGENT_CHAT}\""
         )));
+    }
+    // Agent / Plan are project-session modes only. Standalone stays on ask/chat.
+    if t != SESSION_AGENT_CHAT {
+        let project_id: Option<String> = conn
+            .query_row(
+                "SELECT project_id FROM sessions WHERE id=?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .map_err(|_| AppError::NotFound(format!("session {id}")))?;
+        if project_id.is_none() {
+            return Err(AppError::Invalid(
+                "agent/plan mode is only available for project sessions".into(),
+            ));
+        }
     }
     let updated = now_ms();
     let n = conn.execute(
@@ -1152,7 +1189,17 @@ fn load_message_images(conn: &DbConn, message_id: &str) -> AppResult<Vec<ImageRe
 
 pub fn load_with_messages(conn: &DbConn, session_id: &str) -> AppResult<SessionWithMessages> {
     let session = get(conn, session_id)?;
-    let parent_title = match session.parent_session_id.as_deref() {
+    let parent_title = parent_title_of(conn, &session)?;
+    let messages = load_all_messages(conn, session_id)?;
+    Ok(SessionWithMessages {
+        session,
+        messages,
+        parent_title,
+    })
+}
+
+fn parent_title_of(conn: &DbConn, session: &Session) -> AppResult<Option<String>> {
+    Ok(match session.parent_session_id.as_deref() {
         Some(pid) => conn
             .query_row(
                 "SELECT title FROM sessions WHERE id=?1",
@@ -1161,32 +1208,287 @@ pub fn load_with_messages(conn: &DbConn, session_id: &str) -> AppResult<SessionW
             )
             .ok(),
         None => None,
-    };
+    })
+}
+
+fn collapse_ws(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_space = false;
+    for ch in s.chars() {
+        if ch.is_whitespace() {
+            if !prev_space && !out.is_empty() {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.push(ch);
+            prev_space = false;
+        }
+    }
+    out.trim().to_string()
+}
+
+fn outline_preview(role: &str, text: Option<&str>) -> Option<String> {
+    let raw = text.map(str::trim).filter(|s| !s.is_empty())?;
+    let mut collapsed = collapse_ws(raw);
+    // Drop fenced code block openers so previews stay readable.
+    if collapsed.starts_with("```") {
+        if let Some(rest) = collapsed.split_once('\n').map(|(_, r)| r.trim()) {
+            collapsed = collapse_ws(rest);
+        }
+    }
+    if collapsed.is_empty() {
+        return fallback_preview(role);
+    }
+    let mut chars = collapsed.chars();
+    let taken: String = chars.by_ref().take(OUTLINE_PREVIEW_CHARS).collect();
+    if chars.next().is_some() {
+        Some(format!("{taken}…"))
+    } else {
+        Some(taken)
+    }
+}
+
+fn fallback_preview(role: &str) -> Option<String> {
+    match role {
+        "assistant" => Some("(tools/media)".into()),
+        "user" => Some("(attachment)".into()),
+        "error" => Some("(error)".into()),
+        _ => None,
+    }
+}
+
+/// Full lightweight outline for a session (id/role/preview/created_at only).
+pub fn list_message_outline(conn: &DbConn, session_id: &str) -> AppResult<Vec<MessageOutlineItem>> {
+    let _ = get(conn, session_id)?;
+    let mut stmt = conn.prepare(
+        "SELECT id, role, text, created_at FROM messages
+         WHERE session_id=?1 ORDER BY created_at ASC",
+    )?;
+    let rows = stmt.query_map(params![session_id], |r| {
+        let id: String = r.get(0)?;
+        let role: String = r.get(1)?;
+        let text: Option<String> = r.get(2)?;
+        let created_at: i64 = r.get(3)?;
+        Ok(MessageOutlineItem {
+            preview: outline_preview(&role, text.as_deref()).or_else(|| {
+                // Empty text: still surface a stub for non-empty roles that often
+                // only carry images / tool blocks.
+                if matches!(role.as_str(), "user" | "assistant" | "error") {
+                    fallback_preview(&role)
+                } else {
+                    None
+                }
+            }),
+            id,
+            role,
+            created_at,
+        })
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+fn map_message_row(session_id: &str, r: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
+    let params_str: Option<String> = r.get(3)?;
+    Ok(Message {
+        id: r.get(0)?,
+        session_id: session_id.into(),
+        role: r.get(1)?,
+        text: r.get(2)?,
+        params: params_str.and_then(|s| serde_json::from_str(&s).ok()),
+        created_at: r.get(4)?,
+        images: vec![],
+    })
+}
+
+fn attach_images(conn: &DbConn, mut messages: Vec<Message>) -> AppResult<Vec<Message>> {
+    for m in &mut messages {
+        m.images = load_message_images(conn, &m.id)?;
+    }
+    Ok(messages)
+}
+
+fn load_all_messages(conn: &DbConn, session_id: &str) -> AppResult<Vec<Message>> {
     let mut stmt = conn.prepare(
         "SELECT id, role, text, params_json, created_at FROM messages
          WHERE session_id=?1 ORDER BY created_at ASC",
     )?;
-    let rows = stmt.query_map(params![session_id], |r| {
-        let params_str: Option<String> = r.get(3)?;
-        Ok(Message {
-            id: r.get(0)?,
-            session_id: session_id.into(),
-            role: r.get(1)?,
-            text: r.get(2)?,
-            params: params_str.and_then(|s| serde_json::from_str(&s).ok()),
-            created_at: r.get(4)?,
-            images: vec![],
-        })
-    })?;
-    let mut messages = Vec::new();
+    let rows = stmt.query_map(params![session_id], |r| map_message_row(session_id, r))?;
+    let mut v = Vec::new();
     for r in rows {
-        let mut m = r?;
-        m.images = load_message_images(conn, &m.id)?;
-        messages.push(m);
+        v.push(r?);
     }
+    attach_images(conn, v)
+}
+
+/// Load messages in created_at order with optional window bounds.
+///
+/// - `before_created_at`: strictly older than this timestamp (exclusive)
+/// - `after_created_at`: strictly newer than this timestamp (exclusive)
+/// - `around_message_id`: center a bidirectional window on this message
+/// - `limit`: max rows (clamped 1..500)
+pub fn load_messages_ordered(
+    conn: &DbConn,
+    session_id: &str,
+    around_message_id: Option<&str>,
+    before_created_at: Option<i64>,
+    after_created_at: Option<i64>,
+    limit: i64,
+) -> AppResult<Vec<Message>> {
+    let limit = if limit <= 0 {
+        60
+    } else {
+        limit.min(500)
+    };
+
+    if let Some(mid) = around_message_id {
+        let (anchor_created,): (i64,) = conn.query_row(
+            "SELECT created_at FROM messages WHERE id=?1 AND session_id=?2",
+            params![mid, session_id],
+            |r| Ok((r.get(0)?,)),
+        )?;
+        let before_n = limit / 2;
+        let after_n = limit.saturating_sub(before_n);
+
+        let mut before_stmt = conn.prepare(
+            "SELECT id, role, text, params_json, created_at FROM messages
+             WHERE session_id=?1 AND created_at < ?2
+             ORDER BY created_at DESC LIMIT ?3",
+        )?;
+        let before_rows = before_stmt.query_map(params![session_id, anchor_created, before_n], |r| {
+            map_message_row(session_id, r)
+        })?;
+        let mut before = Vec::new();
+        for r in before_rows {
+            before.push(r?);
+        }
+        before.reverse();
+
+        let mut mid_stmt = conn.prepare(
+            "SELECT id, role, text, params_json, created_at FROM messages
+             WHERE session_id=?1 AND created_at >= ?2
+             ORDER BY created_at ASC LIMIT ?3",
+        )?;
+        let mid_rows =
+            mid_stmt.query_map(params![session_id, anchor_created, after_n.max(1)], |r| {
+                map_message_row(session_id, r)
+            })?;
+        let mut after = Vec::new();
+        for r in mid_rows {
+            after.push(r?);
+        }
+
+        let mut merged = before;
+        merged.extend(after);
+        return attach_images(conn, merged);
+    }
+
+    // Tail / before / after window
+    if let Some(before) = before_created_at {
+        let mut stmt = conn.prepare(
+            "SELECT id, role, text, params_json, created_at FROM messages
+             WHERE session_id=?1 AND created_at < ?2
+             ORDER BY created_at DESC LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![session_id, before, limit], |r| {
+            map_message_row(session_id, r)
+        })?;
+        let mut v = Vec::new();
+        for r in rows {
+            v.push(r?);
+        }
+        v.reverse();
+        return attach_images(conn, v);
+    }
+
+    if let Some(after) = after_created_at {
+        let mut stmt = conn.prepare(
+            "SELECT id, role, text, params_json, created_at FROM messages
+             WHERE session_id=?1 AND created_at > ?2
+             ORDER BY created_at ASC LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![session_id, after, limit], |r| {
+            map_message_row(session_id, r)
+        })?;
+        let mut v = Vec::new();
+        for r in rows {
+            v.push(r?);
+        }
+        return attach_images(conn, v);
+    }
+
+    // Default: last `limit` messages.
+    let mut stmt = conn.prepare(
+        "SELECT id, role, text, params_json, created_at FROM messages
+         WHERE session_id=?1
+         ORDER BY created_at DESC LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![session_id, limit], |r| map_message_row(session_id, r))?;
+    let mut v = Vec::new();
+    for r in rows {
+        v.push(r?);
+    }
+    v.reverse();
+    attach_images(conn, v)
+}
+
+/// Session shell + a window of messages (default: last `limit`).
+pub fn load_with_message_window(
+    conn: &DbConn,
+    session_id: &str,
+    around_message_id: Option<&str>,
+    limit: i64,
+) -> AppResult<SessionWithMessages> {
+    let session = get(conn, session_id)?;
+    let parent_title = parent_title_of(conn, &session)?;
+    let messages = load_messages_ordered(
+        conn,
+        session_id,
+        around_message_id,
+        None,
+        None,
+        limit,
+    )?;
     Ok(SessionWithMessages {
         session,
         messages,
         parent_title,
     })
+}
+
+/// All media rows for a session (gallery), ordered by message time then ord.
+pub fn list_session_media(conn: &DbConn, session_id: &str) -> AppResult<Vec<ImageRef>> {
+    let _ = get(conn, session_id)?;
+    let mut stmt = conn.prepare(
+        "SELECT mi.id, mi.role, mi.rel_path, mi.thumb_path, mi.mime, mi.media_role,
+                mi.source_url, mi.width, mi.height, mi.bytes, mi.ord
+         FROM message_images mi
+         INNER JOIN messages m ON m.id = mi.message_id
+         WHERE mi.session_id=?1 AND mi.message_id IS NOT NULL
+         ORDER BY m.created_at ASC, mi.ord ASC",
+    )?;
+    let rows = stmt.query_map(params![session_id], |r| {
+        Ok(ImageRef {
+            id: r.get(0)?,
+            role: r.get(1)?,
+            rel_path: r.get(2)?,
+            thumb_rel_path: r.get(3)?,
+            mime: r.get(4)?,
+            media_role: r.get(5)?,
+            source_url: r.get(6)?,
+            width: r.get(7)?,
+            height: r.get(8)?,
+            bytes: r.get(9)?,
+            ord: r.get(10)?,
+        })
+    })?;
+    let mut v = Vec::new();
+    for r in rows {
+        v.push(r?);
+    }
+    Ok(v)
 }

@@ -298,6 +298,98 @@ pub fn load_session(
     Ok(decorate_session(&app, s))
 }
 
+fn hydrate_session_chain(
+    conn: &crate::data::db::DbConn,
+    s: &mut session::SessionWithMessages,
+) -> Result<(), AppError> {
+    if let Some(ref pid) = s.session.project_id {
+        if let Ok(proj) = project::get(conn, pid) {
+            s.session.agent_chain = proj.agent_chain;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn list_message_outline(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+) -> Result<Vec<session::MessageOutlineItem>, AppError> {
+    let conn = state.conn()?;
+    session::list_message_outline(&conn, &session_id)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ListMessagesWindowArgs {
+    pub(crate) session_id: String,
+    pub(crate) around_message_id: Option<String>,
+    pub(crate) before_created_at: Option<i64>,
+    pub(crate) after_created_at: Option<i64>,
+    pub(crate) limit: Option<i64>,
+}
+
+#[tauri::command]
+pub fn list_messages_window(
+    state: tauri::State<Arc<AppState>>,
+    app: AppHandle,
+    args: ListMessagesWindowArgs,
+) -> Result<Vec<super::dto::MessageAbs>, AppError> {
+    let conn = state.conn()?;
+    let limit = args.limit.unwrap_or(60);
+    let messages = session::load_messages_ordered(
+        &conn,
+        &args.session_id,
+        args.around_message_id.as_deref(),
+        args.before_created_at,
+        args.after_created_at,
+        limit,
+    )?;
+    Ok(messages
+        .into_iter()
+        .map(|m| super::dto::decorate_message(&app, m))
+        .collect())
+}
+
+/// Session metadata + a message window (default: last N). Prefer this over
+/// full `load_session` for long chats; pair with `list_message_outline`.
+#[tauri::command]
+pub fn load_session_window(
+    state: tauri::State<Arc<AppState>>,
+    app: AppHandle,
+    id: String,
+    around_message_id: Option<String>,
+    limit: Option<i64>,
+) -> Result<SessionWithMessagesAbs, AppError> {
+    let conn = state.conn()?;
+    let scope = crate::data::role_state::resolve_role_state_scope(&conn, &id)?;
+    if let Ok(roles) = crate::data::role_state::latest_roles(&conn, &scope) {
+        state.role_states.load(&scope, roles);
+    }
+    let mut s = session::load_with_message_window(
+        &conn,
+        &id,
+        around_message_id.as_deref(),
+        limit.unwrap_or(60),
+    )?;
+    hydrate_session_chain(&conn, &mut s)?;
+    Ok(decorate_session(&app, s))
+}
+
+#[tauri::command]
+pub fn list_session_media(
+    state: tauri::State<Arc<AppState>>,
+    app: AppHandle,
+    session_id: String,
+) -> Result<Vec<super::dto::ImageRefAbs>, AppError> {
+    let conn = state.conn()?;
+    let images = session::list_session_media(&conn, &session_id)?;
+    Ok(images
+        .into_iter()
+        .map(|i| super::dto::decorate_image(&app, i))
+        .collect())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SetSessionAgentChainArgs {

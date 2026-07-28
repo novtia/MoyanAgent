@@ -341,7 +341,7 @@ pub async fn generate_image(
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
         let session_config = session::get(&conn, &req.session_id)?;
-        let generation_agent = session::generation_agent_definition_key(&session_config.agent_type);
+        let generation_agent = session::session_generation_agent(&session_config);
         let agent_chain = effective_agent_chain(&conn, &session_config);
         let project_cwd = session_project_cwd(&conn, &req.session_id);
         // Unified parameter source: model + provider + prompt + sampling +
@@ -747,7 +747,7 @@ pub async fn regenerate_image(
         let conn = state.conn()?;
         let s = settings::read(&conn)?;
         let session_config = session::get(&conn, &req.session_id)?;
-        let generation_agent = session::generation_agent_definition_key(&session_config.agent_type);
+        let generation_agent = session::session_generation_agent(&session_config);
         let agent_chain = effective_agent_chain(&conn, &session_config);
         let project_cwd = session_project_cwd(&conn, &req.session_id);
         // Unified parameter source: model + provider + prompt + sampling +

@@ -21,6 +21,7 @@ export type { RightPanelProps } from "./types";
 export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
   const { t } = useTranslation();
   const active = useSession((s) => s.active);
+  const sessionMedia = useSession((s) => s.sessionMedia);
   const activeSessionId = useSession((s) => s.activeId);
   const projects = useProject((s) => s.projects);
 
@@ -62,8 +63,8 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
   const openFileTab = useOpenFileTab(setTabs, setActiveTabId, activeTabIdRef);
 
   const galleryCount = useMemo(
-    () => collectSessionGalleryMedia(active).length,
-    [active],
+    () => collectSessionGalleryMedia(active, sessionMedia).length,
+    [active, sessionMedia],
   );
 
   useEffect(() => {

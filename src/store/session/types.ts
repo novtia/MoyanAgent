@@ -1,7 +1,9 @@
 import type {
   AttachmentDraft,
   ChainEntry,
+  ImageRefAbs,
   MessageAbs,
+  MessageOutlineItem,
   ModelParamSettings,
   SessionSummary,
   SessionWithMessagesAbs,
@@ -90,6 +92,14 @@ export interface SessionStore {
   sessions: SessionSummary[];
   activeId: string | null;
   active: SessionWithMessagesAbs | null;
+  /** Full lightweight message outline for the active session (timeline). */
+  outline: MessageOutlineItem[];
+  /** Session media for gallery (independent of message window cache). */
+  sessionMedia: ImageRefAbs[];
+  /** True while older/newer message windows are being fetched. */
+  messagesLoading: boolean;
+  /** Oldest loaded message created_at; null if unknown / empty. */
+  messagesWindowHasMoreBefore: boolean;
   busy: boolean;
   busyBySession: Record<string, boolean>;
   /**
@@ -116,6 +126,15 @@ export interface SessionStore {
   remove: (id: string) => Promise<void>;
   ensureActive: () => Promise<string>;
   reloadActiveSession: () => Promise<void>;
+  /** Refresh outline (+ optional media) for the active session. */
+  refreshOutline: (sessionId?: string) => Promise<void>;
+  /** Load older messages when scrolling toward the top of a long session. */
+  loadOlderMessages: () => Promise<void>;
+  /**
+   * Ensure a message id is inside the loaded window (around-load), then resolve
+   * its index in `active.messages`. Returns -1 if not found.
+   */
+  ensureMessageLoaded: (messageId: string) => Promise<number>;
   /** Clear a session's background "task complete" reminder. */
   dismissFinished: (id: string) => void;
 

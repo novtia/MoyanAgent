@@ -48,13 +48,18 @@ function extForMime(mime: string): string {
 export function GalleryContent({ open, onPreviewImage }: GalleryContentProps) {
   const { t } = useTranslation();
   const active = useSession((s) => s.active);
+  const sessionMedia = useSession((s) => s.sessionMedia);
   const reloadActiveSession = useSession((s) => s.reloadActiveSession);
+  const refreshOutline = useSession((s) => s.refreshOutline);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [innerWidth, setInnerWidth] = useState(0);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [anchorId, setAnchorId] = useState<string | null>(null);
 
-  const media = useMemo(() => collectSessionGalleryMedia(active), [active]);
+  const media = useMemo(
+    () => collectSessionGalleryMedia(active, sessionMedia),
+    [active, sessionMedia],
+  );
   const mediaIds = useMemo(() => media.map((m) => m.id), [media]);
   const mediaById = useMemo(() => {
     const map = new Map<string, ImageRefAbs>();
@@ -169,6 +174,7 @@ export function GalleryContent({ open, onPreviewImage }: GalleryContentProps) {
       try {
         await api.deleteMedia(ids);
         await reloadActiveSession();
+        await refreshOutline();
         clearSelection();
         toast.success(
           ids.length > 1
@@ -179,7 +185,7 @@ export function GalleryContent({ open, onPreviewImage }: GalleryContentProps) {
         toast.error(t("chat.galleryDeleteFailed"), { description: String(err) });
       }
     },
-    [clearSelection, reloadActiveSession, t],
+    [clearSelection, reloadActiveSession, refreshOutline, t],
   );
 
   const onTileClick = useCallback(

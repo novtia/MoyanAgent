@@ -1,10 +1,7 @@
 import type { ImageRefAbs, SessionWithMessagesAbs } from "./types";
 
-/** Images plus generated video outputs, in message order with content dedupe. */
-export function collectSessionGalleryMedia(
-  active: SessionWithMessagesAbs | null,
-): ImageRefAbs[] {
-  if (!active) return [];
+/** Deduplicate gallery media rows (from messages window or list_session_media). */
+export function dedupeGalleryMedia(items: ImageRefAbs[]): ImageRefAbs[] {
   const all: ImageRefAbs[] = [];
   const seenKey = new Set<string>();
   const seenContent = new Set<string>();
@@ -14,36 +11,59 @@ export function collectSessionGalleryMedia(
     }
     return null;
   };
-  const push = (img: ImageRefAbs) => {
+  for (const img of items) {
     const idKey = img.abs_path || img.id;
-    if (idKey && seenKey.has(idKey)) return;
+    if (idKey && seenKey.has(idKey)) continue;
     const ck = contentKey(img);
-    if (ck && seenContent.has(ck)) return;
+    if (ck && seenContent.has(ck)) continue;
     if (idKey) seenKey.add(idKey);
     if (img.id) seenKey.add(img.id);
     if (ck) seenContent.add(ck);
     all.push(img);
-  };
-  for (let i = 0; i < active.messages.length; i++) {
-    const m = active.messages[i];
-    const ins = m.images.filter(
-      (x) => x.role === "input" && x.mime.startsWith("image/"),
-    );
-    const outs = m.images.filter(
-      (x) =>
-        (x.role === "output" || x.role === "edited") &&
-        (x.mime.startsWith("image/") || x.mime.startsWith("video/")),
-    );
-    ins.forEach(push);
-    outs.forEach(push);
   }
   return all;
 }
 
+/** Images plus generated video outputs, in message order with content dedupe. */
+export function collectSessionGalleryMedia(
+  active: SessionWithMessagesAbs | null,
+  sessionMedia?: ImageRefAbs[] | null,
+): ImageRefAbs[] {
+  if (sessionMedia && sessionMedia.length > 0) {
+    return dedupeGalleryMedia(
+      sessionMedia.filter(
+        (x) =>
+          (x.role === "input" && x.mime.startsWith("image/")) ||
+          ((x.role === "output" || x.role === "edited") &&
+            (x.mime.startsWith("image/") || x.mime.startsWith("video/"))),
+      ),
+    );
+  }
+  if (!active) return [];
+  const raw: ImageRefAbs[] = [];
+  for (let i = 0; i < active.messages.length; i++) {
+    const m = active.messages[i];
+    raw.push(
+      ...m.images.filter(
+        (x) => x.role === "input" && x.mime.startsWith("image/"),
+      ),
+    );
+    raw.push(
+      ...m.images.filter(
+        (x) =>
+          (x.role === "output" || x.role === "edited") &&
+          (x.mime.startsWith("image/") || x.mime.startsWith("video/")),
+      ),
+    );
+  }
+  return dedupeGalleryMedia(raw);
+}
+
 export function collectSessionGalleryImages(
   active: SessionWithMessagesAbs | null,
+  sessionMedia?: ImageRefAbs[] | null,
 ): ImageRefAbs[] {
-  return collectSessionGalleryMedia(active).filter((item) =>
+  return collectSessionGalleryMedia(active, sessionMedia).filter((item) =>
     item.mime.startsWith("image/"),
   );
 }

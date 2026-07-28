@@ -384,6 +384,14 @@ export interface SessionSearchResult extends SessionSummary {
   project_id: string | null;
 }
 
+/** Lightweight in-session timeline / virtual-list index row. */
+export interface MessageOutlineItem {
+  id: string;
+  role: "user" | "assistant" | "error" | string;
+  preview: string | null;
+  created_at: number;
+}
+
 export interface ImageRefAbs {
   id: string;
   role: "input" | "output" | "edited" | string;

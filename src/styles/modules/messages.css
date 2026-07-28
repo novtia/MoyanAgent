@@ -4,9 +4,10 @@
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
-  padding: 8px 24px 32px;
-  display: flex;
-  flex-direction: column;
+  /* block so the floated sticky timeline can sit on the left edge */
+  display: block;
+  /* Flush to the sidebar; timeline owns the left gutter */
+  padding: 8px 24px 32px 0;
 }
 .messages::-webkit-scrollbar {
   width: 6px;
@@ -16,6 +17,8 @@
   border-radius: 3px;
 }
 .messages.is-empty {
+  display: flex;
+  flex-direction: column;
   justify-content: center;
 }
 
@@ -24,6 +27,169 @@
   max-width: var(--chat-content-width);
   margin: 0 auto;
   padding: 0 var(--chat-content-padding-x);
+  min-width: 0;
+}
+
+.messages-shell {
+  display: block;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  /* Clear the floated timeline on the left */
+  padding-left: 0;
+  box-sizing: border-box;
+}
+.messages-shell::after {
+  content: "";
+  display: table;
+  clear: both;
+}
+.messages-shell > .messages-inner {
+  max-width: var(--chat-content-width);
+  margin: 0 auto;
+  padding: 0 var(--chat-content-padding-x);
+}
+
+.messages-virtual {
+  width: 100%;
+}
+.msg-virtual-row .msg {
+  animation: none;
+}
+.messages-loading-older {
+  text-align: center;
+  color: var(--ink-mute);
+  font-size: 12px;
+  padding: 4px 0 10px;
+  letter-spacing: 0.2em;
+}
+
+/* ───── sticky message timeline — left aligns with session title, vertically centered ───── */
+.message-timeline {
+  position: sticky;
+  top: 50%;
+  transform: translateY(-50%);
+  float: left;
+  width: var(--msg-timeline-width);
+  /* Collapse layout footprint so messages-inner stays viewport-centered */
+  margin-right: calc(-1 * var(--msg-timeline-width));
+  max-height: min(72vh, calc(var(--app-height, 100vh) - 160px));
+  margin-top: 0;
+  margin-bottom: 0;
+  /* Same inset as .chat-topbar so tick left edge lines up with title left edge */
+  margin-left: var(--chat-topbar-padding-x, 18px);
+  padding: 8px 0;
+  /* Must stay visible — overflow would clip the hover tooltip */
+  overflow: visible;
+  z-index: 20;
+  user-select: none;
+  box-sizing: border-box;
+}
+.message-timeline-track {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--tl-gap, 9px);
+  padding: 4px 0;
+  min-height: 0;
+  max-height: min(72vh, calc(var(--app-height, 100vh) - 160px));
+  overflow-x: visible;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.message-timeline-track::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.tl-tick {
+  position: relative;
+  display: block;
+  height: var(--tl-tick-h, 3px);
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  border-radius: 0;
+  background: var(--tl-tick-color);
+  transition: width 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    background 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.tl-tick:focus,
+.tl-tick:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.tl-tick::after {
+  content: "";
+  position: absolute;
+  inset: -7px -10px -7px -4px;
+}
+.tl-tick.is-peak {
+  background: var(--tl-tick-peak);
+}
+/* Reading position while the rail is idle — set by MessageList scroll probe */
+.tl-tick[data-active="1"] {
+  background: var(--tl-tick-peak);
+}
+/* Fixed-layer tooltip (rendered by MessageTimeline) — escapes overflow clipping */
+.tl-tooltip-fixed {
+  position: fixed;
+  z-index: 10050;
+  width: max-content;
+  max-width: min(320px, 46vw);
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 11.5px;
+  line-height: 1.45;
+  box-shadow: var(--shadow-2);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+.tl-tooltip-fixed p {
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.tl-tip-ask {
+  color: var(--ink);
+  -webkit-line-clamp: 2;
+}
+.tl-tip-reply {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+  color: var(--ink-mute);
+  -webkit-line-clamp: 3;
+}
+
+@media (max-width: 900px) {
+  .message-timeline {
+    width: 36px;
+    /* Keep left edge aligned with title */
+    margin-left: var(--chat-topbar-padding-x, 18px);
+  }
+  .tl-tooltip-fixed {
+    max-width: min(200px, 40vw);
+  }
+}
+
+@media (max-width: 640px) {
+  .message-timeline {
+    width: 28px;
+    margin-left: var(--chat-topbar-padding-x, 18px);
+    max-height: min(60vh, calc(var(--app-height, 100vh) - 180px));
+  }
+  .tl-tooltip-fixed {
+    display: none;
+  }
 }
 
 .hero {

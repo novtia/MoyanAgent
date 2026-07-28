@@ -82,7 +82,17 @@ pub fn assign_session_to_project(
             state.role_states.load(pid, roles);
         }
     }
-    project::assign_session(&conn, &session_id, project_id.as_deref())
+    project::assign_session(&conn, &session_id, project_id.as_deref())?;
+    // Standalone → always ask/chat. Joining a project upgrades chat → agent
+    // so the session can use workspace tools; other modes are left as-is.
+    if project_id.is_none() {
+        let _ = session::set_agent_type(&conn, &session_id, session::SESSION_AGENT_CHAT);
+    } else if let Ok(sess) = session::get(&conn, &session_id) {
+        if sess.agent_type == session::SESSION_AGENT_CHAT {
+            let _ = session::set_agent_type(&conn, &session_id, session::SESSION_AGENT_GENERAL);
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]

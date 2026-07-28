@@ -220,8 +220,12 @@ export default function App() {
                       setVideoPreview(img);
                       return;
                     }
-                    const session = useSession.getState().active;
-                    const items = collectSessionGalleryImages(session);
+                    const { active: session, sessionMedia } =
+                      useSession.getState();
+                    const items = collectSessionGalleryImages(
+                      session,
+                      sessionMedia,
+                    );
                     const idx = indexOfImageInGallery(items, img);
                     if (idx >= 0) {
                       setPreview({ items, index: idx });

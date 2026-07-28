@@ -567,9 +567,23 @@ export async function reloadSessionIfViewing(sessionId: string) {
   const state = useSession.getState();
   if (state.activeId !== sessionId) return;
   try {
-    const data = await api.loadSession(sessionId);
+    const persisted =
+      state.active?.messages.filter((m) => !m.id.startsWith("tmp-")) ?? [];
+    const aroundId =
+      persisted.length > 0 ? persisted[persisted.length - 1].id : null;
+    const [data, outline, media] = await Promise.all([
+      api.loadSessionWindow(sessionId, aroundId, 60),
+      api.listMessageOutline(sessionId).catch(() => state.outline),
+      api.listSessionMedia(sessionId).catch(() => state.sessionMedia),
+    ]);
+    if (useSession.getState().activeId !== sessionId) return;
     useSession.setState({
       active: data,
+      outline,
+      sessionMedia: media,
+      messagesWindowHasMoreBefore:
+        outline.length >
+        data.messages.filter((m) => !m.id.startsWith("tmp-")).length,
       busy: !!useSession.getState().busyBySession[sessionId],
     });
   } catch (e) {

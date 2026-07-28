@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import type {
   ChainEntry,
+  ImageRefAbs,
   MessageAbs,
+  MessageOutlineItem,
   ModelParamSettings,
   SessionWithMessagesAbs,
 } from "../../types";
@@ -59,6 +61,14 @@ import {
   freezeStreamingUi,
   streamingBuffers,
 } from "./streaming";
+import {
+  MESSAGE_WINDOW_SIZE,
+  mergeMessageWindow,
+  outlineFromMessages,
+  previewFromText,
+  removeOutlineItem,
+  upsertOutlineItem,
+} from "./outline";
 import type { PendingAttachmentDraft, SessionStore } from "./types";
 import {
   coerceVideoModeForMedia,
@@ -108,6 +118,32 @@ export const useSession = create<SessionStore>((set, get) => {
     set({ active: update(active) });
   };
 
+  const patchOutline = (
+    sessionId: string,
+    update: (outline: MessageOutlineItem[]) => MessageOutlineItem[],
+  ) => {
+    if (get().activeId !== sessionId) return;
+    set({ outline: update(get().outline) });
+  };
+
+  const fetchOutlineAndMedia = async (sessionId: string) => {
+    const [outline, media] = await Promise.all([
+      api.listMessageOutline(sessionId).catch((e) => {
+        console.warn(e);
+        return null as MessageOutlineItem[] | null;
+      }),
+      api.listSessionMedia(sessionId).catch((e) => {
+        console.warn(e);
+        return null as ImageRefAbs[] | null;
+      }),
+    ]);
+    if (get().activeId !== sessionId) return;
+    set({
+      ...(outline ? { outline } : {}),
+      ...(media ? { sessionMedia: media } : {}),
+    });
+  };
+
   /** Replace active chat with server truth (avoids duplicate/stale merges after async gen or tab switches). */
   const reloadActiveSessionIfViewing = async (sessionId: string) => {
     // Generation is complete — always discard the streaming buffer, even when
@@ -118,12 +154,34 @@ export const useSession = create<SessionStore>((set, get) => {
     streamingBuffers.delete(sessionId);
     if (get().activeId !== sessionId) return;
     try {
-      const data = await api.loadSession(sessionId);
+      const current = get().active;
+      const persisted = current?.messages.filter((m) => !m.id.startsWith("tmp-")) ?? [];
+      const aroundId =
+        persisted.length > 0 ? persisted[persisted.length - 1].id : null;
+      const data = await api.loadSessionWindow(
+        sessionId,
+        aroundId,
+        MESSAGE_WINDOW_SIZE,
+      );
+      if (get().activeId !== sessionId) return;
+      const outline =
+        (await api.listMessageOutline(sessionId).catch(() => null)) ??
+        outlineFromMessages(data.messages);
+      const media =
+        (await api.listSessionMedia(sessionId).catch(() => null)) ??
+        get().sessionMedia;
       set({
         active: data,
+        outline,
+        sessionMedia: media,
+        messagesWindowHasMoreBefore:
+          outline.length > data.messages.filter((m) => !m.id.startsWith("tmp-"))
+            .length,
         composer: {
           ...get().composer,
-          chatMode: composerModeFromAgentType(data.session.agent_type),
+          chatMode: data.session.project_id
+            ? composerModeFromAgentType(data.session.agent_type)
+            : "chat",
         },
       });
     } catch (e) {
@@ -160,6 +218,10 @@ export const useSession = create<SessionStore>((set, get) => {
   sessions: [],
   activeId: null,
   active: null,
+  outline: [],
+  sessionMedia: [],
+  messagesLoading: false,
+  messagesWindowHasMoreBefore: false,
   busy: false,
   busyBySession: {},
   finishedBySession: {},
@@ -206,7 +268,17 @@ export const useSession = create<SessionStore>((set, get) => {
       }
     }
 
-    const data = await api.loadSession(id);
+    const [data, outlineRaw, mediaRaw] = await Promise.all([
+      api.loadSessionWindow(id, null, MESSAGE_WINDOW_SIZE),
+      api.listMessageOutline(id).catch((e) => {
+        console.warn(e);
+        return [] as MessageOutlineItem[];
+      }),
+      api.listSessionMedia(id).catch((e) => {
+        console.warn(e);
+        return [] as ImageRefAbs[];
+      }),
+    ]);
     const isBusy = !!get().busyBySession[id];
 
     // Opening a session acknowledges any background "task complete" reminder.
@@ -226,6 +298,9 @@ export const useSession = create<SessionStore>((set, get) => {
       messagesWithBuffer = applyStreamBufferToMessages(data.messages, id, buf);
     }
 
+    const outline =
+      outlineRaw.length > 0 ? outlineRaw : outlineFromMessages(messagesWithBuffer);
+
     // Restore draft for the target session, falling back to empty defaults.
     const draft = composerDrafts.get(id);
     const pendingAsk = askUserPendingBySession.get(id) ?? null;
@@ -236,6 +311,12 @@ export const useSession = create<SessionStore>((set, get) => {
     set({
       activeId: id,
       active: { ...data, messages: messagesWithBuffer },
+      outline,
+      sessionMedia: mediaRaw,
+      messagesWindowHasMoreBefore:
+        outline.length >
+        messagesWithBuffer.filter((m) => !m.id.startsWith("tmp-")).length,
+      messagesLoading: false,
       busy: isBusy,
       pendingAskUser: pendingAsk,
       composer: {
@@ -253,7 +334,9 @@ export const useSession = create<SessionStore>((set, get) => {
         watermark: draft?.watermark ?? get().composer.watermark,
         thinkingEnabled: data.session.llm_params?.thinking_enabled ?? false,
         thinkingEffort: data.session.llm_params?.thinking_effort ?? "",
-        chatMode: composerModeFromAgentType(data.session.agent_type),
+        chatMode: data.session.project_id
+          ? composerModeFromAgentType(data.session.agent_type)
+          : "chat",
       },
     });
     void useRoleState.getState().loadLatest(id, roleStateScopeForSession(id));
@@ -302,7 +385,15 @@ export const useSession = create<SessionStore>((set, get) => {
       if (parentId) {
         await get().switchTo(parentId);
       } else {
-        set({ activeId: null, active: null, busy: false, pendingAskUser: null });
+        set({
+          activeId: null,
+          active: null,
+          outline: [],
+          sessionMedia: [],
+          messagesWindowHasMoreBefore: false,
+          busy: false,
+          pendingAskUser: null,
+        });
       }
     }
     await get().refreshList();
@@ -318,7 +409,11 @@ export const useSession = create<SessionStore>((set, get) => {
     const id = get().activeId;
     if (!id) return;
     try {
-      const data = await api.loadSession(id);
+      const persisted =
+        get().active?.messages.filter((m) => !m.id.startsWith("tmp-")) ?? [];
+      const aroundId =
+        persisted.length > 0 ? persisted[persisted.length - 1].id : null;
+      const data = await api.loadSessionWindow(id, aroundId, MESSAGE_WINDOW_SIZE);
       const state = get();
       // A settings-only reload (for example, after switching models) can race
       // with an in-flight stream. Keep the optimistic/streaming rows until the
@@ -327,17 +422,104 @@ export const useSession = create<SessionStore>((set, get) => {
       if (state.activeId !== id) return;
       const preserveLiveMessages =
         !!state.busyBySession[id] && state.active?.session.id === id;
+      const outline =
+        (await api.listMessageOutline(id).catch(() => null)) ??
+        outlineFromMessages(
+          preserveLiveMessages ? state.active!.messages : data.messages,
+        );
+      const media =
+        (await api.listSessionMedia(id).catch(() => null)) ?? state.sessionMedia;
       set({
         active: preserveLiveMessages
           ? { ...data, messages: state.active!.messages }
           : data,
+        outline,
+        sessionMedia: media,
+        messagesWindowHasMoreBefore:
+          outline.length >
+          (preserveLiveMessages ? state.active!.messages : data.messages).filter(
+            (m) => !m.id.startsWith("tmp-"),
+          ).length,
         composer: {
           ...get().composer,
-          chatMode: composerModeFromAgentType(data.session.agent_type),
+          chatMode: data.session.project_id
+            ? composerModeFromAgentType(data.session.agent_type)
+            : "chat",
         },
       });
     } catch (e) {
       console.warn(e);
+    }
+  },
+
+  refreshOutline: async (sessionId) => {
+    const id = sessionId ?? get().activeId;
+    if (!id) return;
+    await fetchOutlineAndMedia(id);
+  },
+
+  loadOlderMessages: async () => {
+    const active = get().active;
+    const sid = get().activeId;
+    if (!active || !sid || get().messagesLoading || !get().messagesWindowHasMoreBefore) {
+      return;
+    }
+    const first = active.messages.find((m) => !m.id.startsWith("tmp-"));
+    if (!first) return;
+    set({ messagesLoading: true });
+    try {
+      const older = await api.listMessagesWindow({
+        sessionId: sid,
+        beforeCreatedAt: first.created_at,
+        limit: MESSAGE_WINDOW_SIZE,
+      });
+      if (get().activeId !== sid) return;
+      const merged = mergeMessageWindow(active.messages, older);
+      set({
+        active: { ...active, messages: merged },
+        messagesWindowHasMoreBefore: older.length >= MESSAGE_WINDOW_SIZE,
+      });
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      if (get().activeId === sid) set({ messagesLoading: false });
+    }
+  },
+
+  ensureMessageLoaded: async (messageId) => {
+    const active = get().active;
+    const sid = get().activeId;
+    if (!active || !sid) return -1;
+    const existing = active.messages.findIndex((m) => m.id === messageId);
+    if (existing >= 0) return existing;
+
+    set({ messagesLoading: true });
+    try {
+      const data = await api.loadSessionWindow(
+        sid,
+        messageId,
+        MESSAGE_WINDOW_SIZE,
+      );
+      if (get().activeId !== sid) return -1;
+      const buf = streamingBuffers.get(sid);
+      let messages = data.messages;
+      if (buf && buf.blocks.length > 0) {
+        messages = applyStreamBufferToMessages(data.messages, sid, buf);
+      }
+      const outline = get().outline.length
+        ? get().outline
+        : outlineFromMessages(messages);
+      set({
+        active: { ...data, messages },
+        messagesWindowHasMoreBefore:
+          outline.length > messages.filter((m) => !m.id.startsWith("tmp-")).length,
+      });
+      return messages.findIndex((m) => m.id === messageId);
+    } catch (e) {
+      console.warn(e);
+      return -1;
+    } finally {
+      if (get().activeId === sid) set({ messagesLoading: false });
     }
   },
 
@@ -405,6 +587,11 @@ export const useSession = create<SessionStore>((set, get) => {
 
   setChatMode: async (mode) => {
     const id = get().activeId;
+    const active = get().active;
+    // Standalone sessions are always ask/chat — mode switching is project-only.
+    if (id && active?.session.id === id && !active.session.project_id) {
+      return;
+    }
     if (!id) {
       set({ composer: { ...get().composer, chatMode: mode } });
       return;
@@ -896,6 +1083,9 @@ export const useSession = create<SessionStore>((set, get) => {
         console.warn(e);
       }
     }
+    patchOutline(sid, (outline) =>
+      toDelete.reduce((acc, id) => removeOutlineItem(acc, id), outline),
+    );
     await reloadActiveSessionIfViewing(sid);
     await refreshReaderAfterFileRollback(sid);
     await get().refreshList();
@@ -1022,6 +1212,18 @@ export const useSession = create<SessionStore>((set, get) => {
               : m,
           ),
         },
+        outline: upsertOutlineItem(get().outline, {
+          id: messageId,
+          role:
+            a.messages.find((m) => m.id === messageId)?.role ?? "user",
+          preview: previewFromText(
+            a.messages.find((m) => m.id === messageId)?.role ?? "user",
+            trimmed,
+          ),
+          created_at:
+            a.messages.find((m) => m.id === messageId)?.created_at ??
+            Date.now(),
+        }),
       });
     }
   },
@@ -1092,6 +1294,14 @@ export const useSession = create<SessionStore>((set, get) => {
       ...active,
       messages: [...active.messages, optimisticUser],
     }));
+    patchOutline(sid, (outline) =>
+      upsertOutlineItem(outline, {
+        id: optimisticId,
+        role: "user",
+        preview: previewFromText("user", text),
+        created_at: optimisticUser.created_at,
+      }),
+    );
     set({
       composer: { ...get().composer, prompt: "", mentions: [], attachments: [], pendingAttachments: [] },
     });

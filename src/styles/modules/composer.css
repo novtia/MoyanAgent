@@ -880,6 +880,11 @@
   color: var(--ink-2);
 }
 
+.composer-mode-pill.is-ask {
+  border-color: rgba(120, 120, 120, 0.35);
+  color: var(--ink-2);
+}
+
 .composer-mode-label {
   max-width: 96px;
   white-space: nowrap;
