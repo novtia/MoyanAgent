@@ -8,6 +8,7 @@ import { VideoPreview } from "./components/media/VideoPreview";
 import { SettingsView } from "./components/settings";
 import type { SettingsTab, ThemeMode } from "./components/settings";
 import { UsageView } from "./components/usage";
+import { PluginsView } from "./components/plugins";
 import { ContextMenuHost } from "./components/context-menu";
 import { ToastHost, DialogHost } from "./components/ui";
 import { SearchDialog } from "./components/search/SearchDialog";
@@ -33,6 +34,7 @@ import type { AttachmentDraft, ImageRefAbs } from "./types";
 type AppRoute =
   | { view: "chat" }
   | { view: "usage" }
+  | { view: "plugins" }
   | { view: "settings"; tab: SettingsTab };
 
 const SETTINGS_TABS: SettingsTab[] = [
@@ -47,6 +49,9 @@ function parseRoute(): AppRoute {
   const [, view, tab] = window.location.hash.match(/^#\/([^/]+)\/?([^/]*)?/) || [];
   if (view === "usage") {
     return { view: "usage" };
+  }
+  if (view === "plugins") {
+    return { view: "plugins" };
   }
   if (view === "settings" && SETTINGS_TABS.includes(tab as SettingsTab)) {
     return { view: "settings", tab: tab as SettingsTab };
@@ -170,6 +175,10 @@ export default function App() {
     window.location.hash = "#/usage";
     setRoute({ view: "usage" });
   };
+  const openPlugins = () => {
+    window.location.hash = "#/plugins";
+    setRoute({ view: "plugins" });
+  };
   const openSettings = (tab: SettingsTab = "appearance") => {
     window.location.hash = `#/settings/${tab}`;
     setRoute({ view: "settings", tab });
@@ -185,7 +194,11 @@ export default function App() {
         <TitleBar
           onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
           sidebarCollapsed={sidebarCollapsed}
-          canGoBack={route.view === "settings" || route.view === "usage"}
+          canGoBack={
+            route.view === "settings" ||
+            route.view === "usage" ||
+            route.view === "plugins"
+          }
           onBack={openChat}
           onNewChat={onNewChat}
           onOpenSearch={() => setSearchOpen(true)}
@@ -207,11 +220,15 @@ export default function App() {
                 onOpenSearch={() => setSearchOpen(true)}
                 onOpenSettings={() => openSettings("appearance")}
                 onOpenUsage={openUsage}
+                onOpenPlugins={openPlugins}
                 usageActive={route.view === "usage"}
+                pluginsActive={route.view === "plugins"}
                 settingsActive={false}
               />
               {route.view === "usage" ? (
                 <UsageView />
+              ) : route.view === "plugins" ? (
+                <PluginsView />
               ) : (
                 <ChatView
                   onEditAttachment={(a) => setEditorTarget(a)}

@@ -104,6 +104,15 @@ export function ToolGlyph({ tool }: { tool: string }) {
           <path d="M4 21v-1a7 7 0 0 1 14 0v1" />
         </Icon>
       );
+    case "ConsultRoles":
+      return (
+        <Icon>
+          <circle cx="8" cy="9" r="3" />
+          <circle cx="16" cy="9" r="3" />
+          <path d="M3 20v-1a5 5 0 0 1 8-4" />
+          <path d="M13 15a5 5 0 0 1 8 4v1" />
+        </Icon>
+      );
     case "TodoList":
       return (
         <Icon>

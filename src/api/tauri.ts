@@ -38,6 +38,7 @@ import type {
   Session,
   Settings,
   SettingsPatch,
+  SkillInfo,
   WebSearchOutcome,
 } from "../types";
 
@@ -527,6 +528,17 @@ export const api = {
         offset: args?.offset ?? null,
       },
     }),
+
+  // skills
+  listSkills: () => invoke<SkillInfo[]>("list_skills"),
+  getSkill: (id: string) => invoke<SkillInfo>("get_skill", { id }),
+  listEnabledSkills: () => invoke<SkillInfo[]>("list_enabled_skills"),
+  setSkillEnabled: (id: string, enabled: boolean) =>
+    invoke<Settings>("set_skill_enabled", { args: { id, enabled } }),
+  importSkill: (path: string) =>
+    invoke<SkillInfo>("import_skill", { args: { path } }),
+  uninstallSkill: (id: string) => invoke<void>("uninstall_skill", { id }),
+  getSkillsDir: () => invoke<string>("get_skills_dir"),
 };
 
 export function srcOf(absPath: string | null | undefined): string {

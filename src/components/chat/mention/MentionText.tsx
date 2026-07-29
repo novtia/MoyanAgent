@@ -5,10 +5,11 @@ import {
 } from "./core";
 import { MentionChip } from "./MentionChip";
 import { RoleCiteChip } from "./RoleCiteChip";
+import { SkillCiteChip } from "./SkillCiteChip";
 import { highlightQuery } from "../../../utils/highlightQuery";
 
 /**
- * Render plain message text, turning serialized `@file` / `@role` tokens into
+ * Render plain message text, turning serialized `@file` / `@role` / `@skill` tokens into
  * static reference cards.
  */
 export function MentionText({
@@ -39,6 +40,9 @@ export function MentionText({
     }
     if (seg.type === "roleCite") {
       return <RoleCiteChip key={`r${i}`} id={seg.id} name={seg.name} />;
+    }
+    if (seg.type === "skillCite") {
+      return <SkillCiteChip key={`s${i}`} id={seg.id} name={seg.name} />;
     }
     return (
       <MentionChip

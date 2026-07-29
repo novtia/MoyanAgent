@@ -1,7 +1,9 @@
 import { memo, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
+import { api } from "../../../../api/tauri";
 import { dialog } from "../../../ui";
+import { useFileExplorer } from "../../../../store/fileExplorer";
 import type { Role, RoleGender, RoleMeter, RoleNsfw } from "../../../../store/roleState";
 import {
   SEMEN_ML_KEYS,
@@ -21,6 +23,17 @@ import { useChangedKeys, useChangedString } from "./hooks/useChangeFlash";
 import { genderLabel, nsfwLabel } from "./utils/labels";
 import { asMeter, pct } from "./utils/meters";
 import type { RadarDatum, RoleStateCardProps } from "./types";
+
+function defaultMemoryRel(roleId: string): string {
+  return `.moyan/trpg-memory/${roleId}.md`;
+}
+
+function joinProjectPath(root: string, rel: string): string {
+  const cleaned = rel.replace(/\\/g, "/").replace(/^\/+/, "");
+  const base = root.replace(/[\\/]+$/, "");
+  const sep = root.includes("\\") ? "\\" : "/";
+  return `${base}${sep}${cleaned.split("/").join(sep)}`;
+}
 
 function portraitGlyph(nameOrId: string): string {
   const s = nameOrId.trim();
@@ -380,6 +393,7 @@ export const RoleStateCard = memo(function RoleStateCard({
   const [nsfwOpen, setNsfwOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const deleteRole = useRoleState((s) => s.deleteRole);
+  const projectRoot = useFileExplorer((s) => s.projectRoot);
 
   const attributes = useMemo(() => {
     const a = role.attributes;
@@ -458,6 +472,42 @@ export const RoleStateCard = memo(function RoleStateCard({
     }
   };
 
+  const controlMode = role.control === "user" ? "user" : "ai";
+  const memoryRel =
+    (typeof role.memory_path === "string" && role.memory_path.trim()) ||
+    defaultMemoryRel(role.id);
+  const hasTrpgMeta = Boolean(
+    role.persona?.trim() ||
+      role.goals?.trim() ||
+      role.speech_style?.trim() ||
+      role.control ||
+      role.memory_path ||
+      (typeof role.model === "string" && role.model.trim()),
+  );
+
+  const onOpenMemory = async () => {
+    if (!projectRoot) {
+      await dialog.alert(t("roleState.memoryNeedProject"));
+      return;
+    }
+    const abs = joinProjectPath(projectRoot, memoryRel);
+    try {
+      try {
+        await api.readProjectFile(sessionId, abs);
+      } catch {
+        await api.writeProjectFile(
+          sessionId,
+          abs,
+          `# ${displayName} — private memory\n\n`,
+        );
+      }
+      await api.openPath(abs);
+    } catch (e) {
+      console.warn("[roleState] open memory failed", e);
+      await dialog.alert(t("roleState.memoryOpenFailed"));
+    }
+  };
+
   return (
     <article
       className={`arc ${isDragging ? "is-dragging" : ""}`}
@@ -494,6 +544,14 @@ export const RoleStateCard = memo(function RoleStateCard({
                 {gender === "female" ? " / F" : " / M"}
               </span>
             )}
+            <span
+              className={`arc-control is-${controlMode}`}
+              title={t("roleState.control")}
+            >
+              {controlMode === "user"
+                ? t("roleState.controlUser")
+                : t("roleState.controlAi")}
+            </span>
           </div>
           <span className="arc-alias">{role.id}</span>
           {tags.length > 0 && (
@@ -510,6 +568,11 @@ export const RoleStateCard = memo(function RoleStateCard({
           <button type="button" className="arc-act" onClick={() => setEditing(true)}>
             {t("roleState.edit")}
           </button>
+          {projectRoot ? (
+            <button type="button" className="arc-act" onClick={() => void onOpenMemory()}>
+              {t("roleState.openMemory")}
+            </button>
+          ) : null}
           <button type="button" className="arc-act is-danger" onClick={() => void onDelete()}>
             {t("roleState.delete")}
           </button>
@@ -541,6 +604,47 @@ export const RoleStateCard = memo(function RoleStateCard({
           emptyLabel={t("roleState.unset")}
         />
       </div>
+
+      {hasTrpgMeta && (
+        <div className="arc-trpg">
+          <div className="arc-field-label">
+            <span className="no">TR</span>
+            {t("roleState.sectionTrpg")}
+          </div>
+          {role.persona?.trim() ? (
+            <div className="arc-trpg-line">
+              <span className="k">{t("roleState.persona")}</span>
+              <span>{role.persona}</span>
+            </div>
+          ) : null}
+          {role.goals?.trim() ? (
+            <div className="arc-trpg-line">
+              <span className="k">{t("roleState.goals")}</span>
+              <span>{role.goals}</span>
+            </div>
+          ) : null}
+          {role.speech_style?.trim() ? (
+            <div className="arc-trpg-line">
+              <span className="k">{t("roleState.speechStyle")}</span>
+              <span>{role.speech_style}</span>
+            </div>
+          ) : null}
+          {typeof role.model === "string" && role.model.trim() ? (
+            <div className="arc-trpg-line">
+              <span className="k">{t("roleState.roleModel")}</span>
+              <span className="arc-trpg-path" title={role.model}>
+                {role.model}
+              </span>
+            </div>
+          ) : null}
+          <div className="arc-trpg-line">
+            <span className="k">{t("roleState.memoryPath")}</span>
+            <span className="arc-trpg-path" title={memoryRel}>
+              {memoryRel}
+            </span>
+          </div>
+        </div>
+      )}
 
       {appearance && (
         <div className={`arc-appearance ${appearanceChanged ? "is-changed" : ""}`}>

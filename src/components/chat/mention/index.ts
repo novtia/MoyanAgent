@@ -53,6 +53,15 @@ export {
   type RoleCiteRef,
 } from "./roleCite";
 export {
+  SKILL_CITE_PREFIX,
+  serializeSkillCite,
+  parseSkillCiteAt,
+  createSkillCiteNode,
+  skillCiteDisplayName,
+  type SkillCiteRef,
+} from "./skillCite";
+export { SkillCiteChip } from "./SkillCiteChip";
+export {
   MentionEditor,
   type MentionEditorHandle,
   type MentionEditorProps,

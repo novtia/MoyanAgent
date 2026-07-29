@@ -10,5 +10,6 @@ pub(crate) mod project;
 pub(crate) mod role_state;
 pub(crate) mod session;
 pub(crate) mod settings;
+pub(crate) mod skills;
 pub(crate) mod token_log;
 pub(crate) mod transfer;

@@ -1,6 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
+import { api } from "../../../../api/tauri";
+import { dialog } from "../../../ui";
+import { ModelOverrideSelect } from "../agentFlow/components/ModelOverrideSelect";
+import { useFileExplorer } from "../../../../store/fileExplorer";
+import { useSettings } from "../../../../store/settings";
 import type { Role, RoleGender, RoleMeter, RoleNsfw } from "../../../../store/roleState";
 import {
   SEMEN_ML_KEYS,
@@ -23,6 +29,13 @@ import {
   textToSpots,
 } from "./utils/editForm";
 
+function joinProjectPath(root: string, rel: string): string {
+  const cleaned = rel.replace(/\\/g, "/").replace(/^\/+/, "");
+  const base = root.replace(/[\\/]+$/, "");
+  const sep = root.includes("\\") ? "\\" : "/";
+  return `${base}${sep}${cleaned.split("/").join(sep)}`;
+}
+
 export function RoleStateEditModal({
   role,
   sessionId,
@@ -31,6 +44,15 @@ export function RoleStateEditModal({
 }: RoleStateEditModalProps) {
   const { t } = useTranslation();
   const updateRole = useRoleState((s) => s.updateRole);
+  const projectRoot = useFileExplorer((s) => s.projectRoot);
+  const settings = useSettings((s) => s.settings);
+  const modelProviders = useMemo(
+    () =>
+      (settings?.model_services ?? []).filter(
+        (p) => p.enabled !== false && p.models.length > 0,
+      ),
+    [settings?.model_services],
+  );
 
   const [name, setName] = useState(role.name ?? "");
   const [gender, setGender] = useState<RoleGender | "">(resolveGender(role) ?? "");
@@ -38,6 +60,20 @@ export function RoleStateEditModal({
   const [mood, setMood] = useState(role.mood ?? "");
   const [outfit, setOutfit] = useState(role.outfit ?? "");
   const [appearance, setAppearance] = useState(resolveAppearance(role) ?? "");
+  const [persona, setPersona] = useState(
+    typeof role.persona === "string" ? role.persona : "",
+  );
+  const [goals, setGoals] = useState(typeof role.goals === "string" ? role.goals : "");
+  const [speechStyle, setSpeechStyle] = useState(
+    typeof role.speech_style === "string" ? role.speech_style : "",
+  );
+  const [control, setControl] = useState(
+    role.control === "user" || role.control === "ai" ? role.control : "ai",
+  );
+  const [memoryPath, setMemoryPath] = useState(
+    typeof role.memory_path === "string" ? role.memory_path : "",
+  );
+  const [model, setModel] = useState(typeof role.model === "string" ? role.model : "");
   const [tags, setTags] = useState<string[]>(parseTags(role.tags));
   const [tagDraft, setTagDraft] = useState("");
   const [attrs, setAttrs] = useState<AttrRow[]>(parseAttrs(role.attributes));
@@ -97,6 +133,13 @@ export function RoleStateEditModal({
     setOrClear("mood", mood);
     setOrClear("outfit", outfit);
     setOrClear("appearance", appearance);
+    setOrClear("persona", persona);
+    setOrClear("goals", goals);
+    setOrClear("speech_style", speechStyle);
+    setOrClear("memory_path", memoryPath);
+    setOrClear("model", model);
+    if (control === "user" || control === "ai") next.control = control;
+    else delete next.control;
 
     if (gender === "male" || gender === "female") next.gender = gender;
     else delete next.gender;
@@ -210,7 +253,7 @@ export function RoleStateEditModal({
     }
   };
 
-  return (
+  return createPortal(
     <div
       className="modal-backdrop"
       role="presentation"
@@ -271,6 +314,109 @@ export function RoleStateEditModal({
                   onChange={(e) => setAppearance(e.target.value)}
                 />
               </label>
+            </div>
+          </section>
+
+          <section className="rs-edit-section">
+            <h4 className="rs-edit-section-title">{t("roleState.sectionTrpg")}</h4>
+            <div className="rs-edit-grid">
+              <label className="rs-edit-field">
+                <span>{t("roleState.control")}</span>
+                <select
+                  value={control}
+                  onChange={(e) => setControl(e.target.value as "ai" | "user")}
+                >
+                  <option value="ai">{t("roleState.controlAi")}</option>
+                  <option value="user">{t("roleState.controlUser")}</option>
+                </select>
+              </label>
+              <label className="rs-edit-field">
+                <span>{t("roleState.roleModel")}</span>
+                <ModelOverrideSelect
+                  value={model}
+                  providers={modelProviders}
+                  t={t}
+                  onChange={setModel}
+                />
+                <p className="rs-edit-hint">{t("roleState.roleModelHint")}</p>
+              </label>
+              <label className="rs-edit-field rs-edit-span2">
+                <span>{t("roleState.memoryPath")}</span>
+                <div className="rs-edit-memory-row">
+                  <input
+                    value={memoryPath}
+                    placeholder={`.moyan/trpg-memory/${role.id}.md`}
+                    onChange={(e) => setMemoryPath(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="rs-edit-memory-open"
+                    disabled={!projectRoot}
+                    title={
+                      projectRoot
+                        ? t("roleState.openMemory")
+                        : t("roleState.memoryNeedProject")
+                    }
+                    onClick={() => {
+                      void (async () => {
+                        if (!projectRoot) {
+                          await dialog.alert(t("roleState.memoryNeedProject"));
+                          return;
+                        }
+                        const rel =
+                          memoryPath.trim() || `.moyan/trpg-memory/${role.id}.md`;
+                        const abs = joinProjectPath(projectRoot, rel);
+                        try {
+                          try {
+                            await api.readProjectFile(sessionId, abs);
+                          } catch {
+                            await api.writeProjectFile(
+                              sessionId,
+                              abs,
+                              `# ${name || role.id} — private memory\n\n`,
+                            );
+                          }
+                          await api.openPath(abs);
+                        } catch (e) {
+                          console.warn("[roleState] open memory failed", e);
+                          await dialog.alert(t("roleState.memoryOpenFailed"));
+                        }
+                      })();
+                    }}
+                  >
+                    {t("roleState.openMemory")}
+                  </button>
+                </div>
+              </label>
+              <label className="rs-edit-field rs-edit-span2">
+                <span>{t("roleState.persona")}</span>
+                <textarea
+                  rows={2}
+                  value={persona}
+                  onChange={(e) => setPersona(e.target.value)}
+                />
+              </label>
+              <label className="rs-edit-field rs-edit-span2">
+                <span>{t("roleState.goals")}</span>
+                <textarea
+                  rows={2}
+                  value={goals}
+                  onChange={(e) => setGoals(e.target.value)}
+                />
+              </label>
+              <label className="rs-edit-field rs-edit-span2">
+                <span>{t("roleState.speechStyle")}</span>
+                <input
+                  value={speechStyle}
+                  onChange={(e) => setSpeechStyle(e.target.value)}
+                />
+              </label>
+            </div>
+          </section>
+
+          <section className="rs-edit-section">
+            <h4 className="rs-edit-section-title">{t("roleState.tags")}</h4>
+            <div className="rs-edit-grid">
               <div className="rs-edit-field rs-edit-span2">
                 <span>{t("roleState.tags")}</span>
                 <div className="rs-edit-tags">
@@ -519,6 +665,7 @@ export function RoleStateEditModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

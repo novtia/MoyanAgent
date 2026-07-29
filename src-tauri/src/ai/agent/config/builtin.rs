@@ -27,6 +27,8 @@ pub const AGENT_VERIFICATION: &str = "verification";
 pub const AGENT_FORK: &str = "fork";
 pub const AGENT_ROLE_STATE: &str = "role-state";
 pub const AGENT_RPG: &str = "RPG";
+pub const AGENT_TRPG_DIRECTOR: &str = "trpg-director";
+pub const AGENT_TRPG_CHARACTER: &str = "trpg-character";
 
 /// Tool names that are unsafe for read-only agents (Explore / Plan /
 /// Verification). Kept in one place so adding a write-tool only needs a
@@ -63,6 +65,8 @@ pub fn builtin_definitions() -> Vec<AgentDefinition> {
         fork(),
         role_state(),
         rpg(),
+        trpg_director(),
+        trpg_character(),
     ]
 }
 
@@ -182,5 +186,32 @@ fn fork() -> AgentDefinition {
     d.background = true;
     d.tools = vec!["*".into()];
     d.source = AgentSource::BuiltIn;
+    d
+}
+
+fn trpg_director() -> AgentDefinition {
+    // Narrow director: narrate + ConsultRoles + AskUser + limited RoleState.
+    let mut d = AgentDefinition::builtin(AGENT_TRPG_DIRECTOR, prompts::TRPG_DIRECTOR_PROMPT);
+    d.when_to_use = prompts::TRPG_DIRECTOR_WHEN_TO_USE.into();
+    d.tools = vec![
+        "ConsultRoles".into(),
+        "AskUser".into(),
+        "RoleState".into(),
+    ];
+    d.omit_claude_md = true;
+    d
+}
+
+fn trpg_character() -> AgentDefinition {
+    // Character subagent used by ConsultRoles (and optionally Agent tool).
+    // Memory path is locked by the ConsultRoles host; tools are narrow.
+    let mut d = AgentDefinition::builtin(AGENT_TRPG_CHARACTER, prompts::TRPG_CHARACTER_PROMPT);
+    d.when_to_use = prompts::TRPG_CHARACTER_WHEN_TO_USE.into();
+    d.tools = vec![
+        "FileRead".into(),
+        "Write".into(),
+        "Edit".into(),
+    ];
+    d.omit_claude_md = true;
     d
 }

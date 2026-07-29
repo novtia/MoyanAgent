@@ -360,6 +360,85 @@ body.is-arc-dragging {
   transform: translateY(-3px);
 }
 
+.arc-control {
+  font-family: var(--chat-font-family, var(--app-font-family, inherit));
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 1.5px 6px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--arc-line);
+  transform: translateY(-3px);
+}
+.arc-control.is-ai {
+  color: var(--arc-600);
+  background: var(--arc-tint);
+  border-color: color-mix(in srgb, var(--arc-500) 45%, var(--arc-line));
+}
+.arc-control.is-user {
+  color: color-mix(in srgb, var(--accent, #5b7cfa) 85%, var(--ink));
+  background: color-mix(in srgb, var(--accent, #5b7cfa) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent, #5b7cfa) 40%, var(--arc-line));
+}
+
+.arc-trpg {
+  margin: 8px 12px 4px;
+  padding: 8px 10px;
+  border: 1px dashed color-mix(in srgb, var(--arc-line) 80%, transparent);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--arc-tint) 40%, transparent);
+}
+.arc-trpg-line {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 4px 8px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  margin-top: 4px;
+}
+.arc-trpg-line .k {
+  color: var(--ink-mute);
+  font-size: 10.5px;
+}
+.arc-trpg-path {
+  font-family: var(--chat-font-family, var(--app-font-family, inherit));
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rs-edit-memory-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.rs-edit-memory-row input {
+  flex: 1;
+  min-width: 0;
+}
+.rs-edit-memory-open {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.rs-edit-memory-open:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.rs-edit-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--ink-mute);
+  line-height: 1.35;
+}
+
 .arc-alias {
   font-size: 10.5px;
   color: var(--arc-ink);

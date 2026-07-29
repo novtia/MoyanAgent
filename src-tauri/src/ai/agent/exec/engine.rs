@@ -634,6 +634,30 @@ pub fn inject_attachments_into_history(chat: &mut ChatRequest, attachments: &[At
     chat.history = injected;
 }
 
+/// Resolve `@skill:{"id":…}` cites in the user prompt and inject skill bodies.
+pub fn inject_skill_cites_from_prompt(
+    app: &tauri::AppHandle,
+    chat: &mut ChatRequest,
+    prompt: &str,
+    enabled_skill_ids: &[String],
+) {
+    let Ok(resolved) =
+        crate::data::skills::resolve_invoked_from_prompt(app, prompt, enabled_skill_ids)
+    else {
+        return;
+    };
+    if resolved.is_empty() {
+        return;
+    }
+    let attachments: Vec<Attachment> = resolved
+        .into_iter()
+        .map(|(name, body)| {
+            Attachment::for_main(AttachmentKind::InvokedSkill { name, body })
+        })
+        .collect();
+    inject_attachments_into_history(chat, &attachments);
+}
+
 /// Outcome of [`run_chat_request`]: provider response + task tracking.
 pub struct AgentChatOutcome {
     pub response: GenerateResponse,

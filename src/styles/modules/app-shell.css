@@ -205,6 +205,12 @@
   overflow-x: hidden;
   overflow-y: auto;
 }
+.stage > .plugins {
+  min-height: 0;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
 .app-shell.sidebar-collapsed .stage {
   grid-template-columns: 0 1fr;
 }

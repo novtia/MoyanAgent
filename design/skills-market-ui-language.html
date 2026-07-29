@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Lumen · 插件 / 技能市场设计语言</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;550;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+/* ───── tokens (mirrored from src/styles/modules/tokens.css) ───── */
+:root {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-soft: #f7f8fa;
+  --bg-sunk: #f1f3f6;
+  --bg-side: #fafafa;
+  --bg-hover: #efefef;
+  --line: #ececec;
+  --line-strong: #d8d8d8;
+  --ink: #0d0d0d;
+  --ink-2: #1f1f1f;
+  --ink-soft: #5a5a5a;
+  --ink-mute: #8a8a8a;
+  --accent: #0d0d0d;
+  --accent-soft: #2c2c2c;
+  --blue-50: #eef4ff;
+  --blue-100: #dbe7ff;
+  --blue-500: #2563eb;
+  --blue-600: #1d4ed8;
+  --green-50: #ecfdf5;
+  --green-500: #10b981;
+  --green-600: #059669;
+  --rose-50: #fff5f7;
+  --rose-500: #e11d48;
+  --radius: 14px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 22px;
+  --radius-xs: 6px;
+  --shadow-1: 0 1px 0 rgba(15,23,42,.03), 0 1px 2px rgba(15,23,42,.04);
+  --shadow-2: 0 4px 16px -6px rgba(15,23,42,.08), 0 1px 2px rgba(15,23,42,.04);
+  --ease-out: cubic-bezier(.2,.7,.2,1);
+  --ease-pop: cubic-bezier(.16,1,.3,1);
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #101112;
+  --bg-soft: #17191c;
+  --bg-sunk: #0b0c0e;
+  --bg-side: #141517;
+  --bg-hover: #23262a;
+  --line: #292c31;
+  --line-strong: #3a3f46;
+  --ink: #f3f5f7;
+  --ink-2: #dce1e7;
+  --ink-soft: #aab2bd;
+  --ink-mute: #77808b;
+  --accent: #f3f5f7;
+  --accent-soft: #dce1e7;
+  --blue-50: #15233d;
+  --blue-100: #1d3155;
+  --blue-500: #5b8cff;
+  --blue-600: #7aa2ff;
+  --green-50: #112a22;
+  --green-500: #31d09a;
+  --green-600: #5ee0b2;
+  --rose-50: #35151c;
+  --rose-500: #ff6685;
+  --shadow-1: 0 1px 0 rgba(255,255,255,.03), 0 1px 2px rgba(0,0,0,.24);
+  --shadow-2: 0 8px 22px -8px rgba(0,0,0,.44), 0 1px 2px rgba(0,0,0,.24);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 13.5px; }
+body {
+  font-family: "Instrument Sans", "Noto Sans SC", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+code, .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+/* ───── page chrome ───── */
+.page-head {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 28px;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+}
+.page-head h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.page-head .sub { font-size: 12px; color: var(--ink-mute); }
+.page-head .spacer { flex: 1; }
+.theme-toggle {
+  border: 1px solid var(--line); background: var(--bg-soft); color: var(--ink-2);
+  border-radius: 999px; padding: 6px 14px; font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: border-color .15s, background .15s;
+}
+.theme-toggle:hover { border-color: var(--line-strong); background: var(--bg-hover); }
+
+.hero { max-width: 960px; margin: 0 auto; padding: 48px 28px 8px; }
+.hero h2 { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.25; }
+.hero p { margin-top: 12px; font-size: 14px; color: var(--ink-soft); max-width: 640px; line-height: 1.7; }
+.hero p b { color: var(--ink); font-weight: 550; }
+.note {
+  max-width: 960px; margin: 20px auto 0; padding: 12px 16px;
+  border: 1px dashed var(--line-strong); border-radius: var(--radius-sm);
+  font-size: 12.5px; color: var(--ink-soft); line-height: 1.6;
+}
+.note strong { color: var(--ink); font-weight: 550; }
+
+.family-band { max-width: 960px; margin: 0 auto; padding: 40px 28px 0; }
+.family-band h3 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.family-band .desc { margin-top: 6px; font-size: 13px; color: var(--ink-mute); line-height: 1.6; max-width: 640px; }
+
+.thread {
+  max-width: 960px; margin: 0 auto;
+  padding: 20px 28px 40px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+.label {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-mute);
+  margin: 14px 0 -2px;
+}
+
+/* ───── shared bits ───── */
+.ti { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.ti svg { display: block; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 500; line-height: 1;
+  padding: 4px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--ink-soft); background: var(--bg);
+}
+.chip.on { color: var(--green-600); border-color: color-mix(in srgb, var(--green-500) 30%, var(--line)); background: var(--green-50); }
+.chip.sys { color: var(--blue-500); border-color: color-mix(in srgb, var(--blue-500) 30%, var(--line)); background: var(--blue-50); }
+
+.kv { font-size: 11px; color: var(--ink-mute); }
+.kv b { color: var(--ink-soft); font-weight: 500; }
+
+.btn-ghost {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--line); background: var(--bg);
+  border-radius: var(--radius-xs); padding: 5px 11px;
+  font-size: 11.5px; font-weight: 500; color: var(--ink-2);
+  cursor: pointer; transition: background .15s, border-color .15s;
+}
+.btn-ghost:hover { background: var(--bg-hover); border-color: var(--line-strong); }
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--ink); background: var(--ink); color: var(--bg);
+  border-radius: var(--radius-xs); padding: 5px 12px;
+  font-size: 11.5px; font-weight: 500;
+  cursor: pointer; transition: opacity .15s;
+}
+.btn-primary:hover { opacity: .85; }
+.btn-primary:disabled { opacity: .45; cursor: default; }
+
+/* segmented control — same as usage scope */
+.seg {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 3px; border-radius: 999px;
+  background: var(--bg-soft); border: 1px solid var(--line);
+  width: fit-content;
+}
+.seg button {
+  appearance: none; border: none; background: transparent;
+  font: inherit; font-size: 12px; font-weight: 500; color: var(--ink-mute);
+  padding: 5px 16px; border-radius: 999px; cursor: pointer;
+  transition: color .15s, background .15s, box-shadow .15s;
+  white-space: nowrap;
+}
+.seg button:hover { color: var(--ink-2); }
+.seg button.on {
+  color: var(--ink); background: var(--bg);
+  box-shadow: var(--shadow-1);
+  border: 1px solid var(--line);
+  margin: -1px;
+}
+
+/* ════════════════════════════════════════════════════
+   MARKET PAGE — toolbar + sections
+   ════════════════════════════════════════════════════ */
+.market { display: flex; flex-direction: column; gap: 18px; }
+.market-toolbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.market-toolbar .spacer { flex: 1; }
+
+.search {
+  display: inline-flex; align-items: center; gap: 7px;
+  min-width: 220px; flex: 1; max-width: 320px;
+  border: 1px solid var(--line); background: var(--bg-soft);
+  border-radius: var(--radius-sm); padding: 7px 11px;
+  transition: border-color .15s, background .15s;
+}
+.search:focus-within { border-color: var(--line-strong); background: var(--bg); }
+.search .ti { color: var(--ink-mute); }
+.search input {
+  border: none; outline: none; background: transparent;
+  font: inherit; font-size: 12.5px; color: var(--ink);
+  width: 100%;
+}
+.search input::placeholder { color: var(--ink-mute); }
+
+.section-title {
+  display: flex; align-items: baseline; gap: 10px;
+  font-size: 12.5px; font-weight: 550; color: var(--ink);
+  margin: 6px 0 -2px;
+}
+.section-title .count { font-size: 11px; color: var(--ink-mute); font-weight: 400; }
+
+/* ── skill grid — the ONE elevated surface family on this page ── */
+.skill-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;
+}
+.skill-card {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 13px 14px;
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: var(--bg-soft); box-shadow: var(--shadow-1);
+  cursor: pointer; text-align: left;
+  transition: border-color .15s, background .15s, transform .15s var(--ease-out);
+}
+.skill-card:hover { border-color: var(--line-strong); background: var(--bg-hover); }
+.skill-card:active { transform: scale(.995); }
+.skill-icon {
+  flex: none; width: 36px; height: 36px; border-radius: var(--radius-sm);
+  border: 1.5px solid color-mix(in srgb, var(--ink-mute) 45%, transparent);
+  display: grid; place-items: center; color: var(--ink-soft); background: var(--bg);
+  font-weight: 600; font-size: 14px;
+}
+.skill-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.skill-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.skill-name { font-size: 13px; font-weight: 550; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.skill-ver { font-size: 10.5px; font-family: "JetBrains Mono", monospace; color: var(--ink-mute); }
+.skill-desc {
+  font-size: 12px; color: var(--ink-soft); line-height: 1.55;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.skill-foot { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.skill-author { font-size: 11px; color: var(--ink-mute); }
+
+/* enable switch */
+.switch {
+  flex: none; width: 34px; height: 20px; border-radius: 999px;
+  background: var(--bg-sunk); border: 1px solid var(--line-strong);
+  position: relative; cursor: pointer; transition: background .2s, border-color .2s;
+}
+.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--bg); box-shadow: var(--shadow-1);
+  transition: transform .2s var(--ease-pop);
+}
+.switch.on { background: var(--ink); border-color: var(--ink); }
+.switch.on::after { transform: translateX(14px); }
+
+/* ════════════════════════════════════════════════════
+   DETAIL — VS Code extension layout
+   ════════════════════════════════════════════════════ */
+.detail { display: flex; flex-direction: column; gap: 0; }
+
+.detail-head {
+  display: flex; gap: 16px; align-items: flex-start;
+  padding: 4px 0 16px;
+}
+.detail-icon {
+  flex: none; width: 72px; height: 72px; border-radius: var(--radius);
+  border: 1.5px solid color-mix(in srgb, var(--ink-mute) 45%, transparent);
+  display: grid; place-items: center; color: var(--ink-soft); background: var(--bg-soft);
+  font-size: 26px; font-weight: 600;
+}
+.detail-title { flex: 1; min-width: 0; }
+.detail-name { font-size: 21px; font-weight: 600; letter-spacing: -0.01em; }
+.detail-tagline { margin-top: 4px; font-size: 13px; color: var(--ink-soft); line-height: 1.5; }
+.detail-meta { margin-top: 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-mute); }
+.detail-meta .sep { opacity: .5; }
+.detail-actions { flex: none; display: flex; flex-direction: column; gap: 8px; align-items: stretch; min-width: 108px; }
+
+/* detail tabs */
+.detail-tabs {
+  display: flex; align-items: center; gap: 22px;
+  border-bottom: 1px solid var(--line);
+  margin-top: 4px;
+}
+.detail-tab {
+  appearance: none; border: none; background: transparent;
+  font: inherit; font-size: 12.5px; font-weight: 500; color: var(--ink-mute);
+  padding: 10px 2px 9px; cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  transition: color .15s;
+}
+.detail-tab:hover { color: var(--ink-2); }
+.detail-tab.on { color: var(--ink); border-bottom-color: var(--ink); font-weight: 550; }
+
+/* detail body: main + side rail */
+.detail-body {
+  display: grid; grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 28px; padding: 18px 0 8px;
+}
+.detail-readme { font-size: 13px; line-height: 1.75; color: var(--ink-2); }
+.detail-readme h1 { font-size: 17px; font-weight: 600; margin: 0 0 10px; }
+.detail-readme h2 { font-size: 14.5px; font-weight: 600; margin: 18px 0 8px; }
+.detail-readme p { margin: 8px 0; }
+.detail-readme ul { padding-left: 18px; margin: 8px 0; }
+.detail-readme li { margin: 4px 0; }
+.detail-readme code {
+  font-family: "JetBrains Mono", monospace; font-size: 11px;
+  background: var(--bg-soft); border: 1px solid var(--line);
+  border-radius: 4px; padding: 1px 5px;
+}
+
+.detail-side { display: flex; flex-direction: column; gap: 18px; }
+.side-block h4 {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-mute);
+  margin: 0 0 8px;
+}
+.side-rows { display: flex; flex-direction: column; }
+.side-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 6px 0; border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.side-row:last-child { border-bottom: none; }
+.side-row .k { color: var(--ink-mute); }
+.side-row .v { color: var(--ink-2); text-align: right; overflow: hidden; text-overflow: ellipsis; }
+.side-row .v.mono { font-size: 11px; }
+.tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* empty state */
+.empty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 52px 20px; text-align: center;
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+  background: var(--bg-soft);
+}
+.empty .ti { color: var(--ink-mute); opacity: .7; }
+.empty .et { font-size: 13px; font-weight: 550; color: var(--ink-soft); }
+.empty .ed { font-size: 12px; color: var(--ink-mute); line-height: 1.6; max-width: 340px; }
+
+.foot { max-width: 960px; margin: 0 auto; padding: 10px 28px 70px; color: var(--ink-mute); font-size: 11.5px; line-height: 1.7; }
+.foot code { font-size: 10.5px; background: var(--bg-soft); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+
+@media (max-width: 760px) {
+  .skill-grid { grid-template-columns: 1fr; }
+  .detail-body { grid-template-columns: 1fr; }
+  .detail-head { flex-wrap: wrap; }
+}
+</style>
+</head>
+<body>
+
+<header class="page-head">
+  <h1>Lumen · 插件 / 技能市场</h1>
+  <span class="sub">v1 — 侧栏「插件」入口 · 技能管理 · VS Code 式详情</span>
+  <span class="spacer"></span>
+  <button class="theme-toggle" id="themeToggle">切换暗色</button>
+</header>
+
+<section class="hero">
+  <h2>市场不是商店橱窗，<br/>而是一张可开关的能力清单。</h2>
+  <p>侧栏只保留「插件」入口；页面内用 <b>分段切换</b>区分插件与技能。技能卡片沿用 Agent 卡的浅底语言，<b>开关即状态</b>；详情页对齐 VS Code 扩展：头部信息 + 主操作、细节 Tab、右栏元数据。色彩保持纪律：启用 = 墨色开关，系统 = 蓝 chip，不引入新彩色。</p>
+</section>
+<div class="note"><strong>首版范围：</strong>技能做实（本地包 + 启用 + <code>@技能</code> 注入）；插件 Tab 用同一壳做空态。<strong>删除</strong>侧栏「技能」项，避免双入口。</div>
+
+<!-- ═══════════════ MARKET LIST ═══════════════ -->
+<section class="family-band">
+  <h3>市场 · 列表</h3>
+  <p class="desc">工具栏 = 分段 + 搜索 + 操作；列表按「已启用 / 系统 / 全部」分区。卡片双列网格，点击进详情，开关就地切换。</p>
+</section>
+<div class="thread market">
+
+  <div class="label">Toolbar · seg + search + actions</div>
+  <div class="market-toolbar">
+    <div class="seg" role="tablist">
+      <button>插件</button>
+      <button class="on">技能</button>
+    </div>
+    <div class="spacer"></div>
+    <label class="search">
+      <span class="ti"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+      <input placeholder="搜索技能…" />
+    </label>
+    <button class="btn-ghost">刷新</button>
+    <button class="btn-primary">导入技能</button>
+  </div>
+
+  <div class="label">Section · enabled</div>
+  <div class="section-title">已启用 <span class="count">2</span></div>
+  <div class="skill-grid">
+    <button class="skill-card" type="button">
+      <span class="skill-icon">角</span>
+      <span class="skill-main">
+        <span class="skill-top">
+          <span class="skill-name">角色卡设计</span>
+          <span class="skill-ver">v1.2</span>
+          <span class="chip sys">系统</span>
+          <span class="spacer" style="flex:1"></span>
+          <span class="switch on" role="switch" aria-checked="true" onclick="event.stopPropagation()"></span>
+        </span>
+        <span class="skill-desc">引导 Agent 用 RoleState 创建或更新角色状态板：字段约定、属性 / 计量条 / NSFW 结构、外貌与性别必填规则。</span>
+        <span class="skill-foot">
+          <span class="skill-author">Lumen 内置</span>
+          <span class="chip on">已启用</span>
+        </span>
+      </span>
+    </button>
+    <button class="skill-card" type="button">
+      <span class="skill-icon">校</span>
+      <span class="skill-main">
+        <span class="skill-top">
+          <span class="skill-name">全文校对</span>
+          <span class="skill-ver">v0.9</span>
+          <span class="spacer" style="flex:1"></span>
+          <span class="switch on" role="switch" aria-checked="true" onclick="event.stopPropagation()"></span>
+        </span>
+        <span class="skill-desc">逐章检查错别字、标点与人名 / 设定一致性，输出修改建议清单，不直接改稿。</span>
+        <span class="skill-foot">
+          <span class="skill-author">本地导入</span>
+          <span class="chip on">已启用</span>
+        </span>
+      </span>
+    </button>
+  </div>
+
+  <div class="label">Section · available</div>
+  <div class="section-title">未启用 <span class="count">3</span></div>
+  <div class="skill-grid">
+    <button class="skill-card" type="button">
+      <span class="skill-icon">跑</span>
+      <span class="skill-main">
+        <span class="skill-top">
+          <span class="skill-name">跑团导演</span>
+          <span class="skill-ver">v1.0</span>
+          <span class="chip sys">系统</span>
+          <span class="spacer" style="flex:1"></span>
+          <span class="switch" role="switch" aria-checked="false" onclick="event.stopPropagation()"></span>
+        </span>
+        <span class="skill-desc">导演视角推进 TRPG 剧情：何时征询角色、如何汇总抉择、信息差与节奏控制。</span>
+        <span class="skill-foot"><span class="skill-author">Lumen 内置</span></span>
+      </span>
+    </button>
+    <button class="skill-card" type="button">
+      <span class="skill-icon">网</span>
+      <span class="skill-main">
+        <span class="skill-top">
+          <span class="skill-name">联网调研</span>
+          <span class="skill-ver">v0.4</span>
+          <span class="spacer" style="flex:1"></span>
+          <span class="switch" role="switch" aria-checked="false" onclick="event.stopPropagation()"></span>
+        </span>
+        <span class="skill-desc">WebSearch / WebFetch 的检索策略：查什么、如何交叉验证、如何引用来源。</span>
+        <span class="skill-foot"><span class="skill-author">本地导入</span></span>
+      </span>
+    </button>
+    <button class="skill-card" type="button">
+      <span class="skill-icon">纲</span>
+      <span class="skill-main">
+        <span class="skill-top">
+          <span class="skill-name">大纲拆解</span>
+          <span class="skill-ver">v1.1</span>
+          <span class="spacer" style="flex:1"></span>
+          <span class="switch" role="switch" aria-checked="false" onclick="event.stopPropagation()"></span>
+        </span>
+        <span class="skill-desc">把整卷大纲拆成章节节拍表：场景目标、出场人物、信息释放节奏。</span>
+        <span class="skill-foot"><span class="skill-author">本地导入</span></span>
+      </span>
+    </button>
+  </div>
+
+  <div class="label">Plugin tab · empty (首版)</div>
+  <div class="empty">
+    <span class="ti"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 7h3a2 2 0 0 1 2 2v3"/><path d="M17 14v3a2 2 0 0 1-2 2h-3"/><path d="M10 17H7a2 2 0 0 1-2-2v-3"/><path d="M7 10V7a2 2 0 0 1 2-2h3"/><circle cx="12" cy="12" r="2.5"/></svg></span>
+    <div class="et">插件市场即将推出</div>
+    <div class="ed">首版先开放技能管理；插件将接入 MCP 与第三方扩展，沿用同一布局与切换。</div>
+  </div>
+</div>
+
+<!-- ═══════════════ DETAIL ═══════════════ -->
+<section class="family-band">
+  <h3>技能 · 详情页</h3>
+  <p class="desc">对齐 VS Code 扩展详情：顶部图标 + 名称 + 一句话 + 主操作；细节 Tab 承载 README；右栏是安装信息与标签。不嵌卡片，全部走发丝线。</p>
+</section>
+<div class="thread detail">
+
+  <div class="label">Header · icon + title + actions</div>
+  <div class="detail-head">
+    <span class="detail-icon">角</span>
+    <div class="detail-title">
+      <div class="detail-name">角色卡设计</div>
+      <div class="detail-tagline">引导 Agent 用 RoleState 创建或更新角色状态板：字段约定、属性结构、外貌与性别必填规则。</div>
+      <div class="detail-meta">
+        <span>Lumen 内置</span><span class="sep">·</span>
+        <span class="mono">v1.2.0</span><span class="sep">·</span>
+        <span class="chip sys">系统技能</span>
+      </div>
+    </div>
+    <div class="detail-actions">
+      <button class="btn-primary">启用</button>
+      <button class="btn-ghost">打开目录</button>
+    </div>
+  </div>
+
+  <div class="label">Tabs + body + side rail</div>
+  <div class="detail-tabs" role="tablist">
+    <button class="detail-tab on">细节</button>
+    <button class="detail-tab">更新日志</button>
+  </div>
+  <div class="detail-body">
+    <div class="detail-readme">
+      <h1>角色卡设计</h1>
+      <p>在 Agent 模式下引用本技能（<code>@角色卡设计</code>），Agent 将按下述约定调用 <code>RoleState</code> 工具，把自然语言需求落成结构化角色卡。</p>
+      <h2>何时使用</h2>
+      <ul>
+        <li>用户要求「设计一个角色 / 生成角色卡 / 更新某人状态」</li>
+        <li>需要把外貌、性格、好感度等写进可维护的状态板</li>
+      </ul>
+      <h2>字段约定</h2>
+      <ul>
+        <li><code>id</code>：稳定小写 ascii；<code>gender</code> 必填</li>
+        <li><code>attributes</code>：0–100 整数，渲染雷达图</li>
+        <li><code>meters</code>：<code>{ value, max }</code>，渲染进度条</li>
+        <li><code>appearance</code>：≤100 字外貌概述</li>
+      </ul>
+      <h2>增量原则</h2>
+      <p>只写变更字段；禁止整板替换；新角色用 <code>create</code>，已有角色用 <code>update</code>。</p>
+    </div>
+    <aside class="detail-side">
+      <div class="side-block">
+        <h4>安装信息</h4>
+        <div class="side-rows">
+          <div class="side-row"><span class="k">标识</span><span class="v mono">role-card</span></div>
+          <div class="side-row"><span class="k">版本</span><span class="v mono">1.2.0</span></div>
+          <div class="side-row"><span class="k">来源</span><span class="v">内置</span></div>
+          <div class="side-row"><span class="k">更新</span><span class="v">2026-07-28</span></div>
+        </div>
+      </div>
+      <div class="side-block">
+        <h4>类别</h4>
+        <div class="tag-row">
+          <span class="chip">创作</span>
+          <span class="chip">角色</span>
+          <span class="chip">RoleState</span>
+        </div>
+      </div>
+      <div class="side-block">
+        <h4>资源</h4>
+        <div class="side-rows">
+          <div class="side-row"><span class="k">说明文件</span><span class="v mono">SKILL.md</span></div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="foot">
+  <p><b>落地映射</b> — 路由 <code>#/plugins</code>（沿用 Usage 全页模式，侧栏保留）；分段切换 <code>插件 / 技能</code>；技能列表数据来自 <code>list_skills()</code>（扫描内置 + <code>&lt;app_data&gt;/atelier/skills/&lt;id&gt;/SKILL.md</code>）；启用状态持久化到 settings（<code>enabled_skill_ids</code>）；详情页 = 同页内选中态（非新路由）。<strong>Composer</strong> 的 <code>@</code> 弹层新增「已启用技能」分区，序列化 <code>@skill:{"id":"…","name":"…"}</code>，生成时注入 <code>InvokedSkill</code>。</p>
+</div>
+
+<script>
+const root = document.documentElement;
+const btn = document.getElementById('themeToggle');
+function sync() { btn.textContent = root.dataset.theme === 'dark' ? '切换亮色' : '切换暗色'; }
+btn.addEventListener('click', () => {
+  root.dataset.theme = root.dataset.theme === 'dark' ? '' : 'dark';
+  sync();
+});
+sync();
+document.querySelectorAll('.seg button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.seg button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+  });
+});
+document.querySelectorAll('.detail-tab').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.detail-tab').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+  });
+});
+document.querySelectorAll('.switch').forEach(s => {
+  s.addEventListener('click', (e) => { e.stopPropagation(); s.classList.toggle('on'); });
+});
+</script>
+</body>
+</html>

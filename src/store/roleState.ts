@@ -54,6 +54,18 @@ export interface Role {
   tags?: string[];
   /** Explicit body / arousal state — see [`RoleNsfw`]. */
   nsfw?: RoleNsfw;
+  /** TRPG: persona blurb for character agents. */
+  persona?: string;
+  /** TRPG: goals. */
+  goals?: string;
+  /** TRPG: speech style. */
+  speech_style?: string;
+  /** TRPG: `ai` | `user` control. */
+  control?: "ai" | "user" | string;
+  /** TRPG: private memory file path (default `.moyan/trpg-memory/<id>.md`). */
+  memory_path?: string;
+  /** TRPG: model id for this role's ConsultRoles LLM (empty = session/default). */
+  model?: string;
   [key: string]: unknown;
 }
 

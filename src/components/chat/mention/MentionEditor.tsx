@@ -29,6 +29,7 @@ import {
   type MentionMediaRenderData,
   type MentionRange,
 } from "./core";
+import { createSkillCiteNode, type SkillCiteRef } from "./skillCite";
 
 export interface MentionEditorHandle {
   focus: () => void;
@@ -38,11 +39,13 @@ export interface MentionEditorHandle {
     range?: MentionRange,
   ) => void;
   insertMediaMention: (kind: MediaMentionKind) => string | null;
+  insertSkillCite: (ref: SkillCiteRef) => void;
   replaceMentionTrigger: (
     absPath: string,
     isDir?: boolean,
     moveExisting?: boolean,
   ) => void;
+  replaceSkillCiteTrigger: (ref: SkillCiteRef) => void;
   removeMention: (path: string, notify?: boolean) => boolean;
   removeAllMentions: (path: string, notify?: boolean) => boolean;
   rememberSelection: () => void;
@@ -236,6 +239,50 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
       [syncFromDom],
     );
 
+    const insertSkillCiteAtSelection = useCallback(
+      (ref: SkillCiteRef): void => {
+        const root = rootRef.current;
+        if (!root) return;
+        const selection = window.getSelection();
+        const liveRange =
+          selection &&
+          selection.rangeCount > 0 &&
+          root.contains(selection.anchorNode)
+            ? selection.getRangeAt(0)
+            : null;
+        root.focus();
+        const savedRange = savedRangeRef.current;
+        let range: Range;
+        if (
+          liveRange &&
+          root.contains(liveRange.commonAncestorContainer)
+        ) {
+          range = liveRange;
+        } else if (
+          savedRange &&
+          root.contains(savedRange.commonAncestorContainer)
+        ) {
+          range = savedRange.cloneRange();
+        } else {
+          range = document.createRange();
+          range.selectNodeContents(root);
+          range.collapse(false);
+        }
+        range.deleteContents();
+        const space = document.createTextNode(" ");
+        const chip = createSkillCiteNode(ref);
+        range.insertNode(space);
+        range.insertNode(chip);
+        range.setStartAfter(space);
+        range.collapse(true);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        savedRangeRef.current = range.cloneRange();
+        syncFromDom();
+      },
+      [syncFromDom],
+    );
+
     const tryInsertReaderSelection = useCallback(
       (payload: ReaderSelectionPayload): boolean => {
         if (!isMultiLineReaderSelection(payload)) return false;
@@ -346,6 +393,9 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
             mediaByPath[label],
           );
         },
+        insertSkillCite: (ref: SkillCiteRef) => {
+          insertSkillCiteAtSelection(ref);
+        },
         replaceMentionTrigger: (
           absPath: string,
           isDir?: boolean,
@@ -400,6 +450,27 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
           );
           onMentionTrigger?.(null);
         },
+        replaceSkillCiteTrigger: (ref: SkillCiteRef) => {
+          const root = rootRef.current;
+          const triggerRange = triggerRangeRef.current;
+          if (
+            !root ||
+            !triggerRange ||
+            !root.contains(triggerRange.commonAncestorContainer)
+          ) {
+            insertSkillCiteAtSelection(ref);
+            onMentionTrigger?.(null);
+            return;
+          }
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(triggerRange);
+          triggerRange.deleteContents();
+          triggerRangeRef.current = null;
+          savedRangeRef.current = triggerRange.cloneRange();
+          insertSkillCiteAtSelection(ref);
+          onMentionTrigger?.(null);
+        },
         removeMention: (path: string, notify = true) => {
           const root = rootRef.current;
           if (!root) return false;
@@ -433,6 +504,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
       }),
       [
         insertMentionAtSelection,
+        insertSkillCiteAtSelection,
         compactMediaMentionIndexes,
         mediaByPath,
         onMentionTrigger,

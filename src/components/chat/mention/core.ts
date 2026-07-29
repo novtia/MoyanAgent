@@ -12,6 +12,11 @@ import {
   parseRoleCiteAt,
   serializeRoleCite,
 } from "./roleCite";
+import {
+  createSkillCiteNode,
+  parseSkillCiteAt,
+  serializeSkillCite,
+} from "./skillCite";
 
 export const MENTION_PREFIX = "@";
 
@@ -32,7 +37,8 @@ export interface MentionRange {
 export type MentionSegment =
   | { type: "text"; value: string }
   | { type: "mention"; path: string; range?: MentionRange }
-  | { type: "roleCite"; id: string; name?: string };
+  | { type: "roleCite"; id: string; name?: string }
+  | { type: "skillCite"; id: string; name?: string };
 
 export type MediaMentionKind = "image" | "audio" | "video";
 
@@ -245,6 +251,16 @@ export function parseMentionSegments(text: string): MentionSegment[] {
       i = at + roleCite.length;
       continue;
     }
+    const skillCite = parseSkillCiteAt(text, at);
+    if (skillCite) {
+      segments.push({
+        type: "skillCite",
+        id: skillCite.id,
+        name: skillCite.name,
+      });
+      i = at + skillCite.length;
+      continue;
+    }
     const parsed = parseMentionAt(text, at);
     if (parsed) {
       segments.push({
@@ -374,6 +390,11 @@ export function serializeMentions(root: HTMLElement): string {
           id: el.dataset.roleId,
           name: el.dataset.roleName,
         });
+      } else if (el.dataset.skillId) {
+        out += serializeSkillCite({
+          id: el.dataset.skillId,
+          name: el.dataset.skillName,
+        });
       } else if (el.dataset.path) {
         out += serializeMentionPath(el.dataset.path, rangeFromDataset(el));
       } else if (el.tagName === "BR") {
@@ -432,6 +453,15 @@ export function buildMentionNodes(
           createRoleCiteNode({ id: roleCite.id, name: roleCite.name }),
         );
         i += roleCite.length;
+        continue;
+      }
+      const skillCite = parseSkillCiteAt(text, i);
+      if (skillCite) {
+        flush();
+        nodes.push(
+          createSkillCiteNode({ id: skillCite.id, name: skillCite.name }),
+        );
+        i += skillCite.length;
         continue;
       }
       const parsed = parseMentionAt(text, i);

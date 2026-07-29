@@ -69,6 +69,9 @@ pub async fn compact(
     let older: Vec<HistoryTurn> = chat.history[..split].to_vec();
 
     let mut summary_req = chat.clone();
+    // Capture InvokedSkill reminders before older turns are discarded so we
+    // can reinstate them after compaction (skills must survive summaries).
+    let skill_reminders = extract_invoked_skill_turns(&older);
     summary_req.history = older;
     summary_req.tools.clear();
     summary_req.tool_chain.clear();
@@ -102,7 +105,28 @@ pub async fn compact(
 
     let recent: Vec<HistoryTurn> = chat.history.split_off(split);
     chat.history.clear();
+    // Skills first, then summary, then recent verbatim turns.
+    chat.history.extend(skill_reminders);
     chat.history.push(meta);
     chat.history.extend(recent);
     Ok(())
+}
+
+fn extract_invoked_skill_turns(turns: &[HistoryTurn]) -> Vec<HistoryTurn> {
+    const MARKER: &str = "Continue following the ";
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+    for turn in turns {
+        let Some(text) = turn.text.as_deref() else {
+            continue;
+        };
+        if !text.contains("<system-reminder>") || !text.contains(MARKER) {
+            continue;
+        }
+        // Deduplicate by body so repeated cites don't balloon history.
+        if seen.insert(text.to_string()) {
+            out.push(turn.clone());
+        }
+    }
+    out
 }

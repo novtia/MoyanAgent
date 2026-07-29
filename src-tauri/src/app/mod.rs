@@ -4,10 +4,9 @@ use std::sync::{Arc, Mutex};
 use crate::ai::agent::exec::engine::ProviderQueryEngine;
 use crate::ai::agent::tools::agent_tool::{AgentTool, ChatRequestFactory, SubagentSessionHost};
 use crate::ai::agent::{
-    self, AgentRegistry, FileReadTool, FileSnapshotStore, FsSessionMemoryExtractor,
-    FsUserContextLoader, NotificationQueue, ProviderEngine, RoleStateStore, RoleStateTool,
-    StaticMcpRegistry,
-    TaskStore, ToolPool, UserContextConfig,
+    self, AgentRegistry, ConsultRolesTool, FileReadTool, FileSnapshotStore,
+    FsSessionMemoryExtractor, FsUserContextLoader, NotificationQueue, ProviderEngine,
+    RoleStateStore, RoleStateTool, StaticMcpRegistry, TaskStore, ToolPool, UserContextConfig,
 };
 use crate::ai::{session_log, token_log};
 use tauri::Manager;
@@ -32,6 +31,7 @@ mod role_state;
 mod sessions;
 mod settings;
 mod shell;
+mod skills;
 mod state;
 mod subagent;
 mod tokens;
@@ -98,6 +98,15 @@ pub fn run() {
             // as a system-reminder.
             let chat_factory: Arc<dyn ChatRequestFactory> =
                 Arc::new(subagent::SettingsChatFactory::new(pool.clone(), user_context.clone()));
+            // TRPG ConsultRoles needs the same factory + provider engine
+            // (ProviderEngine is not on ToolUseContext).
+            tools.register(ConsultRolesTool::new(
+                provider_engine.clone(),
+                role_states.clone(),
+                chat_factory.clone(),
+                registry.clone(),
+                pool.clone(),
+            ));
             // Plan-mode aware resolver: in Plan-mode any write tool /
             // mutating Bash invocation is denied at the executor before
             // hitting the tool itself.
@@ -249,6 +258,13 @@ pub fn run() {
             project_fs::delete_project_path,
             project_rules::list_project_rules,
             project_rules::set_project_rule_enabled,
+            skills::list_skills,
+            skills::get_skill,
+            skills::set_skill_enabled,
+            skills::import_skill,
+            skills::uninstall_skill,
+            skills::get_skills_dir,
+            skills::list_enabled_skills,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

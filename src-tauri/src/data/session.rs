@@ -20,6 +20,8 @@ pub const SESSION_AGENT_GENERAL: &str = "general-purpose";
 pub const SESSION_AGENT_PLAN: &str = "Plan";
 /// Default main-session mode: normal chat with AskUser + web tools only.
 pub const SESSION_AGENT_CHAT: &str = "chat";
+/// TRPG director mode (project sessions only).
+pub const SESSION_AGENT_DIRECTOR: &str = "trpg-director";
 
 /// Sentinel used inside `agent_chain` to mark the session's default main agent.
 /// Resolved at generation time to [`generation_agent_definition_key`] of the
@@ -33,6 +35,7 @@ pub fn generation_agent_definition_key(stored: &str) -> &'static str {
     match stored.trim() {
         SESSION_AGENT_CHAT => SESSION_AGENT_CHAT,
         SESSION_AGENT_PLAN => SESSION_AGENT_PLAN,
+        SESSION_AGENT_DIRECTOR => SESSION_AGENT_DIRECTOR,
         _ => SESSION_AGENT_GENERAL,
     }
 }
@@ -193,7 +196,7 @@ pub struct Session {
 
 /// Resolve the main agent for a generation turn.
 /// Standalone (no project) sessions always run in ask/`chat` mode.
-/// Project sessions honour the session's stored `agent_type` (ask / plan / agent).
+/// Project sessions honour the session's stored `agent_type` (ask / plan / agent / director).
 pub fn session_generation_agent(sess: &Session) -> &'static str {
     if sess.project_id.is_none() {
         SESSION_AGENT_CHAT
@@ -448,12 +451,16 @@ pub fn set_agent_chain(conn: &DbConn, id: &str, chain: &[ChainNode]) -> AppResul
 
 pub fn set_agent_type(conn: &DbConn, id: &str, agent_type: &str) -> AppResult<()> {
     let t = agent_type.trim();
-    if t != SESSION_AGENT_GENERAL && t != SESSION_AGENT_PLAN && t != SESSION_AGENT_CHAT {
+    if t != SESSION_AGENT_GENERAL
+        && t != SESSION_AGENT_PLAN
+        && t != SESSION_AGENT_CHAT
+        && t != SESSION_AGENT_DIRECTOR
+    {
         return Err(AppError::Invalid(format!(
-            "agent_type must be \"{SESSION_AGENT_GENERAL}\", \"{SESSION_AGENT_PLAN}\", or \"{SESSION_AGENT_CHAT}\""
+            "agent_type must be \"{SESSION_AGENT_GENERAL}\", \"{SESSION_AGENT_PLAN}\", \"{SESSION_AGENT_CHAT}\", or \"{SESSION_AGENT_DIRECTOR}\""
         )));
     }
-    // Agent / Plan are project-session modes only. Standalone stays on ask/chat.
+    // Agent / Plan / Director are project-session modes only. Standalone stays on ask/chat.
     if t != SESSION_AGENT_CHAT {
         let project_id: Option<String> = conn
             .query_row(
@@ -464,7 +471,7 @@ pub fn set_agent_type(conn: &DbConn, id: &str, agent_type: &str) -> AppResult<()
             .map_err(|_| AppError::NotFound(format!("session {id}")))?;
         if project_id.is_none() {
             return Err(AppError::Invalid(
-                "agent/plan mode is only available for project sessions".into(),
+                "agent/plan/director mode is only available for project sessions".into(),
             ));
         }
     }
@@ -638,6 +645,47 @@ pub fn update_message_text(conn: &DbConn, id: &str, text: &str) -> AppResult<()>
     let n = conn.execute("UPDATE messages SET text=?1 WHERE id=?2", params![text, id])?;
     if n == 0 {
         return Err(AppError::NotFound(format!("message {id}")));
+    }
+    // Keep interleaved AskUser/tool history, but replace prose text blocks so
+    // manual edits stay visible after we prefer `blocks` rendering in the UI.
+    if let Ok(raw) = conn.query_row(
+        "SELECT params_json FROM messages WHERE id=?1",
+        params![id],
+        |r| r.get::<_, Option<String>>(0),
+    ) {
+        if let Some(raw) = raw {
+            if let Ok(mut params_v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(blocks) = params_v.get_mut("blocks").and_then(|b| b.as_array_mut()) {
+                    let mut replaced = false;
+                    let mut next = Vec::with_capacity(blocks.len());
+                    for b in blocks.iter() {
+                        let ty = b.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        if ty == "text" {
+                            if replaced {
+                                continue;
+                            }
+                            replaced = true;
+                            next.push(serde_json::json!({
+                                "type": "text",
+                                "content": text,
+                            }));
+                        } else {
+                            next.push(b.clone());
+                        }
+                    }
+                    if !replaced && !text.is_empty() {
+                        next.insert(0, serde_json::json!({ "type": "text", "content": text }));
+                    }
+                    *blocks = next;
+                    if let Ok(s) = serde_json::to_string(&params_v) {
+                        let _ = conn.execute(
+                            "UPDATE messages SET params_json=?1 WHERE id=?2",
+                            params![s, id],
+                        );
+                    }
+                }
+            }
+        }
     }
     message_search::reindex_message(conn, id)?;
     Ok(())

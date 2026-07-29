@@ -394,6 +394,11 @@ male → penis length & girth. Example male: \"精壮高挑，阴茎约18cm粗�
 Match FICTION scale, NOT clinical human averages. Use dot-paths, e.g. \
 `nsfw.semen.vaginal`: 3200 or `nsfw.semen.texture`: \"浓稠、量大、温热\".\n\
 Keep text fields brief. ALWAYS maintain `nsfw` (including `semen`) from the prose.\n\n\
+TRPG optional fields: `persona`, `goals`, `speech_style`, `control` \
+(`\"ai\"`|`\"user\"`, default ai), `memory_path` (default \
+`.moyan/trpg-memory/<id>.md` for private facts — do not put secrets on the \
+shared board), `model` (optional model id for this role's ConsultRoles calls; \
+omit to use the default).\n\n\
 ━━━ INCREMENTAL EDIT EXAMPLES ━━━\n\
 set: { \"nsfw.arousal\": 60, \"nsfw.semen.vaginal\": 1800, \"nsfw.semen.texture\": \"浓稠拉丝\" }\n\
 unset: [\"tags.0\", \"nsfw.semen.anal\"]\n\n\

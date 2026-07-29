@@ -508,8 +508,9 @@
   display: none;
 }
 
-/* Role-state cite — single-line chip, same height as composer text / @mention */
-.composer-role-cite {
+/* Role-state / skill cite — single-line chip, same height as composer text / @mention */
+.composer-role-cite,
+.composer-skill-cite {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -540,14 +541,16 @@
   flex: 1 1 auto;
   overflow: hidden;
 }
-.composer-role-cite-eyebrow {
+.composer-role-cite-eyebrow,
+.composer-skill-cite-eyebrow {
   flex-shrink: 0;
   font-size: 0.78em;
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--arc-700, var(--accent));
 }
-.composer-role-cite-name {
+.composer-role-cite-name,
+.composer-skill-cite-name {
   min-width: 0;
   max-width: 9em;
   overflow: hidden;
@@ -572,12 +575,22 @@
 .composer-role-cite-id::after {
   content: ")";
 }
-.composer-role-cite--static {
+.composer-role-cite--static,
+.composer-skill-cite--static {
   padding-right: 8px;
   cursor: default;
 }
-.composer-role-cite--static .composer-mention-remove {
+.composer-role-cite--static .composer-mention-remove,
+.composer-skill-cite--static .composer-mention-remove {
   display: none;
+}
+
+.composer-skill-cite {
+  background: color-mix(in srgb, var(--blue-500) 12%, var(--bg-soft));
+  border-color: color-mix(in srgb, var(--blue-500) 28%, var(--line));
+}
+.composer-skill-cite-eyebrow {
+  color: var(--blue-500);
 }
 
 /* ───── @ mention file-tree pull-up panel ───── */
@@ -886,6 +899,11 @@
 
 .composer-mode-pill.is-ask {
   border-color: rgba(120, 120, 120, 0.35);
+  color: var(--ink-2);
+}
+
+.composer-mode-pill.is-director {
+  border-color: rgba(140, 90, 40, 0.45);
   color: var(--ink-2);
 }
 

@@ -42,8 +42,9 @@ information that only the user can provide.\n\n\
 - This tool **pauses the agent loop** until the user answers in the composer. \
   Their reply is returned as this tool's result (`answer`); continue from \
   that answer. Do NOT invent the user's choice yourself.\n\
-- Put the full question and all options in the tool input only — do NOT list \
-  A/B/C choices as plain chat text.\n\n\
+- Put options in the tool input only — do NOT list A/B/C choices as plain \
+  chat text. Story / narrative prose MUST still be written as normal assistant \
+  text **before** this tool call when you are narrating a scene.\n\n\
 ━━━ DESIGNING QUESTIONS ━━━\n\
 - Prefer concrete, mutually distinct options. Keep `label` short.\n\
 - Use multiple questions only when they are independent clarifications needed \

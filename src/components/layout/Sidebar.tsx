@@ -17,7 +17,9 @@ interface SidebarProps {
   onOpenChat: () => void;
   onOpenSearch: () => void;
   onOpenUsage: () => void;
+  onOpenPlugins: () => void;
   usageActive: boolean;
+  pluginsActive: boolean;
   settingsActive: boolean;
 }
 
@@ -26,7 +28,9 @@ export function Sidebar({
   onOpenChat,
   onOpenSearch,
   onOpenUsage,
+  onOpenPlugins,
   usageActive,
+  pluginsActive,
   settingsActive,
 }: SidebarProps) {
   const { t } = useTranslation();
@@ -52,11 +56,11 @@ export function Sidebar({
             <SearchIcon />
             <span>{t("sidebar.search")}</span>
           </button>
-          <button type="button" className="side-nav-item" disabled>
-            <SkillsIcon />
-            <span>{t("sidebar.skills")}</span>
-          </button>
-          <button type="button" className="side-nav-item" disabled>
+          <button
+            type="button"
+            className={`side-nav-item ${pluginsActive ? "active" : ""}`}
+            onClick={onOpenPlugins}
+          >
             <PluginIcon />
             <span>{t("sidebar.plugins")}</span>
           </button>
@@ -598,15 +602,6 @@ function SearchIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="11" cy="11" r="7" />
       <path d="m20 20-3.5-3.5" />
-    </svg>
-  );
-}
-function SkillsIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 2 3 7l9 5 9-5-9-5Z" />
-      <path d="m3 12 9 5 9-5" />
-      <path d="m3 17 9 5 9-5" />
     </svg>
   );
 }

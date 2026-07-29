@@ -138,6 +138,8 @@ export interface Settings {
   auto_backup_config_keep: number;
   /** How many chat auto-backups to retain. */
   auto_backup_chat_keep: number;
+  /** Skill ids enabled for @ mention. */
+  enabled_skill_ids: string[];
 }
 
 /** Builtin API search kinds (local scraping is separate). */
@@ -203,6 +205,7 @@ export interface SettingsPatch {
   auto_backup_chat_interval_minutes?: number;
   auto_backup_config_keep?: number;
   auto_backup_chat_keep?: number;
+  enabled_skill_ids?: string[];
 }
 
 export interface Session {
@@ -677,3 +680,20 @@ export interface BackupStatus {
   next_config_slot: string | null;
   next_chat_at_ms: number | null;
 }
+
+/** Local skill package (SKILL.md). */
+export interface SkillInfo {
+  id: string;
+  name: string;
+  description: string;
+  author: string;
+  version: string;
+  tags: string[];
+  when_to_use: string;
+  body: string;
+  /** `builtin` | `user` */
+  source: string;
+  path: string;
+  enabled: boolean;
+}
+

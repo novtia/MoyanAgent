@@ -171,14 +171,26 @@ pub(crate) fn finalize_generate_assistant_message(
 
     let block_text = concat_block_text(&blocks, "text");
     let block_thinking = concat_block_text(&blocks, "thinking");
-    if resp
-        .text
-        .as_ref()
-        .map(|s| s.trim().is_empty())
-        .unwrap_or(true)
-        && !block_text.trim().is_empty()
+    // Multi-turn tool loops (esp. AskUser) leave `resp.text` as only the last
+    // provider beat while `blocks` hold the full interleaved transcript. Prefer
+    // the longer streamed transcript so chat history keeps earlier prose.
+    let prefer_blocks = !block_text.trim().is_empty()
+        && block_text.trim().len()
+            >= resp
+                .text
+                .as_ref()
+                .map(|s| s.trim().len())
+                .unwrap_or(0);
+    if prefer_blocks
+        || resp
+            .text
+            .as_ref()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
     {
-        resp.text = Some(block_text.trim().to_string());
+        if !block_text.trim().is_empty() {
+            resp.text = Some(block_text.trim().to_string());
+        }
     }
     if resp
         .thinking_content
@@ -409,6 +421,12 @@ pub async fn generate_image(
             params.clone(),
         )?;
         apply_session_response_cache(&conn, &req.session_id, &session_config, &mut chat_request)?;
+        crate::ai::agent::exec::engine::inject_skill_cites_from_prompt(
+            &app,
+            &mut chat_request,
+            &req.prompt,
+            &s.enabled_skill_ids,
+        );
         (
             chat_request,
             params,
@@ -823,6 +841,12 @@ pub async fn regenerate_image(
         // Regeneration rewrites history; always start a fresh cache chain.
         let _ = session::clear_response_cache(&conn, &req.session_id);
         chat_request.previous_response_id = None;
+        crate::ai::agent::exec::engine::inject_skill_cites_from_prompt(
+            &app,
+            &mut chat_request,
+            &prompt,
+            &s.enabled_skill_ids,
+        );
         (
             chat_request,
             params,

@@ -37,7 +37,7 @@ import {
   type MentionEditorHandle,
   type MentionTriggerAnchor,
 } from "../mention";
-import type { AssistantBlock, AttachmentDraft, ImageRefAbs } from "../../../types";
+import type { AssistantBlock, AttachmentDraft, ImageRefAbs, SkillInfo } from "../../../types";
 import { AssistantContent } from "./AssistantContent";
 import { MessageTokenUsage } from "./MessageTokenUsage";
 import { PlateActions } from "./PlateActions";
@@ -121,10 +121,13 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
       .join("")
       .trim();
   }, [blocks]);
-  // Agent messages render text from `blocks`; manual edits only update `m.text`.
-  // When blocks carry no text (e.g. tool-only replies), surface edited `m.text`.
+  // Prefer interleaved `blocks` text whenever present so multi-turn AskUser
+  // transcripts keep prose above each tool card. Provider `m.text` is often
+  // only the *last* model beat after several AskUser pauses — using it to
+  // suppress block text hid all earlier narrative. Fall back to `m.text` for
+  // tool-only / legacy rows (no text blocks) and manual edits that cleared blocks.
   const showMessageText =
-    hasText && (!useBlocksRendering || (m.text || "").trim() !== blocksText);
+    hasText && (!useBlocksRendering || blocksText.length === 0);
   const thinkingContent =
     !useBlocksRendering &&
     isAssistant &&
@@ -169,6 +172,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
   const [editMentionStyle, setEditMentionStyle] = useState<
     CSSProperties | undefined
   >(undefined);
+  const [enabledSkills, setEnabledSkills] = useState<SkillInfo[]>([]);
   const [picking, setPicking] = useState(false);
   const [editDragOver, setEditDragOver] = useState(false);
   const editDragDepth = useRef(0);
@@ -195,6 +199,19 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     },
     [],
   );
+
+  useEffect(() => {
+    if (!editing || !editMentionAnchor) return;
+    let cancelled = false;
+    void api.listEnabledSkills().then((list) => {
+      if (!cancelled) setEnabledSkills(list);
+    }).catch(() => {
+      if (!cancelled) setEnabledSkills([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [editing, editMentionAnchor]);
 
   // Auto-grow the assistant edit textarea (user edits use the mention editor).
   useLayoutEffect(() => {
@@ -678,6 +695,13 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     mentionEditorRef.current?.replaceMentionTrigger(absPath, isDir);
     setEditMentionAnchor(null);
   };
+  const pickEditSkillCite = (skill: SkillInfo) => {
+    mentionEditorRef.current?.replaceSkillCiteTrigger({
+      id: skill.id,
+      name: skill.name,
+    });
+    setEditMentionAnchor(null);
+  };
 
   return (
     <div
@@ -916,6 +940,37 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
                           ) : (
                             <div className="composer-mention-status">
                               {t("composer.mentionNoUploadedMedia")}
+                            </div>
+                          )}
+                        </section>
+
+                        <section className="composer-mention-section">
+                          <div className="composer-mention-section-title">
+                            {t("composer.mentionEnabledSkills")}
+                          </div>
+                          {enabledSkills.length > 0 ? (
+                            <div className="composer-mention-media-list">
+                              {enabledSkills.map((skill) => (
+                                <button
+                                  type="button"
+                                  className="composer-mention-media-item"
+                                  key={skill.id}
+                                  title={skill.description || skill.name}
+                                  onClick={() => pickEditSkillCite(skill)}
+                                >
+                                  <span className="composer-mention-media-icon">
+                                    {(skill.name.trim()[0] || "?").toUpperCase()}
+                                  </span>
+                                  <span className="composer-mention-media-copy">
+                                    <strong>@{skill.name}</strong>
+                                    <small>{skill.description || skill.id}</small>
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="composer-mention-status">
+                              {t("composer.mentionNoEnabledSkills")}
                             </div>
                           )}
                         </section>

@@ -32,6 +32,7 @@ pub const KEY_AUTO_BACKUP_DIR: &str = "auto_backup_dir";
 pub const KEY_AUTO_BACKUP_CHAT_INTERVAL_MINUTES: &str = "auto_backup_chat_interval_minutes";
 pub const KEY_AUTO_BACKUP_CONFIG_KEEP: &str = "auto_backup_config_keep";
 pub const KEY_AUTO_BACKUP_CHAT_KEEP: &str = "auto_backup_chat_keep";
+pub const KEY_ENABLED_SKILL_IDS: &str = "enabled_skill_ids";
 
 pub const DEFAULT_HISTORY_TURNS: i64 = 10;
 pub const DEFAULT_AUTO_BACKUP_CHAT_INTERVAL_MINUTES: i64 = 30;
@@ -234,6 +235,9 @@ pub struct Settings {
     /// How many chat auto-backups to retain.
     #[serde(default = "default_auto_backup_chat_keep")]
     pub auto_backup_chat_keep: i64,
+    /// Skill ids the user has enabled for @ mention and optional auto-inject.
+    #[serde(default)]
+    pub enabled_skill_ids: Vec<String>,
 }
 
 fn default_web_search_enabled() -> bool {
@@ -295,6 +299,7 @@ impl Default for Settings {
             auto_backup_chat_interval_minutes: default_auto_backup_chat_interval_minutes(),
             auto_backup_config_keep: default_auto_backup_config_keep(),
             auto_backup_chat_keep: default_auto_backup_chat_keep(),
+            enabled_skill_ids: Vec::new(),
         }
     }
 }
@@ -374,6 +379,8 @@ pub struct SettingsPatch {
     pub auto_backup_config_keep: Option<i64>,
     #[serde(default)]
     pub auto_backup_chat_keep: Option<i64>,
+    #[serde(default)]
+    pub enabled_skill_ids: Option<Vec<String>>,
 }
 
 pub fn read(conn: &DbConn) -> AppResult<Settings> {
@@ -455,6 +462,15 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
                     s.auto_backup_chat_keep = n.clamp(1, 1000);
                 }
             }
+            KEY_ENABLED_SKILL_IDS => {
+                if let Ok(list) = serde_json::from_str::<Vec<String>>(&v) {
+                    s.enabled_skill_ids = list
+                        .into_iter()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                }
+            }
             _ => {}
         }
     }
@@ -533,6 +549,20 @@ pub fn active_provider(s: &Settings) -> Option<&ModelProvider> {
         .iter()
         .find(|p| p.enabled)
         .or_else(|| s.model_services.first())
+}
+
+/// Find an enabled provider that offers `model_id` (first match wins).
+pub fn find_provider_for_model<'a>(
+    s: &'a Settings,
+    model_id: &str,
+) -> Option<&'a ModelProvider> {
+    let mid = model_id.trim();
+    if mid.is_empty() {
+        return None;
+    }
+    s.model_services
+        .iter()
+        .find(|p| p.enabled && p.models.iter().any(|m| m.id == mid))
 }
 
 /// Resolve the configured "quick model" into a usable provider + model id.
@@ -836,6 +866,16 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
     if let Some(n) = patch.auto_backup_chat_keep {
         let n = n.clamp(1, 1000);
         write_kv(conn, KEY_AUTO_BACKUP_CHAT_KEEP, &n.to_string())?;
+    }
+    if let Some(v) = patch.enabled_skill_ids {
+        let cleaned: Vec<String> = v
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let json =
+            serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
+        write_kv(conn, KEY_ENABLED_SKILL_IDS, &json)?;
     }
     read(conn)
 }

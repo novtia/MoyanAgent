@@ -619,8 +619,8 @@ export const useSession = create<SessionStore>((set, get) => {
     if (id && active?.session.id === id && !active.session.project_id) {
       return;
     }
+    set({ composer: { ...get().composer, chatMode: mode } });
     if (!id) {
-      set({ composer: { ...get().composer, chatMode: mode } });
       return;
     }
     try {
@@ -629,6 +629,15 @@ export const useSession = create<SessionStore>((set, get) => {
       await get().reloadActiveSession();
     } catch (e) {
       console.warn(e);
+      // Roll back pill if persistence failed.
+      if (active?.session.id === id) {
+        set({
+          composer: {
+            ...get().composer,
+            chatMode: composerModeFromAgentType(active.session.agent_type),
+          },
+        });
+      }
     }
   },
 
@@ -1231,13 +1240,26 @@ export const useSession = create<SessionStore>((set, get) => {
       set({
         active: {
           ...a,
-          messages: a.messages.map((m) =>
-            m.id === messageId
-              ? updated
-                ? { ...updated, text: trimmed }
-                : { ...m, text: trimmed }
-              : m,
-          ),
+          messages: a.messages.map((m) => {
+            if (m.id !== messageId) return m;
+            const base = updated ? { ...updated, text: trimmed } : { ...m, text: trimmed };
+            const blocks = base.params?.blocks;
+            if (!Array.isArray(blocks)) return base;
+            let replaced = false;
+            const nextBlocks = blocks.flatMap((b) => {
+              if (b.type !== "text") return [b];
+              if (replaced) return [];
+              replaced = true;
+              return [{ type: "text" as const, content: trimmed }];
+            });
+            if (!replaced && trimmed) {
+              nextBlocks.unshift({ type: "text", content: trimmed });
+            }
+            return {
+              ...base,
+              params: { ...base.params, blocks: nextBlocks },
+            };
+          }),
         },
         outline: upsertOutlineItem(get().outline, {
           id: messageId,

@@ -26,7 +26,7 @@ import {
   VIDEO_RESOLUTIONS,
   type VideoGenerationMode,
 } from "../../config/videoGeneration";
-import type { AttachmentDraft, ModelServiceModel } from "../../types";
+import type { AttachmentDraft, ModelServiceModel, SkillInfo } from "../../types";
 import {
   ComposerEditor,
   MentionIcon,
@@ -156,6 +156,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
 
   const [paramsOpen, setParamsOpen] = useState(false);
   const [mentionOpen, setMentionOpen] = useState(false);
+  const [enabledSkills, setEnabledSkills] = useState<SkillInfo[]>([]);
   const [mentionAnchor, setMentionAnchor] =
     useState<MentionTriggerAnchor | null>(null);
   const [mentionCaretStyle, setMentionCaretStyle] = useState<
@@ -662,6 +663,29 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     closeMentionPanel();
   };
 
+  const pickSkillCite = (skill: SkillInfo) => {
+    const ref = { id: skill.id, name: skill.name };
+    if (mentionAnchor) {
+      editorRef.current?.replaceSkillCiteTrigger(ref);
+    } else {
+      editorRef.current?.insertSkillCite(ref);
+    }
+    closeMentionPanel();
+  };
+
+  useEffect(() => {
+    if (!mentionOpen) return;
+    let cancelled = false;
+    void api.listEnabledSkills().then((list) => {
+      if (!cancelled) setEnabledSkills(list);
+    }).catch(() => {
+      if (!cancelled) setEnabledSkills([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mentionOpen]);
+
   const hasDragPayload = (e: React.DragEvent) => {
     const types = Array.from(e.dataTransfer?.types || []);
     return (
@@ -911,7 +935,13 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                 <button
                   type="button"
                   className={`composer-pill composer-mode-pill ${
-                    chatMode === "plan" ? "is-plan" : chatMode === "chat" ? "is-ask" : ""
+                    chatMode === "plan"
+                      ? "is-plan"
+                      : chatMode === "chat"
+                        ? "is-ask"
+                        : chatMode === "director"
+                          ? "is-director"
+                          : ""
                   } ${modeOpen ? "active" : ""}`}
                   title={t("composer.modePickerTitle")}
                   onClick={() => setModeOpen((v) => !v)}
@@ -921,7 +951,9 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                       ? t("composer.modePlan")
                       : chatMode === "chat"
                         ? t("composer.modeAsk")
-                        : t("composer.modeAgent")}
+                        : chatMode === "director"
+                          ? t("composer.modeDirector")
+                          : t("composer.modeAgent")}
                   </span>
                   <CaretIcon />
                 </button>
@@ -967,6 +999,22 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                     >
                       <span className="composer-mode-option-title">{t("composer.modePlan")}</span>
                       <span className="composer-mode-option-desc">{t("composer.modePlanHint")}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="option"
+                      className={`composer-mode-option ${chatMode === "director" ? "active" : ""}`}
+                      onClick={() => {
+                        void setChatMode("director");
+                        setModeOpen(false);
+                      }}
+                    >
+                      <span className="composer-mode-option-title">
+                        {t("composer.modeDirector")}
+                      </span>
+                      <span className="composer-mode-option-desc">
+                        {t("composer.modeDirectorHint")}
+                      </span>
                     </button>
                   </div>
                 )}
@@ -1080,6 +1128,37 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                       ) : (
                         <div className="composer-mention-status">
                           {t("composer.mentionNoUploadedMedia")}
+                        </div>
+                      )}
+                    </section>
+
+                    <section className="composer-mention-section">
+                      <div className="composer-mention-section-title">
+                        {t("composer.mentionEnabledSkills")}
+                      </div>
+                      {enabledSkills.length > 0 ? (
+                        <div className="composer-mention-media-list">
+                          {enabledSkills.map((skill) => (
+                            <button
+                              type="button"
+                              className="composer-mention-media-item"
+                              key={skill.id}
+                              title={skill.description || skill.name}
+                              onClick={() => pickSkillCite(skill)}
+                            >
+                              <span className="composer-mention-media-icon">
+                                {(skill.name.trim()[0] || "?").toUpperCase()}
+                              </span>
+                              <span className="composer-mention-media-copy">
+                                <strong>@{skill.name}</strong>
+                                <small>{skill.description || skill.id}</small>
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="composer-mention-status">
+                          {t("composer.mentionNoEnabledSkills")}
                         </div>
                       )}
                     </section>

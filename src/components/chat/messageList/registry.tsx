@@ -3,6 +3,7 @@ import type { AssistantBlock } from "../../../types";
 import { AgentToolCard } from "./AgentToolCard";
 import { AskUserChip } from "./AskUserChip";
 import { BashToolCard } from "./BashToolCard";
+import { ConsultRolesChip } from "./ConsultRolesChip";
 import { DeleteDocCard } from "./DeleteDocCard";
 import { GrepToolCard } from "./GrepToolCard";
 import { ListFilesCard } from "./ListFilesCard";
@@ -30,6 +31,7 @@ const TOOL_REGISTRY: Record<string, ComponentType<ToolCardProps>> = {
   WebFetch: WebFetchToolCard,
   Agent: AgentToolCard,
   RoleState: RoleStateChip,
+  ConsultRoles: ConsultRolesChip,
   AskUser: AskUserChip,
 };
 

@@ -82,6 +82,13 @@ pub fn backups_dir(app: &AppHandle) -> AppResult<PathBuf> {
     Ok(dir)
 }
 
+/// User skill packages: `{data_dir}/skills/<id>/SKILL.md`.
+pub fn skills_dir(app: &AppHandle) -> AppResult<PathBuf> {
+    let dir = root_dir(app)?.join("skills");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 pub fn session_dir(app: &AppHandle, session_id: &str) -> AppResult<PathBuf> {
     let dir = sessions_dir(app)?.join(session_id);
     std::fs::create_dir_all(dir.join("in"))?;

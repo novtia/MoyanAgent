@@ -20,6 +20,7 @@
 pub mod agent_tool;
 pub mod ask_user;
 pub mod bash;
+pub mod consult_roles;
 pub mod create_doc;
 pub mod delete;
 pub mod edit;
