@@ -142,6 +142,7 @@
   align-items: center;
   gap: 6px;
   padding: 0 4px;
+  line-height: 28px;
 }
 
 .reader-toolbar-name {
@@ -152,6 +153,15 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.reader-toolbar-chars {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-mute);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .reader-toolbar-actions {
@@ -400,6 +410,12 @@
 
 .reader-codemirror .cm-editor.cm-focused {
   outline: none;
+}
+
+/* drawSelection cursor must follow theme ink (default CM border is black). */
+.reader-codemirror .cm-cursor,
+.reader-codemirror .cm-dropCursor {
+  border-left-color: var(--chat-font-color, var(--ink));
 }
 
 .reader-codemirror .cm-scroller {

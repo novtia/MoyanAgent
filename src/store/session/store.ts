@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  AssistantBlock,
   ChainEntry,
   ImageRefAbs,
   MessageAbs,
@@ -1246,11 +1247,11 @@ export const useSession = create<SessionStore>((set, get) => {
             const blocks = base.params?.blocks;
             if (!Array.isArray(blocks)) return base;
             let replaced = false;
-            const nextBlocks = blocks.flatMap((b) => {
+            const nextBlocks: AssistantBlock[] = blocks.flatMap((b): AssistantBlock[] => {
               if (b.type !== "text") return [b];
               if (replaced) return [];
               replaced = true;
-              return [{ type: "text" as const, content: trimmed }];
+              return [{ type: "text", content: trimmed }];
             });
             if (!replaced && trimmed) {
               nextBlocks.unshift({ type: "text", content: trimmed });
@@ -1422,24 +1423,33 @@ export const useSession = create<SessionStore>((set, get) => {
 
   interrupt: () => {
     const sid = get().activeId;
-    if (!sid || !get().busyBySession[sid]) {
-      return;
-    }
-    if (cancellingSessions.has(sid)) {
-      return;
-    }
-    cancellingSessions.add(sid);
-    // Stop accepting stream deltas and release the send button immediately.
-    setSessionBusy(sid, false);
-    freezeStreamingUi(sid);
+    if (!sid) return;
+    const isBusy = !!get().busyBySession[sid];
+    const hasAskUser = get().pendingAskUser?.sessionId === sid;
+    // Allow stop while AskUser owns the send button (generation is paused).
+    if (!isBusy && !hasAskUser) return;
+    if (isBusy && cancellingSessions.has(sid)) return;
+
     // Drop any in-flight AskUser questionnaire for this session.
     askUserPendingBySession.delete(sid);
     if (get().pendingAskUser?.sessionId === sid) {
       set({ pendingAskUser: null });
     }
-    void api.cancelGeneration(sid).catch((e) => {
-      console.warn("[atelier] cancel_generation failed", e);
-    });
+
+    if (isBusy) {
+      cancellingSessions.add(sid);
+      // Stop accepting stream deltas and release the send button immediately.
+      setSessionBusy(sid, false);
+      freezeStreamingUi(sid);
+      void api.cancelGeneration(sid).catch((e) => {
+        console.warn("[atelier] cancel_generation failed", e);
+      });
+    } else {
+      // AskUser UI left behind without busy — still try to abort the waiter.
+      void api.cancelGeneration(sid).catch((e) => {
+        console.warn("[atelier] cancel_generation failed", e);
+      });
+    }
   },
   });
 });

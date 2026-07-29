@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { api } from "../../api/tauri";
 import { useSettings } from "../../store/settings";
 import type { SkillInfo } from "../../types";
 import { toast } from "../ui";
+import { ReaderMarkdownPreview } from "../chat/rightPanel/reader/ReaderMarkdownPreview";
 
 type MarketTab = "plugins" | "skills";
 
@@ -138,35 +137,60 @@ export function PluginsView() {
   return (
     <div className={`plugins ${busy ? "is-refreshing" : ""}`}>
       <div className="plugins-panel">
-        <header className="plugins-page-head">
-          <div className="plugins-page-head-main">
-            <h1 className="plugins-page-title">{t("plugins.title")}</h1>
-            <p className="plugins-page-subtitle">{t("plugins.subtitle")}</p>
+        <header className="plugins-header">
+          <div className="plugins-header-main">
+            <h1 className="plugins-header-title">{t("plugins.title")}</h1>
+            <p className="plugins-header-subtitle">{t("plugins.subtitle")}</p>
           </div>
-        </header>
-
-        <div className="plugins-toolbar">
-          <div className="plugins-seg" role="tablist">
-            <button
-              type="button"
-              className={tab === "plugins" ? "on" : ""}
-              onClick={() => setTab("plugins")}
-            >
-              {t("plugins.tabPlugins")}
-            </button>
-            <button
-              type="button"
-              className={tab === "skills" ? "on" : ""}
-              onClick={() => setTab("skills")}
-            >
-              {t("plugins.tabSkills")}
-            </button>
-          </div>
-          {tab === "skills" && (
-            <>
-              <div className="plugins-spacer" />
-              <label className="plugins-search">
-                <span className="plugins-search-icon" aria-hidden>
+          <div className="plugins-header-actions">
+            <div className="plugins-seg" role="tablist">
+              <button
+                type="button"
+                className={tab === "plugins" ? "on" : ""}
+                onClick={() => setTab("plugins")}
+              >
+                {t("plugins.tabPlugins")}
+              </button>
+              <button
+                type="button"
+                className={tab === "skills" ? "on" : ""}
+                onClick={() => setTab("skills")}
+              >
+                {t("plugins.tabSkills")}
+              </button>
+            </div>
+            {tab === "skills" && (
+              <>
+                <label className="plugins-search">
+                  <span className="plugins-search-icon" aria-hidden>
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <circle cx="11" cy="11" r="8" />
+                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                  </span>
+                  <input
+                    type="search"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={t("plugins.searchSkills")}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="plugins-btn-icon"
+                  onClick={() => void refresh()}
+                  title={t("plugins.refresh")}
+                  aria-label={t("plugins.refresh")}
+                >
                   <svg
                     width="13"
                     height="13"
@@ -177,25 +201,19 @@ export function PluginsView() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   >
-                    <circle cx="11" cy="11" r="8" />
-                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                    <path d="M3 3v5h5" />
+                    <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+                    <path d="M16 16h5v5" />
                   </svg>
-                </span>
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder={t("plugins.searchSkills")}
-                />
-              </label>
-              <button type="button" className="plugins-btn-ghost" onClick={() => void refresh()}>
-                {t("plugins.refresh")}
-              </button>
-              <button type="button" className="plugins-btn-primary" onClick={() => void onImport()}>
-                {t("plugins.importSkill")}
-              </button>
-            </>
-          )}
-        </div>
+                </button>
+                <button type="button" className="plugins-btn-primary" onClick={() => void onImport()}>
+                  {t("plugins.importSkill")}
+                </button>
+              </>
+            )}
+          </div>
+        </header>
 
         {error && <div className="plugins-error">{error}</div>}
 
@@ -359,7 +377,10 @@ function SkillDetail({
 
       <div className="plugins-detail-body">
         <div className="plugins-detail-readme">
-          <Markdown remarkPlugins={[remarkGfm]}>{skill.body || skill.description}</Markdown>
+          <ReaderMarkdownPreview
+            text={skill.body || skill.description}
+            className="plugins-detail-md"
+          />
         </div>
         <aside className="plugins-detail-side">
           <div className="plugins-side-block">

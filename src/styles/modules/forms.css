@@ -39,7 +39,6 @@ input[type='text'],
 input[type='password'],
 input[type='number'],
 input[type='email'],
-input[type='search'],
 input[type='url'],
 select,
 textarea,
@@ -57,6 +56,29 @@ textarea,
   transition: var(--field-transition);
   appearance: none;
 }
+/* Search fields are always wrapped; never paint their own border/ring. */
+input[type='search'] {
+  width: 100%;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--ink);
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--field-font-size);
+  line-height: var(--field-line-height);
+  border-radius: 0;
+  outline: none;
+  appearance: none;
+}
+input[type='search']:hover,
+input[type='search']:focus,
+input[type='search']:focus-visible {
+  border: none;
+  box-shadow: none;
+  outline: none;
+  background: transparent;
+}
 input[type='number'] {
   -moz-appearance: textfield;
   appearance: textfield;
@@ -73,13 +95,13 @@ select {
   padding-right: 30px;
   cursor: pointer;
 }
-input:not([type="range"]):hover:not(:focus):not(:disabled),
+input:not([type="range"]):not([type="search"]):hover:not(:focus):not(:disabled),
 select:hover:not(:focus):not(:disabled),
 textarea:hover:not(:focus):not(:disabled),
 .field-input:hover:not(:focus):not(:disabled) {
   border-color: var(--field-border-hover);
 }
-input:not([type="range"]):focus,
+input:not([type="range"]):not([type="search"]):focus,
 select:focus,
 textarea:focus,
 .field-input:focus,

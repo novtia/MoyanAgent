@@ -21,6 +21,13 @@ export function createReaderCodeMirrorTheme(layout: ReaderCodeMirrorLayout) {
     ".cm-content": {
       caretColor: "var(--chat-font-color, var(--ink))",
     },
+    // drawSelection() paints .cm-cursor (not the native caret); default is black.
+    ".cm-cursor, .cm-dropCursor": {
+      borderLeftColor: "var(--chat-font-color, var(--ink))",
+    },
+    "&.cm-focused .cm-cursor": {
+      borderLeftColor: "var(--chat-font-color, var(--ink))",
+    },
     ".cm-lineNumbers .cm-gutterElement": {
       padding: "0 6px 0 2px",
       minWidth: "2.5em",

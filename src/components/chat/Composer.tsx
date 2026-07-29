@@ -42,10 +42,6 @@ import {
 } from "./mention";
 import { ComposerAskUserBar } from "./ComposerAskUserBar";
 import { ComposerFileTree } from "./ComposerFileTree";
-import {
-  firstUnansweredAskUserIndex,
-  flushAskUserPrompt,
-} from "./askUser";
 import { READER_FILE_DRAG_TYPE } from "../../utils/readerDrag";
 import { ATELIER_DRAG_TYPE } from "./rightPanel/gallery";
 
@@ -125,12 +121,6 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const busy = useSession((s) => s.busy);
   const pendingAskUser = useSession((s) => s.pendingAskUser);
   const answeringAskUser = !!pendingAskUser;
-  const askUserCanSend = useSession((s) => {
-    const pending = s.pendingAskUser;
-    if (!pending) return false;
-    const flushed = flushAskUserPrompt(pending, s.composer.prompt);
-    return firstUnansweredAskUserIndex(flushed) < 0;
-  });
   const active = useSession((s) => s.active);
   const activeId = useSession((s) => s.activeId);
   const refreshList = useSession((s) => s.refreshList);
@@ -567,6 +557,8 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   };
 
   const onSubmit = async () => {
+    // AskUser pause still counts as in-flight — allow Enter to submit answers,
+    // but the send button itself stays in stop mode (see onSendButtonClick).
     if (busy && !answeringAskUser) return;
     if (hasPendingAttachments) return;
     if (answeringAskUser) {
@@ -577,7 +569,8 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     await send();
   };
   const onSendButtonClick = () => {
-    if (busy && !answeringAskUser) {
+    // Generation not finished (incl. AskUser pause) → always stop, never submit.
+    if (busy || answeringAskUser) {
       interrupt();
       return;
     }
@@ -1472,19 +1465,16 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
               </div>
             </div>
             <button
-              className={`send-btn ${busy && !answeringAskUser ? "busy" : ""}`}
+              className={`send-btn ${busy || answeringAskUser ? "busy" : ""}`}
               type="button"
               onClick={onSendButtonClick}
               disabled={
-                answeringAskUser
-                  ? hasPendingAttachments || !askUserCanSend
-                  : !busy &&
-                    (hasPendingAttachments || (showVideoParams ? !videoCanSend : promptEmpty))
+                busy || answeringAskUser
+                  ? false
+                  : hasPendingAttachments || (showVideoParams ? !videoCanSend : promptEmpty)
               }
               title={
-                answeringAskUser
-                  ? t("composer.sendGenerate")
-                  : busy
+                busy || answeringAskUser
                   ? t("composer.sendInterrupt")
                   : hasPendingAttachments
                   ? t("composer.sendUploading")
@@ -1495,9 +1485,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                   : t("composer.sendGenerate")
               }
               aria-label={
-                answeringAskUser
-                  ? t("composer.sendGenerate")
-                  : busy
+                busy || answeringAskUser
                   ? t("composer.sendInterrupt")
                   : hasPendingAttachments
                   ? t("composer.sendUploading")
@@ -1508,7 +1496,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                   : t("composer.sendGenerate")
               }
             >
-              {busy && !answeringAskUser ? (
+              {busy || answeringAskUser ? (
                 <>
                   <span className="send-spinner" aria-hidden>
                     <span />

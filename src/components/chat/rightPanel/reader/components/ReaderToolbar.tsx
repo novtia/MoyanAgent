@@ -83,6 +83,11 @@ export function ReaderToolbar({
       </div>
       <div className="reader-toolbar-title" title={path ?? undefined}>
         <span className="reader-toolbar-name">{fileName || t("rightPanel.readerTab")}</span>
+        {!isMedia && tab != null && (
+          <span className="reader-toolbar-chars">
+            · {t("rightPanel.readerChars", { count: tab.chars ?? 0 })}
+          </span>
+        )}
         {tab?.dirty && <span className="reader-tab-dirty" title={t("reader.unsaved")} />}
         {tab?.saveError && <span className="reader-tab-error" title={t("reader.saveFailed")} />}
       </div>

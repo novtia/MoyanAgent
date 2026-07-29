@@ -1,10 +1,17 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-/** Rendered markdown preview for the reader's Preview mode. */
-export function ReaderMarkdownPreview({ text }: { text: string }) {
+/** Shared markdown renderer (reader preview + skill detail, etc.). */
+export function ReaderMarkdownPreview({
+  text,
+  className = "reader-md-preview",
+}: {
+  text: string;
+  /** Outer wrapper class; defaults to reader scroll pane chrome. */
+  className?: string;
+}) {
   return (
-    <div className="reader-md-preview">
+    <div className={className}>
       <div className="reader-md-preview-inner">
         <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
       </div>
