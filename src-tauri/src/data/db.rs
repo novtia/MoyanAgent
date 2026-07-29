@@ -9,113 +9,12 @@ use crate::error::AppResult;
 pub type DbPool = Pool<SqliteConnectionManager>;
 pub type DbConn = r2d2::PooledConnection<SqliteConnectionManager>;
 
+/// Squashed baseline after historical migrations 001–027.
+const SCHEMA_VERSION: i64 = 28;
+
 const MIGRATION_001: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/migrations/001_init.sql"
-));
-const MIGRATION_002: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/002_session_system_prompt.sql"
-));
-const MIGRATION_003: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/003_session_history_turns.sql"
-));
-const MIGRATION_004: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/004_session_llm_params.sql"
-));
-const MIGRATION_005: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/005_agent_events.sql"
-));
-const MIGRATION_006: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/006_llm_catalog.sql"
-));
-const MIGRATION_007: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/007_context_window.sql"
-));
-const MIGRATION_008: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/008_deepseek_context_window.sql"
-));
-const MIGRATION_009: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/009_projects.sql"
-));
-const MIGRATION_010: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/010_project_params.sql"
-));
-const MIGRATION_011: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/011_agent_chain.sql"
-));
-const MIGRATION_012: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/012_custom_agent_tools.sql"
-));
-const MIGRATION_013: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/013_role_states.sql"
-));
-const MIGRATION_014: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/014_project_agent_chain.sql"
-));
-const MIGRATION_015: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/015_image_capability.sql"
-));
-const MIGRATION_016: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/016_file_snapshots.sql"
-));
-const MIGRATION_017: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/017_token_usage_events.sql"
-));
-const MIGRATION_018: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/018_file_snapshot_encoding.sql"
-));
-const MIGRATION_019: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/019_token_event_content.sql"
-));
-const MIGRATION_020: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/020_role_state_project_scope.sql"
-));
-const MIGRATION_021: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/021_ark_video.sql"
-));
-const MIGRATION_022: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/022_session_provider.sql"
-));
-const MIGRATION_023: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/023_pending_diffs.sql"
-));
-const MIGRATION_024: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/024_pending_diff_message_bind.sql"
-));
-const MIGRATION_025: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/025_session_parent.sql"
-));
-const MIGRATION_026: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/026_token_cache_tokens.sql"
-));
-const MIGRATION_027: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/migrations/027_session_response_cache.sql"
 ));
 
 pub fn open_pool(db_path: &Path) -> AppResult<DbPool> {
@@ -149,113 +48,18 @@ fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
             |r| r.get(0),
         )
         .unwrap_or(0);
-    if cur < 1 {
+
+    // Fresh DB: create final schema in one shot.
+    if cur == 0 {
         conn.execute_batch(MIGRATION_001)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (1)", params![])?;
     }
-    if cur < 2 {
-        conn.execute_batch(MIGRATION_002)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (2)", params![])?;
-    }
-    if cur < 3 {
-        conn.execute_batch(MIGRATION_003)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (3)", params![])?;
-    }
-    if cur < 4 {
-        conn.execute_batch(MIGRATION_004)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (4)", params![])?;
-    }
-    if cur < 5 {
-        conn.execute_batch(MIGRATION_005)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (5)", params![])?;
-    }
-    if cur < 6 {
-        conn.execute_batch(MIGRATION_006)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (6)", params![])?;
-    }
-    if cur < 7 {
-        conn.execute_batch(MIGRATION_007)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (7)", params![])?;
-    }
-    if cur < 8 {
-        conn.execute_batch(MIGRATION_008)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (8)", params![])?;
-    }
-    if cur < 9 {
-        conn.execute_batch(MIGRATION_009)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (9)", params![])?;
-    }
-    if cur < 10 {
-        conn.execute_batch(MIGRATION_010)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (10)", params![])?;
-    }
-    if cur < 11 {
-        conn.execute_batch(MIGRATION_011)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (11)", params![])?;
-    }
-    if cur < 12 {
-        conn.execute_batch(MIGRATION_012)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (12)", params![])?;
-    }
-    if cur < 13 {
-        conn.execute_batch(MIGRATION_013)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (13)", params![])?;
-    }
-    if cur < 14 {
-        conn.execute_batch(MIGRATION_014)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (14)", params![])?;
-    }
-    if cur < 15 {
-        conn.execute_batch(MIGRATION_015)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (15)", params![])?;
-    }
-    if cur < 16 {
-        conn.execute_batch(MIGRATION_016)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (16)", params![])?;
-    }
-    if cur < 17 {
-        conn.execute_batch(MIGRATION_017)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (17)", params![])?;
-    }
-    if cur < 18 {
-        conn.execute_batch(MIGRATION_018)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (18)", params![])?;
-    }
-    if cur < 19 {
-        conn.execute_batch(MIGRATION_019)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (19)", params![])?;
-    }
-    if cur < 20 {
-        conn.execute_batch(MIGRATION_020)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (20)", params![])?;
-    }
-    if cur < 21 {
-        conn.execute_batch(MIGRATION_021)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (21)", params![])?;
-    }
-    if cur < 22 {
-        conn.execute_batch(MIGRATION_022)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (22)", params![])?;
-    }
-    if cur < 23 {
-        conn.execute_batch(MIGRATION_023)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (23)", params![])?;
-    }
-    if cur < 24 {
-        conn.execute_batch(MIGRATION_024)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (24)", params![])?;
-    }
-    if cur < 25 {
-        conn.execute_batch(MIGRATION_025)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (25)", params![])?;
-    }
-    if cur < 26 {
-        conn.execute_batch(MIGRATION_026)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (26)", params![])?;
-    }
-    if cur < 27 {
-        conn.execute_batch(MIGRATION_027)?;
-        conn.execute("INSERT INTO schema_version(version) VALUES (27)", params![])?;
+
+    // Fresh installs and legacy DBs (1..=27) all stamp to the squashed baseline.
+    if cur < SCHEMA_VERSION {
+        conn.execute(
+            "INSERT INTO schema_version(version) VALUES (?1)",
+            params![SCHEMA_VERSION],
+        )?;
     }
     Ok(())
 }
