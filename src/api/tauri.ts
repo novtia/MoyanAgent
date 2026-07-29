@@ -5,6 +5,10 @@ import type {
   AgentDefinitionInfo,
   AgentSummary,
   AttachmentDraft,
+  BackupListItem,
+  BackupModule,
+  BackupResult,
+  BackupStatus,
   ChainEntry,
   CustomAgent,
   EditOp,
@@ -21,6 +25,7 @@ import type {
   PendingDiffRow,
   PendingDiffRevert,
   RemoteModelInfo,
+  RestoreResult,
   SessionSearchResult,
   SessionSummary,
   SessionWithMessagesAbs,
@@ -301,6 +306,20 @@ export const api = {
 
   importArchive: (archivePath: string) =>
     invoke<ImportResult>("import_archive", { archivePath }),
+
+  createBackup: (module: BackupModule, destPath?: string | null) =>
+    invoke<BackupResult>("create_backup", {
+      args: { module, destPath: destPath ?? null, kind: "manual" },
+    }),
+  restoreBackup: (archivePath: string) =>
+    invoke<RestoreResult>("restore_backup", {
+      args: { archivePath },
+    }),
+  listBackups: (module?: BackupModule | null) =>
+    invoke<BackupListItem[]>("list_backups", {
+      args: { module: module ?? null },
+    }),
+  getBackupStatus: () => invoke<BackupStatus>("get_backup_status"),
 
   // agents
   listAgents: () => invoke<AgentSummary[]>("list_agents"),

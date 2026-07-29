@@ -27,8 +27,16 @@ pub const KEY_WEB_SEARCH_BACKEND: &str = "web_search_backend";
 pub const KEY_WEB_SEARCH_LOCAL_ENGINE: &str = "web_search_local_engine";
 pub const KEY_WEB_SEARCH_MAX_RESULTS: &str = "web_search_max_results";
 pub const KEY_WEB_SEARCH_PROVIDERS: &str = "web_search_providers";
+pub const KEY_AUTO_BACKUP_ENABLED: &str = "auto_backup_enabled";
+pub const KEY_AUTO_BACKUP_DIR: &str = "auto_backup_dir";
+pub const KEY_AUTO_BACKUP_CHAT_INTERVAL_MINUTES: &str = "auto_backup_chat_interval_minutes";
+pub const KEY_AUTO_BACKUP_CONFIG_KEEP: &str = "auto_backup_config_keep";
+pub const KEY_AUTO_BACKUP_CHAT_KEEP: &str = "auto_backup_chat_keep";
 
 pub const DEFAULT_HISTORY_TURNS: i64 = 10;
+pub const DEFAULT_AUTO_BACKUP_CHAT_INTERVAL_MINUTES: i64 = 30;
+pub const DEFAULT_AUTO_BACKUP_CONFIG_KEEP: i64 = 14;
+pub const DEFAULT_AUTO_BACKUP_CHAT_KEEP: i64 = 48;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelParamSettings {
@@ -211,6 +219,21 @@ pub struct Settings {
     /// Configured API search providers.
     #[serde(default)]
     pub web_search_providers: Vec<crate::ai::search::WebSearchProviderConfig>,
+    /// Master switch for modular auto-backup.
+    #[serde(default)]
+    pub auto_backup_enabled: bool,
+    /// Custom backup root directory; empty means `{data_dir}/backups`.
+    #[serde(default)]
+    pub auto_backup_dir: String,
+    /// Chat-module auto-backup interval in minutes (15 / 30 / 60 recommended).
+    #[serde(default = "default_auto_backup_chat_interval_minutes")]
+    pub auto_backup_chat_interval_minutes: i64,
+    /// How many config/usage auto-backups to retain.
+    #[serde(default = "default_auto_backup_config_keep")]
+    pub auto_backup_config_keep: i64,
+    /// How many chat auto-backups to retain.
+    #[serde(default = "default_auto_backup_chat_keep")]
+    pub auto_backup_chat_keep: i64,
 }
 
 fn default_web_search_enabled() -> bool {
@@ -227,6 +250,18 @@ fn default_web_search_local_engine() -> String {
 
 fn default_web_search_max_results() -> i64 {
     crate::ai::search::DEFAULT_MAX_RESULTS
+}
+
+fn default_auto_backup_chat_interval_minutes() -> i64 {
+    DEFAULT_AUTO_BACKUP_CHAT_INTERVAL_MINUTES
+}
+
+fn default_auto_backup_config_keep() -> i64 {
+    DEFAULT_AUTO_BACKUP_CONFIG_KEEP
+}
+
+fn default_auto_backup_chat_keep() -> i64 {
+    DEFAULT_AUTO_BACKUP_CHAT_KEEP
 }
 
 impl Default for Settings {
@@ -255,6 +290,11 @@ impl Default for Settings {
             web_search_local_engine: default_web_search_local_engine(),
             web_search_max_results: default_web_search_max_results(),
             web_search_providers: Vec::new(),
+            auto_backup_enabled: false,
+            auto_backup_dir: String::new(),
+            auto_backup_chat_interval_minutes: default_auto_backup_chat_interval_minutes(),
+            auto_backup_config_keep: default_auto_backup_config_keep(),
+            auto_backup_chat_keep: default_auto_backup_chat_keep(),
         }
     }
 }
@@ -324,6 +364,16 @@ pub struct SettingsPatch {
     pub web_search_max_results: Option<i64>,
     #[serde(default)]
     pub web_search_providers: Option<Vec<crate::ai::search::WebSearchProviderConfig>>,
+    #[serde(default)]
+    pub auto_backup_enabled: Option<bool>,
+    #[serde(default)]
+    pub auto_backup_dir: Option<String>,
+    #[serde(default)]
+    pub auto_backup_chat_interval_minutes: Option<i64>,
+    #[serde(default)]
+    pub auto_backup_config_keep: Option<i64>,
+    #[serde(default)]
+    pub auto_backup_chat_keep: Option<i64>,
 }
 
 pub fn read(conn: &DbConn) -> AppResult<Settings> {
@@ -386,6 +436,23 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
                     serde_json::from_str::<Vec<crate::ai::search::WebSearchProviderConfig>>(&v)
                 {
                     s.web_search_providers = list;
+                }
+            }
+            KEY_AUTO_BACKUP_ENABLED => s.auto_backup_enabled = v == "true" || v == "1",
+            KEY_AUTO_BACKUP_DIR => s.auto_backup_dir = v,
+            KEY_AUTO_BACKUP_CHAT_INTERVAL_MINUTES => {
+                if let Some(n) = parse_optional_i64(&v) {
+                    s.auto_backup_chat_interval_minutes = n.clamp(5, 24 * 60);
+                }
+            }
+            KEY_AUTO_BACKUP_CONFIG_KEEP => {
+                if let Some(n) = parse_optional_i64(&v) {
+                    s.auto_backup_config_keep = n.clamp(1, 365);
+                }
+            }
+            KEY_AUTO_BACKUP_CHAT_KEEP => {
+                if let Some(n) = parse_optional_i64(&v) {
+                    s.auto_backup_chat_keep = n.clamp(1, 1000);
                 }
             }
             _ => {}
@@ -747,6 +814,28 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
     if let Some(v) = patch.web_search_providers {
         let json = serde_json::to_string(&v).map_err(|e| AppError::Invalid(e.to_string()))?;
         write_kv(conn, KEY_WEB_SEARCH_PROVIDERS, &json)?;
+    }
+    if let Some(v) = patch.auto_backup_enabled {
+        write_kv(
+            conn,
+            KEY_AUTO_BACKUP_ENABLED,
+            if v { "true" } else { "false" },
+        )?;
+    }
+    if let Some(v) = patch.auto_backup_dir {
+        write_kv(conn, KEY_AUTO_BACKUP_DIR, &v)?;
+    }
+    if let Some(n) = patch.auto_backup_chat_interval_minutes {
+        let n = n.clamp(5, 24 * 60);
+        write_kv(conn, KEY_AUTO_BACKUP_CHAT_INTERVAL_MINUTES, &n.to_string())?;
+    }
+    if let Some(n) = patch.auto_backup_config_keep {
+        let n = n.clamp(1, 365);
+        write_kv(conn, KEY_AUTO_BACKUP_CONFIG_KEEP, &n.to_string())?;
+    }
+    if let Some(n) = patch.auto_backup_chat_keep {
+        let n = n.clamp(1, 1000);
+        write_kv(conn, KEY_AUTO_BACKUP_CHAT_KEEP, &n.to_string())?;
     }
     read(conn)
 }

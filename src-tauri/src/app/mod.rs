@@ -16,6 +16,7 @@ use crate::data::{db, paths};
 
 mod agents;
 mod attachments;
+mod backup;
 mod clipboard;
 mod dto;
 mod generation;
@@ -147,6 +148,9 @@ pub fn run() {
                 token_stats,
                 session_logger,
             }));
+
+            let state = app.state::<Arc<AppState>>().inner().clone();
+            backup::spawn_scheduler(app.handle().clone(), state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -225,6 +229,10 @@ pub fn run() {
             transfer::export_projects_archive,
             transfer::export_session_archive,
             transfer::import_archive,
+            backup::create_backup,
+            backup::restore_backup,
+            backup::list_backups,
+            backup::get_backup_status,
             project_io::write_project_file,
             project_io::read_project_file,
             project_io::list_pending_diffs,

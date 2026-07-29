@@ -1,3 +1,4 @@
+pub(crate) mod backup;
 pub(crate) mod custom_agents;
 pub(crate) mod db;
 pub(crate) mod file_snapshot;

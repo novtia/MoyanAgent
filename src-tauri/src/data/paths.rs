@@ -75,6 +75,13 @@ pub fn sessions_dir(app: &AppHandle) -> AppResult<PathBuf> {
     Ok(dir)
 }
 
+/// Default auto-backup root: `{data_dir}/backups`.
+pub fn backups_dir(app: &AppHandle) -> AppResult<PathBuf> {
+    let dir = root_dir(app)?.join("backups");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 pub fn session_dir(app: &AppHandle, session_id: &str) -> AppResult<PathBuf> {
     let dir = sessions_dir(app)?.join(session_id);
     std::fs::create_dir_all(dir.join("in"))?;

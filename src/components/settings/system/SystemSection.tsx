@@ -5,6 +5,7 @@ import { api } from "../../../api/tauri";
 import { useNotifySound } from "../../../store/notifySound";
 import { useSettings } from "../../../store/settings";
 import type { AppInfo } from "../types";
+import { BackupCards } from "./BackupCards";
 import { PathRow } from "./PathRow";
 
 const SAVE_DEBOUNCE_MS = 500;
@@ -151,6 +152,8 @@ export function SystemSection() {
           </div>
         </div>
       </div>
+
+      <BackupCards />
 
       <div className="settings-card">
         <div className="settings-row">

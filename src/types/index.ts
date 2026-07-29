@@ -128,6 +128,16 @@ export interface Settings {
   web_search_max_results: number;
   /** Configured API search providers. */
   web_search_providers: WebSearchProviderConfig[];
+  /** Master switch for modular auto-backup. */
+  auto_backup_enabled: boolean;
+  /** Custom backup root; empty means `{data_dir}/backups`. */
+  auto_backup_dir: string;
+  /** Chat-module auto-backup interval in minutes. */
+  auto_backup_chat_interval_minutes: number;
+  /** How many config/usage auto-backups to retain. */
+  auto_backup_config_keep: number;
+  /** How many chat auto-backups to retain. */
+  auto_backup_chat_keep: number;
 }
 
 /** Builtin API search kinds (local scraping is separate). */
@@ -188,6 +198,11 @@ export interface SettingsPatch {
   web_search_local_engine?: string;
   web_search_max_results?: number;
   web_search_providers?: WebSearchProviderConfig[];
+  auto_backup_enabled?: boolean;
+  auto_backup_dir?: string;
+  auto_backup_chat_interval_minutes?: number;
+  auto_backup_config_keep?: number;
+  auto_backup_chat_keep?: number;
 }
 
 export interface Session {
@@ -595,4 +610,50 @@ export interface ImportResult {
   projects_imported: number;
   sessions_imported: number;
   messages_imported: number;
+}
+
+export type BackupModule = "config" | "chat" | "usage" | "full";
+export type BackupKind = "auto" | "manual";
+
+export interface BackupResult {
+  path: string;
+  module: BackupModule;
+  created_at: number;
+  kind: BackupKind;
+  /** True when auto chat found no dirty sessions. */
+  skipped?: boolean;
+  scope?: "full" | "delta";
+  session_count?: number;
+}
+
+export interface RestoreResult {
+  module: BackupModule;
+  path: string;
+  requires_restart: boolean;
+}
+
+export interface BackupListItem {
+  path: string;
+  module: BackupModule;
+  kind: BackupKind;
+  created_at: number;
+  size_bytes: number;
+}
+
+export interface BackupStatus {
+  enabled: boolean;
+  backup_dir: string;
+  busy: boolean;
+  config_times: string[];
+  chat_interval_minutes: number;
+  config_keep: number;
+  chat_keep: number;
+  last_config_slot: string | null;
+  last_chat_at_ms: number | null;
+  last_usage_slot: string | null;
+  last_full_at_ms: number | null;
+  last_success_at_ms: number | null;
+  last_error: string | null;
+  next_config_slot: string | null;
+  next_chat_at_ms: number | null;
 }

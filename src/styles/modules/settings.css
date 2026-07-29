@@ -226,6 +226,50 @@
   align-items: center;
   gap: 8px;
 }
+.settings-row-control--actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 320px;
+}
+.settings-backup-list {
+  padding: 0 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings-backup-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--ink) 3%, var(--bg));
+}
+.settings-backup-item-main {
+  min-width: 0;
+  flex: 1;
+}
+.settings-backup-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.settings-backup-item-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+.settings-backup-item-path {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--ink-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Padded block inside a card (for forms, custom content) */
 .settings-block {
