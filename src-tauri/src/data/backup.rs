@@ -6,6 +6,7 @@
 //! - `sessions/...` media files (chat / full only)
 
 use std::collections::HashSet;
+use std::fmt;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -13,13 +14,15 @@ use std::sync::Mutex;
 
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use rusqlite::{params_from_iter, types::ValueRef, Connection};
+use serde::de::{self, Deserializer, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 use zip::write::SimpleFileOptions;
 use zip::ZipArchive;
 
 use crate::data::db::{now_ms, DbConn, DbPool};
+use crate::data::message_search;
 use crate::data::paths;
 use crate::data::settings::{self, Settings};
 use crate::error::{AppError, AppResult};
@@ -154,6 +157,73 @@ pub struct RestoreResult {
     pub module: BackupModule,
     pub path: String,
     pub requires_restart: bool,
+    /// Non-fatal issues (e.g. usage table restore failed after core data landed).
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+/// Progress payload for `backup://progress` (backup + restore).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupProgressEvent {
+    pub op: String,
+    pub phase: String,
+    /// Overall progress 0–100 (monotonic within one operation).
+    pub percent: u8,
+    pub current: u64,
+    pub total: u64,
+    pub detail: String,
+}
+
+/// Tracks overall 0–100% progress; never goes backwards.
+struct ProgressClock {
+    app: AppHandle,
+    op: String,
+    last: std::cell::Cell<u8>,
+}
+
+impl ProgressClock {
+    fn new(app: &AppHandle, op: &str) -> Self {
+        Self {
+            app: app.clone(),
+            op: op.into(),
+            last: std::cell::Cell::new(0),
+        }
+    }
+
+    fn emit(&self, phase: &str, percent: u8, current: u64, total: u64, detail: &str) {
+        let p = percent.min(100).max(self.last.get());
+        self.last.set(p);
+        let _ = self.app.emit(
+            "backup://progress",
+            BackupProgressEvent {
+                op: self.op.clone(),
+                phase: phase.into(),
+                percent: p,
+                current,
+                total,
+                detail: detail.into(),
+            },
+        );
+    }
+
+    /// Map `current/total` into `[start, end]` overall percent.
+    fn span(&self, phase: &str, start: u8, end: u8, current: u64, total: u64, detail: &str) {
+        let start = start.min(end);
+        let end = end.max(start);
+        let pct = if total == 0 {
+            start
+        } else {
+            let span = u64::from(end.saturating_sub(start));
+            let cur = current.min(total);
+            start.saturating_add(((span * cur) / total) as u8)
+        };
+        self.emit(phase, pct, current, total, detail);
+    }
+
+    fn done(&self) {
+        self.emit("done", 100, 1, 1, "");
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,38 +337,90 @@ fn assert_safe_table(table: &str) -> AppResult<()> {
     Ok(())
 }
 
-fn dump_table(conn: &Connection, table: &str) -> AppResult<Value> {
+/// Stream a table into an open zip entry as a JSON array (row-by-row, low RAM).
+fn zip_write_table_streaming<W: Write + std::io::Seek>(
+    zip: &mut zip::ZipWriter<W>,
+    opts: SimpleFileOptions,
+    conn: &Connection,
+    table: &str,
+    sql: &str,
+    params: impl rusqlite::Params,
+    mut on_row: impl FnMut(u64, u64),
+) -> AppResult<u64> {
     assert_safe_table(table)?;
-    let mut stmt = conn
-        .prepare(&format!("SELECT * FROM \"{table}\""))
-        .map_err(AppError::Db)?;
+    let entry = format!("data/{table}.json");
+    zip.start_file(&entry, opts)
+        .map_err(|e| AppError::Other(format!("zip: {e}")))?;
+    zip.write_all(b"[")?;
+
+    let mut stmt = conn.prepare(sql).map_err(AppError::Db)?;
     let col_count = stmt.column_count();
     let col_names: Vec<String> = (0..col_count)
         .map(|i| stmt.column_name(i).unwrap_or("?").to_string())
         .collect();
-    let mut rows_out = Vec::new();
-    let mut rows = stmt.query([])?;
+    let mut rows = stmt.query(params)?;
+    let mut first = true;
+    let mut count = 0u64;
     while let Some(row) = rows.next()? {
+        if !first {
+            zip.write_all(b",")?;
+        }
+        first = false;
         let mut obj = Map::new();
         for (i, name) in col_names.iter().enumerate() {
             let v = row.get_ref(i)?;
             obj.insert(name.clone(), sqlite_to_json(v));
         }
-        rows_out.push(Value::Object(obj));
+        serde_json::to_writer(&mut *zip, &Value::Object(obj))?;
+        count += 1;
+        if count == 1 || count % 200 == 0 {
+            on_row(count, 0);
+        }
     }
-    Ok(Value::Array(rows_out))
+    zip.write_all(b"]")?;
+    if count > 0 {
+        on_row(count, count);
+    }
+    Ok(count)
 }
 
-/// Dump rows belonging to the given session ids.
-/// `sessions` is filtered by `id`; other chat tables by `session_id`.
-fn dump_chat_table_for_sessions(
+fn table_row_count(conn: &Connection, table: &str) -> u64 {
+    conn.query_row(&format!("SELECT COUNT(*) FROM \"{table}\""), [], |r| {
+        r.get::<_, i64>(0)
+    })
+    .map(|n| n.max(0) as u64)
+    .unwrap_or(0)
+}
+
+fn zip_write_full_table<W: Write + std::io::Seek>(
+    zip: &mut zip::ZipWriter<W>,
+    opts: SimpleFileOptions,
+    conn: &Connection,
+    table: &str,
+    on_row: impl FnMut(u64, u64),
+) -> AppResult<u64> {
+    zip_write_table_streaming(
+        zip,
+        opts,
+        conn,
+        table,
+        &format!("SELECT * FROM \"{table}\""),
+        [],
+        on_row,
+    )
+}
+
+fn zip_write_chat_table_for_sessions<W: Write + std::io::Seek>(
+    zip: &mut zip::ZipWriter<W>,
+    opts: SimpleFileOptions,
     conn: &Connection,
     table: &str,
     session_ids: &[String],
-) -> AppResult<Value> {
-    assert_safe_table(table)?;
+    on_row: impl FnMut(u64, u64),
+) -> AppResult<u64> {
     if session_ids.is_empty() {
-        return Ok(Value::Array(Vec::new()));
+        zip_write_bytes(zip, opts, &format!("data/{table}.json"), b"[]")?;
+        return Ok(0);
     }
     let placeholders: Vec<String> = (1..=session_ids.len()).map(|i| format!("?{i}")).collect();
     let col = if table == "sessions" {
@@ -310,22 +432,15 @@ fn dump_chat_table_for_sessions(
         "SELECT * FROM \"{table}\" WHERE \"{col}\" IN ({})",
         placeholders.join(", ")
     );
-    let mut stmt = conn.prepare(&sql).map_err(AppError::Db)?;
-    let col_count = stmt.column_count();
-    let col_names: Vec<String> = (0..col_count)
-        .map(|i| stmt.column_name(i).unwrap_or("?").to_string())
-        .collect();
-    let mut rows_out = Vec::new();
-    let mut rows = stmt.query(params_from_iter(session_ids.iter()))?;
-    while let Some(row) = rows.next()? {
-        let mut obj = Map::new();
-        for (i, name) in col_names.iter().enumerate() {
-            let v = row.get_ref(i)?;
-            obj.insert(name.clone(), sqlite_to_json(v));
-        }
-        rows_out.push(Value::Object(obj));
-    }
-    Ok(Value::Array(rows_out))
+    zip_write_table_streaming(
+        zip,
+        opts,
+        conn,
+        table,
+        &sql,
+        params_from_iter(session_ids.iter()),
+        on_row,
+    )
 }
 
 /// Sessions changed after `since_ms` (exclusive), including activity on related tables.
@@ -349,6 +464,29 @@ fn changed_session_ids(conn: &Connection, since_ms: i64) -> AppResult<Vec<String
     Ok(ids)
 }
 
+fn insert_one_row(conn: &Connection, table: &str, obj: &Map<String, Value>) -> AppResult<()> {
+    if obj.is_empty() {
+        return Ok(());
+    }
+    let cols: Vec<&str> = obj.keys().map(|s| s.as_str()).collect();
+    let placeholders: Vec<String> = (1..=cols.len()).map(|i| format!("?{i}")).collect();
+    let sql = format!(
+        "INSERT INTO \"{table}\" ({}) VALUES ({})",
+        cols.iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", "),
+        placeholders.join(", ")
+    );
+    let mut values = Vec::with_capacity(cols.len());
+    for c in &cols {
+        values.push(json_to_sql(&obj[*c])?);
+    }
+    conn.execute(&sql, params_from_iter(values))?;
+    Ok(())
+}
+
+#[allow(dead_code)]
 fn insert_table_rows(conn: &Connection, table: &str, rows: &Value) -> AppResult<()> {
     assert_safe_table(table)?;
     let arr = rows
@@ -358,36 +496,139 @@ fn insert_table_rows(conn: &Connection, table: &str, rows: &Value) -> AppResult<
         let obj = row
             .as_object()
             .ok_or_else(|| AppError::Invalid(format!("row in {table} must be an object")))?;
-        if obj.is_empty() {
-            continue;
-        }
-        let cols: Vec<&str> = obj.keys().map(|s| s.as_str()).collect();
-        let placeholders: Vec<String> = (1..=cols.len()).map(|i| format!("?{i}")).collect();
-        let sql = format!(
-            "INSERT INTO \"{table}\" ({}) VALUES ({})",
-            cols.iter()
-                .map(|c| format!("\"{c}\""))
-                .collect::<Vec<_>>()
-                .join(", "),
-            placeholders.join(", ")
-        );
-        let mut values = Vec::with_capacity(cols.len());
-        for c in &cols {
-            values.push(json_to_sql(&obj[*c])?);
-        }
-        conn.execute(&sql, params_from_iter(values))?;
+        insert_one_row(conn, table, obj)?;
     }
     Ok(())
 }
 
-fn restore_table(conn: &Connection, table: &str, rows: &Value) -> AppResult<()> {
+/// Stream-insert rows from a JSON array without loading the whole document into RAM.
+fn insert_table_rows_streaming<R: Read>(
+    conn: &Connection,
+    table: &str,
+    reader: R,
+    mut on_row: impl FnMut(u64),
+) -> AppResult<u64> {
     assert_safe_table(table)?;
+
+    struct RowsVisitor<'a, F> {
+        conn: &'a Connection,
+        table: &'a str,
+        on_row: &'a mut F,
+        count: u64,
+    }
+
+    impl<'de, F: FnMut(u64)> Visitor<'de> for RowsVisitor<'_, F> {
+        type Value = u64;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("a JSON array of row objects")
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(mut self, mut seq: A) -> Result<u64, A::Error> {
+            while let Some(obj) = seq.next_element::<Map<String, Value>>()? {
+                insert_one_row(self.conn, self.table, &obj).map_err(de::Error::custom)?;
+                self.count += 1;
+                if self.count == 1 || self.count % 100 == 0 {
+                    (self.on_row)(self.count);
+                }
+            }
+            Ok(self.count)
+        }
+    }
+
+    let mut de = serde_json::Deserializer::from_reader(reader);
+    let count = de
+        .deserialize_seq(RowsVisitor {
+            conn,
+            table,
+            on_row: &mut on_row,
+            count: 0,
+        })
+        .map_err(|e| AppError::Invalid(format!("data/{table}.json: {e}")))?;
+    if count > 0 {
+        on_row(count);
+    }
+    Ok(count)
+}
+
+fn zip_entry_exists(archive_path: &Path, name: &str) -> bool {
+    let Ok(file) = File::open(archive_path) else {
+        return false;
+    };
+    let Ok(mut zip) = ZipArchive::new(file) else {
+        return false;
+    };
+    let ok = zip.by_name(name).is_ok();
+    ok
+}
+
+/// DELETE + stream INSERT for one table from the archive.
+fn restore_table_streaming(
+    conn: &Connection,
+    archive_path: &Path,
+    table: &str,
+    progress: &ProgressClock,
+    band_start: u8,
+    band_end: u8,
+) -> AppResult<()> {
+    assert_safe_table(table)?;
+    let entry_name = format!("data/{table}.json");
+    if !zip_entry_exists(archive_path, &entry_name) {
+        progress.span(
+            "table",
+            band_start,
+            band_end,
+            1,
+            1,
+            &format!("{table} (skipped)"),
+        );
+        return Ok(());
+    }
+
     conn.execute(&format!("DELETE FROM \"{table}\""), [])?;
-    insert_table_rows(conn, table, rows)
+
+    let file = File::open(archive_path)?;
+    let mut zip =
+        ZipArchive::new(file).map_err(|e| AppError::Other(format!("zip open: {e}")))?;
+    let entry = zip
+        .by_name(&entry_name)
+        .map_err(|e| AppError::Other(format!("missing {entry_name}: {e}")))?;
+
+    progress.span("table", band_start, band_end, 0, 1, table);
+    // Unknown row total in zip: asymptote toward band_end while streaming.
+    let count = insert_table_rows_streaming(conn, table, entry, |rows| {
+        let denom = (rows / 500).saturating_add(1);
+        let within = u64::from(band_end.saturating_sub(band_start));
+        let cur = within.saturating_mul(denom.saturating_sub(1)) / denom;
+        progress.emit(
+            "table_rows",
+            band_start.saturating_add(cur as u8),
+            rows,
+            0,
+            &format!("{table} · {rows}"),
+        );
+    })?;
+    progress.span(
+        "table",
+        band_start,
+        band_end,
+        1,
+        1,
+        &format!("{table} ({count})"),
+    );
+    Ok(())
 }
 
 /// Replace data for the listed sessions only (delta restore).
-fn restore_chat_delta(conn: &Connection, session_ids: &[String], tables: &[&str], path: &Path) -> AppResult<()> {
+fn restore_chat_delta(
+    conn: &Connection,
+    session_ids: &[String],
+    tables: &[&str],
+    path: &Path,
+    progress: &ProgressClock,
+    band_start: u8,
+    band_end: u8,
+) -> AppResult<()> {
     for sid in session_ids {
         conn.execute("DELETE FROM pending_diffs WHERE session_id=?1", [sid])?;
         conn.execute("DELETE FROM file_snapshots WHERE session_id=?1", [sid])?;
@@ -396,14 +637,43 @@ fn restore_chat_delta(conn: &Connection, session_ids: &[String], tables: &[&str]
         conn.execute("DELETE FROM messages WHERE session_id=?1", [sid])?;
         conn.execute("DELETE FROM sessions WHERE id=?1", [sid])?;
     }
-    for table in tables {
+    let n = tables.len().max(1) as u64;
+    let span = u64::from(band_end.saturating_sub(band_start));
+    for (i, table) in tables.iter().enumerate() {
+        let t_start = band_start.saturating_add(((span * i as u64) / n) as u8);
+        let t_end = band_start.saturating_add(((span * (i as u64 + 1)) / n) as u8);
         let entry = format!("data/{table}.json");
-        let bytes = match read_zip_entry(path, &entry) {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-        let rows: Value = serde_json::from_slice(&bytes)?;
-        insert_table_rows(conn, table, &rows)?;
+        if !zip_entry_exists(path, &entry) {
+            progress.span("table", t_start, t_end, 1, 1, &format!("{table} (skipped)"));
+            continue;
+        }
+        let file = File::open(path)?;
+        let mut zip =
+            ZipArchive::new(file).map_err(|e| AppError::Other(format!("zip open: {e}")))?;
+        let entry_r = zip
+            .by_name(&entry)
+            .map_err(|e| AppError::Other(format!("missing {entry}: {e}")))?;
+        progress.span("table", t_start, t_end, 0, 1, table);
+        let count = insert_table_rows_streaming(conn, table, entry_r, |rows| {
+            let denom = (rows / 500).saturating_add(1);
+            let within = u64::from(t_end.saturating_sub(t_start));
+            let cur = within.saturating_mul(denom.saturating_sub(1)) / denom;
+            progress.emit(
+                "table_rows",
+                t_start.saturating_add(cur as u8),
+                rows,
+                0,
+                &format!("{table} · {rows}"),
+            );
+        })?;
+        progress.span(
+            "table",
+            t_start,
+            t_end,
+            1,
+            1,
+            &format!("{table} ({count})"),
+        );
     }
     Ok(())
 }
@@ -506,6 +776,9 @@ fn extract_sessions_from_archive(
     archive_path: &Path,
     sessions_root: &Path,
     only_ids: Option<&[String]>,
+    progress: &ProgressClock,
+    band_start: u8,
+    band_end: u8,
 ) -> AppResult<()> {
     let file = File::open(archive_path)?;
     let mut zip = ZipArchive::new(file).map_err(|e| AppError::Other(format!("zip open: {e}")))?;
@@ -523,6 +796,28 @@ fn extract_sessions_from_archive(
         }
     }
 
+    let total_entries = zip.len() as u64;
+    let mut media_total = 0u64;
+    for i in 0..zip.len() {
+        let entry = zip
+            .by_index(i)
+            .map_err(|e| AppError::Other(format!("zip entry: {e}")))?;
+        let name = entry.name().replace('\\', "/");
+        if let Some(rel) = name.strip_prefix("sessions/") {
+            if !rel.is_empty() && !rel.ends_with('/') {
+                if let Some(ids) = only_ids {
+                    let top = rel.split('/').next().unwrap_or("");
+                    if !ids.iter().any(|s| s == top) {
+                        continue;
+                    }
+                }
+                media_total += 1;
+            }
+        }
+    }
+    let media_total = media_total.max(1);
+
+    let mut done = 0u64;
     for i in 0..zip.len() {
         let mut entry = zip
             .by_index(i)
@@ -549,7 +844,12 @@ fn extract_sessions_from_archive(
         }
         let mut out = File::create(&dest)?;
         std::io::copy(&mut entry, &mut out)?;
+        done += 1;
+        if done == 1 || done % 10 == 0 || (i as u64 + 1) == total_entries {
+            progress.span("media", band_start, band_end, done, media_total, rel);
+        }
     }
+    progress.span("media", band_start, band_end, 1, 1, "sessions");
     Ok(())
 }
 
@@ -713,37 +1013,113 @@ fn create_backup_inner(
         serde_json::to_string_pretty(&manifest)?.as_bytes(),
     )?;
 
+    let progress = ProgressClock::new(app, "backup");
+    progress.emit("preparing", 1, 0, 1, "manifest");
+
+    let has_media = module.includes_sessions_media()
+        && !(scope == BackupScope::Delta && module == BackupModule::Chat && session_ids.is_empty());
+    // Tables: 2–88% (or 2–98% without media). Media: 88–98%. Done: 100%.
+    let tables_end: u8 = if has_media || (scope == BackupScope::Delta && module == BackupModule::Chat)
+    {
+        88
+    } else {
+        98
+    };
+
+    let row_counts: Vec<u64> = tables
+        .iter()
+        .map(|t| {
+            if scope == BackupScope::Delta && module == BackupModule::Chat {
+                // Approximate: full table count is fine for weighting; delta may be smaller.
+                table_row_count(&conn, t).max(1)
+            } else {
+                table_row_count(&conn, t).max(1)
+            }
+        })
+        .collect();
+    let total_weight: u64 = row_counts.iter().sum::<u64>().max(1);
+    let mut completed_weight = 0u64;
+    let tables_span = u64::from(tables_end.saturating_sub(2));
+
     if scope == BackupScope::Delta && module == BackupModule::Chat {
-        for table in &tables {
-            let data = dump_chat_table_for_sessions(&conn, table, &session_ids)?;
-            zip_write_bytes(
+        for (i, table) in tables.iter().enumerate() {
+            let weight = row_counts[i];
+            let start = 2u8.saturating_add(((tables_span * completed_weight) / total_weight) as u8);
+            let end =
+                2u8.saturating_add(((tables_span * (completed_weight + weight)) / total_weight) as u8);
+            progress.span("table", start, end, 0, 1, table);
+            let expected = weight.max(1);
+            let n = zip_write_chat_table_for_sessions(
                 &mut zip,
                 opts,
-                &format!("data/{table}.json"),
-                serde_json::to_string(&data)?.as_bytes(),
+                &conn,
+                table,
+                &session_ids,
+                |rows, _| {
+                    progress.span(
+                        "table_rows",
+                        start,
+                        end,
+                        rows.min(expected),
+                        expected,
+                        &format!("{table} · {rows}"),
+                    );
+                },
             )?;
+            completed_weight += weight;
+            progress.span(
+                "table",
+                start,
+                end,
+                1,
+                1,
+                &format!("{table} ({n})"),
+            );
         }
+        progress.span("media", 88, 98, 0, 1, "sessions");
         let sessions_root = paths::sessions_dir(app)?;
         add_sessions_subset_to_zip(&mut zip, opts, &sessions_root, Some(&session_ids))?;
+        progress.span("media", 88, 98, 1, 1, "sessions");
     } else {
-        for table in &tables {
-            let data = dump_table(&conn, table)?;
-            zip_write_bytes(
-                &mut zip,
-                opts,
-                &format!("data/{table}.json"),
-                serde_json::to_string(&data)?.as_bytes(),
-            )?;
+        for (i, table) in tables.iter().enumerate() {
+            let weight = row_counts[i];
+            let start = 2u8.saturating_add(((tables_span * completed_weight) / total_weight) as u8);
+            let end =
+                2u8.saturating_add(((tables_span * (completed_weight + weight)) / total_weight) as u8);
+            progress.span("table", start, end, 0, 1, table);
+            let expected = weight.max(1);
+            let n = zip_write_full_table(&mut zip, opts, &conn, table, |rows, _| {
+                progress.span(
+                    "table_rows",
+                    start,
+                    end,
+                    rows.min(expected),
+                    expected,
+                    &format!("{table} · {rows}"),
+                );
+            })?;
+            completed_weight += weight;
+            progress.span(
+                "table",
+                start,
+                end,
+                1,
+                1,
+                &format!("{table} ({n})"),
+            );
         }
         if module.includes_sessions_media() {
+            progress.span("media", 88, 98, 0, 1, "sessions");
             let sessions_root = paths::sessions_dir(app)?;
             add_sessions_dir_to_zip(&mut zip, opts, &sessions_root)?;
+            progress.span("media", 88, 98, 1, 1, "sessions");
         }
     }
 
     zip.finish()
         .map_err(|e| AppError::Other(format!("zip finish: {e}")))?;
 
+    progress.done();
     Ok(BackupResult {
         path: paths::display_path(&dest),
         module,
@@ -810,10 +1186,31 @@ fn restore_backup_inner(
     if !path.is_file() {
         return Err(AppError::NotFound(format!("backup not found: {archive_path}")));
     }
+    let progress = ProgressClock::new(app, "restore");
+    progress.emit("preparing", 1, 0, 1, "manifest");
     let manifest = read_manifest(&path)?;
     let module = manifest.module;
     let tables = module.tables();
     let is_delta = manifest.scope == BackupScope::Delta && module == BackupModule::Chat;
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Keep huge usage tables out of the core transaction so projects/sessions
+    // still land if usage restore OOMs or fails.
+    let (core_tables, usage_tables): (Vec<&str>, Vec<&str>) = tables
+        .iter()
+        .copied()
+        .partition(|t| !USAGE_TABLES.contains(t));
+
+    let has_usage = !usage_tables.is_empty() && !is_delta;
+    let has_media = module.includes_sessions_media();
+    // Bands: core 2–70, usage 70–82, index 82–88, media 88–98, done 100.
+    let core_end: u8 = if has_usage {
+        70
+    } else if has_media {
+        82
+    } else {
+        90
+    };
 
     {
         let conn = pool.get()?;
@@ -826,7 +1223,6 @@ fn restore_backup_inner(
     let restore_result = (|| -> AppResult<()> {
         if is_delta {
             let ids = if manifest.session_ids.is_empty() {
-                // Fallback: infer from sessions.json
                 let bytes = read_zip_entry(&path, "data/sessions.json")?;
                 let rows: Value = serde_json::from_slice(&bytes)?;
                 rows.as_array()
@@ -837,16 +1233,14 @@ fn restore_backup_inner(
             } else {
                 manifest.session_ids.clone()
             };
-            restore_chat_delta(&conn, &ids, &tables, &path)?;
+            restore_chat_delta(&conn, &ids, &core_tables, &path, &progress, 2, core_end)?;
         } else {
-            for table in &tables {
-                let entry = format!("data/{table}.json");
-                let bytes = match read_zip_entry(&path, &entry) {
-                    Ok(b) => b,
-                    Err(_) => continue,
-                };
-                let rows: Value = serde_json::from_slice(&bytes)?;
-                restore_table(&conn, table, &rows)?;
+            let n = core_tables.len().max(1) as u64;
+            let span = u64::from(core_end.saturating_sub(2));
+            for (i, table) in core_tables.iter().enumerate() {
+                let t_start = 2u8.saturating_add(((span * i as u64) / n) as u8);
+                let t_end = 2u8.saturating_add(((span * (i as u64 + 1)) / n) as u8);
+                restore_table_streaming(&conn, &path, table, &progress, t_start, t_end)?;
             }
         }
         Ok(())
@@ -864,7 +1258,47 @@ fn restore_backup_inner(
         }
     }
 
-    if module.includes_sessions_media() {
+    // Usage tables: separate transaction — failure must not wipe core restore.
+    if has_usage {
+        let usage_conn = pool.get()?;
+        usage_conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+        usage_conn.execute_batch("BEGIN IMMEDIATE;")?;
+        let usage_ok = (|| -> AppResult<()> {
+            let n = usage_tables.len().max(1) as u64;
+            let span = u64::from(82u8.saturating_sub(70));
+            for (i, table) in usage_tables.iter().enumerate() {
+                let t_start = 70u8.saturating_add(((span * i as u64) / n) as u8);
+                let t_end = 70u8.saturating_add(((span * (i as u64 + 1)) / n) as u8);
+                restore_table_streaming(&usage_conn, &path, table, &progress, t_start, t_end)?;
+            }
+            Ok(())
+        })();
+        match usage_ok {
+            Ok(()) => {
+                usage_conn.execute_batch("COMMIT;")?;
+                let _ = usage_conn.execute_batch("PRAGMA foreign_keys = ON;");
+            }
+            Err(e) => {
+                let _ = usage_conn.execute_batch("ROLLBACK;");
+                let _ = usage_conn.execute_batch("PRAGMA foreign_keys = ON;");
+                progress.emit("table", 82, 0, 1, "usage skipped");
+                warnings.push(format!(
+                    "usage data restore skipped: {e} (projects/sessions were restored)"
+                ));
+            }
+        }
+    }
+
+    progress.emit("index", 85, 0, 1, "search");
+    {
+        let index_conn = pool.get()?;
+        if let Err(e) = message_search::backfill_search_index(&index_conn) {
+            warnings.push(format!("search index rebuild failed: {e}"));
+        }
+    }
+    progress.emit("index", 88, 1, 1, "search");
+
+    if has_media {
         let sessions_root = paths::sessions_dir(app)?;
         if is_delta {
             let ids = if !manifest.session_ids.is_empty() {
@@ -872,16 +1306,18 @@ fn restore_backup_inner(
             } else {
                 session_ids_in_archive(&path)?
             };
-            extract_sessions_from_archive(&path, &sessions_root, Some(&ids))?;
+            extract_sessions_from_archive(&path, &sessions_root, Some(&ids), &progress, 88, 98)?;
         } else {
-            extract_sessions_from_archive(&path, &sessions_root, None)?;
+            extract_sessions_from_archive(&path, &sessions_root, None, &progress, 88, 98)?;
         }
     }
 
+    progress.done();
     Ok(RestoreResult {
         module,
         path: paths::display_path(&path),
         requires_restart: true,
+        warnings,
     })
 }
 

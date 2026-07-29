@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the Atelier main window",
+  "description": "Capabilities for the Lumen main window",
   "windows": ["main"],
   "permissions": [
     "core:default",

@@ -33,8 +33,8 @@ pub struct ListBackupsArgs {
 }
 
 #[tauri::command]
-pub fn create_backup(
-    state: tauri::State<Arc<AppState>>,
+pub async fn create_backup(
+    state: tauri::State<'_, Arc<AppState>>,
     app: AppHandle,
     args: CreateBackupArgs,
 ) -> Result<backup::BackupResult, AppError> {
@@ -43,26 +43,37 @@ pub fn create_backup(
         "auto" => BackupKind::Auto,
         _ => BackupKind::Manual,
     };
-    let result = backup::create_backup(
-        &app,
-        &state.pool,
-        module,
-        kind,
-        args.dest_path.as_deref(),
-    )?;
+    let pool = state.pool.clone();
+    let dest_path = args.dest_path.clone();
+    let app_job = app.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        backup::create_backup(&app_job, &pool, module, kind, dest_path.as_deref())
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("backup task join failed: {e}")))??;
+
     if module == BackupModule::Full && kind == BackupKind::Manual {
-        let _ = backup::record_full_success(&app, &state.pool, result.created_at);
+        let pool2 = state.pool.clone();
+        let created_at = result.created_at;
+        let _ = tokio::task::spawn_blocking(move || {
+            backup::record_full_success(&app, &pool2, created_at)
+        })
+        .await;
     }
     Ok(result)
 }
 
 #[tauri::command]
-pub fn restore_backup(
-    state: tauri::State<Arc<AppState>>,
+pub async fn restore_backup(
+    state: tauri::State<'_, Arc<AppState>>,
     app: AppHandle,
     args: RestoreBackupArgs,
 ) -> Result<backup::RestoreResult, AppError> {
-    backup::restore_backup(&app, &state.pool, &args.archive_path)
+    let pool = state.pool.clone();
+    let archive_path = args.archive_path.clone();
+    tokio::task::spawn_blocking(move || backup::restore_backup(&app, &pool, &archive_path))
+        .await
+        .map_err(|e| AppError::Other(format!("restore task join failed: {e}")))?
 }
 
 #[tauri::command]

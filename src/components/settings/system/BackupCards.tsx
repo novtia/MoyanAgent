@@ -1,9 +1,14 @@
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../api/tauri";
 import { useSettings } from "../../../store/settings";
-import type { BackupListItem, BackupStatus } from "../../../types";
+import type {
+  BackupListItem,
+  BackupProgressEvent,
+  BackupStatus,
+} from "../../../types";
 import { copyText } from "../../../utils/clipboard";
 import { dialog } from "../../ui/Dialog";
 import { toast } from "../../ui/Toast";
@@ -29,6 +34,18 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function progressPercent(event: BackupProgressEvent | null): number {
+  if (!event) return 0;
+  if (typeof event.percent === "number" && Number.isFinite(event.percent)) {
+    return Math.max(0, Math.min(100, Math.round(event.percent)));
+  }
+  if (event.phase === "done") return 100;
+  if (event.total > 0) {
+    return Math.min(99, Math.round((event.current / event.total) * 100));
+  }
+  return event.phase === "preparing" ? 1 : 0;
+}
+
 export function BackupCards() {
   const { t } = useTranslation();
   const settings = useSettings((s) => s.settings);
@@ -36,6 +53,7 @@ export function BackupCards() {
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [backups, setBackups] = useState<BackupListItem[]>([]);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<BackupProgressEvent | null>(null);
   const [showList, setShowList] = useState(false);
   const [copied, setCopied] = useState(false);
   const [configKeep, setConfigKeep] = useState(
@@ -71,6 +89,21 @@ export function BackupCards() {
   }, [refresh]);
 
   useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    void listen<BackupProgressEvent>("backup://progress", (event) => {
+      if (cancelled) return;
+      setProgress(event.payload);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
     setConfigKeep(String(settings?.auto_backup_config_keep ?? 14));
     setChatKeep(String(settings?.auto_backup_chat_keep ?? 48));
   }, [settings?.auto_backup_config_keep, settings?.auto_backup_chat_keep]);
@@ -94,6 +127,24 @@ export function BackupCards() {
     }
   };
 
+  const runWithProgress = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setProgress({
+      op: "backup",
+      phase: "preparing",
+      percent: 0,
+      current: 0,
+      total: 1,
+      detail: "",
+    });
+    try {
+      await fn();
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  };
+
   const onManualFull = async () => {
     const dest = await saveDialog({
       title: t("settings.system.backupSaveTitle"),
@@ -101,20 +152,19 @@ export function BackupCards() {
       filters: [{ name: "ZIP", extensions: ["zip"] }],
     });
     if (!dest) return;
-    setBusy(true);
-    try {
-      const result = await api.createBackup("full", dest as string);
-      toast.success(t("settings.system.backupSuccess"), {
-        description: result.path,
-      });
-      await refresh();
-    } catch (e) {
-      toast.error(t("settings.system.backupFailed"), {
-        description: String(e),
-      });
-    } finally {
-      setBusy(false);
-    }
+    await runWithProgress(async () => {
+      try {
+        const result = await api.createBackup("full", dest as string);
+        toast.success(t("settings.system.backupSuccess"), {
+          description: result.path,
+        });
+        await refresh();
+      } catch (e) {
+        toast.error(t("settings.system.backupFailed"), {
+          description: String(e),
+        });
+      }
+    });
   };
 
   const onRestore = async () => {
@@ -130,37 +180,49 @@ export function BackupCards() {
       confirmLabel: t("settings.system.restoreAction"),
     });
     if (!ok) return;
-    setBusy(true);
-    try {
-      await api.restoreBackup(archive as string);
-      toast.success(t("settings.system.restoreSuccess"), {
-        description: t("settings.system.restoreRestartHint"),
-      });
-      await refresh();
-    } catch (e) {
-      toast.error(t("settings.system.restoreFailed"), {
-        description: String(e),
-      });
-    } finally {
-      setBusy(false);
-    }
+    await runWithProgress(async () => {
+      try {
+        const result = await api.restoreBackup(archive as string);
+        const warning = result.warnings?.filter(Boolean).join(" · ");
+        toast.success(t("settings.system.restoreSuccess"), {
+          description: warning
+            ? t("settings.system.restoreWarning", { warning })
+            : t("settings.system.restoreRestartHint"),
+          duration: 8000,
+        });
+        const reload = await dialog.confirm(
+          t("settings.system.restoreRestartHint"),
+          {
+            title: t("settings.system.restoreSuccess"),
+            confirmLabel: t("settings.system.restoreReloadNow"),
+          },
+        );
+        if (reload) {
+          window.location.reload();
+        }
+        await refresh();
+      } catch (e) {
+        toast.error(t("settings.system.restoreFailed"), {
+          description: String(e),
+        });
+      }
+    });
   };
 
   const onModuleBackup = async (module: "config" | "chat") => {
-    setBusy(true);
-    try {
-      const result = await api.createBackup(module);
-      toast.success(t("settings.system.backupSuccess"), {
-        description: result.path,
-      });
-      await refresh();
-    } catch (e) {
-      toast.error(t("settings.system.backupFailed"), {
-        description: String(e),
-      });
-    } finally {
-      setBusy(false);
-    }
+    await runWithProgress(async () => {
+      try {
+        const result = await api.createBackup(module);
+        toast.success(t("settings.system.backupSuccess"), {
+          description: result.path,
+        });
+        await refresh();
+      } catch (e) {
+        toast.error(t("settings.system.backupFailed"), {
+          description: String(e),
+        });
+      }
+    });
   };
 
   const onPickBackupDir = async () => {
@@ -199,6 +261,16 @@ export function BackupCards() {
     { value: "30", label: t("settings.system.backupInterval30") },
     { value: "60", label: t("settings.system.backupInterval60") },
   ];
+
+  const progressOp = progress?.op === "restore" ? "restore" : "backup";
+  const phaseKey =
+    progressOp === "restore"
+      ? `settings.system.restoreProgressPhase.${progress?.phase || "preparing"}`
+      : `settings.system.backupProgressPhase.${progress?.phase || "preparing"}`;
+  const phaseLabel = t(phaseKey, {
+    defaultValue: progress?.phase || "",
+  });
+  const pct = progressPercent(progress);
 
   return (
     <>
@@ -246,6 +318,35 @@ export function BackupCards() {
             </button>
           </div>
         </div>
+
+        {busy && progress ? (
+          <div className="settings-backup-progress" aria-live="polite">
+            <div className="settings-backup-progress-head">
+              <span>
+                {progressOp === "restore"
+                  ? t("settings.system.restoreProgressTitle")
+                  : t("settings.system.backupProgressTitle")}
+              </span>
+              <span className="settings-backup-progress-pct">{pct}%</span>
+            </div>
+            <div
+              className="settings-backup-progress-track"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={pct}
+            >
+              <div
+                className="settings-backup-progress-fill"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <div className="settings-backup-progress-detail">
+              {phaseLabel}
+              {progress.detail ? ` · ${progress.detail}` : ""}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="settings-card">

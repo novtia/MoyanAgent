@@ -235,7 +235,7 @@ function useProjectActions() {
     const archivePath = await openDialog({
       multiple: false,
       title: "选择 .atelier 归档文件",
-      filters: [{ name: "Atelier 归档", extensions: ["atelier"] }],
+      filters: [{ name: "Lumen 归档", extensions: ["atelier"] }],
     });
     if (!archivePath) return;
     setImporting(true);
@@ -453,7 +453,7 @@ function ProjectItem({ project, sessions, onOpenChat }: ProjectItemProps) {
     const destPath = await saveDialog({
       title: "导出项目归档",
       defaultPath: `${project.name}.atelier`,
-      filters: [{ name: "Atelier 归档", extensions: ["atelier"] }],
+      filters: [{ name: "Lumen 归档", extensions: ["atelier"] }],
     });
     if (!destPath) return;
     try {

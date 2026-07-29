@@ -639,6 +639,17 @@ export interface RestoreResult {
   module: BackupModule;
   path: string;
   requires_restart: boolean;
+  warnings?: string[];
+}
+
+export interface BackupProgressEvent {
+  op: "backup" | "restore" | string;
+  phase: string;
+  /** Overall 0–100 progress for the whole operation. */
+  percent: number;
+  current: number;
+  total: number;
+  detail: string;
 }
 
 export interface BackupListItem {

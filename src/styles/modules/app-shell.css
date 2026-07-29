@@ -172,7 +172,8 @@
   opacity: 0.88;
   transition: opacity 0.12s ease, filter 0.12s ease;
 }
-:root[data-theme="dark"] .titlebar-win-icon {
+:root[data-theme="dark"] .titlebar-win-icon,
+:root[data-theme="ink"] .titlebar-win-icon {
   filter: invert(1);
 }
 .titlebar-btn:hover .titlebar-win-icon {

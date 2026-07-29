@@ -1,108 +1,78 @@
-# Atelier · gpt-image-2
+# Lumen
 
-Local-first desktop application for OpenRouter-compatible image generation and
-editing chat. Built on **Tauri 2 + React + TypeScript** (frontend) and **Rust**
-(backend with SQLite, file-system image store, local image editor, OpenRouter
-client).
+本地优先的 AI 工作台。基于 **Tauri 2 + React + TypeScript**（前端）与 **Rust**（后端：SQLite、文件系统、多供应商 LLM 客户端）。
 
-## Features
+会话、媒体、密钥与配置均保存在本机；请求由 Rust 后端发出，不经过 WebView。
 
-- Multi-session chat with persistent history (SQLite).
-- Generate images from text prompts via OpenRouter `chat/completions`
-  (`image_config` aspect ratio + size).
-- Image editing: drop in reference images and ask the model to remix.
-- Local image tools (no API call):
-  - Crop (free / 1:1 / 4:3 / 3:4 / 16:9 / 9:16)
-  - Transform (rotate 90/180/270, flip H/V, resize)
-  - Mask (paint to remove regions; outputs PNG with transparency)
-- Image preview overlay with wheel-zoom and pan.
-- API key, endpoint and model are stored locally in SQLite — never leave the
-  machine.
-- Drag & drop / paste / file picker for attachments (PNG / JPEG / WebP, ≤ 50
-  MB, ≤ 8 per message).
+## 能力概览
 
-## Layout
+- **多会话对话**：历史持久化；流式回复；消息编辑 / 重发 / 引用；附件拖拽、粘贴与选择；`@` 引用项目文件。
+- **Ask / Agent / Plan**：绑定项目后可切换模式——问答与联网、可读写工作区的完整 Agent、只读探索与规划。
+- **Agent 工具链**：读写文件、Shell、Grep、Todo、AskUser、WebSearch / WebFetch、文档创建与编辑、角色状态等；支持自定义 Agent 与流程串联。
+- **项目工作区**：本地文件夹绑定、项目级提示词与模型参数、右侧文档阅读器（文件树、查找替换、diff 确认）。
+- **图像与视频**：文生图 / 参考图 remix、本地裁剪与遮罩编辑；具备 video 能力的模型可文生视频、首帧 / 首尾帧与多模态参考。
+- **多供应商 LLM**：添加 OpenAI 兼容端点（OpenRouter、OpenAI、Anthropic 等）；按能力标记模型；会话内切换模型与思考强度。
+- **搜索**：`Ctrl+K` 跨会话全文检索（含正文、思考与工具输出）；会话内精读查找；可配置本地或 API 联网搜索。
+- **备份与用量**：模块化 ZIP 备份 / 恢复；Token 与费用趋势统计。
+- **外观**：多主题、强调色、字体与布局密度；中 / 英界面。
+
+侧边栏中的 Skills / Plugins / Automations 目前为占位，尚未启用。
+
+## 仓库结构
 
 ```
-gpt-image2/
-├── src/                    React + TS frontend
-│   ├── api/tauri.ts        invoke wrappers
-│   ├── store/              Zustand stores (settings, session)
-│   ├── components/         UI: Sidebar, Chat, Composer, Editor, Preview
-│   └── styles/             design tokens + modular CSS (globals.css → modules/*)
-└── src-tauri/              Rust backend
-    ├── migrations/         SQLite schema
+Lumen/
+├── src/                         React + TypeScript 前端
+│   ├── api/tauri.ts             Tauri invoke 封装
+│   ├── store/                   Zustand 状态
+│   ├── components/              侧边栏、会话、Composer、设置、阅读器等
+│   └── styles/                  设计 token + 模块化 CSS
+└── src-tauri/                   Rust 后端
+    ├── migrations/              SQLite schema
     └── src/
-        ├── lib.rs          AppState + Tauri commands
-        ├── db.rs           r2d2 + rusqlite pool
-        ├── settings.rs     settings table
-        ├── session.rs      sessions / messages / message_images
-        ├── images.rs       attachment + thumbnail + output storage
-        ├── editor.rs       image-crate based local edits
-        ├── openrouter.rs   reqwest chat/completions client
-        └── paths.rs        app data layout helpers
+        ├── app/                 Tauri commands、生成流、会话 API
+        ├── ai/                  Agent、工具、多供应商客户端
+        └── data/                SQLite、路径、备份与传输
 ```
 
-## Data lives in `<app_data>/atelier`
+## 数据目录
+
+应用数据位于 `<app_data>/atelier`（历史目录名，产品现为 Lumen）：
 
 ```
 atelier/
 ├── atelier.db
 └── sessions/<session_id>/
-    ├── in/<id>.<ext>      uploaded reference images
-    ├── out/<id>.<ext>     generated images
-    ├── edit/<id>.<ext>    local-edit results
-    └── thumb/<id>.webp    thumbnails for the strip
+    ├── in/      上传的参考媒体
+    ├── out/     生成结果
+    ├── edit/    本地编辑结果
+    └── thumb/   缩略图
 ```
 
-## Develop
+## 开发
 
-Prereqs: **Rust toolchain** (1.77+), **Node.js 18+**, **npm**, plus the
-[Tauri 2 system prerequisites](https://v2.tauri.app/start/prerequisites/) (on
-Windows: WebView2 — usually already installed).
+依赖：**Rust**（1.77+）、**Node.js 18+**、**npm**，以及 [Tauri 2 系统前置条件](https://v2.tauri.app/start/prerequisites/)（Windows 通常已自带 WebView2）。
 
 ```bash
 npm install
 npm run tauri:dev
 ```
 
-The first `cargo build` will be slow (compiles SQLite + reqwest + image
-toolchain). Subsequent runs are incremental.
+首次 `cargo build` 较慢（编译 SQLite、reqwest、image 等），之后为增量编译。
 
-## Build a desktop bundle
+## 打包
 
 ```bash
 npm run tauri:build
 ```
 
-Bundle outputs land in `src-tauri/target/release/bundle/`. The bundled icons
-under `src-tauri/icons/` are minimal placeholders — replace them with your own
-artwork (or run `npx tauri icon path/to/source.png` to regenerate) before
-shipping.
+产物在 `src-tauri/target/release/bundle/`。发布前请替换 `src-tauri/icons/`（或执行 `npx tauri icon path/to/source.png` 重新生成）。
 
-## First-run setup inside the app
+## 首次使用
 
-1. Open the **Settings** panel (left sidebar).
-2. Paste your OpenRouter API key. Endpoint and model are pre-filled with
-   `https://openrouter.ai/api/v1/chat/completions` and
-   `openai/gpt-5.4-image-2`.
-3. Pick the default aspect ratio and image size.
-4. Click **新建会话** to start a session, type a prompt, hit Enter.
+1. 打开侧边栏 **设置**。
+2. 在「模型服务」中添加并启用至少一个供应商与模型。
+3. （可选）配置联网搜索来源。
+4. **新建会话**，按需绑定项目，开始对话。
 
-## Notes on the OpenRouter contract
-
-Requests are POSTed by the Rust backend, not the WebView. The body is
-
-```json
-{
-  "model": "<model>",
-  "modalities": ["image", "text"],
-  "messages": [{ "role": "user", "content": "<prompt or array>" }],
-  "image_config": { "aspect_ratio": "...", "image_size": "..." }
-}
-```
-
-with `content` upgraded to a `[ {type:"text"}, {type:"image_url"} ... ]` array
-when there are reference attachments. Response parsing tries
-`message.images[].image_url.url`, then `message.content[]`, then any inline
-`data:image/<fmt>;base64,...` URL in the assistant text.
+生图 / 生视频取决于所选模型的能力标记；OpenAI 兼容的 `chat/completions` 或厂商专用端点由后端按供应商适配。

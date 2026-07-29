@@ -210,7 +210,7 @@ export function SearchDialog({ open, onClose, onOpenChat }: SearchDialogProps) {
               </span>
               <span className="search-result-side">
                 <span className="search-result-model">
-                  {shortModelLabel(result.model || "") || activeModelLabel || "gpt-image2"}
+                  {shortModelLabel(result.model || "") || activeModelLabel || "—"}
                 </span>
                 {index < RECENT_LIMIT && (
                   <kbd className="search-result-key">Ctrl+{index + 1}</kbd>
