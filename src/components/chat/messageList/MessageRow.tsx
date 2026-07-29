@@ -17,6 +17,8 @@ import {
   messageMatchesVideoMode,
   useSession,
 } from "../../../store/session";
+import { useChatFind } from "../../../store/chatFind";
+import { highlightQuery } from "../../../utils/highlightQuery";
 import { ATELIER_DRAG_TYPE } from "../rightPanel/gallery";
 import { READER_FILE_DRAG_TYPE } from "../../../utils/readerDrag";
 import { ComposerFileTree } from "../ComposerFileTree";
@@ -91,6 +93,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
   const isError = m.role === "error";
   const busyBySession = useSession((s) => s.busyBySession);
   const isTempSession = useSession((s) => !!s.active?.session.is_temporary);
+  const findQuery = useChatFind((s) => (s.open ? s.query : ""));
   const isSpawnedPrompt =
     isUser &&
     (m.params?.spawned_prompt === true || isTempSession);
@@ -699,6 +702,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
             <ThinkingBlock
               content={thinkingContent}
               streaming={isStreamingDraft}
+              highlightQuery={findQuery || undefined}
             />
           ) : null}
 
@@ -748,6 +752,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
               blocks={blocks as AssistantBlock[]}
               isStreaming={isStreamingDraft}
               suppressText={showMessageText}
+              highlightQuery={findQuery || undefined}
             />
           )}
 
@@ -757,13 +762,20 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
                 <MentionText
                   text={m.text || ""}
                   mediaByPath={inputMediaByPath}
+                  highlight={findQuery || undefined}
                 />
+              ) : findQuery ? (
+                highlightQuery(m.text || "", findQuery)
               ) : (
                 m.text
               )}
             </div>
           )}
-          {!editing && isError && <div className="text mono">{m.text}</div>}
+          {!editing && isError && (
+            <div className="text mono">
+              {findQuery ? highlightQuery(m.text || "", findQuery) : m.text}
+            </div>
+          )}
 
           {editing && (
             <div

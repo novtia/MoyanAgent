@@ -399,6 +399,15 @@ export interface SessionSearchResult extends SessionSummary {
   project_id: string | null;
 }
 
+/** Per-message hit inside a session (chat find navigation). */
+export interface SessionSearchHit {
+  message_id: string;
+  role: "user" | "assistant" | "error" | string;
+  created_at: number;
+  snippet: string;
+  match_fields: string[];
+}
+
 /** Lightweight in-session timeline / virtual-list index row. */
 export interface MessageOutlineItem {
   id: string;

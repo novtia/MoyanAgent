@@ -211,3 +211,150 @@
     display: none;
   }
 }
+
+/* ── Chat find bar (in-session deep read) ─────────────────────────────── */
+/* Match composer-dock horizontal padding / content width */
+.chat-find-dock {
+  flex-shrink: 0;
+  padding: 0 24px 8px;
+  display: flex;
+  justify-content: center;
+  position: relative;
+}
+.messages:not(.is-empty) ~ .chat-find-dock {
+  padding-left: var(--msg-timeline-gutter);
+}
+
+.chat-find-bar {
+  width: 100%;
+  max-width: var(--chat-content-width);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-elevated, var(--bg));
+  box-shadow: 0 6px 20px -14px rgba(0, 0, 0, 0.35);
+}
+
+.chat-find-bar-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 14px;
+  min-height: 40px;
+}
+
+.chat-find-query {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.chat-find-count {
+  flex-shrink: 0;
+  color: var(--ink-mute);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-find-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.chat-find-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.chat-find-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+
+.chat-find-btn.is-active {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+
+.chat-find-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.chat-find-list {
+  max-height: 160px;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+  padding: 6px;
+  scrollbar-width: thin;
+}
+
+.chat-find-hit {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.chat-find-hit:hover,
+.chat-find-hit.is-active {
+  background: var(--bg-hover);
+  color: var(--ink);
+}
+
+.chat-find-hit-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.chat-find-hit-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chat-find-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line-strong) 55%, transparent);
+  color: var(--ink-mute);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.search-result mark,
+.chat-find-hit mark,
+mark.chat-find-mark {
+  background: color-mix(in srgb, var(--amber-500, #e6a23c) 42%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}

@@ -70,6 +70,22 @@ const zhCN = {
     sessionMatched: "会话匹配",
     messageMatches: "{{count}} 条消息匹配",
   },
+  chatFind: {
+    title: "会话内查找",
+    prev: "上一条",
+    next: "下一条",
+    close: "关闭",
+    searching: "搜索中…",
+    noResults: "无匹配消息",
+    matchCount: "{{current}} / {{total}}",
+    matchList: "命中列表",
+    emptySnippet: "(无摘要)",
+    field: {
+      text: "正文",
+      thinking: "思考",
+      tool: "工具",
+    },
+  },
   chat: {
     defaultTitle: "新对话",
     moreTitle: "更多",

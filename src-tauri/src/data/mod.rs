@@ -4,6 +4,7 @@ pub(crate) mod db;
 pub(crate) mod file_snapshot;
 pub(crate) mod pending_diff;
 pub(crate) mod llm_catalog;
+pub(crate) mod message_search;
 pub(crate) mod paths;
 pub(crate) mod project;
 pub(crate) mod role_state;

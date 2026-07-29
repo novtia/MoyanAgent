@@ -166,6 +166,7 @@ pub fn run() {
             clipboard::clipboard_write_text,
             sessions::list_sessions,
             sessions::search_sessions,
+            sessions::search_session_hits,
             sessions::create_session,
             sessions::rename_session,
             sessions::update_session_config,

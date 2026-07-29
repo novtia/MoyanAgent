@@ -1,13 +1,16 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { highlightQuery } from "../../../utils/highlightQuery";
 import { ThinkingChevronIcon, ThinkingIcon } from "./icons";
 
 export function ThinkingBlock({
   content,
   streaming,
+  highlightQuery: query,
 }: {
   content: string;
   streaming: boolean;
+  highlightQuery?: string;
 }) {
   const { t } = useTranslation();
   const uid = useId();
@@ -23,6 +26,13 @@ export function ThinkingBlock({
     }
     prevStreamingRef.current = streaming;
   }, [streaming]);
+
+  useEffect(() => {
+    if (!query?.trim() || !content) return;
+    if (content.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) {
+      setOpen(true);
+    }
+  }, [query, content]);
 
   const handleToggle = () => {
     userToggledRef.current = true;
@@ -65,7 +75,9 @@ export function ThinkingBlock({
         aria-hidden={!open}
       >
         <div className="msg-thinking-panel-inner">
-          <div className="msg-thinking-content">{content}</div>
+          <div className="msg-thinking-content">
+            {query ? highlightQuery(content, query) : content}
+          </div>
         </div>
       </div>
     </div>

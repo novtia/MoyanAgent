@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { AssistantBlock } from "../../../types";
+import { highlightQuery } from "../../../utils/highlightQuery";
 import { AgentStageDivider } from "./AgentStageDivider";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { TodoMasterView } from "./TodoMasterView";
@@ -10,6 +11,7 @@ export function AssistantContent({
   blocks,
   isStreaming,
   suppressText,
+  highlightQuery: query,
 }: {
   blocks: AssistantBlock[];
   isStreaming: boolean;
@@ -20,6 +22,7 @@ export function AssistantContent({
    * alongside the edit.
    */
   suppressText?: boolean;
+  highlightQuery?: string;
 }) {
   const lastThinkingIdx = useMemo(() => {
     for (let i = blocks.length - 1; i >= 0; i--) {
@@ -58,6 +61,7 @@ export function AssistantContent({
               key={`thinking:${i}`}
               content={block.content}
               streaming={isStreaming && live}
+              highlightQuery={query}
             />
           );
         }
@@ -65,7 +69,7 @@ export function AssistantContent({
           if (suppressText || !block.content) return null;
           return (
             <div key={`text:${i}`} className="text">
-              {block.content}
+              {query ? highlightQuery(block.content, query) : block.content}
             </div>
           );
         }

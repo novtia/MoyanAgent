@@ -50,15 +50,38 @@ CREATE INDEX IF NOT EXISTS idx_sessions_temporary ON sessions(is_temporary);
 
 -- ─── messages ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS messages (
-  id          TEXT PRIMARY KEY,
-  session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  role        TEXT NOT NULL,
-  text        TEXT,
-  params_json TEXT,
-  created_at  INTEGER NOT NULL,
-  events_json TEXT
+  id              TEXT PRIMARY KEY,
+  session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  role            TEXT NOT NULL,
+  text            TEXT,
+  params_json     TEXT,
+  created_at      INTEGER NOT NULL,
+  events_json     TEXT,
+  searchable_text TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
+
+-- FTS5 trigram indexes (application-maintained; delete triggers keep in sync)
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+  searchable_text,
+  content='messages',
+  content_rowid='rowid',
+  tokenize='trigram'
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
+  title,
+  content='sessions',
+  content_rowid='rowid',
+  tokenize='trigram'
+);
+CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, searchable_text)
+    VALUES('delete', old.rowid, old.searchable_text);
+END;
+CREATE TRIGGER IF NOT EXISTS sessions_fts_ad AFTER DELETE ON sessions BEGIN
+  INSERT INTO sessions_fts(sessions_fts, rowid, title)
+    VALUES('delete', old.rowid, old.title);
+END;
 
 -- ─── message_images ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS message_images (

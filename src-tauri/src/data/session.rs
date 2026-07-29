@@ -4,6 +4,7 @@ use ulid::Ulid;
 
 use crate::ai::tokens;
 use crate::data::db::{now_ms, DbConn};
+use crate::data::message_search;
 use crate::data::settings::{
     validate_model_param_settings, ModelParamSettings, DEFAULT_HISTORY_TURNS,
 };
@@ -306,6 +307,7 @@ pub fn create(conn: &DbConn, title: Option<String>, model: Option<String>) -> Ap
         "INSERT INTO sessions(id, title, model, system_prompt, agent_type, created_at, updated_at) VALUES(?1, ?2, ?3, '', ?4, ?5, ?5)",
         params![id, title, model, SESSION_AGENT_CHAT, now],
     )?;
+    let _ = message_search::index_new_session(conn, &id);
     Ok(Session {
         id,
         title,
@@ -373,6 +375,7 @@ pub fn create_temp(
             now,
         ],
     )?;
+    let _ = message_search::index_new_session(conn, &id);
     Ok(Session {
         id,
         title,
@@ -477,6 +480,13 @@ pub fn set_agent_type(conn: &DbConn, id: &str, agent_type: &str) -> AppResult<()
 }
 
 pub fn rename(conn: &DbConn, id: &str, title: &str) -> AppResult<()> {
+    let (old_title,): (String,) = conn
+        .query_row(
+            "SELECT title FROM sessions WHERE id=?1",
+            params![id],
+            |r| Ok((r.get(0)?,)),
+        )
+        .map_err(|_| AppError::NotFound(format!("session {id}")))?;
     let updated = now_ms();
     let n = conn.execute(
         "UPDATE sessions SET title=?1, updated_at=?2 WHERE id=?3",
@@ -485,6 +495,7 @@ pub fn rename(conn: &DbConn, id: &str, title: &str) -> AppResult<()> {
     if n == 0 {
         return Err(AppError::NotFound(format!("session {id}")));
     }
+    let _ = message_search::update_session_title_fts(conn, id, &old_title, title);
     Ok(())
 }
 
@@ -628,6 +639,7 @@ pub fn update_message_text(conn: &DbConn, id: &str, text: &str) -> AppResult<()>
     if n == 0 {
         return Err(AppError::NotFound(format!("message {id}")));
     }
+    message_search::reindex_message(conn, id)?;
     Ok(())
 }
 
@@ -639,6 +651,7 @@ pub fn update_message_params(conn: &DbConn, id: &str, params_json: &str) -> AppR
     if n == 0 {
         return Err(AppError::NotFound(format!("message {id}")));
     }
+    message_search::reindex_message(conn, id)?;
     Ok(())
 }
 
@@ -709,14 +722,7 @@ pub fn list(conn: &DbConn) -> AppResult<Vec<SessionSummary>> {
 }
 
 fn escape_like(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    for ch in raw.chars() {
-        if matches!(ch, '\\' | '%' | '_') {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out
+    message_search::escape_like(raw)
 }
 
 pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSearchResult>> {
@@ -744,25 +750,89 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
         return Ok(out);
     }
 
+    let use_fts = message_search::query_char_len(query) >= 3;
+
+    if use_fts {
+        let fts_q = message_search::escape_fts_query(query);
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.context_window, s.context_window_used, s.agent_type, s.updated_at,
+                (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt,
+                s.project_id,
+                (SELECT mm.id FROM messages mm
+                 JOIN messages_fts ON messages_fts.rowid = mm.rowid
+                 WHERE mm.session_id = s.id AND messages_fts MATCH ?1
+                 ORDER BY mm.created_at DESC LIMIT 1) AS match_message_id,
+                (SELECT mm.role FROM messages mm
+                 JOIN messages_fts ON messages_fts.rowid = mm.rowid
+                 WHERE mm.session_id = s.id AND messages_fts MATCH ?1
+                 ORDER BY mm.created_at DESC LIMIT 1) AS match_role,
+                (SELECT mm.searchable_text FROM messages mm
+                 JOIN messages_fts ON messages_fts.rowid = mm.rowid
+                 WHERE mm.session_id = s.id AND messages_fts MATCH ?1
+                 ORDER BY mm.created_at DESC LIMIT 1) AS match_text,
+                (SELECT mm.created_at FROM messages mm
+                 JOIN messages_fts ON messages_fts.rowid = mm.rowid
+                 WHERE mm.session_id = s.id AND messages_fts MATCH ?1
+                 ORDER BY mm.created_at DESC LIMIT 1) AS match_created_at,
+                (SELECT COUNT(*) FROM messages mc
+                 JOIN messages_fts ON messages_fts.rowid = mc.rowid
+                 WHERE mc.session_id = s.id AND messages_fts MATCH ?1) AS match_count,
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM sessions_fts WHERE sessions_fts.rowid = s.rowid AND sessions_fts MATCH ?1
+                ) THEN 1 ELSE 0 END AS title_match,
+                s.provider_id
+             FROM sessions s
+             WHERE COALESCE(s.is_temporary, 0) = 0
+               AND (
+                 EXISTS (
+                    SELECT 1 FROM sessions_fts
+                    WHERE sessions_fts.rowid = s.rowid AND sessions_fts MATCH ?1
+                 )
+                 OR EXISTS (
+                    SELECT 1 FROM messages mx
+                    JOIN messages_fts ON messages_fts.rowid = mx.rowid
+                    WHERE mx.session_id = s.id AND messages_fts MATCH ?1
+                 )
+               )
+             ORDER BY
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM sessions_fts
+                    WHERE sessions_fts.rowid = s.rowid AND sessions_fts MATCH ?1
+                ) THEN 0 ELSE 1 END,
+                s.updated_at DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![fts_q, limit], map_search_result)?;
+        let mut out = Vec::new();
+        for r in rows {
+            let mut item = r?;
+            if let Some(ref body) = item.match_text {
+                item.match_text = Some(message_search::make_snippet(body, query));
+            }
+            out.push(item);
+        }
+        return Ok(out);
+    }
+
     let pattern = format!("%{}%", escape_like(query));
     let mut stmt = conn.prepare(
         "SELECT s.id, s.title, s.model, s.system_prompt, s.history_turns, s.llm_params, s.context_window, s.context_window_used, s.agent_type, s.updated_at,
             (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS cnt,
             s.project_id,
             (SELECT mm.id FROM messages mm
-             WHERE mm.session_id = s.id AND COALESCE(mm.text, '') LIKE ?1 ESCAPE '\\'
+             WHERE mm.session_id = s.id AND COALESCE(mm.searchable_text, '') LIKE ?1 ESCAPE '\\'
              ORDER BY mm.created_at DESC LIMIT 1) AS match_message_id,
             (SELECT mm.role FROM messages mm
-             WHERE mm.session_id = s.id AND COALESCE(mm.text, '') LIKE ?1 ESCAPE '\\'
+             WHERE mm.session_id = s.id AND COALESCE(mm.searchable_text, '') LIKE ?1 ESCAPE '\\'
              ORDER BY mm.created_at DESC LIMIT 1) AS match_role,
-            (SELECT mm.text FROM messages mm
-             WHERE mm.session_id = s.id AND COALESCE(mm.text, '') LIKE ?1 ESCAPE '\\'
+            (SELECT mm.searchable_text FROM messages mm
+             WHERE mm.session_id = s.id AND COALESCE(mm.searchable_text, '') LIKE ?1 ESCAPE '\\'
              ORDER BY mm.created_at DESC LIMIT 1) AS match_text,
             (SELECT mm.created_at FROM messages mm
-             WHERE mm.session_id = s.id AND COALESCE(mm.text, '') LIKE ?1 ESCAPE '\\'
+             WHERE mm.session_id = s.id AND COALESCE(mm.searchable_text, '') LIKE ?1 ESCAPE '\\'
              ORDER BY mm.created_at DESC LIMIT 1) AS match_created_at,
             (SELECT COUNT(*) FROM messages mc
-             WHERE mc.session_id = s.id AND COALESCE(mc.text, '') LIKE ?1 ESCAPE '\\') AS match_count,
+             WHERE mc.session_id = s.id AND COALESCE(mc.searchable_text, '') LIKE ?1 ESCAPE '\\') AS match_count,
             CASE WHEN s.title LIKE ?1 ESCAPE '\\' THEN 1 ELSE 0 END AS title_match,
             s.provider_id
          FROM sessions s
@@ -771,7 +841,7 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
              s.title LIKE ?1 ESCAPE '\\'
              OR EXISTS (
                  SELECT 1 FROM messages mx
-                 WHERE mx.session_id = s.id AND COALESCE(mx.text, '') LIKE ?1 ESCAPE '\\'
+                 WHERE mx.session_id = s.id AND COALESCE(mx.searchable_text, '') LIKE ?1 ESCAPE '\\'
              )
            )
          ORDER BY
@@ -782,7 +852,11 @@ pub fn search(conn: &DbConn, query: &str, limit: i64) -> AppResult<Vec<SessionSe
     let rows = stmt.query_map(params![pattern, limit], map_search_result)?;
     let mut out = Vec::new();
     for r in rows {
-        out.push(r?);
+        let mut item = r?;
+        if let Some(ref body) = item.match_text {
+            item.match_text = Some(message_search::make_snippet(body, query));
+        }
+        out.push(item);
     }
     Ok(out)
 }
@@ -867,15 +941,20 @@ pub fn insert_message(
 ) -> AppResult<Message> {
     let id = Ulid::new().to_string();
     let now = now_ms();
-    conn.execute(
-        "INSERT INTO messages(id, session_id, role, text, params_json, created_at) VALUES(?1,?2,?3,?4,?5,?6)",
-        params![id, session_id, role, text, params_json, now],
-    )?;
-    touch(conn, session_id)?;
     let params_v: Option<serde_json::Value> = match params_json {
         Some(s) => serde_json::from_str(s).ok(),
         None => None,
     };
+    let searchable = message_search::build_searchable_text(
+        text,
+        params_v.as_ref().unwrap_or(&serde_json::Value::Null),
+    );
+    conn.execute(
+        "INSERT INTO messages(id, session_id, role, text, params_json, created_at, searchable_text) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+        params![id, session_id, role, text, params_json, now, searchable],
+    )?;
+    let _ = message_search::index_new_message(conn, &id);
+    touch(conn, session_id)?;
     Ok(Message {
         id,
         session_id: session_id.into(),

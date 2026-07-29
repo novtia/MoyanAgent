@@ -250,6 +250,14 @@
 .msg.is-focused .bubble {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue-500) 22%, transparent);
 }
+
+mark.chat-find-mark,
+.msg .chat-find-mark {
+  background: color-mix(in srgb, var(--amber-500, #e6a23c) 42%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
 @keyframes rise {
   from {
     opacity: 0;

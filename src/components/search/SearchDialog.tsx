@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../api/tauri";
+import { useChatFind } from "../../store/chatFind";
 import { useSession } from "../../store/session";
 import { useSettings } from "../../store/settings";
 import type { SessionSearchResult } from "../../types";
+import { highlightQuery } from "../../utils/highlightQuery";
 
 const RECENT_LIMIT = 5;
 const SEARCH_LIMIT = 20;
@@ -99,10 +101,17 @@ export function SearchDialog({ open, onClose, onOpenChat }: SearchDialogProps) {
   const openResult = useCallback(
     async (result: SessionSearchResult | undefined) => {
       if (!result) return;
+      const q = query.trim();
       await switchTo(result.id);
       onOpenChat();
       onClose();
-      if (result.match_message_id) {
+      if (q) {
+        void useChatFind.getState().activate({
+          sessionId: result.id,
+          query: q,
+          preferredMessageId: result.match_message_id ?? undefined,
+        });
+      } else if (result.match_message_id) {
         window.setTimeout(() => {
           window.dispatchEvent(
             new CustomEvent("atelier:focus-message", {
@@ -112,7 +121,7 @@ export function SearchDialog({ open, onClose, onOpenChat }: SearchDialogProps) {
         }, 80);
       }
     },
-    [onClose, onOpenChat, switchTo],
+    [onClose, onOpenChat, query, switchTo],
   );
 
   const onKeyDown = (event: React.KeyboardEvent) => {
@@ -191,14 +200,11 @@ export function SearchDialog({ open, onClose, onOpenChat }: SearchDialogProps) {
             >
               <span className="search-result-main">
                 <span className="search-result-title">
-                  <HighlightText text={result.title} query={query} />
+                  {highlightQuery(result.title, query)}
                 </span>
                 {isSearching && (
                   <span className="search-result-snippet">
-                    <HighlightText
-                      text={resultSummary(result, query, t)}
-                      query={query}
-                    />
+                    {highlightQuery(resultSummary(result, query, t), query)}
                   </span>
                 )}
               </span>
@@ -258,23 +264,4 @@ function makeSnippet(text: string, query: string) {
   const start = index >= 0 ? Math.max(0, index - 22) : 0;
   const end = Math.min(compact.length, start + maxLength);
   return `${start > 0 ? "..." : ""}${compact.slice(start, end)}${end < compact.length ? "..." : ""}`;
-}
-
-function HighlightText({ text, query }: { text: string; query: string }) {
-  const needle = query.trim();
-  if (!needle) return <>{text}</>;
-
-  const lowerText = text.toLocaleLowerCase();
-  const lowerNeedle = needle.toLocaleLowerCase();
-  const start = lowerText.indexOf(lowerNeedle);
-  if (start < 0) return <>{text}</>;
-
-  const end = start + needle.length;
-  return (
-    <>
-      {text.slice(0, start)}
-      <mark>{text.slice(start, end)}</mark>
-      {text.slice(end)}
-    </>
-  );
 }

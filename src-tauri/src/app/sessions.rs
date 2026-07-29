@@ -34,6 +34,17 @@ pub fn search_sessions(
 }
 
 #[tauri::command]
+pub fn search_session_hits(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+    query: String,
+    limit: i64,
+) -> Result<Vec<crate::data::message_search::SessionSearchHit>, AppError> {
+    let conn = state.conn()?;
+    crate::data::message_search::search_session_hits(&conn, &session_id, &query, limit)
+}
+
+#[tauri::command]
 pub fn create_session(
     state: tauri::State<Arc<AppState>>,
     args: CreateSessionArgs,

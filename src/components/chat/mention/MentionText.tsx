@@ -5,6 +5,7 @@ import {
 } from "./core";
 import { MentionChip } from "./MentionChip";
 import { RoleCiteChip } from "./RoleCiteChip";
+import { highlightQuery } from "../../../utils/highlightQuery";
 
 /**
  * Render plain message text, turning serialized `@file` / `@role` tokens into
@@ -13,21 +14,28 @@ import { RoleCiteChip } from "./RoleCiteChip";
 export function MentionText({
   text,
   mediaByPath = {},
+  highlight,
 }: {
   text: string;
   mediaByPath?: Record<string, MentionMediaRenderData>;
+  /** When set, wrap plain-text segments with case-insensitive <mark> highlights. */
+  highlight?: string;
 }): ReactNode {
   if (!text) return null;
-  if (!text.includes("@")) return text;
+
+  const renderText = (value: string): ReactNode =>
+    highlight ? highlightQuery(value, highlight) : value;
+
+  if (!text.includes("@")) return renderText(text);
 
   const segments = parseMentionSegments(text);
   if (segments.length === 1 && segments[0].type === "text") {
-    return text;
+    return renderText(text);
   }
 
   return segments.map((seg, i) => {
     if (seg.type === "text") {
-      return <Fragment key={`t${i}`}>{seg.value}</Fragment>;
+      return <Fragment key={`t${i}`}>{renderText(seg.value)}</Fragment>;
     }
     if (seg.type === "roleCite") {
       return <RoleCiteChip key={`r${i}`} id={seg.id} name={seg.name} />;

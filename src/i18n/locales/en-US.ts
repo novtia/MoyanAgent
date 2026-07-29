@@ -73,6 +73,22 @@ const enUS: Resource = {
     sessionMatched: "Chat match",
     messageMatches: "{{count}} message matches",
   },
+  chatFind: {
+    title: "Find in chat",
+    prev: "Previous",
+    next: "Next",
+    close: "Close",
+    searching: "Searching…",
+    noResults: "No matches",
+    matchCount: "{{current}} / {{total}}",
+    matchList: "Match list",
+    emptySnippet: "(no snippet)",
+    field: {
+      text: "text",
+      thinking: "thinking",
+      tool: "tool",
+    },
+  },
   chat: {
     defaultTitle: "New chat",
     moreTitle: "More",

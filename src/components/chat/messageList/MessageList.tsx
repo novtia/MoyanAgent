@@ -7,6 +7,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../../store/session";
+import { useChatFind } from "../../../store/chatFind";
 import type { MessageListProps } from "./types";
 import { DevelopingRow } from "./DevelopingRow";
 import { MessageRow } from "./MessageRow";
@@ -61,6 +62,19 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
     (s) => s.messagesWindowHasMoreBefore,
   );
   const messagesLoading = useSession((s) => s.messagesLoading);
+  const chatFindOpen = useChatFind((s) => s.open);
+  const chatFindHitIndex = useChatFind((s) => s.hitIndex);
+  const chatFindHits = useChatFind((s) => s.hits);
+  const chatFindActiveId =
+    chatFindOpen && chatFindHitIndex >= 0
+      ? (chatFindHits[chatFindHitIndex]?.message_id ?? null)
+      : null;
+
+  useEffect(() => {
+    if (!chatFindOpen) {
+      setFocusedMessageId(null);
+    }
+  }, [chatFindOpen]);
 
   const ref = useRef<HTMLDivElement | null>(null);
   const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null);
@@ -282,9 +296,12 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
     };
 
     const onFocusMessage = (event: Event) => {
-      const messageId = (event as CustomEvent<{ messageId?: string }>).detail
-        ?.messageId;
+      const detail = (event as CustomEvent<{ messageId?: string; persist?: boolean }>)
+        .detail;
+      const messageId = detail?.messageId;
       if (!messageId) return;
+      const persist =
+        detail?.persist === true || useChatFind.getState().open;
       const token = ++focusTokenRef.current;
       void (async () => {
         suppressAutoScrollRef.current = true;
@@ -305,10 +322,12 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
           }
 
           setFocusedMessageId(messageId);
-          window.setTimeout(
-            () => setFocusedMessageId((id) => (id === messageId ? null : id)),
-            1600,
-          );
+          if (!persist) {
+            window.setTimeout(
+              () => setFocusedMessageId((id) => (id === messageId ? null : id)),
+              1600,
+            );
+          }
 
           if (idx < 0) return;
           await scrollMessageIntoView(messageId, idx, token);
@@ -331,6 +350,8 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
   const start = virtualEnabled ? range.start : 0;
   const end = virtualEnabled ? range.end : messages.length;
   const slice = messages.slice(start, end);
+  const isRowFocused = (id: string) =>
+    focusedMessageId === id || chatFindActiveId === id;
 
   const spacerStyle: CSSProperties | undefined = virtualEnabled
     ? {
@@ -384,7 +405,7 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
                       key={`${m.id}:${index}`}
                       m={m}
                       onPreviewImage={onPreviewImage}
-                      focused={focusedMessageId === m.id}
+                      focused={isRowFocused(m.id)}
                     />
                   );
                   if (!virtualEnabled) return row;
@@ -414,7 +435,7 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
                           <MessageRow
                             m={m}
                             onPreviewImage={onPreviewImage}
-                            focused={focusedMessageId === m.id}
+                            focused={isRowFocused(m.id)}
                           />
                         </VirtualRow>
                       );

@@ -27,6 +27,7 @@ import type {
   RemoteModelInfo,
   RestoreResult,
   SessionSearchResult,
+  SessionSearchHit,
   SessionSummary,
   SessionWithMessagesAbs,
   MessageOutlineItem,
@@ -85,6 +86,12 @@ export const api = {
   listSessions: () => invoke<SessionSummary[]>("list_sessions"),
   searchSessions: (query: string, limit = 20) =>
     invoke<SessionSearchResult[]>("search_sessions", { query, limit }),
+  searchSessionHits: (sessionId: string, query: string, limit = 200) =>
+    invoke<SessionSearchHit[]>("search_session_hits", {
+      sessionId,
+      query,
+      limit,
+    }),
   createSession: (title?: string, model?: string) =>
     invoke<Session>("create_session", { args: { title, model } }),
   renameSession: (id: string, title: string) =>

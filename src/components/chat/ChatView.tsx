@@ -4,12 +4,14 @@ import { useSession } from "../../store/session";
 import { useReader } from "../../store/reader";
 import { dialog } from "../ui";
 import { MessageList } from "./messageList";
+import { ChatFindBar } from "./messageList/ChatFindBar";
 import { Composer } from "./Composer";
 import { EmptyChat } from "./EmptyChat";
 import { RightPanel } from "./rightPanel";
 import { ChatFontPanel } from "./ChatFontPanel";
 import { ChatSessionBreadcrumb } from "./ChatSessionBreadcrumb";
 import type { AttachmentDraft, ImageRefAbs } from "../../types";
+import { useChatFind } from "../../store/chatFind";
 
 interface ChatViewProps {
   onEditAttachment: (a: AttachmentDraft) => void;
@@ -31,6 +33,19 @@ export function ChatView({
     s.activeId ? s.generationPhaseBySession[s.activeId] : undefined,
   );
   const remove = useSession((s) => s.remove);
+  const chatFindSessionId = useChatFind((s) => s.sessionId);
+  const closeChatFind = useChatFind((s) => s.close);
+
+  // Drop find bar when leaving the session it was opened for.
+  useEffect(() => {
+    const activeId = active?.session.id ?? null;
+    if (chatFindSessionId && activeId && chatFindSessionId !== activeId) {
+      closeChatFind();
+    }
+    if (chatFindSessionId && !activeId) {
+      closeChatFind();
+    }
+  }, [active?.session.id, chatFindSessionId, closeChatFind]);
 
   const [moreOpen, setMoreOpen] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
@@ -167,6 +182,7 @@ export function ChatView({
         ) : (
           <>
             <MessageList onPreviewImage={onPreviewImage} />
+            <ChatFindBar />
             {!isTemporary && (
               <Composer
                 onEditAttachment={onEditAttachment}
