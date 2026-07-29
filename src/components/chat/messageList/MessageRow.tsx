@@ -94,12 +94,15 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
   const isSpawnedPrompt =
     isUser &&
     (m.params?.spawned_prompt === true || isTempSession);
+  // Local-only stream row — never persisted. Hide mutate actions even after Stop
+  // clears busy (otherwise Delete hits the DB with a tmp-* id).
+  const isTempDraft = m.id.startsWith("tmp-assistant-");
   const isStreamingDraft =
-    m.id.startsWith("tmp-assistant-") && !!busyBySession[m.session_id];
+    isTempDraft && !!busyBySession[m.session_id];
   const hasText = !!(m.text && m.text.trim());
   const canEditUser =
     isUser && !isSpawnedPrompt && (hasText || inputs.length > 0);
-  const canEditAssistant = isAssistant && !isStreamingDraft && !isTempSession;
+  const canEditAssistant = isAssistant && !isTempDraft && !isTempSession;
   const canEdit = canEditUser || canEditAssistant;
   const canQuote =
     hasText ||
@@ -1002,12 +1005,12 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
             </div>
           )}
 
-          {isAssistant && !isStreamingDraft && !editing && (
+          {isAssistant && !isTempDraft && !editing && (
             <MessageTokenUsage usage={m.params?.usage} />
           )}
         </div>
 
-        {!editing && !isStreamingDraft && (
+        {!editing && !isTempDraft && (
           <div className="msg-action-bar">
             {outputs.map((img, i) => (
               <PlateActions

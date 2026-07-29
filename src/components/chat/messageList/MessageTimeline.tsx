@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -14,6 +15,8 @@ import type { MessageOutlineItem } from "../../../types";
 const LEVEL_BASE = 10;
 const LEVEL_STEP = 6;
 const REPLY_PREVIEW_CHARS = 180;
+/** Breathing room so the rail never touches the viewport edges. */
+const RAIL_VERTICAL_INSET = 48;
 
 function widthForLevel(level: number): number {
   return LEVEL_BASE + (level - 1) * LEVEL_STEP;
@@ -70,22 +73,75 @@ function buildTurns(outline: MessageOutlineItem[]): TimelineTurn[] {
   return turns;
 }
 
+interface RailBox {
+  left: number;
+  centerY: number;
+  maxHeight: number;
+}
+
 interface MessageTimelineProps {
+  /** The scroll container to align against (the message viewport). */
+  scrollRef: RefObject<HTMLElement | null>;
   /** Message the reader is currently on — its turn's tick renders solid. */
   activeMessageId: string | null;
   onHoverChange?: (messageId: string | null) => void;
 }
 
 /**
- * Sticky left-rail ruler: equal ticks at rest; hover expands a 5→1 staircase
- * with the peak tick in solid black (see design/message-timeline.html).
+ * Track the message viewport's screen box.
+ *
+ * The rail renders fixed in the body layer, so it needs the viewport's real
+ * rect rather than any ancestor's layout: that is what makes it immune to the
+ * sidebar collapsing, the right panel opening, or the message column resizing.
+ */
+function useRailBox(scrollRef: RefObject<HTMLElement | null>): RailBox | null {
+  const [box, setBox] = useState<RailBox | null>(null);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      const next: RailBox = {
+        left: r.left,
+        centerY: r.top + r.height / 2,
+        maxHeight: Math.max(0, r.height - RAIL_VERTICAL_INSET),
+      };
+      setBox((prev) =>
+        prev &&
+        Math.abs(prev.left - next.left) < 0.5 &&
+        Math.abs(prev.centerY - next.centerY) < 0.5 &&
+        Math.abs(prev.maxHeight - next.maxHeight) < 0.5
+          ? prev
+          : next,
+      );
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [scrollRef]);
+
+  return box;
+}
+
+/**
+ * Left-rail ruler pinned to the message viewport: equal ticks at rest; hover
+ * expands a 5→1 staircase with the peak tick in solid black
+ * (see design/message-timeline.html).
  */
 export function MessageTimeline({
+  scrollRef,
   activeMessageId,
   onHoverChange,
 }: MessageTimelineProps) {
   const { t } = useTranslation();
   const outline = useSession((s) => s.outline);
+  const rail = useRailBox(scrollRef);
 
   const turns = useMemo(() => buildTurns(outline), [outline]);
 
@@ -148,7 +204,7 @@ export function MessageTimeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hoverIndex, turns]);
 
-  if (turns.length === 0) return null;
+  if (turns.length === 0 || !rail) return null;
 
   const nearestIndex = (clientY: number) => {
     const nodes = trackRef.current?.querySelectorAll<HTMLElement>(".tl-tick");
@@ -187,11 +243,12 @@ export function MessageTimeline({
     onHoverChange?.(null);
   };
 
-  return (
+  return createPortal(
     <>
       <aside
         className="message-timeline"
         aria-label={t("chat.timelineLabel")}
+        style={{ left: rail.left, top: rail.centerY, height: rail.maxHeight }}
         onPointerMove={onPointerMove}
         onPointerLeave={onPointerLeave}
       >
@@ -218,18 +275,17 @@ export function MessageTimeline({
           })}
         </div>
       </aside>
-      {tooltip &&
-        createPortal(
-          <div
-            className="tl-tooltip-fixed"
-            style={{ top: tooltip.top, left: tooltip.left }}
-            role="tooltip"
-          >
-            <p className="tl-tip-ask">{tooltip.ask}</p>
-            {tooltip.reply && <p className="tl-tip-reply">{tooltip.reply}</p>}
-          </div>,
-          document.body,
-        )}
-    </>
+      {tooltip && (
+        <div
+          className="tl-tooltip-fixed"
+          style={{ top: tooltip.top, left: tooltip.left }}
+          role="tooltip"
+        >
+          <p className="tl-tip-ask">{tooltip.ask}</p>
+          {tooltip.reply && <p className="tl-tip-reply">{tooltip.reply}</p>}
+        </div>
+      )}
+    </>,
+    document.body,
   );
 }

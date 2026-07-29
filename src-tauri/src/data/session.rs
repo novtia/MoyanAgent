@@ -1,4 +1,4 @@
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
@@ -1345,12 +1345,21 @@ pub fn load_messages_ordered(
         limit.min(500)
     };
 
-    if let Some(mid) = around_message_id {
-        let (anchor_created,): (i64,) = conn.query_row(
-            "SELECT created_at FROM messages WHERE id=?1 AND session_id=?2",
-            params![mid, session_id],
-            |r| Ok((r.get(0)?,)),
-        )?;
+    // A missing anchor is expected: the caller's anchor may have just been
+    // deleted (message delete / resend truncation). Fall back to the tail
+    // window instead of failing the whole load.
+    let anchor_created = match around_message_id {
+        Some(mid) => conn
+            .query_row(
+                "SELECT created_at FROM messages WHERE id=?1 AND session_id=?2",
+                params![mid, session_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()?,
+        None => None,
+    };
+
+    if let Some(anchor_created) = anchor_created {
         let before_n = limit / 2;
         let after_n = limit.saturating_sub(before_n);
 

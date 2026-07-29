@@ -7,6 +7,10 @@
   background: linear-gradient(180deg, transparent, var(--bg) 30%);
   position: relative;
 }
+/* Match the message-list timeline gutter so the composer stays aligned */
+.messages:not(.is-empty) ~ .composer-dock {
+  padding-left: var(--msg-timeline-gutter);
+}
 .composer-card {
   width: 100%;
   max-width: var(--chat-content-width);

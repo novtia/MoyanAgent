@@ -364,7 +364,10 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
       {!isEmpty && (
         <div className="messages-shell">
           {showTimeline && (
-            <MessageTimeline activeMessageId={scrollActiveId} />
+            <MessageTimeline
+              scrollRef={ref}
+              activeMessageId={scrollActiveId}
+            />
           )}
           <div className="messages-inner">
             {messagesLoading && messagesWindowHasMoreBefore && (

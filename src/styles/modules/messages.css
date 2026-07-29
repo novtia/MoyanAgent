@@ -4,10 +4,13 @@
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
-  /* block so the floated sticky timeline can sit on the left edge */
   display: block;
-  /* Flush to the sidebar; timeline owns the left gutter */
+  /* Right inset only; left gutter is added when the timeline is present */
   padding: 8px 24px 32px 0;
+}
+/* Keep a hard left strip for the fixed timeline — content centres in the rest */
+.messages:not(.is-empty) {
+  padding-left: var(--msg-timeline-gutter);
 }
 .messages::-webkit-scrollbar {
   width: 6px;
@@ -35,14 +38,7 @@
   width: 100%;
   max-width: none;
   margin: 0;
-  /* Clear the floated timeline on the left */
-  padding-left: 0;
   box-sizing: border-box;
-}
-.messages-shell::after {
-  content: "";
-  display: table;
-  clear: both;
 }
 .messages-shell > .messages-inner {
   max-width: var(--chat-content-width);
@@ -64,26 +60,24 @@
   letter-spacing: 0.2em;
 }
 
-/* ───── sticky message timeline — left aligns with session title, vertically centered ───── */
+/* ───── message timeline — body-layer overlay, positioned from the measured
+   message viewport by MessageTimeline (left/top/height are inline). Deliberately
+   detached from the message flow so no layout change can move it. ───── */
 .message-timeline {
-  position: sticky;
-  top: 50%;
+  position: fixed;
   transform: translateY(-50%);
-  float: left;
   width: var(--msg-timeline-width);
-  /* Collapse layout footprint so messages-inner stays viewport-centered */
-  margin-right: calc(-1 * var(--msg-timeline-width));
-  max-height: min(72vh, calc(var(--app-height, 100vh) - 160px));
-  margin-top: 0;
-  margin-bottom: 0;
   /* Same inset as .chat-topbar so tick left edge lines up with title left edge */
   margin-left: var(--chat-topbar-padding-x, 18px);
-  padding: 8px 0;
   /* Must stay visible — overflow would clip the hover tooltip */
   overflow: visible;
-  z-index: 20;
+  z-index: 30;
   user-select: none;
   box-sizing: border-box;
+  /* Overlays the message column on narrow windows, so only the ticks may take
+     pointer events — otherwise it swallows clicks on left-aligned assistant
+     action buttons. */
+  pointer-events: none;
 }
 .message-timeline-track {
   display: flex;
@@ -91,12 +85,12 @@
   align-items: flex-start;
   justify-content: center;
   gap: var(--tl-gap, 9px);
-  padding: 4px 0;
+  height: 100%;
   min-height: 0;
-  max-height: min(72vh, calc(var(--app-height, 100vh) - 160px));
   overflow-x: visible;
   overflow-y: auto;
   scrollbar-width: none;
+  pointer-events: none;
 }
 .message-timeline-track::-webkit-scrollbar {
   width: 0;
@@ -114,20 +108,23 @@
   padding: 0;
   margin: 0;
   cursor: pointer;
-  border-radius: 0;
+  border-radius: var(--tl-tick-radius, var(--radius-xs));
+  pointer-events: auto;
   background: var(--tl-tick-color);
   transition: width 0.28s cubic-bezier(0.16, 1, 0.3, 1),
-    background 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
+    background 0.18s cubic-bezier(0.2, 0.7, 0.2, 1),
+    border-radius 0.18s ease;
 }
 .tl-tick:focus,
 .tl-tick:focus-visible {
   outline: none;
   box-shadow: none;
 }
+/* Hit area only — boxes tile vertically so the rail hovers as one ruler */
 .tl-tick::after {
   content: "";
   position: absolute;
-  inset: -7px -10px -7px -4px;
+  inset: -7px -14px -7px -8px;
 }
 .tl-tick.is-peak {
   background: var(--tl-tick-peak);
@@ -143,9 +140,11 @@
   width: max-content;
   max-width: min(320px, 46vw);
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--bg);
+  color: var(--ink-2);
+  font-family: var(--app-font-family, inherit);
   font-size: 11.5px;
   line-height: 1.45;
   box-shadow: var(--shadow-2);
@@ -171,9 +170,11 @@
 }
 
 @media (max-width: 900px) {
+  .messages {
+    --msg-timeline-width: 36px;
+  }
   .message-timeline {
-    width: 36px;
-    /* Keep left edge aligned with title */
+    width: var(--msg-timeline-width);
     margin-left: var(--chat-topbar-padding-x, 18px);
   }
   .tl-tooltip-fixed {
@@ -182,10 +183,12 @@
 }
 
 @media (max-width: 640px) {
+  .messages {
+    --msg-timeline-width: 28px;
+  }
   .message-timeline {
-    width: 28px;
+    width: var(--msg-timeline-width);
     margin-left: var(--chat-topbar-padding-x, 18px);
-    max-height: min(60vh, calc(var(--app-height, 100vh) - 180px));
   }
   .tl-tooltip-fixed {
     display: none;

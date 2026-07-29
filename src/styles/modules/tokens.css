@@ -59,9 +59,15 @@
   --msg-timeline-width: 48px;
   /* Match .chat-topbar horizontal padding so timeline left aligns with title */
   --chat-topbar-padding-x: 18px;
+  /* Reserved strip for the fixed timeline overlay — chat content must not enter */
+  --msg-timeline-gutter: calc(
+    var(--chat-topbar-padding-x) + var(--msg-timeline-width)
+  );
   --tl-tick-h: 3px;
-  --tl-tick-color: #8a8a8a;
-  --tl-tick-peak: #0d0d0d;
+  /* Follow theme ink — dark/paper/mist/ink override --ink* and pick these up */
+  --tl-tick-color: var(--ink-mute);
+  --tl-tick-peak: var(--ink);
+  --tl-tick-radius: var(--radius-xs);
   --tl-gap: 9px;
   --density-scale: 1;
 
@@ -317,9 +323,6 @@
   --shadow-pop: 0 18px 44px -12px rgba(0, 0, 0, 0.72);
   --shadow-card: 0 14px 34px -16px rgba(0, 0, 0, 0.66), 0 1px 2px rgba(0, 0, 0, 0.38);
 
-  --tl-tick-color: #8a929c;
-  --tl-tick-peak: #f3f5f7;
-
   --field-bg: #1c1914;
   --field-bg-soft: #242019;
   --field-border: #3d372b;
@@ -341,6 +344,16 @@
 }
 
 /* ───── density / radius data attributes ───── */
+:root[data-radius="sharp"] {
+  --tl-tick-radius: 0;
+}
+:root[data-radius="default"] {
+  --tl-tick-radius: 1px;
+}
+:root[data-radius="rounded"] {
+  --tl-tick-radius: 999px;
+}
+
 :root[data-density="compact"] {
   --density-scale: 0.88;
   --sidebar-width: 200px;
@@ -373,4 +386,6 @@
   --msg-list-gap: 24px;
   --msg-bubble-padding-y: 16px;
   --msg-bubble-padding-x: 20px;
+  --tl-gap: 11px;
+  --msg-timeline-width: 52px;
 }

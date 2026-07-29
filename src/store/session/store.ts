@@ -144,6 +144,31 @@ export const useSession = create<SessionStore>((set, get) => {
     });
   };
 
+  /**
+   * Which message the next window load should be centred on, so a reload keeps
+   * the reader roughly in place.
+   *
+   * Must be checked against `outline` (server truth): the last row of the
+   * current view is often exactly what was just deleted by a delete/resend
+   * truncation, and anchoring on a dead id would fail the load. Returns null
+   * when the view already reaches the tail — a plain tail window is both
+   * correct and a full `limit` rows instead of half.
+   */
+  const pickWindowAnchor = (
+    messages: MessageAbs[] | undefined,
+    outline: MessageOutlineItem[] | null,
+  ): string | null => {
+    if (!messages || !outline || outline.length === 0) return null;
+    const alive = new Set(outline.map((o) => o.id));
+    const tailId = outline[outline.length - 1].id;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const id = messages[i].id;
+      if (id.startsWith("tmp-") || !alive.has(id)) continue;
+      return id === tailId ? null : id;
+    }
+    return null;
+  };
+
   /** Replace active chat with server truth (avoids duplicate/stale merges after async gen or tab switches). */
   const reloadActiveSessionIfViewing = async (sessionId: string) => {
     // Generation is complete — always discard the streaming buffer, even when
@@ -155,18 +180,18 @@ export const useSession = create<SessionStore>((set, get) => {
     if (get().activeId !== sessionId) return;
     try {
       const current = get().active;
-      const persisted = current?.messages.filter((m) => !m.id.startsWith("tmp-")) ?? [];
-      const aroundId =
-        persisted.length > 0 ? persisted[persisted.length - 1].id : null;
+      // Outline first: it decides which anchor is still alive.
+      const freshOutline = await api
+        .listMessageOutline(sessionId)
+        .catch(() => null);
+      if (get().activeId !== sessionId) return;
       const data = await api.loadSessionWindow(
         sessionId,
-        aroundId,
+        pickWindowAnchor(current?.messages, freshOutline),
         MESSAGE_WINDOW_SIZE,
       );
       if (get().activeId !== sessionId) return;
-      const outline =
-        (await api.listMessageOutline(sessionId).catch(() => null)) ??
-        outlineFromMessages(data.messages);
+      const outline = freshOutline ?? outlineFromMessages(data.messages);
       const media =
         (await api.listSessionMedia(sessionId).catch(() => null)) ??
         get().sessionMedia;
@@ -409,11 +434,13 @@ export const useSession = create<SessionStore>((set, get) => {
     const id = get().activeId;
     if (!id) return;
     try {
-      const persisted =
-        get().active?.messages.filter((m) => !m.id.startsWith("tmp-")) ?? [];
-      const aroundId =
-        persisted.length > 0 ? persisted[persisted.length - 1].id : null;
-      const data = await api.loadSessionWindow(id, aroundId, MESSAGE_WINDOW_SIZE);
+      const freshOutline = await api.listMessageOutline(id).catch(() => null);
+      if (get().activeId !== id) return;
+      const data = await api.loadSessionWindow(
+        id,
+        pickWindowAnchor(get().active?.messages, freshOutline),
+        MESSAGE_WINDOW_SIZE,
+      );
       const state = get();
       // A settings-only reload (for example, after switching models) can race
       // with an in-flight stream. Keep the optimistic/streaming rows until the
@@ -423,7 +450,7 @@ export const useSession = create<SessionStore>((set, get) => {
       const preserveLiveMessages =
         !!state.busyBySession[id] && state.active?.session.id === id;
       const outline =
-        (await api.listMessageOutline(id).catch(() => null)) ??
+        freshOutline ??
         outlineFromMessages(
           preserveLiveMessages ? state.active!.messages : data.messages,
         );
