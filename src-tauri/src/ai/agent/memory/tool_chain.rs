@@ -23,14 +23,27 @@ pub fn is_todo_round(round: &ToolChainRound) -> bool {
             .all(|tc| tc.name == TOOL_NAME)
 }
 
-/// Drop the oldest non-TodoList rounds until at most `max_non_todo` remain.
+/// Drop the oldest non-TodoList rounds once `max_non_todo` is exceeded.
 /// TodoList rounds are never removed. Order of kept rounds is preserved.
+///
+/// Trimming overshoots down to a low-water mark rather than shaving off exactly
+/// one round. Rounds already sent sit in the provider's context cache, and
+/// evicting the oldest on every single loop iteration would shift the prompt
+/// prefix each time and forfeit those hits; overshooting lets the next few
+/// iterations reuse an untouched prefix.
 pub fn trim_tool_chain(chain: &mut Vec<ToolChainRound>, max_non_todo: usize) {
     let non_todo_count = chain.iter().filter(|r| !is_todo_round(r)).count();
     if non_todo_count <= max_non_todo {
         return;
     }
-    let mut drop_remaining = non_todo_count - max_non_todo;
+    // Half the cap, but never zero: the round committed a moment ago carries
+    // the tool result the model is about to answer, so it has to survive.
+    let low_water = if max_non_todo == 0 {
+        0
+    } else {
+        (max_non_todo / 2).max(1)
+    };
+    let mut drop_remaining = non_todo_count - low_water;
     chain.retain(|round| {
         if is_todo_round(round) {
             return true;
@@ -78,15 +91,40 @@ mod tests {
     }
 
     #[test]
-    fn drops_oldest_non_todo_beyond_cap() {
+    fn drops_to_low_water_mark_beyond_cap() {
         let mut chain: Vec<ToolChainRound> = (0..15)
             .map(|_| round_with_tool("Edit"))
             .collect();
         trim_tool_chain(&mut chain, 10);
-        assert_eq!(chain.len(), 10);
+        assert_eq!(chain.len(), 5);
         for r in &chain {
             assert!(!is_todo_round(r));
         }
+    }
+
+    /// Trimming must not nibble one round per iteration: the retained prefix
+    /// has to stay byte-identical for several rounds so the provider's context
+    /// cache keeps hitting.
+    #[test]
+    fn window_start_holds_still_between_trims() {
+        let mut chain: Vec<ToolChainRound> = Vec::new();
+        let mut trims = 0;
+        let mut previous_len = 0;
+        for _ in 0..30 {
+            chain.push(round_with_tool("Edit"));
+            let before = chain.len();
+            trim_tool_chain(&mut chain, DEFAULT_MAX_NON_TODO_TOOL_ROUNDS);
+            if chain.len() != before {
+                trims += 1;
+            } else if previous_len > 0 {
+                assert_eq!(chain.len(), previous_len + 1, "untrimmed round must append");
+            }
+            previous_len = chain.len();
+            assert!(chain.len() <= DEFAULT_MAX_NON_TODO_TOOL_ROUNDS);
+        }
+        // 30 rounds capped at 10 would trim ~20 times when shaving one at a
+        // time; overshooting to the low-water mark keeps it to a handful.
+        assert!(trims <= 5, "trimmed {trims} times, window is still sliding");
     }
 
     #[test]
@@ -104,7 +142,7 @@ mod tests {
         let todo_after = chain.iter().filter(|r| is_todo_round(r)).count();
         assert_eq!(todo_before, todo_after);
         let non_todo_after = chain.iter().filter(|r| !is_todo_round(r)).count();
-        assert_eq!(non_todo_after, 10);
+        assert_eq!(non_todo_after, 5);
     }
 
     #[test]

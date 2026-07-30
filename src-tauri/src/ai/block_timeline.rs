@@ -169,10 +169,18 @@ pub fn restore_timeline_from_blocks(blocks: &[Value]) -> Vec<TimelineSegment> {
                             .unwrap_or(false),
                     });
                 } else {
+                    // A call with no recorded output means the turn died before
+                    // the tool reported back (cancel, crash, provider error).
+                    // The protocol still needs a result for every call id, but
+                    // it has to read as a failure — handing the model a
+                    // successful-looking placeholder makes it move on as if the
+                    // work were done.
                     batch_results.push(TimelineToolResult {
                         tool_call_id: id,
-                        content: Value::String("（无结果记录）".into()),
-                        is_error: false,
+                        content: Value::String(
+                            "（该工具调用未完成，没有结果记录；如仍有需要请重新调用）".into(),
+                        ),
+                        is_error: true,
                     });
                 }
             }
@@ -244,6 +252,24 @@ mod tests {
             } => {
                 assert_eq!(assistant_text.as_deref(), Some("先查目录"));
                 assert!(thinking_content.is_none());
+            }
+            _ => panic!("expected ToolRound"),
+        }
+    }
+
+    #[test]
+    fn call_without_a_recorded_result_replays_as_a_failure() {
+        let blocks = vec![
+            json!({"type":"tool_use","id":"c1","tool":"Edit","input":{"path":"a.md"}}),
+        ];
+        let segs = restore_timeline_from_blocks(&blocks);
+        match &segs[0] {
+            TimelineSegment::ToolRound { results, .. } => {
+                assert_eq!(results.len(), 1);
+                assert!(
+                    results[0].is_error,
+                    "an interrupted call must not replay as a success"
+                );
             }
             _ => panic!("expected ToolRound"),
         }

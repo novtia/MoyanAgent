@@ -30,7 +30,7 @@ pub(crate) fn build_history(
         .collect();
 
     let len = candidates.len();
-    let start = len.saturating_sub(max_messages);
+    let start = stable_window_start(len, max_messages);
     let mut out: Vec<chat::HistoryTurn> = Vec::with_capacity(len - start);
     for m in &candidates[start..] {
         let want_roles: &[&str] = match m.role.as_str() {
@@ -65,6 +65,26 @@ pub(crate) fn build_history(
         });
     }
     Ok(out)
+}
+
+/// First history index to send, keeping at most `max_messages` entries.
+///
+/// The obvious `len - max_messages` advances by one for every message the
+/// session gains, so the oldest turn falls out on *every* request and the
+/// prompt prefix shifts with it — which costs a full context-cache miss each
+/// turn. Dropping in fixed-size steps instead pins the start index for a whole
+/// batch of turns: the window is a little shorter right after a step, and in
+/// exchange only one turn per step pays to re-process the history.
+///
+/// Never returns more than `max_messages` entries.
+fn stable_window_start(len: usize, max_messages: usize) -> usize {
+    if max_messages == 0 || len <= max_messages {
+        return 0;
+    }
+    let step = (max_messages / 2).max(1);
+    let overflow = len - max_messages;
+    // Round the drop count up to the next step boundary.
+    overflow.div_ceil(step) * step
 }
 
 /// Load the current character state board for prompt injection: prefer the
@@ -228,4 +248,50 @@ pub(crate) fn message_qualifies_for_history(m: &session::Message) -> bool {
             || !message_timeline_for_history(m).is_empty();
     }
     has_text || has_img
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::stable_window_start;
+
+    #[test]
+    fn keeps_everything_below_the_cap() {
+        assert_eq!(stable_window_start(0, 10), 0);
+        assert_eq!(stable_window_start(9, 10), 0);
+        assert_eq!(stable_window_start(10, 10), 0);
+    }
+
+    #[test]
+    fn never_exceeds_the_cap() {
+        for len in 0..200 {
+            for max in 1..20 {
+                let start = stable_window_start(len, max);
+                assert!(start <= len, "start {start} past len {len}");
+                assert!(len - start <= max, "kept {} > cap {max}", len - start);
+            }
+        }
+    }
+
+    /// The whole point: the first retained message must stay put as the session
+    /// grows, otherwise the prompt prefix shifts on every turn.
+    #[test]
+    fn start_index_holds_still_between_steps() {
+        let mut moves = 0;
+        let mut last = stable_window_start(10, 10);
+        for len in 11..=40 {
+            let start = stable_window_start(len, 10);
+            if start != last {
+                moves += 1;
+                last = start;
+            }
+        }
+        // 30 new messages would shift the window 30 times with a naive
+        // `len - max`; stepping by half the cap cuts it to 6.
+        assert_eq!(moves, 6);
+    }
+
+    #[test]
+    fn zero_cap_disables_history() {
+        assert_eq!(stable_window_start(50, 0), 0);
+    }
 }

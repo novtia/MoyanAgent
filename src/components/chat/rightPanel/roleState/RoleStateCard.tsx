@@ -7,6 +7,7 @@ import { useFileExplorer } from "../../../../store/fileExplorer";
 import type { Role, RoleGender, RoleMeter, RoleNsfw } from "../../../../store/roleState";
 import {
   SEMEN_ML_KEYS,
+  coerceRoleText,
   nsfwScalars,
   nsfwSensitiveSpots,
   nsfwStatus,
@@ -476,10 +477,13 @@ export const RoleStateCard = memo(function RoleStateCard({
   const memoryRel =
     (typeof role.memory_path === "string" && role.memory_path.trim()) ||
     defaultMemoryRel(role.id);
+  const personaText = coerceRoleText(role.persona);
+  const goalsText = coerceRoleText(role.goals);
+  const speechStyleText = coerceRoleText(role.speech_style);
   const hasTrpgMeta = Boolean(
-    role.persona?.trim() ||
-      role.goals?.trim() ||
-      role.speech_style?.trim() ||
+    personaText ||
+      goalsText ||
+      speechStyleText ||
       role.control ||
       role.memory_path ||
       (typeof role.model === "string" && role.model.trim()),
@@ -611,22 +615,22 @@ export const RoleStateCard = memo(function RoleStateCard({
             <span className="no">TR</span>
             {t("roleState.sectionTrpg")}
           </div>
-          {role.persona?.trim() ? (
+          {personaText ? (
             <div className="arc-trpg-line">
               <span className="k">{t("roleState.persona")}</span>
-              <span>{role.persona}</span>
+              <span>{personaText}</span>
             </div>
           ) : null}
-          {role.goals?.trim() ? (
+          {goalsText ? (
             <div className="arc-trpg-line">
               <span className="k">{t("roleState.goals")}</span>
-              <span>{role.goals}</span>
+              <span>{goalsText}</span>
             </div>
           ) : null}
-          {role.speech_style?.trim() ? (
+          {speechStyleText ? (
             <div className="arc-trpg-line">
               <span className="k">{t("roleState.speechStyle")}</span>
-              <span>{role.speech_style}</span>
+              <span>{speechStyleText}</span>
             </div>
           ) : null}
           {typeof role.model === "string" && role.model.trim() ? (

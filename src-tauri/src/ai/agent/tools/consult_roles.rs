@@ -420,8 +420,6 @@ fn character_definition(registry: &AgentRegistry) -> AgentDefinition {
 
 async fn run_ai_role(
     provider: Arc<ProviderEngine>,
-    chat_factory: Arc<dyn ChatRequestFactory>,
-    registry: Arc<AgentRegistry>,
     cwd: PathBuf,
     role_id: String,
     card: Value,
@@ -458,18 +456,12 @@ async fn run_ai_role(
         }
     };
     let memory = read_memory_file(&mem_path);
-    let definition = character_definition(registry.as_ref());
     let user_prompt = build_character_user_prompt(&digest, &question);
 
-    let mut chat = match chat_factory.build(&user_prompt, AGENT_TRPG_CHARACTER, &definition) {
-        Ok((c, _)) => c,
-        Err(_) => {
-            let mut fallback = base_chat.clone();
-            fallback.prompt = user_prompt.clone();
-            fallback
-        }
-    };
-
+    // Reuse the parent-built request (already resolved to the session model).
+    // A second factory.build() would fall back to the global default and
+    // discard the conversation model the user actually selected.
+    let mut chat = base_chat.clone();
     chat.system_prompt = build_character_system(&card, &memory, &memory_rel);
     chat.prompt = user_prompt;
     chat.tools.clear();
@@ -716,6 +708,7 @@ impl Tool for ConsultRolesTool {
                 "placeholder",
                 AGENT_TRPG_CHARACTER,
                 &definition,
+                invocation.context.session_id.as_deref(),
             ) {
                 Ok(pair) => pair,
                 Err(e) => {
@@ -802,8 +795,6 @@ impl Tool for ConsultRolesTool {
                     idx,
                     run_ai_role(
                         self.provider.clone(),
-                        self.chat_factory.clone(),
-                        self.registry.clone(),
                         cwd.clone(),
                         role_id.clone(),
                         card,

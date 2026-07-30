@@ -119,6 +119,14 @@ impl ProviderEngine {
     }
 }
 
+/// Tool-call rounds allowed per user turn when the agent definition does not
+/// set `maxTurns`.
+///
+/// Generous enough for genuinely long multi-file work, but bounded: the loop
+/// has no other exit while the model keeps emitting tool calls, and every round
+/// re-sends the entire prompt.
+const DEFAULT_MAX_TURNS: u32 = 60;
+
 /// Concrete [`QueryEngine`] backed by [`ProviderEngine`].
 #[derive(Clone)]
 pub struct ProviderQueryEngine {
@@ -167,7 +175,7 @@ impl QueryEngine for ProviderQueryEngine {
             let QueryRequest {
                 mut chat,
                 source: _,
-                max_turns: _max_turns,
+                max_turns,
                 initial_attachments,
                 on_text_delta,
                 on_tool_event,
@@ -191,12 +199,13 @@ impl QueryEngine for ProviderQueryEngine {
             let mut tool_call_count: u32 = 0;
             let mut final_text: Option<String> = None;
             let mut final_thinking: Option<String> = None;
-            let mut final_images;
-            let mut final_videos;
+            let mut final_images = Vec::new();
+            let mut final_videos = Vec::new();
 
             // When the model tries to stop with unfinished TodoList items,
-            // inject a nudge so multi-step work can continue (no fixed turn cap).
+            // inject a nudge so multi-step work can continue.
             const MAX_TODO_NUDGES: u32 = 8;
+            let turn_limit = max_turns.unwrap_or(DEFAULT_MAX_TURNS).max(1);
             let mut turn_count: u32 = 0;
             let mut todo_nudges: u32 = 0;
 
@@ -206,6 +215,18 @@ impl QueryEngine for ProviderQueryEngine {
                 }
 
                 turn_count += 1;
+                if turn_count > turn_limit {
+                    return Ok(QueryResult {
+                        final_text: Some(turn_limit_notice(turn_limit, final_text.as_deref())),
+                        thinking_content: final_thinking,
+                        events,
+                        usage,
+                        tool_call_count,
+                        images: final_images,
+                        videos: final_videos,
+                        response_id: chat.previous_response_id.clone(),
+                    });
+                }
 
                 // Stream every turn — including tool-call turns and the
                 // final-answer turn. Provider streaming paths now
@@ -518,6 +539,23 @@ fn wrap_tracking_callback(inner: TextDeltaCallback) -> (TextDeltaCallback, Arc<D
     (wrapped, tracker)
 }
 
+/// Stop text for a run that used up its tool-call budget.
+///
+/// The loop only ends on its own when the model answers without calling a tool,
+/// so a model stuck re-reading the same files would otherwise bill the user for
+/// full-context requests until they notice and hit cancel. Whatever prose the
+/// last turn produced is kept — it is usually a partial answer worth reading.
+fn turn_limit_notice(limit: u32, partial: Option<&str>) -> String {
+    let notice = format!(
+        "[已达到本轮最大工具调用次数上限（{limit} 次），自动停止。\
+         如果任务确实需要更多步骤，请拆分任务，或在 agent 配置中调高 maxTurns。]"
+    );
+    match partial.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(text) => format!("{text}\n\n{notice}"),
+        None => notice,
+    }
+}
+
 /// True iff the tool pool is empty. We can't check
 /// [`ToolPool::all`] directly because the iterator borrows `tools` —
 /// the loop body needs `tools` later, so we cache the answer here.
@@ -605,7 +643,7 @@ fn inject_todo_continuation(chat: &mut ChatRequest, message: &str) {
     });
 }
 
-/// Prepend attachments as hidden user-meta history turns so the model
+/// Append attachments as hidden user-meta history turns so the model
 /// sees them on the very next request.
 pub fn inject_attachments_into_history(chat: &mut ChatRequest, attachments: &[Attachment]) {
     if attachments.is_empty() {
@@ -628,10 +666,12 @@ pub fn inject_attachments_into_history(chat: &mut ChatRequest, attachments: &[At
             // ToolUseContext::loaded_nested_memory_paths analogue).
         }
     }
-    // Place attachments at the *front* of history — they're system-
-    // reminder messages that should be visible before any prior turn.
-    injected.extend(std::mem::take(&mut chat.history));
-    chat.history = injected;
+    // Place attachments at the *end* of history, immediately before the user
+    // prompt. These arrive mid-session (task notifications, skill cites,
+    // nested memory), so putting them up front would shift every prior turn
+    // and void the provider's context cache for the whole transcript. Sitting
+    // last also puts them closest to the prompt they relate to.
+    chat.history.append(&mut injected);
 }
 
 /// Resolve `@skill:{"id":…}` cites in the user prompt and inject skill bodies.
@@ -692,5 +732,29 @@ pub async fn run_chat_request(
             store.fail(&task_id, e.to_string());
             Err(e)
         }
+    }
+}
+
+#[cfg(test)]
+mod turn_limit_tests {
+    use super::turn_limit_notice;
+
+    #[test]
+    fn partial_prose_is_kept_above_the_notice() {
+        let out = turn_limit_notice(60, Some("第三章我已经写到一半"));
+        assert!(out.starts_with("第三章我已经写到一半"));
+        assert!(out.contains("60"));
+    }
+
+    #[test]
+    fn a_turn_that_only_called_tools_still_explains_itself() {
+        let out = turn_limit_notice(60, None);
+        assert!(!out.trim().is_empty());
+        assert!(out.contains("60"));
+    }
+
+    #[test]
+    fn blank_prose_does_not_leave_leading_whitespace() {
+        assert_eq!(turn_limit_notice(5, Some("   \n")), turn_limit_notice(5, None));
     }
 }

@@ -40,6 +40,7 @@ import {
   type ComposerEditorHandle,
   type MentionTriggerAnchor,
 } from "./mention";
+import { askUserActiveReady } from "./askUser";
 import { ComposerAskUserBar } from "./ComposerAskUserBar";
 import { ComposerFileTree } from "./ComposerFileTree";
 import { READER_FILE_DRAG_TYPE } from "../../utils/readerDrag";
@@ -121,6 +122,15 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const busy = useSession((s) => s.busy);
   const pendingAskUser = useSession((s) => s.pendingAskUser);
   const answeringAskUser = !!pendingAskUser;
+  // Subscribe to prompt while AskUser is open so the send button can flip
+  // from pause → send once an option or custom answer is ready.
+  const askUserPrompt = useSession((s) =>
+    s.pendingAskUser ? s.composer.prompt : "",
+  );
+  const askUserCanSend =
+    !!pendingAskUser && askUserActiveReady(pendingAskUser, askUserPrompt);
+  /** Pause/stop chrome: generating, or AskUser waiting without an answer yet. */
+  const sendAsStop = (busy && !answeringAskUser) || (answeringAskUser && !askUserCanSend);
   const active = useSession((s) => s.active);
   const activeId = useSession((s) => s.activeId);
   const refreshList = useSession((s) => s.refreshList);
@@ -557,11 +567,12 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   };
 
   const onSubmit = async () => {
-    // AskUser pause still counts as in-flight — allow Enter to submit answers,
-    // but the send button itself stays in stop mode (see onSendButtonClick).
+    // AskUser pause still counts as in-flight — Enter submits once an answer
+    // is ready (option selected or custom text).
     if (busy && !answeringAskUser) return;
     if (hasPendingAttachments) return;
     if (answeringAskUser) {
+      if (!askUserCanSend) return;
       await send();
       return;
     }
@@ -569,7 +580,11 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     await send();
   };
   const onSendButtonClick = () => {
-    // Generation not finished (incl. AskUser pause) → always stop, never submit.
+    // AskUser with a ready answer → submit; otherwise stop in-flight work.
+    if (answeringAskUser && askUserCanSend) {
+      onSubmit();
+      return;
+    }
     if (busy || answeringAskUser) {
       interrupt();
       return;
@@ -1465,19 +1480,21 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
               </div>
             </div>
             <button
-              className={`send-btn ${busy || answeringAskUser ? "busy" : ""}`}
+              className={`send-btn ${sendAsStop ? "busy" : ""}`}
               type="button"
               onClick={onSendButtonClick}
               disabled={
-                busy || answeringAskUser
+                sendAsStop || askUserCanSend
                   ? false
                   : hasPendingAttachments || (showVideoParams ? !videoCanSend : promptEmpty)
               }
               title={
-                busy || answeringAskUser
+                sendAsStop
                   ? t("composer.sendInterrupt")
                   : hasPendingAttachments
                   ? t("composer.sendUploading")
+                  : answeringAskUser
+                  ? t("composer.sendGenerate")
                   : showVideoParams
                   ? t("composer.sendVideo")
                   : hasAttachments
@@ -1485,10 +1502,12 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                   : t("composer.sendGenerate")
               }
               aria-label={
-                busy || answeringAskUser
+                sendAsStop
                   ? t("composer.sendInterrupt")
                   : hasPendingAttachments
                   ? t("composer.sendUploading")
+                  : answeringAskUser
+                  ? t("composer.sendGenerate")
                   : showVideoParams
                   ? t("composer.sendVideo")
                   : hasAttachments
@@ -1496,7 +1515,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                   : t("composer.sendGenerate")
               }
             >
-              {busy || answeringAskUser ? (
+              {sendAsStop ? (
                 <>
                   <span className="send-spinner" aria-hidden>
                     <span />

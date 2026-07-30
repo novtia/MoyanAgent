@@ -20,7 +20,9 @@ use serde_json::{json, Value};
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
 use crate::ai::agent::tools::project_path::display_path;
 use crate::ai::agent::tools::read_receipt::content_hash;
-use crate::ai::agent::tools::text_decode::normalize_tool_string;
+use crate::ai::agent::tools::text_decode::{
+    detect_and_decode, normalize_tool_string, write_text_file, TextEncoding,
+};
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
@@ -48,6 +50,9 @@ impl CreateDocTool {
                     name like `notes`, or a nested breadcrumb like `chapters/01` \
                     or `chapters > 01`. \
                     `doc_type` is `md` (Markdown) or `txt` (plain text). \
+                    Fails if a document with that title already exists — pick a \
+                    different title, use Edit to change part of it, or pass \
+                    `overwrite: true` to replace the whole file on purpose. \
                     Prefer this over Write for authoring new documents — you only \
                     supply the title, the content, the type, and optionally a folder."
                     .to_string(),
@@ -68,6 +73,11 @@ impl CreateDocTool {
                             "description": "Optional subfolder within the project. \
                                 Single folder name or breadcrumb, e.g. `notes`, \
                                 `网文测试\\草稿`, `chapters\\01`. Omit to save at project root."
+                        },
+                        "overwrite": {
+                            "type": "boolean",
+                            "description": "Replace an existing document with the same title. \
+                                Defaults to false, which fails instead of destroying the file."
                         },
                         "content": {
                             "type": "string",
@@ -149,13 +159,41 @@ impl Tool for CreateDocTool {
             let path = dir.join(&file_name);
             let created = !path.exists();
 
+            // `fs::write` truncates, so an accidental title collision would
+            // silently swallow a whole existing chapter. Make replacement an
+            // explicit decision instead.
+            let overwrite = invocation
+                .input
+                .get("overwrite")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if !created && !overwrite {
+                return Ok(ToolResult::error(format!(
+                    "{TOOL_NAME}: `{}` already exists. Use Edit to change part of it, \
+                     choose a different title, or pass `overwrite: true` to replace \
+                     the whole file.",
+                    display_path(&path)
+                )));
+            }
+
             // Snapshot the pre-image before writing so the document can be
             // rolled back (deleted when created, restored when overwritten).
             let op = if created { FileOp::Create } else { FileOp::Update };
             self.snapshots
                 .record_before(invocation.context.session_id.as_deref(), &path, op);
 
-            std::fs::write(&path, content.as_bytes())
+            // Match FileWriteTool: an existing document keeps the encoding it
+            // was authored in, so overwriting a GBK chapter doesn't silently
+            // convert it to UTF-8 and break the user's other editors.
+            let (encoding, had_bom) = if created {
+                (TextEncoding::Utf8, false)
+            } else {
+                let bytes = std::fs::read(&path)
+                    .map_err(|e| AppError::Other(format!("{TOOL_NAME}: read {:?}: {e}", path)))?;
+                let decoded = detect_and_decode(&bytes);
+                (decoded.encoding, decoded.had_bom)
+            };
+            write_text_file(&path, &content, encoding, had_bom)
                 .map_err(|e| AppError::Other(format!("{TOOL_NAME}: write {:?}: {e}", path)))?;
 
             // Canonicalize for a stable, absolute path; fall back to the
@@ -321,6 +359,89 @@ fn sanitize_file_name(title: &str) -> String {
 
 fn count_words(content: &str) -> usize {
     content.chars().filter(|c| !c.is_whitespace()).count()
+}
+
+#[cfg(test)]
+mod overwrite_tests {
+    use super::*;
+    use crate::ai::agent::core::context::{ToolUseContext, ToolUseContextBuilder};
+    use crate::ai::agent::tools::text_decode::encode_text;
+    use crate::ai::agent::types::{AgentId, MessageId};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    fn ctx_in_temp_dir() -> Arc<ToolUseContext> {
+        let dir = std::env::temp_dir().join(format!(
+            "moyan-createdoc-test-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::SeqCst)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        ToolUseContextBuilder::new(AgentId::new(), dir).build().0
+    }
+
+    async fn run(ctx: &Arc<ToolUseContext>, input: Value) -> ToolResult {
+        CreateDocTool::new(Arc::new(FileSnapshotStore::new()))
+            .execute(ToolInvocation {
+                id: MessageId("createdoc".into()),
+                input,
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap()
+    }
+
+    fn doc(title: &str, content: &str) -> Value {
+        json!({ "title": title, "doc_type": "txt", "content": content })
+    }
+
+    #[tokio::test]
+    async fn refuses_to_replace_an_existing_document() {
+        let ctx = ctx_in_temp_dir();
+        assert!(!run(&ctx, doc("第一章", "原稿")).await.is_error);
+
+        let second = run(&ctx, doc("第一章", "新稿")).await;
+        assert!(second.is_error, "same title must not silently overwrite");
+        assert_eq!(
+            std::fs::read_to_string(ctx.cwd.join("第一章.txt")).unwrap(),
+            "原稿"
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_overwrite_replaces_the_document() {
+        let ctx = ctx_in_temp_dir();
+        run(&ctx, doc("第一章", "原稿")).await;
+
+        let mut input = doc("第一章", "新稿");
+        input["overwrite"] = Value::Bool(true);
+        assert!(!run(&ctx, input).await.is_error);
+        assert_eq!(
+            std::fs::read_to_string(ctx.cwd.join("第一章.txt")).unwrap(),
+            "新稿"
+        );
+    }
+
+    #[tokio::test]
+    async fn overwriting_keeps_the_original_encoding() {
+        let ctx = ctx_in_temp_dir();
+        let path = ctx.cwd.join("旧稿.txt");
+        std::fs::write(&path, encode_text("原来的内容", TextEncoding::Gbk, false)).unwrap();
+
+        let mut input = doc("旧稿", "改写后的内容");
+        input["overwrite"] = Value::Bool(true);
+        assert!(!run(&ctx, input).await.is_error);
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(
+            std::str::from_utf8(&bytes).is_err(),
+            "a GBK chapter must not come back as UTF-8"
+        );
+        let decoded = detect_and_decode(&bytes);
+        assert_eq!(decoded.text, "改写后的内容");
+        assert_eq!(decoded.encoding, TextEncoding::Gbk);
+    }
 }
 
 #[cfg(test)]

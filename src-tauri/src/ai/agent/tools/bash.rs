@@ -139,6 +139,11 @@ impl Tool for BashTool {
             cmd.stdout(Stdio::piped());
             cmd.stderr(Stdio::piped());
             cmd.stdin(Stdio::null());
+            // Reap the shell when this future is dropped — on timeout, or when
+            // the agent loop cancels the turn. Without it the command keeps
+            // running unsupervised and can still be writing to project files
+            // long after the tool reported failure.
+            cmd.kill_on_drop(true);
 
             let mut child = cmd
                 .spawn()
@@ -150,11 +155,11 @@ impl Tool for BashTool {
             let mut stderr_pipe = child.stderr.take();
 
             let exec = async {
-                if let Some(mut p) = stdout_pipe.take() {
-                    let _ = p.read_to_end(&mut stdout_buf).await;
+                if let Some(p) = stdout_pipe.take() {
+                    drain_capped(p, &mut stdout_buf).await;
                 }
-                if let Some(mut p) = stderr_pipe.take() {
-                    let _ = p.read_to_end(&mut stderr_buf).await;
+                if let Some(p) = stderr_pipe.take() {
+                    drain_capped(p, &mut stderr_buf).await;
                 }
                 child.wait().await
             };
@@ -213,6 +218,30 @@ fn build_command(command: &str) -> Command {
     let mut cmd = Command::new("sh");
     cmd.arg("-c").arg(command);
     cmd
+}
+
+/// Read a child pipe into `buf`, retaining at most `MAX_OUTPUT_BYTES + 1`
+/// bytes — one past the display cap, so [`truncate_console`] still sees the
+/// output as truncated.
+///
+/// Reading past the cap is *discarded* rather than skipped: a command whose
+/// pipe fills up blocks forever, so the far end has to keep being consumed for
+/// the process to reach exit. `read_to_end` would instead buffer the whole
+/// stream, which a single `type <big file>` turns into an out-of-memory kill.
+async fn drain_capped<R: tokio::io::AsyncRead + Unpin>(mut pipe: R, buf: &mut Vec<u8>) {
+    const RETAIN: usize = MAX_OUTPUT_BYTES + 1;
+    let mut chunk = [0u8; 8 * 1024];
+    loop {
+        match pipe.read(&mut chunk).await {
+            Ok(0) | Err(_) => return,
+            Ok(n) => {
+                if buf.len() < RETAIN {
+                    let take = n.min(RETAIN - buf.len());
+                    buf.extend_from_slice(&chunk[..take]);
+                }
+            }
+        }
+    }
 }
 
 fn truncate_console(bytes: &[u8]) -> (String, bool) {
@@ -303,5 +332,32 @@ fn cwd_validation_error(path: &std::path::Path) -> String {
     #[cfg(not(windows))]
     {
         format!("Bash: `cwd` must be an absolute path, got `{display}`")
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn drain_capped_consumes_everything_but_retains_a_bounded_prefix() {
+        let source = vec![b'x'; 4 * MAX_OUTPUT_BYTES];
+        let mut buf = Vec::new();
+        drain_capped(&source[..], &mut buf).await;
+
+        assert_eq!(
+            buf.len(),
+            MAX_OUTPUT_BYTES + 1,
+            "a noisy command must not be buffered in full"
+        );
+        assert!(truncate_console(&buf).1, "the result still reads truncated");
+    }
+
+    #[tokio::test]
+    async fn drain_capped_keeps_short_output_intact() {
+        let mut buf = Vec::new();
+        drain_capped(&b"hello"[..], &mut buf).await;
+        assert_eq!(buf, b"hello");
+        assert!(!truncate_console(&buf).1);
     }
 }

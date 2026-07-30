@@ -23,6 +23,21 @@ pub(crate) fn should_reset_responses_cache(err: &AppError, request: &ChatRequest
         || msg.contains("expired")
         || msg.contains("invalid")
 }
+
+/// True when the upstream rejected Session caching for this model/account
+/// (e.g. Ark: "has not activated the cache service for model …"). Retry
+/// once with caching disabled rather than failing the whole turn.
+pub(crate) fn should_disable_responses_cache(err: &AppError, request: &ChatRequest) -> bool {
+    if !responses_cache_active(request) {
+        return false;
+    }
+    let msg = err.to_string().to_ascii_lowercase();
+    msg.contains("has not activated the cache")
+        || msg.contains("activate the cache service")
+        || (msg.contains("cache service") && msg.contains("403"))
+        || msg.contains("caching is not supported")
+        || msg.contains("does not support caching")
+}
 /// Best-effort DELETE of a stored Responses API object (Session cache tip).
 /// Failures are logged and ignored — local DB is the source of truth for clearing.
 pub async fn delete_stored_response(endpoint: &str, api_key: &str, response_id: &str) {

@@ -37,7 +37,7 @@ pub mod todo;
 pub mod web_fetch;
 pub mod web_search;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -128,7 +128,11 @@ pub struct ToolPool {
     /// Interior-mutable so that consumers can register additional tools
     /// (e.g. `AgentTool` registered after the pool is wrapped in `Arc`)
     /// without `&mut self`.
-    tools: Mutex<HashMap<String, Arc<dyn Tool>>>,
+    ///
+    /// Ordered by name rather than hashed: the serialized `tools` array is part
+    /// of the prompt prefix that providers hash for their context cache, and a
+    /// per-request reshuffle would void every hit past the system prompt.
+    tools: Mutex<BTreeMap<String, Arc<dyn Tool>>>,
     /// Tools that are denied for *every* sub-agent (e.g. `AgentTool`,
     /// `TaskOutput`, plan-mode primitives).
     global_deny: Mutex<Vec<String>>,
@@ -177,8 +181,8 @@ impl ToolPool {
         self.tools.lock().ok()?.get(name).cloned()
     }
 
-    /// Snapshot of all currently-registered tools. Returns owned `Arc`s
-    /// so callers don't hold the inner lock during long-running
+    /// Snapshot of all currently-registered tools, ordered by name. Returns
+    /// owned `Arc`s so callers don't hold the inner lock during long-running
     /// inspections.
     pub fn all(&self) -> Vec<Arc<dyn Tool>> {
         self.tools
@@ -198,9 +202,9 @@ impl ToolPool {
         &self,
         allow: &[String],
         deny: &[String],
-    ) -> HashMap<String, Arc<dyn Tool>> {
+    ) -> BTreeMap<String, Arc<dyn Tool>> {
         let Ok(tools_guard) = self.tools.lock() else {
-            return HashMap::new();
+            return BTreeMap::new();
         };
         let global_deny = self.global_deny.lock().map(|g| g.clone()).unwrap_or_default();
         let wildcard = allow.iter().any(|t| t == "*");
@@ -357,6 +361,73 @@ mod pool_tests {
         )
         .await;
         assert!(second.is_error);
+    }
+
+    struct DummyTool(ToolSpec);
+
+    impl Tool for DummyTool {
+        fn spec(&self) -> &ToolSpec {
+            &self.0
+        }
+        fn execute<'a>(&'a self, _invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
+            Box::pin(async { Ok(ToolResult::ok(json!({}))) })
+        }
+    }
+
+    fn dummy(name: &str) -> DummyTool {
+        DummyTool(ToolSpec {
+            name: name.into(),
+            description: String::new(),
+            schema: json!({}),
+            read_only: true,
+            concurrency_safe: true,
+        })
+    }
+
+    /// Mirror how `run_cancellable_generation` assembles the per-request pool:
+    /// filter the global registry, then register the survivors into a brand-new
+    /// `ToolPool`.
+    fn worker_tool_names(global: &ToolPool) -> Vec<String> {
+        let worker = ToolPool::new();
+        for (_, tool) in global.filter_for_agent(&["*".to_string()], &[]) {
+            worker.register_arc(tool);
+        }
+        worker
+            .all()
+            .into_iter()
+            .map(|t| t.spec().name.clone())
+            .collect()
+    }
+
+    /// The tools array is part of the prompt prefix every provider hashes for
+    /// its context cache. A per-request reshuffle keeps the token count
+    /// identical while destroying every cache hit past the system prompt.
+    #[test]
+    fn tool_definition_order_is_stable_across_pools() {
+        let names = [
+            "Read", "Edit", "Write", "Bash", "Grep", "ListFiles", "Delete", "WebFetch",
+            "WebSearch", "TodoList", "AskUser", "CreateDoc", "RoleState", "ConsultRoles",
+        ];
+
+        let baseline = {
+            let global = ToolPool::new();
+            for n in names {
+                global.register(dummy(n));
+            }
+            worker_tool_names(&global)
+        };
+
+        for attempt in 0..32 {
+            let global = ToolPool::new();
+            for n in names {
+                global.register(dummy(n));
+            }
+            assert_eq!(
+                baseline,
+                worker_tool_names(&global),
+                "tool order changed on attempt {attempt}"
+            );
+        }
     }
 
     #[tokio::test]

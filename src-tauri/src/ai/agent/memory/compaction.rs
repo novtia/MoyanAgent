@@ -39,14 +39,23 @@ impl Default for CompactionPolicy {
 }
 
 /// Decision-only check. Returns `true` iff `chat.history` has enough
-/// material to compact *and* token usage crossed the threshold.
+/// material to compact *and* the context window is close to full.
+///
+/// Occupancy is read from `last_prompt_tokens` — the prompt size of the most
+/// recent API call, which already carries the whole conversation. `total_tokens`
+/// is a *sum* over every tool-call round of the turn, so a loop of four 30k
+/// rounds reports 120k while the real context is still only 30k; triggering on
+/// that would compact far too early and needlessly rewrite a cached prefix.
 pub fn should_compact(
     history_len: usize,
     usage: &TokenUsage,
     policy: &CompactionPolicy,
 ) -> bool {
-    let total = usage.total_tokens.unwrap_or(0);
-    total >= policy.threshold_tokens && history_len > policy.keep_recent + 1
+    let occupancy = usage
+        .last_prompt_tokens
+        .or(usage.total_tokens)
+        .unwrap_or(0);
+    occupancy >= policy.threshold_tokens && history_len > policy.keep_recent + 1
 }
 
 /// Run a compaction pass on `chat.history` in place.
@@ -129,4 +138,55 @@ fn extract_invoked_skill_turns(turns: &[HistoryTurn]) -> Vec<HistoryTurn> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod should_compact_tests {
+    use super::*;
+
+    fn policy() -> CompactionPolicy {
+        CompactionPolicy::default()
+    }
+
+    /// A multi-round turn sums each round's prompt into `total_tokens`, which
+    /// used to trip the threshold while the real context was still small.
+    #[test]
+    fn summed_rounds_do_not_trigger_compaction() {
+        let usage = TokenUsage {
+            prompt_tokens: Some(130_000),
+            total_tokens: Some(131_000),
+            last_prompt_tokens: Some(33_000),
+            ..Default::default()
+        };
+        assert!(!should_compact(20, &usage, &policy()));
+    }
+
+    #[test]
+    fn real_occupancy_triggers_compaction() {
+        let usage = TokenUsage {
+            prompt_tokens: Some(400_000),
+            total_tokens: Some(401_000),
+            last_prompt_tokens: Some(125_000),
+            ..Default::default()
+        };
+        assert!(should_compact(20, &usage, &policy()));
+    }
+
+    #[test]
+    fn falls_back_to_total_when_provider_omits_last_prompt() {
+        let usage = TokenUsage {
+            total_tokens: Some(125_000),
+            ..Default::default()
+        };
+        assert!(should_compact(20, &usage, &policy()));
+    }
+
+    #[test]
+    fn short_history_is_never_compacted() {
+        let usage = TokenUsage {
+            last_prompt_tokens: Some(500_000),
+            ..Default::default()
+        };
+        assert!(!should_compact(policy().keep_recent + 1, &usage, &policy()));
+    }
 }

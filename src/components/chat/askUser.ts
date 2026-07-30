@@ -126,6 +126,19 @@ export function askUserAnswerText(
   return a.optionText?.trim() ?? "";
 }
 
+/** Active question has an option or non-empty custom text ready to submit. */
+export function askUserActiveReady(
+  pending: PendingAskUser,
+  prompt: string,
+): boolean {
+  return (
+    askUserAnswerText(
+      flushAskUserPrompt(pending, prompt),
+      pending.activeIndex,
+    ).trim().length > 0
+  );
+}
+
 export function firstUnansweredAskUserIndex(
   pending: PendingAskUser,
 ): number {

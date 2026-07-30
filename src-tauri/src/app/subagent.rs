@@ -11,6 +11,7 @@ use crate::ai::agent::{
     self, FileSnapshotStore, FsUserContextLoader, RoleStateStore, RunAgentResult,
 };
 use crate::ai::{chat, parameters, session_log, token_log};
+use crate::app::generation::params::{effective_agent_chain, resolve_session_generation};
 use crate::data::db::DbPool;
 use crate::data::{session, settings};
 use crate::error::{AppError, AppResult};
@@ -36,22 +37,94 @@ impl ChatRequestFactory for SettingsChatFactory {
     fn build(
         &self,
         prompt: &str,
-        _agent_type: &str,
+        agent_type: &str,
         definition: &crate::ai::agent::AgentDefinition,
+        session_id: Option<&str>,
     ) -> AppResult<(chat::ChatRequest, Vec<agent::Attachment>)> {
         let conn = self.pool.get()?;
         let settings = settings::read(&conn)?;
 
-        // Spawned sub-agents follow the global default model/provider.
-        let provider = settings::active_provider(&settings)
-            .cloned()
-            .ok_or_else(|| AppError::Config("no enabled model provider configured".into()))?;
+        // Prefer the parent session's model/provider so ConsultRoles / Agent
+        // tool matches the conversation the user actually selected — not the
+        // global default (which may be a different model entirely).
+        let (mut provider, mut model) = if let Some(sid) = session_id {
+            match session::get(&conn, sid) {
+                Ok(sess) => match resolve_session_generation(&conn, &settings, &sess) {
+                    Ok(resolved) => {
+                        // Per-node agent-flow override for this agent_type wins
+                        // over the bare session model when present.
+                        let chain_model = effective_agent_chain(&conn, &sess)
+                            .as_ref()
+                            .and_then(|chain| {
+                                chain.iter().find_map(|node| {
+                                    if node.agent_type != agent_type {
+                                        return None;
+                                    }
+                                    node.effective_overrides()
+                                        .and_then(|ov| ov.model.as_deref())
+                                        .map(str::trim)
+                                        .filter(|m| !m.is_empty())
+                                        .map(|m| m.to_string())
+                                })
+                            });
+                        match chain_model {
+                            Some(m) => {
+                                if let Some(p) = settings::find_provider_for_model(&settings, &m) {
+                                    (p.clone(), m)
+                                } else {
+                                    (resolved.provider, resolved.model)
+                                }
+                            }
+                            None => (resolved.provider, resolved.model),
+                        }
+                    }
+                    Err(_) => (
+                        settings::active_provider(&settings)
+                            .cloned()
+                            .ok_or_else(|| {
+                                AppError::Config("no enabled model provider configured".into())
+                            })?,
+                        settings.model.clone(),
+                    ),
+                },
+                Err(_) => (
+                    settings::active_provider(&settings)
+                        .cloned()
+                        .ok_or_else(|| {
+                            AppError::Config("no enabled model provider configured".into())
+                        })?,
+                    settings.model.clone(),
+                ),
+            }
+        } else {
+            (
+                settings::active_provider(&settings)
+                    .cloned()
+                    .ok_or_else(|| {
+                        AppError::Config("no enabled model provider configured".into())
+                    })?,
+                settings.model.clone(),
+            )
+        };
+
+        // Agent definition model override (custom agents / built-in edits).
+        if let Some(m) = definition
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            if let Some(p) = settings::find_provider_for_model(&settings, m) {
+                provider = p.clone();
+                model = m.to_string();
+            }
+        }
 
         // Runner overwrites `system_prompt` with `definition.system_prompt`
         // plus env-details + critical reminder, so leave it empty here.
         let chat = crate::ai::router::build_chat_request(
             &provider,
-            &settings.model,
+            &model,
             prompt.to_string(),
             Vec::new(),
             String::new(),

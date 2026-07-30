@@ -10,6 +10,7 @@ import { useSettings } from "../../../../store/settings";
 import type { Role, RoleGender, RoleMeter, RoleNsfw } from "../../../../store/roleState";
 import {
   SEMEN_ML_KEYS,
+  coerceRoleText,
   nsfwSensitiveSpots,
   nsfwStatus,
   resolveAppearance,
@@ -60,12 +61,10 @@ export function RoleStateEditModal({
   const [mood, setMood] = useState(role.mood ?? "");
   const [outfit, setOutfit] = useState(role.outfit ?? "");
   const [appearance, setAppearance] = useState(resolveAppearance(role) ?? "");
-  const [persona, setPersona] = useState(
-    typeof role.persona === "string" ? role.persona : "",
-  );
-  const [goals, setGoals] = useState(typeof role.goals === "string" ? role.goals : "");
+  const [persona, setPersona] = useState(coerceRoleText(role.persona) ?? "");
+  const [goals, setGoals] = useState(coerceRoleText(role.goals) ?? "");
   const [speechStyle, setSpeechStyle] = useState(
-    typeof role.speech_style === "string" ? role.speech_style : "",
+    coerceRoleText(role.speech_style) ?? "",
   );
   const [control, setControl] = useState(
     role.control === "user" || role.control === "ai" ? role.control : "ai",

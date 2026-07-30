@@ -103,6 +103,31 @@ export function resolveAppearance(role: Role): string | null {
   return trimmed || null;
 }
 
+/**
+ * Coerce free-form TRPG text fields (`persona` / `goals` / `speech_style`).
+ * Models sometimes emit a string array instead of a single string.
+ */
+export function coerceRoleText(raw: unknown): string | null {
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    return trimmed || null;
+  }
+  if (Array.isArray(raw)) {
+    const parts = raw
+      .map((item) => {
+        if (typeof item === "string") return item.trim();
+        if (item == null) return "";
+        if (typeof item === "number" || typeof item === "boolean") {
+          return String(item);
+        }
+        return "";
+      })
+      .filter(Boolean);
+    return parts.length > 0 ? parts.join("；") : null;
+  }
+  return null;
+}
+
 /** Normalised gender from role (English keys only). */
 export function resolveGender(role: Role): RoleGender | undefined {
   const g = role.gender;

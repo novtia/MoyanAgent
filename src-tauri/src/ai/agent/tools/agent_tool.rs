@@ -43,11 +43,17 @@ pub const AGENT_TOOL_NAME: &str = "Agent";
 /// runtime-only context that doesn't fit on the `AgentDefinition`
 /// (CLAUDE.md, drained task notifications, plan-mode banners, ...).
 pub trait ChatRequestFactory: Send + Sync {
+    /// Build a chat request for a spawned agent.
+    ///
+    /// When `session_id` is set, the host should prefer that session's
+    /// model/provider over the global default (ConsultRoles / Agent tool
+    /// inherit the parent conversation's model).
     fn build(
         &self,
         prompt: &str,
         agent_type: &str,
         definition: &AgentDefinition,
+        session_id: Option<&str>,
     ) -> AppResult<(ChatRequest, Vec<Attachment>)>;
 }
 
@@ -464,7 +470,12 @@ impl Tool for AgentTool {
             // `omit_claude_md`, `requiredMcpServers`, etc., and emit
             // initial attachments (user-context, plan-mode banner, …).
             let (chat_request, initial_attachments) =
-                match factory.build(&invocation_args.prompt, &agent_type, &definition) {
+                match factory.build(
+                    &invocation_args.prompt,
+                    &agent_type,
+                    &definition,
+                    invocation.context.session_id.as_deref(),
+                ) {
                     Ok(pair) => pair,
                     Err(e) => {
                         return Ok(ToolResult::error(format!(

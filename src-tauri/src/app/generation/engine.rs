@@ -227,7 +227,7 @@ pub(crate) async fn run_cancellable_generation(
     let abort_signal = register_generation_abort(state, session_id)?;
 
     // Drain any pending task-notifications addressed to the main loop and
-    // prepend them to the chat history as hidden user-meta turns. This
+    // append them to the chat history as hidden user-meta turns. This
     // mirrors how `query.ts` injects `<task-notification>` at turn
     // boundaries so the model sees background results on the *next* call.
     let drained = state.notifications.drain_for_main();

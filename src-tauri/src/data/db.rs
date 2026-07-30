@@ -25,8 +25,12 @@ pub fn open_pool(db_path: &Path) -> AppResult<DbPool> {
     }
     let manager = SqliteConnectionManager::file(db_path).with_init(|c| {
         c.execute_batch(
+            // busy_timeout defaults to 0, which turns any overlap with the
+            // backup job's `BEGIN IMMEDIATE` into an instant "database is
+            // locked" instead of a short wait.
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
+             PRAGMA busy_timeout = 5000;
              PRAGMA foreign_keys = ON;",
         )
     });

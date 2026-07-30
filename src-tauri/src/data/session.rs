@@ -641,6 +641,29 @@ pub fn recompute_context_window_used(conn: &DbConn, session_id: &str) -> AppResu
     Ok(())
 }
 
+/// Fold a manual edit back into a message's block list.
+///
+/// `text` is the concatenation of every prose block (see
+/// `finalize_generate_assistant_message`), which is also what the edit box is
+/// seeded with — so the edit replaces all of them at once. The replacement goes
+/// where the *last* prose block was, not the first: prose that trailed a tool
+/// call has to stay behind it, both to read correctly and so timeline replay
+/// still finds a final `Text` segment. Tool and AskUser blocks are untouched.
+fn collapse_text_blocks(blocks: &[serde_json::Value], text: &str) -> Vec<serde_json::Value> {
+    let is_text = |b: &serde_json::Value| b.get("type").and_then(|t| t.as_str()) == Some("text");
+    let anchor = blocks.iter().rposition(is_text);
+    let mut next: Vec<serde_json::Value> = blocks.iter().filter(|b| !is_text(b)).cloned().collect();
+    if !text.is_empty() {
+        let at = match anchor {
+            // Non-text blocks ahead of the anchor keep their slots.
+            Some(i) => blocks.iter().take(i).filter(|b| !is_text(b)).count(),
+            None => next.len(),
+        };
+        next.insert(at, serde_json::json!({ "type": "text", "content": text }));
+    }
+    next
+}
+
 pub fn update_message_text(conn: &DbConn, id: &str, text: &str) -> AppResult<()> {
     let n = conn.execute("UPDATE messages SET text=?1 WHERE id=?2", params![text, id])?;
     if n == 0 {
@@ -648,41 +671,19 @@ pub fn update_message_text(conn: &DbConn, id: &str, text: &str) -> AppResult<()>
     }
     // Keep interleaved AskUser/tool history, but replace prose text blocks so
     // manual edits stay visible after we prefer `blocks` rendering in the UI.
-    if let Ok(raw) = conn.query_row(
+    if let Ok(Some(raw)) = conn.query_row(
         "SELECT params_json FROM messages WHERE id=?1",
         params![id],
         |r| r.get::<_, Option<String>>(0),
     ) {
-        if let Some(raw) = raw {
-            if let Ok(mut params_v) = serde_json::from_str::<serde_json::Value>(&raw) {
-                if let Some(blocks) = params_v.get_mut("blocks").and_then(|b| b.as_array_mut()) {
-                    let mut replaced = false;
-                    let mut next = Vec::with_capacity(blocks.len());
-                    for b in blocks.iter() {
-                        let ty = b.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                        if ty == "text" {
-                            if replaced {
-                                continue;
-                            }
-                            replaced = true;
-                            next.push(serde_json::json!({
-                                "type": "text",
-                                "content": text,
-                            }));
-                        } else {
-                            next.push(b.clone());
-                        }
-                    }
-                    if !replaced && !text.is_empty() {
-                        next.insert(0, serde_json::json!({ "type": "text", "content": text }));
-                    }
-                    *blocks = next;
-                    if let Ok(s) = serde_json::to_string(&params_v) {
-                        let _ = conn.execute(
-                            "UPDATE messages SET params_json=?1 WHERE id=?2",
-                            params![s, id],
-                        );
-                    }
+        if let Ok(mut params_v) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(blocks) = params_v.get_mut("blocks").and_then(|b| b.as_array_mut()) {
+                *blocks = collapse_text_blocks(blocks, text);
+                if let Ok(s) = serde_json::to_string(&params_v) {
+                    let _ = conn.execute(
+                        "UPDATE messages SET params_json=?1 WHERE id=?2",
+                        params![s, id],
+                    );
                 }
             }
         }
@@ -1627,4 +1628,60 @@ pub fn list_session_media(conn: &DbConn, session_id: &str) -> AppResult<Vec<Imag
         v.push(r?);
     }
     Ok(v)
+}
+
+#[cfg(test)]
+mod collapse_text_blocks_tests {
+    use super::collapse_text_blocks;
+    use serde_json::json;
+
+    fn types(blocks: &[serde_json::Value]) -> Vec<&str> {
+        blocks
+            .iter()
+            .map(|b| b["type"].as_str().unwrap_or(""))
+            .collect()
+    }
+
+    #[test]
+    fn edited_prose_stays_behind_the_tool_call_it_describes() {
+        let blocks = vec![
+            json!({"type":"text","content":"先看一下"}),
+            json!({"type":"tool_use","id":"c1","tool":"Read"}),
+            json!({"type":"text","content":"看完了"}),
+        ];
+        let next = collapse_text_blocks(&blocks, "先看一下\n看完了（改）");
+        assert_eq!(types(&next), vec!["tool_use", "text"]);
+        assert_eq!(next[1]["content"], "先看一下\n看完了（改）");
+    }
+
+    #[test]
+    fn tool_blocks_survive_the_edit() {
+        let blocks = vec![
+            json!({"type":"tool_use","id":"c1","tool":"Read"}),
+            json!({"type":"tool_use","id":"c2","tool":"Edit"}),
+            json!({"type":"text","content":"done"}),
+        ];
+        let next = collapse_text_blocks(&blocks, "改好了");
+        assert_eq!(types(&next), vec!["tool_use", "tool_use", "text"]);
+        assert_eq!(next[0]["id"], "c1");
+        assert_eq!(next[1]["id"], "c2");
+    }
+
+    #[test]
+    fn a_message_with_no_prose_gains_a_trailing_block() {
+        let blocks = vec![json!({"type":"tool_use","id":"c1","tool":"Read"})];
+        let next = collapse_text_blocks(&blocks, "补一句");
+        assert_eq!(types(&next), vec!["tool_use", "text"]);
+    }
+
+    #[test]
+    fn clearing_the_text_drops_prose_without_touching_tools() {
+        let blocks = vec![
+            json!({"type":"text","content":"a"}),
+            json!({"type":"tool_use","id":"c1","tool":"Read"}),
+            json!({"type":"text","content":"b"}),
+        ];
+        let next = collapse_text_blocks(&blocks, "");
+        assert_eq!(types(&next), vec!["tool_use"]);
+    }
 }

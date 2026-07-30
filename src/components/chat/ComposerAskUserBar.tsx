@@ -11,7 +11,8 @@ import {
  * Question strip inside the composer card.
  * ○/● select an option without filling the input; the ComposerEditor below is
  * custom-only — empty input means the selected option is the answer.
- * Submit answers with Enter; the send button stays in stop mode while paused.
+ * Until an option/custom answer is ready the send button stays in pause/stop
+ * mode; once ready it becomes send (Enter also submits).
  */
 export function ComposerAskUserBar() {
   const { t } = useTranslation();
