@@ -442,7 +442,16 @@ async fn create_task(
             }
         };
         let status = response.status();
-        let text = response.text().await?;
+        let text = match response.text().await {
+            Ok(text) => text,
+            Err(error) => {
+                if attempt < MAX_CREATE_ATTEMPTS && should_retry_transport(&error) {
+                    retry_sleep(attempt).await;
+                    continue;
+                }
+                return Err(error.into());
+            }
+        };
         if status.is_success() {
             let value: Value = serde_json::from_str(&text).map_err(|error| {
                 AppError::Upstream(format!(
@@ -500,7 +509,16 @@ async fn poll_task(
         match response {
             Ok(response) => {
                 let status = response.status();
-                let text = response.text().await?;
+                let text = match response.text().await {
+                    Ok(text) => text,
+                    Err(error) => {
+                        if should_retry_transport(&error) {
+                            tokio::time::sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
+                            continue;
+                        }
+                        return Err(error.into());
+                    }
+                };
                 if !status.is_success() {
                     if retryable_status(status) {
                         tokio::time::sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
@@ -636,7 +654,10 @@ fn retryable_status(status: StatusCode) -> bool {
 }
 
 fn should_retry_transport(error: &reqwest::Error) -> bool {
-    error.is_timeout() || error.is_connect() || error.is_request()
+    error.is_timeout()
+        || error.is_connect()
+        || error.is_request()
+        || crate::error::reqwest_error_indicates_abrupt_close(error)
 }
 
 async fn retry_sleep(attempt: usize) {

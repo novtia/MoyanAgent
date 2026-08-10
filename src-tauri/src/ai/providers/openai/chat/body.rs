@@ -114,11 +114,10 @@ pub(crate) fn append_openai_assistant_text_turn(
     }
     let mut msg = json!({ "role": "assistant" });
     let m = msg.as_object_mut().unwrap();
-    if !t.is_empty() {
-        m.insert("content".into(), Value::String(t.to_string()));
-    } else {
-        m.insert("content".into(), Value::Null);
-    }
+    // DeepSeek rejects assistant messages where `content` is null/absent and
+    // `tool_calls` is also absent ("content or tool_calls must be set").
+    // Thinking-only turns therefore use an empty string, not null.
+    m.insert("content".into(), Value::String(t.to_string()));
     if let Some(thinking) = thinking {
         m.insert("reasoning_content".into(), json!(thinking));
     }
@@ -126,7 +125,22 @@ pub(crate) fn append_openai_assistant_text_turn(
 }
 
 pub(crate) fn append_openai_assistant_tool_turn(messages: &mut Vec<Value>, pending: &PendingAssistantTurn) {
-    let text = pending.text.as_deref().unwrap_or("");
+    let raw_text = pending.text.as_deref().unwrap_or("");
+    // Coerce whitespace-only text to "" so DeepSeek sees content as set;
+    // keep non-empty text verbatim (do not trim meaningful content).
+    let content = if raw_text.trim().is_empty() {
+        String::new()
+    } else {
+        raw_text.to_string()
+    };
+    let thinking = pending
+        .thinking_content
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if content.is_empty() && pending.tool_calls.is_empty() && thinking.is_none() {
+        return;
+    }
     let tool_calls: Vec<Value> = pending
         .tool_calls
         .iter()
@@ -143,25 +157,17 @@ pub(crate) fn append_openai_assistant_tool_turn(messages: &mut Vec<Value>, pendi
         .collect();
     let mut msg = json!({ "role": "assistant" });
     let m = msg.as_object_mut().unwrap();
-    if !text.is_empty() {
-        m.insert("content".into(), Value::String(text.to_string()));
-    } else {
-        m.insert("content".into(), Value::Null);
-    }
+    // Prefer "" over null for empty content: DeepSeek treats null content
+    // without tool_calls as unset; empty string satisfies its validator and
+    // remains accepted by OpenAI-compatible endpoints with tool_calls.
+    m.insert("content".into(), Value::String(content));
     if !tool_calls.is_empty() {
         m.insert("tool_calls".into(), Value::Array(tool_calls));
     }
-    if let Some(t) = pending
-        .thinking_content
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
+    if let Some(t) = thinking {
         m.insert("reasoning_content".into(), json!(t));
     }
-    if !text.is_empty() || !pending.tool_calls.is_empty() || pending.thinking_content.is_some() {
-        messages.push(msg);
-    }
+    messages.push(msg);
 }
 
 pub(crate) fn append_openai_tool_results(messages: &mut Vec<Value>, tool_results: &[ToolResultMessage]) {

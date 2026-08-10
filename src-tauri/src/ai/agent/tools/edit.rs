@@ -297,6 +297,7 @@ impl Tool for FileEditTool {
                 }
             }
 
+            let chars = updated.chars().filter(|c| !c.is_whitespace()).count();
             let mut body = json!({
                 "success": true,
                 "path": path_str,
@@ -307,6 +308,7 @@ impl Tool for FileEditTool {
                 "match_start": match_start,
                 "text_before": text_before,
                 "text": updated,
+                "chars": chars,
             });
             if let Some(id) = pending_diff_id {
                 body["pending_diff_id"] = json!(id);

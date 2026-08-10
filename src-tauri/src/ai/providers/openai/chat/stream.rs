@@ -1,3 +1,6 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use futures_util::StreamExt;
 use serde_json::Value;
 
@@ -12,10 +15,10 @@ use super::super::common::{
     collect_response_images, debug_log_sse_event, debug_log_upstream_request,
     debug_log_upstream_response_text, emit_final_text_if_needed, finalize_stream_response,
     find_sse_event_end, is_empty_stream_upstream_error, is_json_response, is_retryable_status,
-    merge_tool_call_deltas, merge_usage, post_with_retries, should_retry_transport,
-    sleep_for_attempt, sse_data_payload, stream_read_error, top_level_error_message,
-    upstream_debug, upstream_error_message, upstream_rejects_streaming, without_streaming,
-    PendingStreamToolCall, MAX_ATTEMPTS,
+    is_retryable_stream_interruption, merge_tool_call_deltas, merge_usage, post_with_retries,
+    should_retry_transport, sleep_for_attempt, sse_data_payload, stream_read_error,
+    top_level_error_message, upstream_debug, upstream_error_message, upstream_rejects_streaming,
+    without_streaming, PendingStreamToolCall, MAX_ATTEMPTS,
 };
 use super::parse::parse_openai_like_response;
 
@@ -51,7 +54,18 @@ pub(crate) async fn post_stream_with_retries(
 
         let status = resp.status();
         if status.is_success() {
-            return match parse_openai_chat_success(resp, on_text_delta.clone()).await {
+            // Track whether any delta reached the UI: a transient transport
+            // failure (abrupt connection close) may only be retried while
+            // nothing has been emitted, otherwise the user would see the
+            // response restart.
+            let emitted = Arc::new(AtomicBool::new(false));
+            let flag = emitted.clone();
+            let base = on_text_delta.clone();
+            let tracked: TextDeltaCallback = Arc::new(move |delta| {
+                flag.store(true, Ordering::Relaxed);
+                (base)(delta);
+            });
+            return match parse_openai_chat_success(resp, tracked).await {
                 Ok(r) => Ok(r),
                 Err(e) if is_empty_stream_upstream_error(&e) => {
                     fallback_openai_chat_response(
@@ -63,11 +77,28 @@ pub(crate) async fn post_stream_with_retries(
                     )
                     .await
                 }
+                Err(e)
+                    if attempt < MAX_ATTEMPTS
+                        && !emitted.load(Ordering::Relaxed)
+                        && is_retryable_stream_interruption(&e) =>
+                {
+                    sleep_for_attempt(attempt).await;
+                    continue;
+                }
                 Err(e) => Err(e),
             };
         }
 
-        let txt = resp.text().await?;
+        let txt = match resp.text().await {
+            Ok(txt) => txt,
+            Err(err) => {
+                if attempt < MAX_ATTEMPTS && should_retry_transport(&err) {
+                    sleep_for_attempt(attempt).await;
+                    continue;
+                }
+                return Err(err.into());
+            }
+        };
         let msg = upstream_error_message(&txt);
         if attempt < MAX_ATTEMPTS && is_retryable_status(status) {
             sleep_for_attempt(attempt).await;

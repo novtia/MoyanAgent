@@ -98,6 +98,33 @@ pub fn describe_reqwest_error(e: &reqwest::Error) -> String {
     }
 }
 
+/// Substrings (matched case-insensitively) that identify an abrupt transport
+/// close: the peer dropped the connection without a clean TLS shutdown.
+/// rustls reports this as `UnexpectedEof` ("peer closed connection without
+/// sending TLS close_notify"); hyper/io surface it as connection reset or
+/// early EOF. Such failures are transient by nature and safe to retry.
+const ABRUPT_CLOSE_MARKERS: &[&str] = &[
+    "close_notify",
+    "unexpected end of file",
+    "connection closed",
+    "connection reset",
+    "forcibly closed",
+    "broken pipe",
+    "early eof",
+];
+
+/// Whether a rendered error chain looks like an abrupt transport close.
+pub fn msg_indicates_abrupt_close(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    ABRUPT_CLOSE_MARKERS.iter().any(|marker| m.contains(marker))
+}
+
+/// Whether a reqwest error's full source chain indicates the peer closed the
+/// connection abruptly (no TLS close_notify, reset, early EOF, ...).
+pub fn reqwest_error_indicates_abrupt_close(err: &reqwest::Error) -> bool {
+    msg_indicates_abrupt_close(&describe_reqwest_error(err))
+}
+
 impl From<anyhow::Error> for AppError {
     fn from(e: anyhow::Error) -> Self {
         AppError::Other(format!("{e:#}"))

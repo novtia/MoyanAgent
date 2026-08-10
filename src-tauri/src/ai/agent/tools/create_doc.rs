@@ -7,10 +7,9 @@
 //! is written under the session's project working directory
 //! (`ToolUseContext::cwd`), falling back to `~/Documents/moyanagent` when the
 //! session has no project path. Writes are always confined to that project
-//! root — `folder` cannot escape it. The successful result echoes the full text
-//! and file metadata so the UI can open the freshly created document in the
-//! reader panel. Word/line counts are omitted from the tool result on purpose —
-//! models tend to sum redundant numeric fields and mis-report totals.
+//! root — `folder` cannot escape it. The successful result echoes the full text,
+//! file metadata, and a non-whitespace character count (`chars`) so the model
+//! and UI can report document length after create/overwrite.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -213,6 +212,7 @@ impl Tool for CreateDocTool {
                 "folder": folder.map(str::trim).filter(|s| !s.is_empty()),
                 "created": created,
                 "text": content,
+                "chars": count_words(&content),
             })))
         })
     }

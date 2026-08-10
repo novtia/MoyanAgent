@@ -367,8 +367,50 @@ use super::responses::stream::{
         let mut messages = Vec::new();
         append_openai_assistant_text_turn(&mut messages, "", Some("只思考"));
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0]["content"], Value::Null);
+        // Empty string (not null): DeepSeek requires content or tool_calls.
+        assert_eq!(messages[0]["content"], "");
         assert_eq!(messages[0]["reasoning_content"], "只思考");
+    }
+
+    #[test]
+    fn assistant_tool_turn_empty_content_uses_empty_string() {
+        use crate::ai::chat::{PendingAssistantTurn, ProviderToolCall};
+        use super::chat::body::append_openai_assistant_tool_turn;
+
+        let mut messages = Vec::new();
+        append_openai_assistant_tool_turn(
+            &mut messages,
+            &PendingAssistantTurn {
+                text: None,
+                thinking_content: Some("先推理再调工具".into()),
+                tool_calls: vec![ProviderToolCall {
+                    id: "call_1".into(),
+                    name: "Read".into(),
+                    arguments: json!({}),
+                }],
+            },
+        );
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["content"], "");
+        assert!(messages[0]["tool_calls"].as_array().unwrap().len() == 1);
+        assert_eq!(messages[0]["reasoning_content"], "先推理再调工具");
+    }
+
+    #[test]
+    fn assistant_tool_turn_skips_blank_thinking_without_payload() {
+        use crate::ai::chat::PendingAssistantTurn;
+        use super::chat::body::append_openai_assistant_tool_turn;
+
+        let mut messages = Vec::new();
+        append_openai_assistant_tool_turn(
+            &mut messages,
+            &PendingAssistantTurn {
+                text: Some("   ".into()),
+                thinking_content: Some("  ".into()),
+                tool_calls: vec![],
+            },
+        );
+        assert!(messages.is_empty());
     }
 
     #[test]

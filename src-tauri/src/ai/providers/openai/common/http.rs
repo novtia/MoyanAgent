@@ -38,7 +38,19 @@ pub(crate) async fn post_with_retries(
         };
 
         let status = resp.status();
-        let txt = resp.text().await?;
+        let txt = match resp.text().await {
+            Ok(txt) => txt,
+            Err(err) => {
+                // Reading the body can fail on an abrupt connection close
+                // (e.g. "peer closed connection without sending TLS
+                // close_notify") — transient, so retry like a send failure.
+                if attempt < MAX_ATTEMPTS && should_retry_transport(&err) {
+                    sleep_for_attempt(attempt).await;
+                    continue;
+                }
+                return Err(err.into());
+            }
+        };
         if status.is_success() {
             debug_log_upstream_response_text(provider_label, &txt);
             return Ok(txt);
@@ -74,7 +86,10 @@ pub(crate) fn is_retryable_status(status: StatusCode) -> bool {
 }
 
 pub(crate) fn should_retry_transport(err: &reqwest::Error) -> bool {
-    err.is_timeout() || err.is_connect() || err.is_request()
+    err.is_timeout()
+        || err.is_connect()
+        || err.is_request()
+        || crate::error::reqwest_error_indicates_abrupt_close(err)
 }
 
 pub(crate) async fn sleep_for_attempt(attempt: usize) {

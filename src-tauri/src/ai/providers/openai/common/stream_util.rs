@@ -133,6 +133,18 @@ pub(crate) fn stream_read_error(err: reqwest::Error) -> AppError {
         crate::error::describe_reqwest_error(&err)
     ))
 }
+
+/// Whether an error surfaced while consuming a response body is a transient
+/// abrupt transport close. Used by the streaming entry points: if the
+/// connection dies before any delta was emitted, the request can be retried
+/// safely (nothing was shown to the user yet).
+pub(crate) fn is_retryable_stream_interruption(err: &AppError) -> bool {
+    let msg = match err {
+        AppError::Http(s) | AppError::Upstream(s) | AppError::Other(s) => s,
+        _ => return false,
+    };
+    crate::error::msg_indicates_abrupt_close(msg)
+}
 pub(crate) fn is_empty_stream_upstream_error(err: &AppError) -> bool {
     matches!(
         err,

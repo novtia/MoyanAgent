@@ -216,7 +216,16 @@ async fn post_with_retries(
         };
 
         let status = resp.status();
-        let txt = resp.text().await?;
+        let txt = match resp.text().await {
+            Ok(txt) => txt,
+            Err(err) => {
+                if attempt < MAX_ATTEMPTS && should_retry_transport(&err) {
+                    sleep_for_attempt(attempt).await;
+                    continue;
+                }
+                return Err(err.into());
+            }
+        };
         if status.is_success() {
             return Ok(txt);
         }
@@ -245,7 +254,10 @@ fn is_retryable_status(status: StatusCode) -> bool {
 }
 
 fn should_retry_transport(err: &reqwest::Error) -> bool {
-    err.is_timeout() || err.is_connect() || err.is_request()
+    err.is_timeout()
+        || err.is_connect()
+        || err.is_request()
+        || crate::error::reqwest_error_indicates_abrupt_close(err)
 }
 
 async fn sleep_for_attempt(attempt: usize) {
