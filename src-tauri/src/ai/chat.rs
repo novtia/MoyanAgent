@@ -372,4 +372,10 @@ pub struct ChatRequest {
     /// Request-level mirror of provider `context_cache_enabled` after
     /// Volcengine / SDK gating in the router.
     pub context_cache_enabled: bool,
+    /// Maximum prompt+completion tokens the target model accepts, when known.
+    ///
+    /// Sourced from the session's resolved model catalog entry. The agent loop
+    /// uses it to size compaction and to clamp `max_tokens`, so leaving it
+    /// `None` means "no budget enforcement" — the request goes out as built.
+    pub context_window: Option<i64>,
 }

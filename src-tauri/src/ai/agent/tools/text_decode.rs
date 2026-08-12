@@ -115,11 +115,15 @@ impl From<DecodedText> for ProjectTextFile {
     }
 }
 
-/// Normalize a tool argument string after JSON parsing.
+/// Normalize a **prose** tool argument string after JSON parsing.
 ///
 /// Models and partial JSON repair sometimes leave JSON-style escapes (`\"`, `\n`, …)
 /// in prose `content` fields. Run until stable so nested escapes like `\\"` are
 /// fully resolved before writing to disk.
+///
+/// Only for prose destinations — `CreateDoc` content and `Edit`'s not-found
+/// retry. Never apply it to code-bearing writes: source text legitimately
+/// contains `\n`, `\\` and `\"`, and collapsing those corrupts the file.
 pub fn normalize_tool_string(s: &str) -> String {
     let mut cur = s.to_string();
     for _ in 0..8 {

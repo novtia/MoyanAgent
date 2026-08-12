@@ -70,13 +70,14 @@ impl Tool for FileWriteTool {
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
             let path = path_arg(&invocation.input, WRITE_TOOL, &invocation.context.cwd)?;
-            let content = normalize_tool_string(
-                invocation
-                    .input
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            );
+            // Written verbatim: JSON parsing already resolved the escapes, so any
+            // remaining `\n` / `\\` / `\"` is literal source text.
+            let content = invocation
+                .input
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
 
             let exists = path.exists();
 
@@ -203,32 +204,32 @@ impl Tool for FileEditTool {
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
             let path = path_arg(&invocation.input, EDIT_TOOL, &invocation.context.cwd)?;
-            let old_string = normalize_tool_string(
-                invocation
-                    .input
-                    .get("old_string")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            );
-            let new_string = normalize_tool_string(
-                invocation
-                    .input
-                    .get("new_string")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-            );
+            // Verbatim strings: JSON parsing already resolved the escapes, so any
+            // remaining `\n` / `\\` / `\"` is literal source text to match as-is.
+            let raw_old = invocation
+                .input
+                .get("old_string")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let raw_new = invocation
+                .input
+                .get("new_string")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
             let replace_all = invocation
                 .input
                 .get("replace_all")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
 
-            if old_string.is_empty() {
+            if raw_old.is_empty() {
                 return Ok(ToolResult::error(
                     "Edit: `old_string` must be non-empty".to_string(),
                 ));
             }
-            if old_string == new_string {
+            if raw_old == raw_new {
                 return Ok(ToolResult::error(
                     "Edit: `old_string` and `new_string` are identical — nothing to change"
                         .to_string(),
@@ -238,10 +239,32 @@ impl Tool for FileEditTool {
             let decoded = read_text_file(&path)
                 .map_err(|e| AppError::Other(format!("Edit: read {:?}: {e}", path)))?;
 
-            let occurrences = decoded.text.matches(&old_string).count();
-            if occurrences == 0 {
-                return Ok(not_found_error(&path));
-            }
+            let mut occurrences = decoded.text.matches(&raw_old).count();
+            let (old_string, new_string) = if occurrences > 0 {
+                (raw_old, raw_new)
+            } else {
+                // Weak models sometimes double-escape prose (`\"你好\"`). Retry with
+                // the unescaped reading, replacing both sides so the pair stays
+                // consistent.
+                let unescaped_old = normalize_tool_string(&raw_old);
+                let retry = if unescaped_old == raw_old {
+                    0
+                } else {
+                    decoded.text.matches(&unescaped_old).count()
+                };
+                if retry == 0 {
+                    return Ok(not_found_error(&path));
+                }
+                occurrences = retry;
+                let unescaped_new = normalize_tool_string(&raw_new);
+                if unescaped_old == unescaped_new {
+                    return Ok(ToolResult::error(
+                        "Edit: `old_string` and `new_string` are identical — nothing to change"
+                            .to_string(),
+                    ));
+                }
+                (unescaped_old, unescaped_new)
+            };
             if occurrences > 1 && !replace_all {
                 return Ok(not_unique_error(occurrences));
             }
@@ -395,6 +418,15 @@ mod edit_tests {
         (ctx, name)
     }
 
+    /// Fresh context plus an unused file name; nothing is written to disk.
+    fn blank() -> (Arc<ToolUseContext>, String) {
+        let dir = test_dir();
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let name = format!("script-{n}.mjs");
+        let ctx = ToolUseContextBuilder::new(AgentId::new(), dir).build().0;
+        (ctx, name)
+    }
+
     async fn read_receipt(ctx: &Arc<ToolUseContext>, name: &str) {
         let tool = FileReadTool::new();
         tool.execute(ToolInvocation {
@@ -404,6 +436,18 @@ mod edit_tests {
         })
         .await
         .unwrap();
+    }
+
+    async fn run_write(ctx: &Arc<ToolUseContext>, input: Value) -> ToolResult {
+        let tool = FileWriteTool::new(Arc::new(FileSnapshotStore::new()));
+        tool.validate(&input).unwrap();
+        tool.execute(ToolInvocation {
+            id: MessageId("write".into()),
+            input,
+            context: ctx.as_ref(),
+        })
+        .await
+        .unwrap()
     }
 
     async fn run_edit(ctx: &Arc<ToolUseContext>, input: Value) -> ToolResult {
@@ -570,6 +614,79 @@ mod edit_tests {
         .await;
         assert!(!res.is_error, "unexpected error: {:?}", res.content);
         assert_eq!(disk(&ctx, &name), "Z\nB");
+    }
+
+    #[tokio::test]
+    async fn write_preserves_source_escapes_verbatim() {
+        let (ctx, name) = blank();
+        let content = r#"fail('syntax: ' + relative(root, f) + ' -> ' + err.split('\n')[0]);
+const dir = "C:\\Users\\Administrator";
+const quoted = "say \"hi\"";
+const entity = "a &amp; b";
+const re = /\d+\\s/g;
+"#;
+        let res = run_write(&ctx, json!({ "path": &name, "content": content })).await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), content);
+        assert_eq!(res.content["text"], content);
+        assert_eq!(res.content["created"], true);
+    }
+
+    #[tokio::test]
+    async fn write_does_not_collapse_double_backslashes() {
+        let (ctx, name) = blank();
+        let content = r#"\\\\ \\ \ \n \t"#;
+        let res = run_write(&ctx, json!({ "path": &name, "content": content })).await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), content);
+    }
+
+    #[tokio::test]
+    async fn edit_matches_backslashes_verbatim() {
+        let (ctx, name) = seed(r#"const parts = err.split('\n');"#);
+        read_receipt(&ctx, &name).await;
+        let res = run_edit(
+            &ctx,
+            json!({
+                "path": name,
+                "old_string": r#"err.split('\n')"#,
+                "new_string": r#"err.split('\r\n')"#,
+            }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), r#"const parts = err.split('\r\n');"#);
+    }
+
+    #[tokio::test]
+    async fn edit_falls_back_to_unescaped_prose_when_raw_misses() {
+        let (ctx, name) = seed("他说\"你好\"。");
+        read_receipt(&ctx, &name).await;
+        let res = run_edit(
+            &ctx,
+            json!({
+                "path": name,
+                "old_string": r#"他说\"你好\"。"#,
+                "new_string": r#"他说\"再见\"。"#,
+            }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "他说\"再见\"。");
+    }
+
+    #[tokio::test]
+    async fn edit_prefers_raw_match_over_unescaped_fallback() {
+        // Both readings exist in the file; the verbatim one must win.
+        let (ctx, name) = seed("literal: a\\nb\nprose: a\nb\n");
+        read_receipt(&ctx, &name).await;
+        let res = run_edit(
+            &ctx,
+            json!({ "path": name, "old_string": "a\\nb", "new_string": "OK" }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "literal: OK\nprose: a\nb\n");
     }
 
     #[tokio::test]

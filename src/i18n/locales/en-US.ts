@@ -557,6 +557,7 @@ const enUS: Resource = {
     thinkingLow: "low",
     thinkingMedium: "medium",
     thinkingHigh: "high",
+    thinkingXhigh: "xhigh",
     thinkingMax: "max",
     modelTitle: "Model",
     modelInputPlaceholder: "Full model ID",

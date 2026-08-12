@@ -125,6 +125,35 @@ pub fn reqwest_error_indicates_abrupt_close(err: &reqwest::Error) -> bool {
     msg_indicates_abrupt_close(&describe_reqwest_error(err))
 }
 
+/// Substrings (matched case-insensitively) that identify a request rejected for
+/// exceeding the model's context window. Upstreams all report this as a plain
+/// HTTP 400 with no machine-readable code, so the prose is the only signal.
+const CONTEXT_OVERFLOW_MARKERS: &[&str] = &[
+    "maximum context length",
+    "context length exceeded",
+    "context_length_exceeded",
+    "reduce the length of the messages",
+    "exceed context limit",
+    "prompt is too long",
+    "input is too long",
+    "too many tokens",
+];
+
+/// Whether an upstream error message says the request did not fit the model's
+/// context window. Callers use it to shrink the conversation and retry rather
+/// than surfacing a dead end to the user.
+pub fn msg_indicates_context_overflow(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    CONTEXT_OVERFLOW_MARKERS
+        .iter()
+        .any(|marker| m.contains(marker))
+}
+
+pub fn error_indicates_context_overflow(err: &AppError) -> bool {
+    matches!(err, AppError::Upstream(_) | AppError::Http(_) | AppError::Other(_))
+        && msg_indicates_context_overflow(&err.to_string())
+}
+
 impl From<anyhow::Error> for AppError {
     fn from(e: anyhow::Error) -> Self {
         AppError::Other(format!("{e:#}"))

@@ -39,6 +39,7 @@ import {
 } from "../mention";
 import type { AssistantBlock, AttachmentDraft, ImageRefAbs, SkillInfo } from "../../../types";
 import { AssistantContent } from "./AssistantContent";
+import { ChunkedText } from "./ChunkedText";
 import { MessageTokenUsage } from "./MessageTokenUsage";
 import { PlateActions } from "./PlateActions";
 import { ThinkingBlock } from "./ThinkingBlock";
@@ -791,7 +792,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
               ) : findQuery ? (
                 highlightQuery(m.text || "", findQuery)
               ) : (
-                m.text
+                <ChunkedText text={m.text || ""} />
               )}
             </div>
           )}

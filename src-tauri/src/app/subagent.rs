@@ -122,7 +122,7 @@ impl ChatRequestFactory for SettingsChatFactory {
 
         // Runner overwrites `system_prompt` with `definition.system_prompt`
         // plus env-details + critical reminder, so leave it empty here.
-        let chat = crate::ai::router::build_chat_request(
+        let mut chat = crate::ai::router::build_chat_request(
             &provider,
             &model,
             prompt.to_string(),
@@ -135,6 +135,13 @@ impl ChatRequestFactory for SettingsChatFactory {
                 Default::default(),
             ),
         )?;
+        // The model may differ from the parent session's (definition override,
+        // chain override), so the window comes from the catalog for whichever
+        // model this sub-agent actually ended up on.
+        chat.context_window =
+            crate::data::llm_catalog::lookup_context_window(&conn, &provider.id, &provider.sdk, &model)
+                .ok()
+                .flatten();
 
         // Honour `omit_claude_md`: only inject user-context (CLAUDE.md +
         // rules) when the agent definition opts in. Rendered as a

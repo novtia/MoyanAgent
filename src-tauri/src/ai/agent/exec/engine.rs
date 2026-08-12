@@ -28,6 +28,7 @@ use crate::ai::agent::core::task::{Task, TaskId, TaskState, TaskStore};
 use crate::ai::agent::exec::query::{
     QueryEngine, QueryFuture, QueryRequest, QueryResult, ToolEventCallback,
 };
+use crate::ai::agent::memory::compaction as compaction_mod;
 use crate::ai::agent::tools::{ToolInvocation, ToolPool, ToolResult};
 use crate::ai::agent::types::{AgentId, MessageEvent, MessageId};
 use crate::ai::chat::{
@@ -209,6 +210,22 @@ impl QueryEngine for ProviderQueryEngine {
             let mut turn_count: u32 = 0;
             let mut todo_nudges: u32 = 0;
 
+            // Bind the compaction policy to the model actually being called so
+            // its thresholds track that model's window instead of a build-time
+            // default chosen for 128k models.
+            let compaction = self
+                .compaction
+                .clone()
+                .map(|p| p.with_context_window(chat.context_window));
+            // One shrink-and-retry per run. A second overflow means the shrink
+            // did not help and retrying would just burn another request.
+            let mut overflow_retried = false;
+            // The user's configured ceiling. Each turn re-derives its clamp
+            // from this rather than from the previous turn's clamped value, so
+            // room freed by a compaction is handed back to the completion
+            // instead of leaving the run permanently capped.
+            let configured_max_tokens = chat.parameters.model.max_tokens;
+
             loop {
                 if context.abort.aborted() {
                     return Err(AppError::Canceled);
@@ -252,10 +269,54 @@ impl QueryEngine for ProviderQueryEngine {
                     None => (None, None),
                 };
 
-                let turn = tokio::select! {
-                    t = self.provider.run_turn(chat.clone(), turn_delta) => t?,
+                // Context budget, enforced *before* the call. Reacting to
+                // reported usage alone is too late for the first call of a
+                // turn: its history was just rebuilt from the database and can
+                // already exceed the window, which the provider answers with a
+                // 400 rather than a usage report.
+                if let Some(policy) = compaction.as_ref() {
+                    if compaction_mod::should_compact_chat(&chat, &usage, policy) {
+                        if let Err(e) =
+                            compaction_mod::compact(&mut chat, self.provider.as_ref(), policy).await
+                        {
+                            eprintln!("[atelier] context compaction failed: {e}");
+                        }
+                    }
+                    chat.parameters.model.max_tokens = configured_max_tokens;
+                    compaction_mod::clamp_completion_budget(&mut chat, policy);
+                }
+
+                let turn_result = tokio::select! {
+                    t = self.provider.run_turn(chat.clone(), turn_delta) => t,
                     _ = context.abort.wait_aborted() => {
                         return Err(AppError::Canceled);
+                    }
+                };
+                let turn = match turn_result {
+                    Ok(t) => t,
+                    Err(e) => {
+                        let recoverable = !overflow_retried
+                            && crate::error::error_indicates_context_overflow(&e);
+                        let shrank = match (recoverable, compaction.as_ref()) {
+                            (true, Some(policy)) => {
+                                overflow_retried = true;
+                                compaction_mod::shrink_after_overflow(
+                                    &mut chat,
+                                    self.provider.as_ref(),
+                                    policy,
+                                )
+                                .await
+                            }
+                            _ => false,
+                        };
+                        if !shrank {
+                            return Err(e);
+                        }
+                        eprintln!(
+                            "[atelier] upstream rejected the request for context length; \
+                             retrying with a compacted conversation"
+                        );
+                        continue;
                     }
                 };
                 let EngineTurn {
@@ -332,23 +393,6 @@ impl QueryEngine for ProviderQueryEngine {
                 }
                 final_images = response.images.clone();
                 final_videos = response.videos.clone();
-
-                // Compaction window: run *before* enqueuing the next
-                // turn so the model never sees an over-budget history.
-                if let Some(policy) = self.compaction.as_ref() {
-                    if crate::ai::agent::memory::compaction::should_compact(
-                        chat.history.len(),
-                        &usage,
-                        policy,
-                    ) {
-                        let _ = crate::ai::agent::memory::compaction::compact(
-                            &mut chat,
-                            self.provider.as_ref(),
-                            policy,
-                        )
-                        .await;
-                    }
-                }
 
                 if tool_uses.is_empty() {
                     if let Some(nudge) = tools.incomplete_todo_nudge() {

@@ -85,6 +85,7 @@ use super::responses::stream::{
             pending_assistant_turn: None,
             previous_response_id: Some("resp_prev".into()),
             context_cache_enabled: true,
+            context_window: None,
         };
         let body = build_responses_body(&request);
         assert_eq!(body["previous_response_id"], "resp_prev");

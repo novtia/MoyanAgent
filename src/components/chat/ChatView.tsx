@@ -27,7 +27,11 @@ export function ChatView({
   needsSetup,
 }: ChatViewProps) {
   const { t } = useTranslation();
-  const active = useSession((s) => s.active);
+  // Subscribe to the session record and an emptiness flag rather than `active`:
+  // streaming swaps `active` every frame, and this tree has no reason to
+  // re-render for it.
+  const session = useSession((s) => s.active?.session ?? null);
+  const isEmpty = useSession((s) => !s.active || s.active.messages.length === 0);
   const busy = useSession((s) => s.busy);
   const generationPhase = useSession((s) =>
     s.activeId ? s.generationPhaseBySession[s.activeId] : undefined,
@@ -38,14 +42,14 @@ export function ChatView({
 
   // Drop find bar when leaving the session it was opened for.
   useEffect(() => {
-    const activeId = active?.session.id ?? null;
+    const activeId = session?.id ?? null;
     if (chatFindSessionId && activeId && chatFindSessionId !== activeId) {
       closeChatFind();
     }
     if (chatFindSessionId && !activeId) {
       closeChatFind();
     }
-  }, [active?.session.id, chatFindSessionId, closeChatFind]);
+  }, [session?.id, chatFindSessionId, closeChatFind]);
 
   const [moreOpen, setMoreOpen] = useState(false);
   const [galleryOpen, setGalleryOpen] = useState(false);
@@ -85,9 +89,8 @@ export function ChatView({
     return () => window.removeEventListener("mousedown", onDoc);
   }, [fontOpen]);
 
-  const isEmpty = !active || active.messages.length === 0;
-  const isTemporary = !!active?.session.is_temporary;
-  const title = active?.session.title || t("chat.defaultTitle");
+  const isTemporary = !!session?.is_temporary;
+  const title = session?.title || t("chat.defaultTitle");
 
   return (
     <main className="chat">
@@ -111,13 +114,13 @@ export function ChatView({
                       type="button"
                       className="chat-more-item danger"
                       onClick={async () => {
-                        if (!active) return;
+                        if (!session) return;
                         const ok = await dialog.confirm(
                           t("chat.deleteSessionConfirm", { title }),
                           { type: "danger", confirmLabel: t("common.delete"), title: t("chat.deleteSession") },
                         );
                         if (ok) {
-                          remove(active.session.id);
+                          remove(session.id);
                           setMoreOpen(false);
                         }
                       }}

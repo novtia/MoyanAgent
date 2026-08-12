@@ -73,6 +73,7 @@ const THINKING_EFFORTS = [
   { value: "low", labelKey: "composer.thinkingLow" },
   { value: "medium", labelKey: "composer.thinkingMedium" },
   { value: "high", labelKey: "composer.thinkingHigh" },
+  { value: "xhigh", labelKey: "composer.thinkingXhigh" },
   { value: "max", labelKey: "composer.thinkingMax" },
 ] as const;
 
@@ -131,7 +132,11 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     !!pendingAskUser && askUserActiveReady(pendingAskUser, askUserPrompt);
   /** Pause/stop chrome: generating, or AskUser waiting without an answer yet. */
   const sendAsStop = (busy && !answeringAskUser) || (answeringAskUser && !askUserCanSend);
-  const active = useSession((s) => s.active);
+  // Session metadata only, never `active` itself: streaming replaces `active`
+  // once per frame with a new `messages` array, and subscribing to the whole
+  // object would re-render this entire tree — and stall typing — on every one
+  // of those frames. `active.session` keeps its identity across that update.
+  const session = useSession((s) => s.active?.session ?? null);
   const activeId = useSession((s) => s.activeId);
   const refreshList = useSession((s) => s.refreshList);
   const reloadActiveSession = useSession((s) => s.reloadActiveSession);
@@ -141,10 +146,10 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const projects = useProject((s) => s.projects);
 
   const projectRoot = useMemo(() => {
-    const projectId = active?.session.project_id ?? null;
+    const projectId = session?.project_id ?? null;
     if (!projectId) return null;
     return projects.find((p) => p.id === projectId)?.path?.trim() || null;
-  }, [active, projects]);
+  }, [session?.project_id, projects]);
 
   const editorRef = useRef<ComposerEditorHandle | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -201,21 +206,21 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
       ),
     [settings?.model_services],
   );
-  const modelName = shortModelName(active?.session.model ?? settings?.model);
+  const modelName = shortModelName(session?.model ?? settings?.model);
   const modelLabel = modelName.length > 12 ? `${modelName.slice(0, 12)}…` : modelName;
   const ratioLabel = aspectRatio === "auto" ? t("composer.ratioAuto") : aspectRatio;
   const sizeLabel = imageSize === "auto" ? t("composer.sizeAuto") : imageSize;
 
   const activeCapabilities = useMemo(() => {
-    const providerId = active?.session.provider_id ?? settings?.active_provider_id;
-    const modelId = active?.session.model ?? settings?.model;
+    const providerId = session?.provider_id ?? settings?.active_provider_id;
+    const modelId = session?.model ?? settings?.model;
     return modelCapabilities(providerId, modelId);
   }, [
     settings?.model_services,
     settings?.active_provider_id,
     settings?.model,
-    active?.session.provider_id,
-    active?.session.model,
+    session?.provider_id,
+    session?.model,
   ]);
   const showImageParams = activeCapabilities.includes("image");
   const showVideoParams = activeCapabilities.includes("video");
@@ -938,7 +943,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
 
         <div className="composer-bar">
           <div className="composer-bar-left">
-            {!!active?.session.project_id && (
+            {!!session?.project_id && (
               <div className="composer-mode-wrap" ref={modeRef}>
                 <button
                   type="button"
@@ -1415,10 +1420,10 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
           </div>
           <div className="composer-bar-right">
             <div className="composer-ring-model-cluster">
-              {active && (
+              {session && (
                 <ContextRing
-                  used={active.session.context_window_used}
-                  limit={active.session.context_window}
+                  used={session.context_window_used}
+                  limit={session.context_window}
                 />
               )}
               <div className="composer-model" ref={modelRef}>
@@ -1449,10 +1454,10 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                               {provider.models.map((modelRow) => {
                                 const m = modelRow.id;
                                 const sessionProviderId =
-                                  active?.session.provider_id ??
+                                  session?.provider_id ??
                                   settings?.active_provider_id;
                                 const sessionModelId =
-                                  active?.session.model ?? settings?.model;
+                                  session?.model ?? settings?.model;
                                 const isActive =
                                   provider.id === sessionProviderId &&
                                   m === sessionModelId;

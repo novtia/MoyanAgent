@@ -26,7 +26,9 @@ export function useVirtualMessages(
   count: number,
   opts?: { enabled?: boolean; estimate?: number },
 ) {
-  const enabled = opts?.enabled ?? count >= 40;
+  // Low threshold on purpose: cost tracks total DOM, not row count, and a
+  // handful of very long replies is as expensive as dozens of short ones.
+  const enabled = opts?.enabled ?? count >= 16;
   const estimate = opts?.estimate ?? DEFAULT_ROW;
   const heightsRef = useRef<Map<number, number>>(new Map());
   const [range, setRange] = useState<VirtualRange>({

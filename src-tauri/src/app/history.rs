@@ -7,12 +7,29 @@ use crate::media::images;
 
 use super::state::AppState;
 
+/// Share of the model's context window that replayed history may occupy.
+///
+/// The remainder covers the system prompt, injected rules, the tool schema,
+/// the user's new message and the completion reservation. In-session
+/// compaction cannot help here: it rewrites the in-memory request only, and
+/// every new user message rebuilds the history from these rows again.
+const HISTORY_BUDGET_RATIO: f64 = 0.5;
+
+/// Token budget for replayed history, derived from the session's context
+/// window. `None` (unknown window) means no token-based trimming.
+pub(crate) fn history_token_budget(context_window: Option<i64>) -> Option<i64> {
+    context_window
+        .filter(|w| *w > 0)
+        .map(|w| (w as f64 * HISTORY_BUDGET_RATIO) as i64)
+}
+
 pub(crate) fn build_history(
     app: &AppHandle,
     conn: &db::DbConn,
     session_id: &str,
     before_ms: Option<i64>,
     max_messages: usize,
+    token_budget: Option<i64>,
 ) -> AppResult<Vec<chat::HistoryTurn>> {
     if max_messages == 0 {
         return Ok(Vec::new());
@@ -64,7 +81,55 @@ pub(crate) fn build_history(
             timeline,
         });
     }
+    if let Some(budget) = token_budget {
+        trim_history_to_budget(&mut out, budget);
+    }
     Ok(out)
+}
+
+/// Bring replayed history inside `budget` estimated tokens.
+///
+/// `max_messages` bounds the *count* of turns, not their size — a single
+/// assistant turn carrying a long tool transcript can be worth more than the
+/// whole rest of the window. Tool rounds go first, oldest turn first, because
+/// they are bulky and their conclusions are already restated in the prose
+/// reply; only if that is not enough do whole turns get dropped.
+fn trim_history_to_budget(turns: &mut Vec<chat::HistoryTurn>, budget: i64) {
+    use crate::ai::tokens::estimate_history_turn_tokens;
+
+    if budget <= 0 {
+        return;
+    }
+    let mut total: i64 = turns.iter().map(estimate_history_turn_tokens).sum();
+    if total <= budget {
+        return;
+    }
+
+    for turn in turns.iter_mut() {
+        if total <= budget {
+            return;
+        }
+        let has_tool_rounds = turn
+            .timeline
+            .iter()
+            .any(|s| matches!(s, chat::TimelineSegment::ToolRound { .. }));
+        if !has_tool_rounds {
+            continue;
+        }
+        let before = estimate_history_turn_tokens(turn);
+        turn.timeline
+            .retain(|s| matches!(s, chat::TimelineSegment::Text { .. }));
+        total -= before - estimate_history_turn_tokens(turn);
+    }
+
+    // Keep the most recent turn no matter what: dropping it would strip the
+    // context the user's new message is replying to.
+    let mut drop_count = 0usize;
+    while total > budget && drop_count + 1 < turns.len() {
+        total -= estimate_history_turn_tokens(&turns[drop_count]);
+        drop_count += 1;
+    }
+    turns.drain(..drop_count);
 }
 
 /// First history index to send, keeping at most `max_messages` entries.
@@ -293,5 +358,103 @@ mod window_tests {
     #[test]
     fn zero_cap_disables_history() {
         assert_eq!(stable_window_start(50, 0), 0);
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::{history_token_budget, trim_history_to_budget};
+    use crate::ai::chat::{HistoryTurn, TimelineSegment, TimelineToolResult};
+    use crate::ai::tokens::estimate_history_turn_tokens;
+
+    fn tool_turn(prose: &str, tool_output_chars: usize) -> HistoryTurn {
+        HistoryTurn {
+            role: "assistant".into(),
+            text: Some(prose.into()),
+            images: Vec::new(),
+            thinking_content: None,
+            timeline: vec![
+                TimelineSegment::ToolRound {
+                    assistant_text: None,
+                    thinking_content: None,
+                    calls: Vec::new(),
+                    results: vec![TimelineToolResult {
+                        tool_call_id: "1".into(),
+                        content: serde_json::Value::String("z".repeat(tool_output_chars)),
+                        is_error: false,
+                    }],
+                },
+                TimelineSegment::Text {
+                    text: prose.into(),
+                    thinking_content: None,
+                },
+            ],
+        }
+    }
+
+    fn total(turns: &[HistoryTurn]) -> i64 {
+        turns.iter().map(estimate_history_turn_tokens).sum()
+    }
+
+    #[test]
+    fn budget_is_half_the_window_and_absent_when_unknown() {
+        assert_eq!(history_token_budget(Some(1_000_000)), Some(500_000));
+        assert_eq!(history_token_budget(None), None);
+        assert_eq!(history_token_budget(Some(0)), None);
+    }
+
+    #[test]
+    fn history_inside_the_budget_is_untouched() {
+        let mut turns = vec![tool_turn("ok", 40)];
+        let before = turns.clone();
+        trim_history_to_budget(&mut turns, 10_000);
+        assert_eq!(turns.len(), before.len());
+        assert_eq!(turns[0].timeline.len(), before[0].timeline.len());
+    }
+
+    /// Ten messages of prose fit anywhere; ten messages each dragging a large
+    /// tool transcript are what actually blow the window.
+    #[test]
+    fn tool_transcripts_are_dropped_before_whole_turns() {
+        let mut turns: Vec<HistoryTurn> = (0..10).map(|_| tool_turn("summary", 40_000)).collect();
+        trim_history_to_budget(&mut turns, 5_000);
+        assert_eq!(turns.len(), 10, "prose turns should survive");
+        assert!(total(&turns) <= 5_000);
+        assert!(turns
+            .iter()
+            .all(|t| t.timeline.iter().all(|s| matches!(s, TimelineSegment::Text { .. }))));
+    }
+
+    #[test]
+    fn oldest_turns_go_when_trimming_tools_is_not_enough() {
+        let mut turns: Vec<HistoryTurn> = (0..10)
+            .map(|i| HistoryTurn {
+                role: "user".into(),
+                text: Some(format!("turn{i} {}", "w".repeat(20_000))),
+                images: Vec::new(),
+                thinking_content: None,
+                timeline: Vec::new(),
+            })
+            .collect();
+        trim_history_to_budget(&mut turns, 10_000);
+        assert!(total(&turns) <= 10_000);
+        assert!(turns.len() < 10);
+        assert!(turns.last().unwrap().text.as_ref().unwrap().contains("turn9"));
+    }
+
+    /// Whatever the budget, the turn the user is replying to must stay.
+    #[test]
+    fn the_most_recent_turn_always_survives() {
+        let mut turns: Vec<HistoryTurn> = (0..3)
+            .map(|_| HistoryTurn {
+                role: "user".into(),
+                text: Some("q".repeat(100_000)),
+                images: Vec::new(),
+                thinking_content: None,
+                timeline: Vec::new(),
+            })
+            .collect();
+        trim_history_to_budget(&mut turns, 10);
+        assert_eq!(turns.len(), 1);
     }
 }

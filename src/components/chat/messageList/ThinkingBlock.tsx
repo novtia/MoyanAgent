@@ -1,7 +1,11 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { highlightQuery } from "../../../utils/highlightQuery";
+import { ChunkedText } from "./ChunkedText";
 import { ThinkingChevronIcon, ThinkingIcon } from "./icons";
+
+/** Matches the `.msg-thinking-panel` grid-template-rows transition (0.28s). */
+const COLLAPSE_MS = 320;
 
 export function ThinkingBlock({
   content,
@@ -16,6 +20,10 @@ export function ThinkingBlock({
   const uid = useId();
   const panelId = `${uid}-thinking-panel`;
   const [open, setOpen] = useState(streaming);
+  // Collapsed thinking text is dead weight — a long session accumulates a lot
+  // of it — so it gets unmounted, but only once the collapse transition has
+  // finished, otherwise the panel snaps shut instead of animating.
+  const [mounted, setMounted] = useState(streaming);
   const userToggledRef = useRef(false);
   const prevStreamingRef = useRef(streaming);
 
@@ -33,6 +41,16 @@ export function ThinkingBlock({
       setOpen(true);
     }
   }, [query, content]);
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      return;
+    }
+    if (!mounted) return;
+    const timer = window.setTimeout(() => setMounted(false), COLLAPSE_MS);
+    return () => window.clearTimeout(timer);
+  }, [open, mounted]);
 
   const handleToggle = () => {
     userToggledRef.current = true;
@@ -76,7 +94,11 @@ export function ThinkingBlock({
       >
         <div className="msg-thinking-panel-inner">
           <div className="msg-thinking-content">
-            {query ? highlightQuery(content, query) : content}
+            {!mounted ? null : query ? (
+              highlightQuery(content, query)
+            ) : (
+              <ChunkedText text={content} />
+            )}
           </div>
         </div>
       </div>

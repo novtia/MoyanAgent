@@ -63,5 +63,6 @@ pub fn build_chat_request(
         pending_assistant_turn: None,
         previous_response_id: None,
         context_cache_enabled,
+        context_window: None,
     })
 }

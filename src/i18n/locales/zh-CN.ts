@@ -547,6 +547,7 @@ const zhCN = {
     thinkingLow: "low",
     thinkingMedium: "medium",
     thinkingHigh: "high",
+    thinkingXhigh: "xhigh",
     thinkingMax: "max",
     modelTitle: "模型",
     modelInputPlaceholder: "输入完整模型 ID",

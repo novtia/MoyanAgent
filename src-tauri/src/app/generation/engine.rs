@@ -128,6 +128,9 @@ pub(crate) async fn run_agent_chain(
     on_text_delta: chat::TextDeltaCallback,
     on_tool_event: ToolEventCallback,
 ) -> AppResult<chat::GenerateResponse> {
+    // Later stages build a fresh request, so the model's window has to be
+    // carried over explicitly or their agent loop runs without a budget.
+    let context_window = base_request.context_window;
     let mut base_request = Some(base_request);
     let mut prev_text: Option<String> = None;
     let mut merged = chat::GenerateResponse::default();
@@ -154,7 +157,7 @@ pub(crate) async fn run_agent_chain(
             (r, p)
         } else {
             let wrapped = build_chain_stage_prompt(user_prompt, prev_text.as_deref().unwrap_or(""));
-            let r = router::build_chat_request(
+            let mut r = router::build_chat_request(
                 provider,
                 model,
                 wrapped.clone(),
@@ -163,6 +166,7 @@ pub(crate) async fn run_agent_chain(
                 Vec::new(),
                 params.clone(),
             )?;
+            r.context_window = context_window;
             (r, wrapped)
         };
 

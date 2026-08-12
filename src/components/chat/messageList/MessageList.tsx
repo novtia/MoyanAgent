@@ -118,6 +118,25 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+
+    // Reading position for the timeline: last message that starts above the
+    // probe line, so a tall message keeps its tick lit while scrolling it.
+    // rAF-throttled, because it measures every mounted row and scroll events
+    // can arrive several times per frame.
+    let scanHandle = 0;
+    const scanReadingPosition = () => {
+      scanHandle = 0;
+      const probe = el.getBoundingClientRect().top + el.clientHeight * 0.35;
+      const nodes = el.querySelectorAll<HTMLElement>(".msg[data-message-id]");
+      let activeId: string | null = nodes[0]?.dataset.messageId ?? null;
+      nodes.forEach((node) => {
+        if (node.getBoundingClientRect().top <= probe) {
+          activeId = node.dataset.messageId ?? activeId;
+        }
+      });
+      if (activeId) setScrollActiveId(activeId);
+    };
+
     const onScroll = () => {
       if (!suppressAutoScrollRef.current) {
         isNearBottomRef.current =
@@ -147,23 +166,14 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
         });
       }
 
-      // Reading position for the timeline: last message that starts above the
-      // probe line, so a tall message keeps its tick lit while scrolling it.
-      const probe = el.getBoundingClientRect().top + el.clientHeight * 0.35;
-      const nodes = el.querySelectorAll<HTMLElement>(".msg[data-message-id]");
-      let activeId: string | null = nodes[0]?.dataset.messageId ?? null;
-      nodes.forEach((node) => {
-        if (node.getBoundingClientRect().top <= probe) {
-          activeId = node.dataset.messageId ?? activeId;
-        }
-      });
-      if (activeId) setScrollActiveId(activeId);
+      if (!scanHandle) scanHandle = requestAnimationFrame(scanReadingPosition);
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     // Seed the reading position without waiting for the first scroll event.
     const seed = requestAnimationFrame(onScroll);
     return () => {
       cancelAnimationFrame(seed);
+      if (scanHandle) cancelAnimationFrame(scanHandle);
       el.removeEventListener("scroll", onScroll);
     };
   }, [
@@ -183,16 +193,20 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
   }, [active?.session.id]);
 
   useEffect(() => {
-    if (!ref.current) return;
+    const el = ref.current;
+    if (!el) return;
     if (suppressAutoScrollRef.current) {
       prevMessagesLengthRef.current = messages.length;
       return;
     }
     const messagesGrew = messages.length > prevMessagesLengthRef.current;
     prevMessagesLengthRef.current = messages.length;
-    if (messagesGrew || isNearBottomRef.current) {
-      ref.current.scrollTop = ref.current.scrollHeight;
-    }
+    if (!messagesGrew && !isNearBottomRef.current) return;
+    // This effect runs on every streamed frame. Writing scrollTop when we're
+    // already pinned to the bottom buys nothing and costs a forced layout plus
+    // a scroll event that re-enters the handler above.
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 1) return;
+    el.scrollTop = el.scrollHeight;
   }, [
     messages.length,
     lastMessageTextLength,

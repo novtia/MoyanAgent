@@ -14,7 +14,9 @@ pub(crate) struct EffectiveSessionParams {
     pub system_prompt: String,
     pub history_turns: i64,
     pub llm_params: settings::ModelParamSettings,
-    /// Context window override; reserved for future use in compaction / UI hints.
+    /// Context window (tokens) for the session's model. Drives compaction
+    /// thresholds and the `max_tokens` clamp in the agent loop, plus the
+    /// composer's context ring.
     pub context_window: Option<i64>,
 }
 
@@ -55,7 +57,6 @@ pub(crate) struct ResolvedGeneration {
     pub(crate) system_prompt: String,
     pub(crate) history_turns: i64,
     pub(crate) llm_params: settings::ModelParamSettings,
-    #[allow(dead_code)]
     pub(crate) context_window: Option<i64>,
 }
 
@@ -112,13 +113,23 @@ pub(crate) fn resolve_session_generation(
         );
     }
 
+    // Sessions created before the model catalog carried a window — and any
+    // whose stored value was dropped by a settings round-trip — still need one,
+    // otherwise the agent loop has no budget to enforce and falls back to
+    // sending whatever it built.
+    let context_window = eff.context_window.filter(|w| *w > 0).or_else(|| {
+        llm_catalog::lookup_context_window(conn, &provider.id, &provider.sdk, &model)
+            .ok()
+            .flatten()
+    });
+
     Ok(ResolvedGeneration {
         provider,
         model,
         system_prompt: eff.system_prompt,
         history_turns: eff.history_turns,
         llm_params: eff.llm_params,
-        context_window: eff.context_window,
+        context_window,
     })
 }
 

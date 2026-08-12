@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { AssistantBlock } from "../../../types";
 import { highlightQuery } from "../../../utils/highlightQuery";
 import { AgentStageDivider } from "./AgentStageDivider";
+import { ChunkedText } from "./ChunkedText";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { TodoMasterView } from "./TodoMasterView";
 import { resolveToolComponent } from "./registry";
@@ -69,7 +70,11 @@ export function AssistantContent({
           if (suppressText || !block.content) return null;
           return (
             <div key={`text:${i}`} className="text">
-              {query ? highlightQuery(block.content, query) : block.content}
+              {query ? (
+                highlightQuery(block.content, query)
+              ) : (
+                <ChunkedText text={block.content} />
+              )}
             </div>
           );
         }
