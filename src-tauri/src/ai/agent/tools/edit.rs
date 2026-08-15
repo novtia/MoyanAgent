@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
+use crate::ai::agent::core::file_snapshot::{FileChangeRecord, FileOp, FileSnapshotStore};
 use crate::ai::agent::tools::project_path::{self, display_path, FILE_REF_DESC};
 use crate::ai::agent::tools::read_receipt::record_receipt;
 use crate::ai::agent::tools::text_decode::{
@@ -69,7 +69,10 @@ impl Tool for FileWriteTool {
 
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
-            let path = path_arg(&invocation.input, WRITE_TOOL, &invocation.context.cwd)?;
+            // Strict resolution: a bare `notes.md` must land in the project
+            // root, never on a same-named file the search happens to find in a
+            // subfolder — Write overwrites, so guessing costs the user data.
+            let path = strict_path_arg(&invocation.input, WRITE_TOOL, &invocation.context.cwd)?;
             // Written verbatim: JSON parsing already resolved the escapes, so any
             // remaining `\n` / `\\` / `\"` is literal source text.
             let content = invocation
@@ -79,7 +82,20 @@ impl Tool for FileWriteTool {
                 .unwrap_or_default()
                 .to_string();
 
-            let exists = path.exists();
+            // One read serves both the pre-image and the encoding to preserve,
+            // so the snapshot describes exactly the bytes being replaced.
+            let existing = match std::fs::read(&path) {
+                Ok(bytes) => Some(detect_and_decode(&bytes)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => {
+                    return Err(AppError::Other(format!("Write: read {:?}: {e}", path)));
+                }
+            };
+            let exists = existing.is_some();
+            let (encoding, had_bom) = existing
+                .as_ref()
+                .map(|d| (d.encoding, d.had_bom))
+                .unwrap_or((TextEncoding::Utf8, false));
 
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() {
@@ -90,20 +106,24 @@ impl Tool for FileWriteTool {
             }
 
             // Snapshot the pre-image (before overwriting / creating) so the
-            // change can be rolled back if its message is deleted.
-            let op = if exists { FileOp::Update } else { FileOp::Create };
-            self.snapshots
-                .record_before(invocation.context.session_id.as_deref(), &path, op);
-
-            let (encoding, had_bom) = if exists {
-                let bytes = std::fs::read(&path).map_err(|e| {
-                    AppError::Other(format!("Write: read {:?}: {e}", path))
-                })?;
-                let decoded = detect_and_decode(&bytes);
-                (decoded.encoding, decoded.had_bom)
-            } else {
-                (TextEncoding::Utf8, false)
+            // change can be rolled back if its message is deleted. A failure
+            // here aborts the write: an unrecorded mutation is unrecoverable.
+            let change = match existing.as_ref() {
+                Some(decoded) => FileChangeRecord::from_read(
+                    &path,
+                    FileOp::Update,
+                    &decoded.text,
+                    decoded.encoding,
+                    decoded.had_bom,
+                ),
+                None => FileChangeRecord::absent(&path, FileOp::Create),
             };
+            self.snapshots.record(
+                invocation.context.session_id.as_deref(),
+                invocation.context.correlation_id.as_deref(),
+                &change,
+            )?;
+
             write_text_file(&path, &content, encoding, had_bom)
                 .map_err(|e| AppError::Other(format!("Write: write {:?}: {e}", path)))?;
 
@@ -282,19 +302,29 @@ impl Tool for FileEditTool {
                 (decoded.text.replacen(&old_string, &new_string, 1), 1)
             };
 
-            // Snapshot the pre-image before mutating for rollback support.
-            self.snapshots.record_before(
+            // Snapshot the pre-image before mutating for rollback support,
+            // reusing the read the replacement was computed from: re-reading
+            // here could capture a different file than the one being edited.
+            self.snapshots.record(
                 invocation.context.session_id.as_deref(),
-                &path,
-                FileOp::Update,
-            );
+                invocation.context.correlation_id.as_deref(),
+                &FileChangeRecord::from_read(
+                    &path,
+                    FileOp::Update,
+                    &text_before,
+                    decoded.encoding,
+                    decoded.had_bom,
+                ),
+            )?;
 
             write_text_file(&path, &updated, decoded.encoding, decoded.had_bom)
                 .map_err(|e| AppError::Other(format!("Edit: write {:?}: {e}", path)))?;
 
             record_receipt(&invocation.context.read_file_state, &path, &updated);
 
-            let path_str = display_path(&path);
+            // Same key the snapshot row uses, so review rows and rollbacks
+            // resolve to one identity per file.
+            let path_str = crate::data::paths::normalized_path_key(&path);
             let mut pending_diff_id: Option<String> = None;
             if let (Some(pool), Some(sid)) = (&self.pool, invocation.context.session_id.as_deref())
             {
@@ -385,11 +415,20 @@ fn require_optional_bool(input: &Value, key: &str, tool: &str) -> AppResult<()> 
 }
 
 fn path_arg(input: &Value, tool: &str, cwd: &Path) -> AppResult<PathBuf> {
-    let raw = input
+    let raw = raw_path_arg(input, tool)?;
+    project_path::resolve_project_file(cwd, raw, tool)
+}
+
+fn strict_path_arg(input: &Value, tool: &str, cwd: &Path) -> AppResult<PathBuf> {
+    let raw = raw_path_arg(input, tool)?;
+    project_path::resolve_project_file_strict(cwd, raw, tool)
+}
+
+fn raw_path_arg<'a>(input: &'a Value, tool: &str) -> AppResult<&'a str> {
+    input
         .get("path")
         .and_then(Value::as_str)
-        .ok_or_else(|| AppError::Invalid(format!("{tool}: missing path")))?;
-    project_path::resolve_project_file(cwd, raw, tool)
+        .ok_or_else(|| AppError::Invalid(format!("{tool}: missing path")))
 }
 
 #[cfg(test)]
@@ -687,6 +726,31 @@ const re = /\d+\\s/g;
         .await;
         assert!(!res.is_error, "unexpected error: {:?}", res.content);
         assert_eq!(disk(&ctx, &name), "literal: OK\nprose: a\nb\n");
+    }
+
+    /// Write overwrites, so a bare file name must not be retargeted at a
+    /// same-named file living in a subfolder.
+    #[tokio::test]
+    async fn write_creates_at_the_root_instead_of_overwriting_a_nested_namesake() {
+        let dir = test_dir().join(format!("strict-{}", COUNTER.fetch_add(1, Ordering::SeqCst)));
+        std::fs::create_dir_all(dir.join("chapters")).unwrap();
+        let nested = dir.join("chapters").join("outline.md");
+        std::fs::write(&nested, "precious").unwrap();
+        let ctx = ToolUseContextBuilder::new(AgentId::new(), dir.clone())
+            .build()
+            .0;
+
+        let res = run_write(&ctx, json!({ "path": "outline.md", "content": "new" })).await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(
+            std::fs::read_to_string(&nested).unwrap(),
+            "precious",
+            "the nested namesake must be untouched"
+        );
+        assert_eq!(std::fs::read_to_string(dir.join("outline.md")).unwrap(), "new");
+        assert_eq!(res.content["created"], true);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

@@ -130,6 +130,99 @@ pub fn display_path(path: &Path) -> String {
     strip_verbatim_prefix(&path.to_string_lossy())
 }
 
+/// Canonicalize an existing path, or its nearest existing ancestor when the
+/// final file / folders have not been created yet.
+///
+/// On Windows `canonicalize` returns a verbatim `\\?\` path. Comparing that
+/// against an untouched non-existent target makes a valid child look like it
+/// sits outside the root, so the missing tail is rebuilt on top of the
+/// canonical ancestor to keep both sides in one representation.
+pub fn canonicalize_with_missing_tail(path: &Path) -> AppResult<PathBuf> {
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(AppError::Invalid(format!(
+            "path traversal is not allowed: {}",
+            path.display()
+        )));
+    }
+
+    let mut ancestor = path;
+    let mut missing = Vec::new();
+
+    while !ancestor.exists() {
+        let segment = ancestor
+            .file_name()
+            .ok_or_else(|| AppError::Invalid(format!("cannot resolve path {}", path.display())))?;
+        if segment == "." || segment == ".." {
+            return Err(AppError::Invalid(format!(
+                "path traversal is not allowed: {}",
+                path.display()
+            )));
+        }
+        missing.push(segment.to_os_string());
+        ancestor = ancestor
+            .parent()
+            .ok_or_else(|| AppError::Invalid(format!("cannot resolve path {}", path.display())))?;
+    }
+
+    let mut resolved = std::fs::canonicalize(ancestor)
+        .map_err(|e| AppError::Other(format!("canonicalize {}: {e}", ancestor.display())))?;
+    for segment in missing.iter().rev() {
+        resolved.push(segment);
+    }
+    Ok(resolved)
+}
+
+/// True when `candidate` is `root` itself or sits underneath it.
+///
+/// Both sides are reduced to one spelling first, because neither a raw string
+/// comparison nor `Path::starts_with` is trustworthy here: on Windows
+/// `canonicalize` yields a verbatim `\\?\C:\…` path, so comparing it against an
+/// un-canonicalized root rejects valid children, and the comparison is
+/// case-sensitive while NTFS is not — `c:\project` would look foreign to
+/// `C:\Project`.
+///
+/// A path containing `..` never resolves (see
+/// [`canonicalize_with_missing_tail`]) and therefore never passes as contained
+/// unless it exists on disk, where canonicalization removes the traversal.
+pub fn is_within(root: &Path, candidate: &Path) -> bool {
+    fn normalize(path: &Path) -> String {
+        let text = canonicalize_with_missing_tail(path)
+            .map(|p| display_path(&p))
+            .unwrap_or_else(|_| display_path(path));
+        if cfg!(windows) {
+            text.to_lowercase()
+        } else {
+            text
+        }
+    }
+
+    let root = normalize(root);
+    let root = root.trim_end_matches(['\\', '/']);
+    let candidate = normalize(candidate);
+    if candidate == root {
+        return true;
+    }
+    // Compared component-wise so `C:\proj-old` is not read as a child of
+    // `C:\proj`.
+    Path::new(&candidate).starts_with(Path::new(root))
+}
+
+/// The single stored representation of a workspace file.
+///
+/// `file_snapshots` and `pending_diffs` both key off this string, so rollback
+/// and review-row cleanup can match on equality instead of hoping two
+/// independently derived path spellings happen to agree. Falls back to the
+/// raw path when the location cannot be canonicalized at all (e.g. the drive
+/// went away), which keeps a best-effort record rather than dropping one.
+pub fn normalized_path_key(path: &Path) -> String {
+    canonicalize_with_missing_tail(path)
+        .map(|p| display_path(&p))
+        .unwrap_or_else(|_| display_path(path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,6 +235,22 @@ mod tests {
             r"\\server\share\a"
         );
         assert_eq!(strip_verbatim_prefix(r"C:\Users\x"), r"C:\Users\x");
+    }
+
+    #[test]
+    fn normalized_key_agrees_for_existing_and_not_yet_created_files() {
+        let root = std::env::temp_dir().join(format!("moyan_key_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp dir");
+        let file = root.join("章节.md");
+
+        let before_create = normalized_path_key(&file);
+        std::fs::write(&file, "x").expect("write");
+        let after_create = normalized_path_key(&file);
+
+        assert_eq!(before_create, after_create);
+        assert!(!after_create.starts_with(r"\\?\"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

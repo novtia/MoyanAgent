@@ -24,6 +24,10 @@ pub(crate) struct AnswerAskUserArgs {
     pub(crate) answer: String,
     #[serde(default)]
     pub(crate) items: Vec<AnswerAskUserItem>,
+    /// Session the answer was typed in. Scopes the wake-up so a tool_call id
+    /// shared by two conversations cannot cross over.
+    #[serde(default)]
+    pub(crate) session_id: Option<String>,
 }
 
 /// Wake a blocked AskUser tool so the in-flight agent loop continues.
@@ -43,7 +47,9 @@ pub fn answer_ask_user(
             })
             .collect(),
     };
-    Ok(state.prompt_registry.answer(&args.prompt_id, answer))
+    Ok(state
+        .prompt_registry
+        .answer(args.session_id.as_deref(), &args.prompt_id, answer))
 }
 
 // ????????? Agent task commands ?????????

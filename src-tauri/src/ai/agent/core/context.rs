@@ -127,12 +127,19 @@ impl ToolUseContext {
 
 /// Lightweight cancellation flag backed by `tokio::sync::watch`. Cheap to
 /// clone, supports child-of relationship for sub-agents.
+///
+/// A [`child`](Self::child) owns its own channel and additionally observes
+/// every ancestor's: cancelling a parent tears the child down, while cancelling
+/// the child leaves the parent (and its siblings) running. Ancestors are held
+/// as a flat list so checking the flag never recurses.
 #[derive(Clone)]
 pub struct AbortSignal {
     rx: watch::Receiver<bool>,
     /// Kept for the lifetime of the original signal so that `aborted()`
     /// remains stable even after spawning children.
     _tx: Arc<watch::Sender<bool>>,
+    /// Receivers of this signal's ancestors, outermost first.
+    ancestors: Arc<Vec<watch::Receiver<bool>>>,
 }
 
 impl AbortSignal {
@@ -143,29 +150,52 @@ impl AbortSignal {
             Self {
                 rx,
                 _tx: tx.clone(),
+                ancestors: Arc::new(Vec::new()),
             },
             AbortHandle { tx },
         )
     }
 
     pub fn aborted(&self) -> bool {
-        *self.rx.borrow()
+        *self.rx.borrow() || self.ancestors.iter().any(|rx| *rx.borrow())
     }
 
-    /// Block until [`AbortHandle::abort`] is invoked on this signal's controller.
+    /// Block until this signal or any ancestor is aborted.
     pub async fn wait_aborted(&self) {
         if self.aborted() {
             return;
         }
-        let mut rx = self.rx.clone();
-        let _ = rx.changed().await;
+        let waits: Vec<_> = std::iter::once(self.rx.clone())
+            .chain(self.ancestors.iter().cloned())
+            .map(|mut rx| {
+                Box::pin(async move {
+                    // A closed channel means the owner is gone; treat it as
+                    // "will never abort" and let the other arms decide.
+                    if rx.changed().await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
+                })
+            })
+            .collect();
+        futures_util::future::select_all(waits).await;
     }
 
+    /// Derive a signal that this one can cancel but which cannot cancel this
+    /// one. Used for sub-agents so a worker failing does not kill its parent.
     pub fn child(&self) -> AbortSignal {
-        self.clone()
+        let (tx, rx) = watch::channel(false);
+        let mut ancestors = Vec::with_capacity(self.ancestors.len() + 1);
+        ancestors.extend(self.ancestors.iter().cloned());
+        ancestors.push(self.rx.clone());
+        AbortSignal {
+            rx,
+            _tx: Arc::new(tx),
+            ancestors: Arc::new(ancestors),
+        }
     }
 
-    /// Handle that aborts this signal (and any [`child`] clones).
+    /// Handle that aborts this signal and everything derived from it via
+    /// [`child`](Self::child) — but not its parents.
     pub fn controller(&self) -> AbortHandle {
         AbortHandle {
             tx: self._tx.clone(),
@@ -180,6 +210,69 @@ pub struct AbortHandle {
 impl AbortHandle {
     pub fn abort(&self) {
         let _ = self.tx.send(true);
+    }
+}
+
+#[cfg(test)]
+mod abort_tests {
+    use super::*;
+
+    #[test]
+    fn a_parent_abort_reaches_every_descendant() {
+        let (parent, handle) = AbortSignal::new();
+        let child = parent.child();
+        let grandchild = child.child();
+
+        handle.abort();
+
+        assert!(parent.aborted());
+        assert!(child.aborted(), "a child follows its parent");
+        assert!(grandchild.aborted(), "and so does a grandchild");
+    }
+
+    /// The whole point of a child signal: one sub-agent giving up must not
+    /// cancel the run that spawned it, nor its siblings.
+    #[test]
+    fn aborting_a_child_leaves_the_parent_and_siblings_running() {
+        let (parent, _handle) = AbortSignal::new();
+        let child = parent.child();
+        let sibling = parent.child();
+
+        child.controller().abort();
+
+        assert!(child.aborted());
+        assert!(!parent.aborted(), "parent keeps running");
+        assert!(!sibling.aborted(), "sibling keeps running");
+    }
+
+    #[tokio::test]
+    async fn waiting_wakes_on_a_parent_abort() {
+        let (parent, handle) = AbortSignal::new();
+        let child = parent.child();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            handle.abort();
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), child.wait_aborted())
+            .await
+            .expect("the child must wake when its parent is cancelled");
+        assert!(child.aborted());
+    }
+
+    #[tokio::test]
+    async fn waiting_wakes_on_its_own_abort() {
+        let (parent, _handle) = AbortSignal::new();
+        let child = parent.child();
+        let own = child.controller();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            own.abort();
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), child.wait_aborted())
+            .await
+            .expect("its own controller must still wake it");
     }
 }
 

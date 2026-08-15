@@ -11,12 +11,18 @@ use super::message_search;
 pub type DbPool = Pool<SqliteConnectionManager>;
 pub type DbConn = r2d2::PooledConnection<SqliteConnectionManager>;
 
-/// Squashed baseline is 28; 29 adds message/session FTS search indexes.
-const SCHEMA_VERSION: i64 = 29;
+/// Squashed baseline is 28; 29 adds message/session FTS search indexes;
+/// 30 makes file snapshots persist at write time.
+const SCHEMA_VERSION: i64 = 30;
 
 const MIGRATION_001: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/migrations/001_init.sql"
+));
+
+const MIGRATION_030: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/030_file_snapshot_request_binding.sql"
 ));
 
 pub fn open_pool(db_path: &Path) -> AppResult<DbPool> {
@@ -119,6 +125,19 @@ fn ensure_message_search_schema(conn: &rusqlite::Connection) -> AppResult<bool> 
     Ok(need_backfill)
 }
 
+/// Idempotent: rebuild `file_snapshots` with the write-time binding columns.
+/// Guarded on the column rather than the version stamp so a DB created from
+/// the current `001_init.sql` skips the rebuild entirely.
+fn ensure_file_snapshot_binding_schema(conn: &rusqlite::Connection) -> AppResult<()> {
+    if !table_exists(conn, "file_snapshots")
+        || column_exists(conn, "file_snapshots", "request_message_id")
+    {
+        return Ok(());
+    }
+    conn.execute_batch(MIGRATION_030)?;
+    Ok(())
+}
+
 fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)",
@@ -160,12 +179,137 @@ fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
         message_search::backfill_search_index(conn)?;
     }
     if cur < 29 {
+        conn.execute("INSERT INTO schema_version(version) VALUES (?1)", params![29])?;
+    }
+
+    ensure_file_snapshot_binding_schema(conn)?;
+    if cur < 30 {
         conn.execute(
             "INSERT INTO schema_version(version) VALUES (?1)",
             params![SCHEMA_VERSION],
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pre-30 table: `message_id` mandatory, no request binding.
+    const LEGACY_FILE_SNAPSHOTS: &str = "
+        DROP TABLE file_snapshots;
+        CREATE TABLE file_snapshots (
+          id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id      TEXT NOT NULL,
+          message_id      TEXT NOT NULL,
+          path            TEXT NOT NULL,
+          op              TEXT NOT NULL,
+          before_existed  INTEGER NOT NULL,
+          before_content  TEXT,
+          restorable      INTEGER NOT NULL,
+          created_at      INTEGER NOT NULL,
+          before_encoding TEXT,
+          before_had_bom  INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO file_snapshots(
+          session_id, message_id, path, op, before_existed, restorable, created_at)
+          VALUES('s1', 'a1', 'proj/one.md', 'create', 0, 1, 1700000000000);
+        DELETE FROM schema_version WHERE version >= 30;";
+
+    #[test]
+    fn upgrading_a_pre_binding_database_keeps_its_snapshots() {
+        let dir = std::env::temp_dir().join(format!("atelier-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("legacy.db");
+
+        {
+            let pool = open_pool(&db_path).unwrap();
+            let conn = pool.get().unwrap();
+            conn.execute_batch(LEGACY_FILE_SNAPSHOTS).unwrap();
+            assert!(!column_exists(&conn, "file_snapshots", "request_message_id"));
+        }
+
+        let pool = open_pool(&db_path).unwrap();
+        let conn = pool.get().unwrap();
+        assert!(column_exists(&conn, "file_snapshots", "request_message_id"));
+        assert!(column_exists(&conn, "file_snapshots", "rollback_error"));
+
+        let (message_id, path, request): (Option<String>, String, Option<String>) = conn
+            .query_row(
+                "SELECT message_id, path, request_message_id FROM file_snapshots",
+                params![],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("existing snapshot survives the rebuild");
+        assert_eq!(message_id.as_deref(), Some("a1"));
+        assert_eq!(path, "proj/one.md");
+        assert!(request.is_none());
+
+        // A second open must not rebuild again.
+        drop(conn);
+        drop(pool);
+        let pool = open_pool(&db_path).unwrap();
+        let conn = pool.get().unwrap();
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM file_snapshots", params![], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 1);
+
+        drop(conn);
+        drop(pool);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use super::{open_pool, DbConn, DbPool};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    /// Throwaway on-disk database with the full schema applied, removed when
+    /// the handle drops. SQLite in-memory databases are per-connection, so a
+    /// pooled test needs a real file.
+    pub(crate) struct TempDb {
+        pool: Option<DbPool>,
+        dir: PathBuf,
+    }
+
+    impl TempDb {
+        pub(crate) fn new(tag: &str) -> Self {
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let dir = std::env::temp_dir()
+                .join(format!("atelier-db-{tag}-{}-{n}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("create temp db dir");
+            let pool = open_pool(&dir.join("test.db")).expect("open temp db");
+            Self {
+                pool: Some(pool),
+                dir,
+            }
+        }
+
+        pub(crate) fn conn(&self) -> DbConn {
+            self.pool.as_ref().expect("pool alive").get().expect("conn")
+        }
+
+        pub(crate) fn pool(&self) -> DbPool {
+            self.pool.as_ref().expect("pool alive").clone()
+        }
+    }
+
+    impl Drop for TempDb {
+        fn drop(&mut self) {
+            // Windows keeps the .db file locked until every connection closes.
+            drop(self.pool.take());
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
 }
 
 pub fn now_ms() -> i64 {

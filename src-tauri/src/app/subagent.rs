@@ -7,9 +7,7 @@ use crate::ai::agent::tools::agent_tool::{
     ChatRequestFactory, ChildStreamHooks, SpawnedTempSession, SubagentSessionHost,
 };
 use crate::ai::agent::memory::UserContextLoader;
-use crate::ai::agent::{
-    self, FileSnapshotStore, FsUserContextLoader, RoleStateStore, RunAgentResult,
-};
+use crate::ai::agent::{self, FsUserContextLoader, RoleStateStore, RunAgentResult};
 use crate::ai::{chat, parameters, session_log, token_log};
 use crate::app::generation::params::{effective_agent_chain, resolve_session_generation};
 use crate::data::db::DbPool;
@@ -18,8 +16,8 @@ use crate::error::{AppError, AppResult};
 
 use super::generation::commands::finalize_generate_assistant_message;
 use super::generation::streaming::{
-    new_stream_blocks, snapshot_stream_blocks, stream_text_callback, tool_event_callback,
-    StreamBlocks,
+    new_stream_blocks, persist_streamed_assistant_snapshot, snapshot_stream_blocks,
+    stream_text_callback, tool_event_callback, StreamBlocks,
 };
 
 pub(crate) struct SettingsChatFactory {
@@ -177,7 +175,6 @@ pub(crate) struct TauriSubagentHost {
     pub(crate) app: AppHandle,
     pub(crate) pool: DbPool,
     pub(crate) role_states: Arc<RoleStateStore>,
-    pub(crate) file_snapshots: Arc<FileSnapshotStore>,
     pub(crate) token_stats: Arc<token_log::TokenStatsRecorder>,
     pub(crate) session_logger: Arc<session_log::SessionLogger>,
     /// Per-child stream block buffers drained at finalize.
@@ -189,7 +186,6 @@ impl TauriSubagentHost {
         app: AppHandle,
         pool: DbPool,
         role_states: Arc<RoleStateStore>,
-        file_snapshots: Arc<FileSnapshotStore>,
         token_stats: Arc<token_log::TokenStatsRecorder>,
         session_logger: Arc<session_log::SessionLogger>,
     ) -> Self {
@@ -197,7 +193,6 @@ impl TauriSubagentHost {
             app,
             pool,
             role_states,
-            file_snapshots,
             token_stats,
             session_logger,
             child_blocks: Mutex::new(HashMap::new()),
@@ -330,7 +325,6 @@ impl SubagentSessionHost for TauriSubagentHost {
             resp,
             blocks,
             &self.role_states,
-            &self.file_snapshots,
             &self.token_stats,
             &self.session_logger,
             "subagent",
@@ -346,5 +340,74 @@ impl SubagentSessionHost for TauriSubagentHost {
             }),
         );
         Ok(())
+    }
+
+    fn abandon_temp_session(
+        &self,
+        child: &SpawnedTempSession,
+        parent_session_id: &str,
+        parent_request_message_id: Option<&str>,
+        tool_call_id: Option<&str>,
+        reason: &str,
+    ) {
+        // Always drain the buffer, even if nothing below succeeds: it is keyed
+        // by child session id and would otherwise be held for the lifetime of
+        // the app.
+        let blocks = self.take_blocks(&child.session_id);
+
+        match self.pool.get() {
+            Ok(conn) => {
+                // Keep what the sub-agent managed to produce, so a cancelled
+                // research task still shows its partial notes instead of an
+                // empty session.
+                if let Err(e) = persist_streamed_assistant_snapshot(
+                    &conn,
+                    &child.session_id,
+                    &blocks,
+                    None,
+                    None,
+                    serde_json::json!({ "cancelled": true, "subagent_error": reason }),
+                    Some(child.user_message_id.as_str()),
+                ) {
+                    eprintln!(
+                        "abandon temp session {}: persist failed: {e}",
+                        child.session_id
+                    );
+                }
+            }
+            Err(e) => eprintln!(
+                "abandon temp session {}: db connection: {e}",
+                child.session_id
+            ),
+        }
+
+        // Resolve the parent's Agent card. `keep_pending` is deliberately absent
+        // here: the earlier `running` update set it, and only a final event
+        // without it lets the UI stop the spinner.
+        if let (Some(req_id), Some(call_id)) = (parent_request_message_id, tool_call_id) {
+            let _ = self.app.emit(
+                "gen://tool",
+                serde_json::json!({
+                    "session_id": parent_session_id,
+                    "request_message_id": req_id,
+                    "type": "tool_result",
+                    "id": call_id,
+                    "tool": "Agent",
+                    "output": {
+                        "status": "failed",
+                        "child_session_id": &child.session_id,
+                        "error": reason,
+                    },
+                    "is_error": true,
+                }),
+            );
+        }
+        let _ = self.app.emit(
+            "gen://status",
+            serde_json::json!({
+                "phase": "response",
+                "session_id": &child.session_id,
+            }),
+        );
     }
 }

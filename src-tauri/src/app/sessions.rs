@@ -268,14 +268,12 @@ pub fn delete_session(
         let _ = crate::data::pending_diff::clear_session(&conn, &id);
     }
     for child_id in &child_ids {
-        state.file_snapshots.clear(child_id);
         state.session_logger.delete_session_log(child_id);
         let dir = paths::sessions_dir(&app)?.join(child_id);
         if dir.exists() {
             let _ = std::fs::remove_dir_all(&dir);
         }
     }
-    state.file_snapshots.clear(&id);
     state.session_logger.delete_session_log(&id);
     let dir = paths::sessions_dir(&app)?.join(&id);
     if dir.exists() {

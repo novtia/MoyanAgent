@@ -212,16 +212,59 @@ export function applyStreamingToolCallDelta(
   });
 }
 
+/**
+ * Temp subagent session -> the parent session the user actually sees. A child
+ * emits tool events under its own id, but its files belong to the parent's view.
+ */
+const childSessionParents = new Map<string, string>();
+
+/** True when the event comes from the session currently on screen (or its child). */
+function isEventForActiveView(sessionId?: string): boolean {
+  if (!sessionId) return false;
+  const activeId = useSession.getState().activeId;
+  if (!activeId) return false;
+  return sessionId === activeId || childSessionParents.get(sessionId) === activeId;
+}
+
+/**
+ * True when the event touches the project whose file tree is on screen. Wider
+ * than [`isEventForActiveView`]: a sibling session writing into the same
+ * project changes the tree the user is looking at.
+ */
+function isEventForActiveProject(sessionId?: string): boolean {
+  if (isEventForActiveView(sessionId)) return true;
+  if (!sessionId) return false;
+  const state = useSession.getState();
+  if (!state.activeId) return false;
+  // Temp child sessions are hidden from the summary list; use their parent.
+  const owner = state.sessions.some((s) => s.id === sessionId)
+    ? sessionId
+    : childSessionParents.get(sessionId);
+  const project = owner
+    ? (state.sessions.find((s) => s.id === owner)?.project_id ?? null)
+    : null;
+  if (!project) return false;
+  const activeProject =
+    state.active?.session.project_id ??
+    state.sessions.find((s) => s.id === state.activeId)?.project_id ??
+    null;
+  return project === activeProject;
+}
+
 async function handleReaderToolComplete(
   tool: string,
   input: unknown,
   output: unknown,
   isError: boolean | undefined,
+  sessionId?: string,
 ) {
   if (isError) return;
-  if (FS_TREE_TOOLS.has(tool)) {
+  if (FS_TREE_TOOLS.has(tool) && isEventForActiveProject(sessionId)) {
     useFileExplorer.getState().bumpTree();
   }
+  // Reader tabs belong to the session in view; a background session (often in
+  // another project) must not open, close, or rewrite them.
+  if (!isEventForActiveView(sessionId)) return;
   const o = (output && typeof output === "object" ? output : {}) as Record<string, unknown>;
   const path = resolveToolFilePath(input, output);
 
@@ -488,7 +531,10 @@ export function applyToolEvent(
           typeof outObj?.child_session_id === "string"
             ? outObj.child_session_id
             : null;
-        if (childId) markChildSessionBusy(childId, true);
+        if (childId) {
+          if (sessionId) childSessionParents.set(childId, sessionId);
+          markChildSessionBusy(childId, true);
+        }
         return;
       }
       blocks[i] = {
@@ -498,7 +544,13 @@ export function applyToolEvent(
         is_error: event.is_error || undefined,
       };
       if (!event.is_error) {
-        void handleReaderToolComplete(b.tool, b.input, event.output, event.is_error);
+        void handleReaderToolComplete(
+          b.tool,
+          b.input,
+          event.output,
+          event.is_error,
+          sessionId,
+        );
       }
       if (b.tool === "Agent") {
         const prevOut =
@@ -513,6 +565,7 @@ export function applyToolEvent(
             ? prevOut.child_session_id
             : null);
         if (childId) {
+          if (sessionId) childSessionParents.set(childId, sessionId);
           // Preserve child_session_id on error payloads so the card stays openable.
           const cur = blocks[i];
           if (

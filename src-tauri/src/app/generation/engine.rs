@@ -27,10 +27,39 @@ pub(crate) fn generation_abort_lock(
         .map_err(|_| AppError::Other("generation abort lock poisoned".into()))
 }
 
-/// Register a session-scoped abort controller and return the matching signal
-/// for the agent run. Repeated cancel clicks call [`AbortHandle::abort`] on the
-/// stored handle until the run finishes and the slot is cleared.
-pub(crate) fn register_generation_abort(state: &AppState, session_id: &str) -> AppResult<AbortSignal> {
+/// A session's registered abort controller, released when this value drops.
+///
+/// The slot doubles as the "a generation is running" flag, so it must be
+/// cleared on *every* exit path. Clearing it by hand at the end of the happy
+/// path is not enough: any `?` in between would leave the session permanently
+/// registered, and every later send would be rejected with "generation already
+/// in progress" until the app restarts.
+pub(crate) struct GenerationAbortGuard<'a> {
+    state: &'a AppState,
+    session_id: String,
+    signal: AbortSignal,
+}
+
+impl GenerationAbortGuard<'_> {
+    pub(crate) fn signal(&self) -> &AbortSignal {
+        &self.signal
+    }
+}
+
+impl Drop for GenerationAbortGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.state.generation_abort.lock() {
+            guard.remove(&self.session_id);
+        }
+    }
+}
+
+/// Register a session-scoped abort controller. Repeated cancel clicks call
+/// [`AbortHandle::abort`] on the stored handle until the returned guard drops.
+pub(crate) fn register_generation_abort<'a>(
+    state: &'a AppState,
+    session_id: &str,
+) -> AppResult<GenerationAbortGuard<'a>> {
     let (signal, handle) = AbortSignal::new();
     let mut guard = generation_abort_lock(state)?;
     if guard.contains_key(session_id) {
@@ -39,13 +68,12 @@ pub(crate) fn register_generation_abort(state: &AppState, session_id: &str) -> A
         ));
     }
     guard.insert(session_id.to_string(), handle);
-    Ok(signal)
-}
-
-pub(crate) fn clear_generation_abort(state: &AppState, session_id: &str) {
-    if let Ok(mut guard) = state.generation_abort.lock() {
-        guard.remove(session_id);
-    }
+    drop(guard);
+    Ok(GenerationAbortGuard {
+        state,
+        session_id: session_id.to_string(),
+        signal,
+    })
 }
 
 /// Build the prompt handed to a downstream (N>1) agent flow stage. Wraps the
@@ -228,7 +256,8 @@ pub(crate) async fn run_cancellable_generation(
     overrides: Option<&session::NodeOverrides>,
     correlation_id: Option<&str>,
 ) -> AppResult<chat::GenerateResponse> {
-    let abort_signal = register_generation_abort(state, session_id)?;
+    let abort_guard = register_generation_abort(state, session_id)?;
+    let abort_signal = abort_guard.signal().clone();
 
     // Drain any pending task-notifications addressed to the main loop and
     // append them to the chat history as hidden user-meta turns. This
@@ -287,6 +316,11 @@ pub(crate) async fn run_cancellable_generation(
         }
     }
 
+    // Aim the memory walk at this session's project before reading it. The
+    // loader has no other way to learn the path: it is per-session state that
+    // only the database knows.
+    state.user_context.set_project_cwd(project_cwd.as_deref());
+
     // Prepend user-context when the agent opts in (Plan/Explore omit it).
     if let Ok(ctx) = state.user_context.load() {
         if !definition.omit_claude_md {
@@ -344,6 +378,7 @@ pub(crate) async fn run_cancellable_generation(
     {
         worker.register_arc(tool);
     }
+    worker.share_todo_list_from(state.tools.as_ref());
     let worker_tools = Arc::new(worker);
 
     let query_engine = state.query_engine.clone();
@@ -353,34 +388,35 @@ pub(crate) async fn run_cancellable_generation(
         crate::data::role_state::resolve_role_state_scope(&conn, session_id)?
     };
 
-    let outcome = tokio::select! {
-        out = agent::run_agent(RunAgentParams {
-            definition,
-            prompt,
-            run_mode: agent::AgentRunMode::Foreground,
-            chat_request: request,
-            tools: worker_tools,
-            task_store,
-            engine: query_engine,
-            initial_attachments: Vec::new(),
-            permission_override: None,
-            parent_system_prompt: None,
-            on_text_delta,
-            on_tool_event,
-            query_source: Some(agent::QuerySource::ReplMainThread),
-            project_cwd,
-            abort_signal: Some(abort_signal.clone()),
-            session_id: Some(session_id.to_string()),
-            role_state_scope_id: Some(role_state_scope_id),
-            correlation_id: correlation_id.map(str::to_string),
-            token_stats: Some(state.token_stats.clone()),
-            session_logger: Some(state.session_logger.clone()),
-        }) => out,
-        _ = abort_signal.wait_aborted() => Err(AppError::Canceled),
-    };
-    clear_generation_abort(state, session_id);
-
-    let run = outcome?;
+    // Awaited directly rather than raced against the abort signal. The run
+    // already holds that signal and unwinds on it at every await point, so a
+    // second race here would only ever finish *first* — dropping the run
+    // mid-turn, which skips the bookkeeping it does on the way out (persisting
+    // what was already streamed, recording token usage, closing task rows) and
+    // leaves the UI holding a half-finished block nothing will ever complete.
+    let run = agent::run_agent(RunAgentParams {
+        definition,
+        prompt,
+        run_mode: agent::AgentRunMode::Foreground,
+        chat_request: request,
+        tools: worker_tools,
+        task_store,
+        engine: query_engine,
+        initial_attachments: Vec::new(),
+        permission_override: None,
+        parent_system_prompt: None,
+        on_text_delta,
+        on_tool_event,
+        query_source: Some(agent::QuerySource::ReplMainThread),
+        project_cwd,
+        abort_signal: Some(abort_signal),
+        session_id: Some(session_id.to_string()),
+        role_state_scope_id: Some(role_state_scope_id),
+        correlation_id: correlation_id.map(str::to_string),
+        token_stats: Some(state.token_stats.clone()),
+        session_logger: Some(state.session_logger.clone()),
+    })
+    .await?;
     Ok(chat::GenerateResponse {
         images: run.images,
         videos: run.videos,

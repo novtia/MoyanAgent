@@ -1,9 +1,10 @@
 //! In-session TodoList tool.
 //!
 //! Gives the model a lightweight, ephemeral task-list it can use to plan
-//! and track multi-step work within a single agent run. The list lives
-//! only in memory for the duration of the session; it is never written
-//! to disk and is not shared across concurrent sub-agents.
+//! and track multi-step work within a single agent run. Lists are kept in
+//! memory only, keyed per `(session, agent)` scope so that concurrent
+//! sessions and sub-agents never see each other's items; the engine clears
+//! a scope when its run ends.
 //!
 //! Supported operations (the `action` field):
 //!
@@ -21,10 +22,12 @@
 //! - `detail` – longer task description (immutable, may be empty).
 //! - `status` – one of `"pending"`, `"in_progress"`, `"done"`, `"cancelled"`.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
+use crate::ai::agent::core::context::ToolUseContext;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
@@ -82,12 +85,17 @@ impl TodoStore {
     }
 }
 
-/// The TodoList tool. Each instance owns its own isolated store, so
-/// concurrent sub-agents don't share each other's lists.
+/// Scope key isolating one agent run from every other session / sub-agent.
+pub fn scope_key(ctx: &ToolUseContext) -> String {
+    format!("{}#{}", ctx.session_id.as_deref().unwrap_or("-"), ctx.agent_id)
+}
+
+/// The TodoList tool. One process-wide instance holds a map of per-run
+/// stores so concurrent sessions and sub-agents never share lists.
 #[derive(Clone)]
 pub struct TodoListTool {
     spec: ToolSpec,
-    store: Arc<Mutex<TodoStore>>,
+    stores: Arc<Mutex<HashMap<String, TodoStore>>>,
 }
 
 impl Default for TodoListTool {
@@ -97,10 +105,16 @@ impl Default for TodoListTool {
 }
 
 impl TodoListTool {
-    /// Returns a nudge message when pending / in-progress items remain.
-    /// Used by the query engine to continue the loop instead of stopping early.
-    pub fn incomplete_nudge_message(&self) -> Option<String> {
-        let store = self.store.lock().ok()?;
+    /// Returns a nudge message when pending / in-progress items remain
+    /// in this run's list. Used by the query engine to continue the loop
+    /// instead of stopping early.
+    pub fn incomplete_nudge_message(&self, ctx: &ToolUseContext) -> Option<String> {
+        self.incomplete_nudge_for_key(&scope_key(ctx))
+    }
+
+    fn incomplete_nudge_for_key(&self, key: &str) -> Option<String> {
+        let stores = self.stores.lock().ok()?;
+        let store = stores.get(key)?;
         let incomplete: Vec<_> = store
             .items
             .iter()
@@ -124,9 +138,17 @@ impl TodoListTool {
         ))
     }
 
+    /// Drop this run's list so the next generation can `create` again and
+    /// the in-memory map does not grow without bound.
+    pub fn clear_scope(&self, ctx: &ToolUseContext) {
+        if let Ok(mut stores) = self.stores.lock() {
+            stores.remove(&scope_key(ctx));
+        }
+    }
+
     pub fn new() -> Self {
         Self {
-            store: Arc::new(Mutex::new(TodoStore::default())),
+            stores: Arc::new(Mutex::new(HashMap::new())),
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
                 description: "\
@@ -319,7 +341,8 @@ impl Tool for TodoListTool {
     }
 
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
-        let store = self.store.clone();
+        let stores = self.stores.clone();
+        let key = scope_key(invocation.context);
         Box::pin(async move {
             let action = invocation
                 .input
@@ -330,9 +353,10 @@ impl Tool for TodoListTool {
 
             let tasks = invocation.input.get("tasks").cloned().unwrap_or(Value::Null);
 
-            let mut store = store
+            let mut stores = stores
                 .lock()
                 .map_err(|_| AppError::Other("TodoList: store lock poisoned".into()))?;
+            let store = stores.entry(key).or_default();
 
             match action.as_str() {
                 "create" => {
@@ -439,28 +463,47 @@ mod tests {
     fn incomplete_nudge_when_items_open() {
         let tool = TodoListTool::new();
         {
-            let mut store = tool.store.lock().unwrap();
+            let mut stores = tool.stores.lock().unwrap();
+            let store = stores.entry("s#a".into()).or_default();
             store.create(vec![
                 ("task a".into(), String::new()),
                 ("task b".into(), String::new()),
             ]);
             store.items[0].status = "done".into();
         }
-        let msg = tool.incomplete_nudge_message().expect("nudge");
+        let msg = tool.incomplete_nudge_for_key("s#a").expect("nudge");
         assert!(msg.contains("NOT complete"));
         assert!(msg.contains("task b"));
         assert!(msg.contains("update"));
+        assert!(tool.incomplete_nudge_for_key("other").is_none());
     }
 
     #[test]
     fn no_nudge_when_all_done() {
         let tool = TodoListTool::new();
         {
-            let mut store = tool.store.lock().unwrap();
+            let mut stores = tool.stores.lock().unwrap();
+            let store = stores.entry("s#a".into()).or_default();
             store.create(vec![("task".into(), String::new())]);
             store.get_mut(1).unwrap().status = "done".into();
         }
-        assert!(tool.incomplete_nudge_message().is_none());
+        assert!(tool.incomplete_nudge_for_key("s#a").is_none());
+    }
+
+    #[test]
+    fn clear_scope_drops_the_list() {
+        let tool = TodoListTool::new();
+        {
+            let mut stores = tool.stores.lock().unwrap();
+            stores.entry("sess#agent".into()).or_default().create(vec![
+                ("task".into(), String::new()),
+            ]);
+        }
+        assert!(tool.incomplete_nudge_for_key("sess#agent").is_some());
+        if let Ok(mut stores) = tool.stores.lock() {
+            stores.remove("sess#agent");
+        }
+        assert!(tool.incomplete_nudge_for_key("sess#agent").is_none());
     }
 
     #[test]

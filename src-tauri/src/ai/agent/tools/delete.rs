@@ -76,11 +76,21 @@ impl Tool for DeleteTool {
                 .get("path")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let path = project_path::resolve_project_file(&invocation.context.cwd, raw, TOOL_NAME)?;
+            let cwd = &invocation.context.cwd;
+            // Strict: a bare name refers to the project root and nothing else.
+            // The lenient whole-tree search that Read uses is fine for looking
+            // at a file, but here it could unlink a same-named file the model
+            // never mentioned, so a near miss is reported as a suggestion.
+            let path = project_path::resolve_project_file_strict(cwd, raw, TOOL_NAME)?;
             if !path.exists() {
+                let hint = project_path::resolve_project_file(cwd, raw, TOOL_NAME)
+                    .ok()
+                    .filter(|found| found != &path)
+                    .map(|found| format!(" Did you mean `{}`?", display_path(&found)))
+                    .unwrap_or_default();
                 return Ok(ToolResult::error(format!(
-                    "{TOOL_NAME}: file does not exist: {}",
-                    path.display()
+                    "{TOOL_NAME}: file does not exist: {}.{hint}",
+                    display_path(&path)
                 )));
             }
             if !path.is_file() {
@@ -99,9 +109,10 @@ impl Tool for DeleteTool {
             // recreate the file with its original content.
             self.snapshots.record_before(
                 invocation.context.session_id.as_deref(),
+                invocation.context.correlation_id.as_deref(),
                 &path,
                 FileOp::Delete,
-            );
+            )?;
 
             std::fs::remove_file(&path)
                 .map_err(|e| AppError::Other(format!("{TOOL_NAME}: remove {:?}: {e}", path)))?;

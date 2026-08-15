@@ -129,21 +129,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_role_state_message ON role_state_snapshots
 CREATE INDEX IF NOT EXISTS idx_role_state_scope ON role_state_snapshots(scope_id, id);
 
 -- ─── file_snapshots ───────────────────────────────────────────────────────
+-- Rows are written the moment a tool touches disk, so `message_id` stays NULL
+-- until the assistant message that owns the mutation is persisted.
+-- `request_message_id` is the user turn that triggered it, which keeps a
+-- cancelled / crashed generation's writes attributable and rollback-able.
 CREATE TABLE IF NOT EXISTS file_snapshots (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id      TEXT NOT NULL,
-  message_id      TEXT NOT NULL,
-  path            TEXT NOT NULL,
-  op              TEXT NOT NULL,
-  before_existed  INTEGER NOT NULL,
-  before_content  TEXT,
-  restorable      INTEGER NOT NULL,
-  created_at      INTEGER NOT NULL,
-  before_encoding TEXT,
-  before_had_bom  INTEGER NOT NULL DEFAULT 0
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id         TEXT NOT NULL,
+  message_id         TEXT,
+  request_message_id TEXT,
+  path               TEXT NOT NULL,
+  op                 TEXT NOT NULL,
+  before_existed     INTEGER NOT NULL,
+  before_content     TEXT,
+  restorable         INTEGER NOT NULL,
+  created_at         INTEGER NOT NULL,
+  before_encoding    TEXT,
+  before_had_bom     INTEGER NOT NULL DEFAULT 0,
+  rollback_error     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_file_snapshots_session ON file_snapshots(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_file_snapshots_message ON file_snapshots(message_id);
+CREATE INDEX IF NOT EXISTS idx_file_snapshots_request ON file_snapshots(session_id, request_message_id);
 
 -- ─── token_usage_events ───────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS token_usage_events (

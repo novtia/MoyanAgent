@@ -60,6 +60,17 @@ use crate::error::{AppError, AppResult};
 
 pub const TOOL_NAME: &str = "RoleState";
 
+/// Highest array index a dot-path may address.
+///
+/// `set` grows an array to reach the index it names, so an unbounded index is
+/// an allocation primitive: `tags.900000000` would try to materialise nine
+/// hundred million JSON objects before the write.
+const MAX_ARRAY_INDEX: usize = 63;
+
+/// Segment ceiling for a dot-path. Role cards are shallow by design; anything
+/// deeper is a malformed path rather than a real field.
+const MAX_PATH_SEGMENTS: usize = 8;
+
 /// Scope-scoped, shared store of role boards. Lives on `AppState` so the
 /// `role-state` sub-agent, the persistence layer and the Tauri commands all
 /// see the same in-memory truth.
@@ -147,6 +158,15 @@ impl RoleStateStore {
             .iter_mut()
             .find(|r| role_id(r) == Some(id))
             .ok_or_else(|| AppError::Invalid(format!("RoleState update: unknown role id {id:?}")))?;
+
+        if let Some(set) = set {
+            for path in set.keys() {
+                check_dot_path(path)?;
+            }
+        }
+        for path in unset {
+            check_dot_path(path)?;
+        }
 
         if let Some(set) = set {
             for (path, value) in set {
@@ -263,6 +283,42 @@ fn role_id(role: &Value) -> Option<&str> {
     role.get("id").and_then(Value::as_str)
 }
 
+/// Reject dot-paths an incremental update must never take.
+///
+/// `id` is the board's primary key: the store looks roles up by it, the UI
+/// keys cards on it and the persisted snapshot is matched against it, so a
+/// `set: {"id": …}` would either orphan the role or collide with another one.
+/// The remaining rules keep a single edit from being expensive (see
+/// [`MAX_ARRAY_INDEX`] / [`MAX_PATH_SEGMENTS`]).
+fn check_dot_path(path: &str) -> AppResult<()> {
+    let parts: Vec<&str> = path.split('.').collect();
+    if path.trim().is_empty() || parts.iter().any(|p| p.is_empty()) {
+        return Err(AppError::Invalid(format!(
+            "RoleState update: {path:?} is not a valid dot-path"
+        )));
+    }
+    if parts.len() > MAX_PATH_SEGMENTS {
+        return Err(AppError::Invalid(format!(
+            "RoleState update: {path:?} is deeper than {MAX_PATH_SEGMENTS} segments"
+        )));
+    }
+    if parts[0] == "id" {
+        return Err(AppError::Invalid(
+            "RoleState update: `id` is immutable; delete and re-create the role instead".into(),
+        ));
+    }
+    for part in parts {
+        if let Ok(idx) = part.parse::<usize>() {
+            if idx > MAX_ARRAY_INDEX {
+                return Err(AppError::Invalid(format!(
+                    "RoleState update: index {idx} in {path:?} exceeds the limit of {MAX_ARRAY_INDEX}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Set a value at a dot-path, creating intermediate objects as needed.
 /// Pure-numeric path segments index into arrays when the parent is one.
 fn set_dot_path(root: &mut Value, path: &str, value: Value) {
@@ -309,7 +365,9 @@ fn descend_segment<'a>(parent: &'a mut Value, seg: &str) -> &'a mut Value {
             .entry(seg.to_string())
             .or_insert_with(|| Value::Object(Map::new())),
         Value::Array(arr) => {
-            let idx = seg.parse::<usize>().unwrap_or(0);
+            // Clamped as well as validated: growing to reach an index is the
+            // one operation here that can allocate without bound.
+            let idx = seg.parse::<usize>().unwrap_or(0).min(MAX_ARRAY_INDEX);
             while arr.len() <= idx {
                 arr.push(Value::Object(Map::new()));
             }
@@ -401,7 +459,9 @@ shared board), `model` (optional model id for this role's ConsultRoles calls; \
 omit to use the default).\n\n\
 ━━━ INCREMENTAL EDIT EXAMPLES ━━━\n\
 set: { \"nsfw.arousal\": 60, \"nsfw.semen.vaginal\": 1800, \"nsfw.semen.texture\": \"浓稠拉丝\" }\n\
-unset: [\"tags.0\", \"nsfw.semen.anal\"]\n\n\
+unset: [\"tags.0\", \"nsfw.semen.anal\"]\n\
+`id` is immutable — to rename a character change `name`; to replace one, \
+`delete` then `create`. Array indices must stay small (≤63).\n\n\
 Do NOT narrate. Your visible text reply must be at most one short sentence."
                     .to_string(),
                 schema: json!({
@@ -566,3 +626,81 @@ impl Tool for RoleStateTool {
         })
     }
 }
+
+#[cfg(test)]
+mod dot_path_tests {
+    use super::*;
+
+    fn board() -> Arc<RoleStateStore> {
+        let store = Arc::new(RoleStateStore::new());
+        store
+            .create(
+                "scope",
+                "rin",
+                json!({ "name": "凛", "tags": ["害羞"], "attributes": { "好感": 10 } }),
+            )
+            .unwrap();
+        store
+    }
+
+    #[test]
+    fn ordinary_paths_still_apply() {
+        let store = board();
+        let mut set = Map::new();
+        set.insert("attributes.好感".into(), json!(80));
+        set.insert("tags.1".into(), json!("紧张"));
+        let role = store.update("scope", "rin", Some(&set), &[]).unwrap();
+
+        assert_eq!(role["attributes"]["好感"], json!(80));
+        assert_eq!(role["tags"][1], json!("紧张"));
+    }
+
+    /// The board is keyed by `id`; letting an update rewrite it would orphan
+    /// the role from its UI card and its persisted snapshot.
+    #[test]
+    fn id_cannot_be_rewritten_by_an_update() {
+        let store = board();
+        let mut set = Map::new();
+        set.insert("id".into(), json!("stolen"));
+
+        assert!(store.update("scope", "rin", Some(&set), &[]).is_err());
+        assert_eq!(store.snapshot("scope")[0]["id"], json!("rin"));
+
+        assert!(store
+            .update("scope", "rin", None, &["id".to_string()])
+            .is_err());
+        assert_eq!(store.snapshot("scope")[0]["id"], json!("rin"));
+    }
+
+    /// A far-out index used to be materialised element by element.
+    #[test]
+    fn an_absurd_array_index_is_refused_instead_of_allocated() {
+        let store = board();
+        let mut set = Map::new();
+        set.insert("tags.900000000".into(), json!("boom"));
+
+        assert!(store.update("scope", "rin", Some(&set), &[]).is_err());
+        assert_eq!(store.snapshot("scope")[0]["tags"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn malformed_and_overdeep_paths_are_refused() {
+        assert!(check_dot_path("").is_err());
+        assert!(check_dot_path("a..b").is_err());
+        assert!(check_dot_path("a.b.c.d.e.f.g.h.i").is_err());
+        assert!(check_dot_path("nsfw.semen.vaginal").is_ok());
+    }
+
+    /// A rejected path must not have applied its siblings either.
+    #[test]
+    fn one_bad_path_rejects_the_whole_update() {
+        let store = board();
+        let mut set = Map::new();
+        set.insert("mood".into(), json!("羞涩"));
+        set.insert("id".into(), json!("stolen"));
+
+        assert!(store.update("scope", "rin", Some(&set), &[]).is_err());
+        assert!(store.snapshot("scope")[0].get("mood").is_none());
+    }
+}
+

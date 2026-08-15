@@ -19,6 +19,14 @@ pub const TOOL_NAME: &str = "AskUser";
 
 const MAX_QUESTIONS: usize = 5;
 
+/// Ceiling on the blocking wait.
+///
+/// Long enough that a user who steps away still comes back to a live question,
+/// but bounded: an unanswered prompt otherwise pins the run's generation slot
+/// (and its provider connection) for the lifetime of the process, and the
+/// session cannot start a new turn while that slot is held.
+const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
 /// Blocking AskUser tool. Holds a shared [`PromptRegistry`] with the Tauri command.
 pub struct AskUserTool {
     spec: ToolSpec,
@@ -159,18 +167,36 @@ impl Tool for AskUserTool {
 
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
-            let id = invocation.id.as_str().to_string();
-            let (rx, _guard) = self.registry.register(id);
+            let (rx, _guard) = self.registry.register(
+                invocation.context.session_id.as_deref(),
+                invocation.id.as_str(),
+            );
 
-            let answer = tokio::select! {
-                received = rx => received.ok(),
-                _ = invocation.context.abort.wait_aborted() => None,
+            enum Outcome {
+                Answered(PromptAnswer),
+                Cancelled,
+                TimedOut,
+            }
+
+            let outcome = tokio::select! {
+                received = rx => match received {
+                    Ok(a) => Outcome::Answered(a),
+                    Err(_) => Outcome::Cancelled,
+                },
+                _ = invocation.context.abort.wait_aborted() => Outcome::Cancelled,
+                _ = tokio::time::sleep(MAX_WAIT) => Outcome::TimedOut,
             };
 
-            let PromptAnswer { answer, items } = match answer {
-                Some(a) => a,
-                None => {
+            let PromptAnswer { answer, items } = match outcome {
+                Outcome::Answered(a) => a,
+                Outcome::Cancelled => {
                     return Ok(ToolResult::error("用户未回答（提问已取消）"));
+                }
+                Outcome::TimedOut => {
+                    return Ok(ToolResult::error(format!(
+                        "用户未回答（等待超过 {} 分钟，已超时）",
+                        MAX_WAIT.as_secs() / 60
+                    )));
                 }
             };
 

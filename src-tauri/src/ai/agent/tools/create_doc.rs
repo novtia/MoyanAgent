@@ -178,8 +178,12 @@ impl Tool for CreateDocTool {
             // Snapshot the pre-image before writing so the document can be
             // rolled back (deleted when created, restored when overwritten).
             let op = if created { FileOp::Create } else { FileOp::Update };
-            self.snapshots
-                .record_before(invocation.context.session_id.as_deref(), &path, op);
+            self.snapshots.record_before(
+                invocation.context.session_id.as_deref(),
+                invocation.context.correlation_id.as_deref(),
+                &path,
+                op,
+            )?;
 
             // Match FileWriteTool: an existing document keeps the encoding it
             // was authored in, so overwriting a GBK chapter doesn't silently

@@ -60,7 +60,9 @@ pub fn run() {
             // `Arc` immediately so we can register `AgentTool` self-
             // referentially below.
             let tools: Arc<ToolPool> = Arc::new(ToolPool::new());
-            let file_snapshots = Arc::new(FileSnapshotStore::new());
+            // Snapshots land in SQLite as the tools write, so an interrupted
+            // generation still leaves a rollback record behind.
+            let file_snapshots = Arc::new(FileSnapshotStore::with_pool(Arc::new(pool.clone())));
             tools.register(FileReadTool::new());
             tools.register(crate::ai::agent::tools::list_files::ListFilesTool::new());
             tools.register(crate::ai::agent::tools::grep::GrepTool::new());
@@ -107,11 +109,18 @@ pub fn run() {
                 registry.clone(),
                 pool.clone(),
             ));
-            // Plan-mode aware resolver: in Plan-mode any write tool /
-            // mutating Bash invocation is denied at the executor before
-            // hitting the tool itself.
+            // Plan-mode aware resolver over the real default-mode policy.
+            //
+            // Outer layer: in Plan-mode every write tool and `Bash` itself is
+            // denied at the executor before the tool runs.
+            // Inner layer: in the interactive modes, in-project writes are
+            // allowed (that is the app's purpose, and every mutation is
+            // snapshotted for rollback), while shell commands that the
+            // snapshot system provably cannot undo are refused.
             let permission_resolver: Arc<dyn agent::PermissionResolver> = Arc::new(
-                crate::ai::agent::core::permission::PlanModeResolver::new(agent::AllowAllResolver),
+                crate::ai::agent::core::permission::PlanModeResolver::new(
+                    crate::ai::agent::core::permission::DefaultModeResolver,
+                ),
             );
             let query_engine: Arc<dyn agent::QueryEngine> = Arc::new(ProviderQueryEngine::new(
                 provider_engine.clone(),
@@ -124,7 +133,6 @@ pub fn run() {
                 app.handle().clone(),
                 pool.clone(),
                 role_states.clone(),
-                file_snapshots.clone(),
                 token_stats.clone(),
                 session_logger.clone(),
             ));
@@ -153,7 +161,6 @@ pub fn run() {
                 session_memory: Arc::new(FsSessionMemoryExtractor::new()),
                 role_states,
                 prompt_registry,
-                file_snapshots,
                 token_stats,
                 session_logger,
             }));

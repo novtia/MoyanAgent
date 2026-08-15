@@ -509,14 +509,24 @@ async fn run_ai_role(
                 .filter(|s| !s.is_empty()),
             parse_memory_facts(v),
         ),
+        // Unparseable reply. The raw text cannot be forwarded as `action`: the
+        // role was asked for an object *containing* `reasoning_private` and
+        // `memory_facts`, so a near-miss reply (fences, trailing prose, one
+        // stray comma) carries exactly the private motives this tool exists to
+        // keep from the director.
         None => {
-            let t = text.trim().to_string();
-            (
-                if t.is_empty() { None } else { Some(t) },
-                Some(String::new()),
-                None,
-                Vec::new(),
-            )
+            return RoleChoice {
+                role_id,
+                name,
+                control: "ai".into(),
+                action: None,
+                speech: None,
+                reasoning_private: None,
+                needs_ask_user: false,
+                error: Some("role reply was not valid JSON; no choice extracted".into()),
+                memory_path: Some(memory_rel),
+                model: used_model,
+            };
         }
     };
 
@@ -718,10 +728,19 @@ impl Tool for ConsultRolesTool {
                 }
             };
 
+            let abort = &invocation.context.abort;
+            if abort.aborted() {
+                return Err(AppError::Canceled);
+            }
+
             let force = args.force_compact.unwrap_or(false);
             let need_compact = force || estimate_tokens(&scene) > COMPACT_TOKEN_THRESHOLD;
             let (digest, compacted) = if need_compact {
-                match compact_scene(self.provider.as_ref(), &base_chat, &scene).await {
+                let compacted = tokio::select! {
+                    r = compact_scene(self.provider.as_ref(), &base_chat, &scene) => r,
+                    _ = abort.wait_aborted() => return Err(AppError::Canceled),
+                };
+                match compacted {
                     Ok(d) => (d, true),
                     Err(e) => {
                         let truncated: String = scene.chars().take(20_000).collect();
@@ -806,10 +825,15 @@ impl Tool for ConsultRolesTool {
                 ));
             }
 
-            let results = join_all(ai_futs.into_iter().map(|(idx, fut)| async move {
-                (idx, fut.await)
-            }))
-            .await;
+            // One provider call per AI role, so a cancelled turn must not sit
+            // here until every one of them finishes. Dropping the `join_all`
+            // future drops each request with it.
+            let results = tokio::select! {
+                r = join_all(ai_futs.into_iter().map(|(idx, fut)| async move {
+                    (idx, fut.await)
+                })) => r,
+                _ = abort.wait_aborted() => return Err(AppError::Canceled),
+            };
 
             for (idx, choice) in results {
                 if let Some(slot) = ordered.get_mut(idx) {

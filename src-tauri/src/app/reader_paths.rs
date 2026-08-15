@@ -37,56 +37,10 @@ pub(crate) fn path_under_root(path: &std::path::Path, root: &std::path::Path) ->
 }
 
 /// Canonicalize an existing path, or its nearest existing ancestor when the
-/// final file/folders have not been created yet.
-///
-/// On Windows, `canonicalize` returns a verbatim `\\?\` path. Comparing that
-/// canonical root with an untouched non-existent target makes a valid child
-/// appear to be outside the root. Rebuilding the missing tail on top of the
-/// canonical ancestor keeps both sides in the same path representation.
+/// final file/folders have not been created yet. Shared with the snapshot
+/// layer so a stored path and a validated write path are the same string.
 pub(crate) fn canonicalize_reader_path(path: &std::path::Path) -> AppResult<PathBuf> {
-    if path
-        .components()
-        .any(|component| matches!(component, std::path::Component::ParentDir))
-    {
-        return Err(AppError::Invalid(
-            "write_project_file: path traversal is not allowed".into(),
-        ));
-    }
-
-    let mut ancestor = path;
-    let mut missing = Vec::new();
-
-    while !ancestor.exists() {
-        let segment = ancestor.file_name().ok_or_else(|| {
-            AppError::Invalid(format!(
-                "write_project_file: cannot resolve path {}",
-                path.display()
-            ))
-        })?;
-        if segment == "." || segment == ".." {
-            return Err(AppError::Invalid(
-                "write_project_file: path traversal is not allowed".into(),
-            ));
-        }
-        missing.push(segment.to_os_string());
-        ancestor = ancestor.parent().ok_or_else(|| {
-            AppError::Invalid(format!(
-                "write_project_file: cannot resolve path {}",
-                path.display()
-            ))
-        })?;
-    }
-
-    let mut resolved = std::fs::canonicalize(ancestor).map_err(|e| {
-        AppError::Other(format!(
-            "write_project_file: canonicalize {}: {e}",
-            ancestor.display()
-        ))
-    })?;
-    for segment in missing.iter().rev() {
-        resolved.push(segment);
-    }
-    Ok(resolved)
+    paths::canonicalize_with_missing_tail(path)
 }
 
 pub(crate) fn validate_reader_write_path(

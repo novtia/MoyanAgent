@@ -8,7 +8,6 @@ use crate::data::{db, paths, session};
 use crate::error::{AppError, AppResult};
 
 use super::dto::{decorate_message, MessageAbs};
-use super::project_io::apply_pending_diff_revert;
 use super::reader_paths::{session_project_cwd, validate_reader_write_path};
 use super::state::AppState;
 
@@ -90,42 +89,63 @@ pub fn delete_message(
             state.role_states.load(&scope, roles);
             emit_role_state_reset(&app, &scope, &sid);
         }
-        // Roll the workspace back: restore / delete every file this message (and
-        // any later ones) created, updated or removed.
-        let mut restored_paths: Vec<String> = Vec::new();
-        if let Ok(restores) = crate::data::file_snapshot::rollback_from_message(&conn, &sid, &id) {
-            for r in &restores {
-                if let Err(e) = apply_file_restore(&conn, &sid, r) {
-                    eprintln!("delete_message: apply_file_restore failed: {e}");
-                }
-                let raw = r.path.to_string_lossy();
-                restored_paths.push(
-                    raw.strip_prefix(r"\\?\")
-                        .unwrap_or(raw.as_ref())
-                        .to_string(),
-                );
-            }
-        }
-        // Always also roll back via pending_diffs (covers missing snapshots and
-        // deletes of the originating user message via request_message_id).
-        match crate::data::pending_diff::rollback_for_message(&conn, &sid, &id) {
-            Ok(reverts) => {
-                for revert in &reverts {
-                    if let Err(e) = apply_pending_diff_revert(&conn, &sid, revert) {
-                        eprintln!("delete_message: pending_diff revert failed: {e}");
-                    }
-                    restored_paths.push(revert.path.clone());
-                }
-            }
-            Err(e) => {
-                eprintln!("delete_message: pending_diff rollback_for_message failed: {e}");
-            }
-        }
-        restored_paths.sort();
-        restored_paths.dedup();
-        let _ = crate::data::pending_diff::clear_paths(&conn, &sid, &restored_paths);
+        rollback_workspace_from_message(&conn, &sid, &id);
     }
     Ok(())
+}
+
+/// Undo every file mutation recorded for `message_id` and everything after it
+/// in the session, then retire the review rows that described them.
+///
+/// `file_snapshots` is the only writer here: it is the one place that knows a
+/// file was *created* (and must therefore be deleted rather than rewritten),
+/// and it now holds a row from the instant the tool touched disk, so an
+/// interrupted generation is covered too. `message_id` may be the assistant
+/// message that owns the writes or the user turn that requested them.
+pub(crate) fn rollback_workspace_from_message(
+    conn: &db::DbConn,
+    session_id: &str,
+    message_id: &str,
+) {
+    let plan = match crate::data::file_snapshot::plan_rollback_from_message(
+        conn, session_id, message_id,
+    ) {
+        Ok(Some(plan)) => Some(plan),
+        Ok(None) => None,
+        Err(e) => {
+            eprintln!("rollback_workspace: planning failed for {message_id}: {e}");
+            None
+        }
+    };
+
+    let mut restored_paths: Vec<String> = Vec::new();
+    if let Some(plan) = plan {
+        let mut failures: Vec<(i64, String)> = plan.unrestorable.clone();
+        for (_, reason) in &plan.unrestorable {
+            eprintln!("rollback_workspace: {reason}");
+        }
+        for restore in &plan.restores {
+            match apply_file_restore(conn, session_id, restore) {
+                Ok(()) => restored_paths.push(restore.path.clone()),
+                Err(e) => {
+                    eprintln!("rollback_workspace: {} failed: {e}", restore.path);
+                    failures.push((restore.row_id, e.to_string()));
+                }
+            }
+        }
+        if let Err(e) =
+            crate::data::file_snapshot::finish_rollback(conn, session_id, &plan, &failures)
+        {
+            eprintln!("rollback_workspace: finish failed for {message_id}: {e}");
+        }
+    }
+
+    if let Err(e) = crate::data::pending_diff::clear_for_message(conn, session_id, message_id) {
+        eprintln!("rollback_workspace: pending_diff clear failed for {message_id}: {e}");
+    }
+    restored_paths.sort();
+    restored_paths.dedup();
+    let _ = crate::data::pending_diff::clear_paths(conn, session_id, &restored_paths);
 }
 
 /// Apply a single file-snapshot rollback action to disk: delete a file that
@@ -136,15 +156,20 @@ pub(crate) fn apply_file_restore(
     session_id: &str,
     restore: &crate::data::file_snapshot::FileRestore,
 ) -> AppResult<()> {
-    let raw = restore.path.to_string_lossy();
-    let stripped = raw.strip_prefix(r"\\?\").unwrap_or(raw.as_ref());
-    let file_path = PathBuf::from(stripped);
+    let file_path = PathBuf::from(&restore.path);
     let cwd = session_project_cwd(conn, session_id);
     let resolved = validate_reader_write_path(&file_path, cwd.as_deref())?;
 
     if restore.delete {
-        let _ = std::fs::remove_file(&resolved);
-        return Ok(());
+        return match std::fs::remove_file(&resolved) {
+            Ok(()) => Ok(()),
+            // Already gone is the state we wanted.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(AppError::Other(format!(
+                "apply_file_restore: remove {:?}: {e}",
+                resolved
+            ))),
+        };
     }
     if let Some(content) = &restore.content {
         let encoding = restore
@@ -218,5 +243,124 @@ pub(crate) fn reload_message(conn: &db::DbConn, id: &str) -> AppResult<session::
         Ok(m)
     } else {
         Err(AppError::NotFound(format!("message {id}")))
+    }
+}
+
+#[cfg(test)]
+mod rollback_tests {
+    use super::*;
+    use crate::ai::agent::core::file_snapshot::{capture_before, FileOp};
+    use crate::data::db::test_support::TempDb;
+    use crate::data::{file_snapshot, pending_diff};
+
+    fn workspace(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "atelier-rollback-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create workspace");
+        std::fs::canonicalize(&dir).expect("canonicalize workspace")
+    }
+
+    fn project_session(conn: &db::DbConn, root: &std::path::Path) -> String {
+        let project =
+            crate::data::project::create(conn, "rollback-test", Some(&root.to_string_lossy()))
+                .expect("create project");
+        let sess = session::create(conn, Some("rollback-test".into()), None).expect("create session");
+        conn.execute(
+            "UPDATE sessions SET project_id = ?1 WHERE id = ?2",
+            rusqlite::params![project.id, sess.id],
+        )
+        .expect("attach project");
+        sess.id
+    }
+
+    /// The resend regression: turn 1 creates a file, turn 2 edits it and leaves
+    /// a review row behind. Deleting the turns in resend order must leave the
+    /// file gone — the review row must not write it back.
+    #[test]
+    fn rollback_deletes_a_created_file_and_no_review_row_resurrects_it() {
+        let root = workspace("create");
+        let db = TempDb::new("rollback-create");
+        let conn = db.conn();
+        let sid = project_session(&conn, &root);
+        let file = root.join("chapter.md");
+
+        let create = capture_before(&file, FileOp::Create).unwrap();
+        file_snapshot::record_change(&conn, &sid, Some("u1"), &create).unwrap();
+        std::fs::write(&file, "v1").unwrap();
+        file_snapshot::bind_message(&conn, &sid, "u1", "a1").unwrap();
+
+        let edit = capture_before(&file, FileOp::Update).unwrap();
+        file_snapshot::record_change(&conn, &sid, Some("u2"), &edit).unwrap();
+        std::fs::write(&file, "v2").unwrap();
+        pending_diff::insert(
+            &conn,
+            &sid,
+            &edit.path,
+            "v1",
+            "v2",
+            "v1",
+            "v2",
+            Some("utf-8"),
+            false,
+            Some("u2"),
+        )
+        .unwrap();
+        file_snapshot::bind_message(&conn, &sid, "u2", "a2").unwrap();
+
+        // Resend of u1 deletes everything after it, oldest first.
+        for message_id in ["a1", "u2", "a2"] {
+            rollback_workspace_from_message(&conn, &sid, message_id);
+            assert!(
+                !file.exists(),
+                "file reappeared while rolling back {message_id}"
+            );
+        }
+
+        assert!(pending_diff::list_for_session(&conn, &sid).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A generation that never produced an assistant message still owns its
+    /// writes through the user turn, so regenerating that turn reclaims them.
+    #[test]
+    fn rollback_reclaims_writes_from_a_turn_that_never_finalized() {
+        let root = workspace("orphan");
+        let db = TempDb::new("rollback-orphan");
+        let conn = db.conn();
+        let sid = project_session(&conn, &root);
+        let file = root.join("draft.md");
+
+        let create = capture_before(&file, FileOp::Create).unwrap();
+        file_snapshot::record_change(&conn, &sid, Some("u1"), &create).unwrap();
+        std::fs::write(&file, "half-written").unwrap();
+
+        rollback_workspace_from_message(&conn, &sid, "u1");
+
+        assert!(!file.exists(), "orphaned write was not rolled back");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An edited file goes back to its pre-image rather than being deleted.
+    #[test]
+    fn rollback_restores_an_updated_file_to_its_pre_image() {
+        let root = workspace("update");
+        let db = TempDb::new("rollback-update");
+        let conn = db.conn();
+        let sid = project_session(&conn, &root);
+        let file = root.join("notes.md");
+        std::fs::write(&file, "original").unwrap();
+
+        let edit = capture_before(&file, FileOp::Update).unwrap();
+        file_snapshot::record_change(&conn, &sid, Some("u1"), &edit).unwrap();
+        std::fs::write(&file, "rewritten").unwrap();
+        file_snapshot::bind_message(&conn, &sid, "u1", "a1").unwrap();
+
+        rollback_workspace_from_message(&conn, &sid, "a1");
+
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "original");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

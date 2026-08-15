@@ -256,7 +256,20 @@ pub async fn compact(
     chat.history.extend(skill_reminders);
     chat.history.push(meta);
     chat.history.extend(recent);
+    drop_response_cache_chain(chat);
     Ok(())
+}
+
+/// Detach the request from any server-side conversation chain.
+///
+/// With `previous_response_id` set, providers that keep the conversation
+/// (Volcengine's Session cache, OpenAI's Responses API) rebuild the *entire*
+/// prior context on their side and treat the request's own history as an
+/// addition to it. Compacting locally while pointing at that chain therefore
+/// saves nothing — the pre-compaction turns are still counted, and the summary
+/// arrives as extra text on top of them, making the request bigger than before.
+fn drop_response_cache_chain(chat: &mut ChatRequest) {
+    chat.previous_response_id = None;
 }
 
 /// Last-resort shrink after the provider rejected a request for exceeding its
@@ -284,13 +297,29 @@ pub async fn shrink_after_overflow(
             eprintln!("[atelier] compaction after context overflow failed: {e}");
             // The summariser could not run (often for the same reason the main
             // call failed), so fall back to dropping the older turns outright.
-            let split = chat.history.len() - policy.keep_recent;
+            let split = user_aligned_split(&chat.history, chat.history.len() - policy.keep_recent);
             chat.history.drain(..split);
+            drop_response_cache_chain(chat);
         }
     }
 
     clamp_completion_budget(chat, policy);
     estimate_chat_tokens(chat) < before
+}
+
+/// Move `split` back to the nearest turn that starts a user exchange.
+///
+/// Cutting history at an arbitrary index can leave it starting with an
+/// assistant turn, which Anthropic rejects outright and which reads to every
+/// other provider as a reply to a question it cannot see. Walking backwards
+/// (rather than forwards) keeps at least `keep_recent` turns, so the fallback
+/// never drops more context than it was asked to.
+fn user_aligned_split(history: &[HistoryTurn], split: usize) -> usize {
+    let split = split.min(history.len());
+    (0..=split)
+        .rev()
+        .find(|&i| i == history.len() || history[i].role == "user")
+        .unwrap_or(split)
 }
 
 /// Flatten older turns into a bounded plain-text transcript for the
@@ -580,6 +609,51 @@ mod budget_tests {
             ..Default::default()
         };
         assert!(!should_compact_chat(&c, &usage, &policy_for(&c)));
+    }
+}
+
+#[cfg(test)]
+mod split_alignment_tests {
+    use super::*;
+
+    fn history(roles: &[&str]) -> Vec<HistoryTurn> {
+        roles
+            .iter()
+            .map(|role| HistoryTurn {
+                role: (*role).into(),
+                text: Some("x".into()),
+                images: Vec::new(),
+                thinking_content: None,
+                timeline: Vec::new(),
+            })
+            .collect()
+    }
+
+    /// Cutting mid-exchange would leave the history starting with an assistant
+    /// reply, which Anthropic rejects outright.
+    #[test]
+    fn a_split_landing_on_an_assistant_turn_moves_back() {
+        let h = history(&["user", "assistant", "user", "assistant"]);
+        assert_eq!(user_aligned_split(&h, 3), 2);
+    }
+
+    #[test]
+    fn a_split_already_on_a_user_turn_is_kept() {
+        let h = history(&["user", "assistant", "user", "assistant"]);
+        assert_eq!(user_aligned_split(&h, 2), 2);
+    }
+
+    /// Backwards alignment may keep more than `keep_recent`, never less.
+    #[test]
+    fn alignment_never_drops_more_than_requested() {
+        let h = history(&["user", "assistant", "assistant", "assistant"]);
+        assert!(user_aligned_split(&h, 3) <= 3);
+    }
+
+    #[test]
+    fn a_history_without_user_turns_falls_back_to_the_raw_split() {
+        let h = history(&["assistant", "assistant", "assistant"]);
+        assert_eq!(user_aligned_split(&h, 2), 2);
     }
 }
 

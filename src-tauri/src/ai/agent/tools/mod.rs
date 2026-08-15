@@ -219,16 +219,37 @@ impl ToolPool {
             .collect()
     }
 
+    /// Copy the typed TodoList handle from another pool. Worker pools are
+    /// assembled via [`Self::register_arc`] which only sees `dyn Tool`, so
+    /// the engine's nudge / clear path needs this extra wiring.
+    pub fn share_todo_list_from(&self, other: &ToolPool) {
+        let handle = other.todo_list.lock().ok().and_then(|g| g.clone());
+        if let Some(arc) = handle {
+            if let Ok(mut t) = self.todo_list.lock() {
+                *t = Some(arc);
+            }
+        }
+    }
+
+    /// When the TodoList tool has unfinished items in this run's scope,
+    /// return a nudge the query engine can inject so the model keeps working.
+    pub fn incomplete_todo_nudge(&self, ctx: &ToolUseContext) -> Option<String> {
+        let guard = self.todo_list.lock().ok()?;
+        guard.as_ref()?.incomplete_nudge_message(ctx)
+    }
+
+    /// Drop this run's TodoList so the next generation starts empty.
+    pub fn clear_todo_scope(&self, ctx: &ToolUseContext) {
+        if let Ok(guard) = self.todo_list.lock() {
+            if let Some(tool) = guard.as_ref() {
+                tool.clear_scope(ctx);
+            }
+        }
+    }
+
     /// Permission + validation + execute pipeline. The hooks stages from the
     /// TS executor (`PreToolUse`, `PostToolUse`) are intentionally elided
     /// here; the runner inserts them around this call.
-    /// When the TodoList tool has unfinished items, return a nudge the
-    /// query engine can inject so the model keeps working.
-    pub fn incomplete_todo_nudge(&self) -> Option<String> {
-        let guard = self.todo_list.lock().ok()?;
-        guard.as_ref()?.incomplete_nudge_message()
-    }
-
     pub async fn execute(
         &self,
         name: &str,
@@ -247,10 +268,22 @@ impl ToolPool {
             PermissionDecision::Deny { reason } => {
                 return Ok(ToolResult::error(format!("denied: {reason}")));
             }
+            // No interactive approval channel is wired into the executor, so
+            // `Ask` cannot be satisfied here. Report it as a *refusal pending
+            // approval* rather than a generic failure: a model that reads
+            // "error" retries the same call, whereas this tells it the call
+            // was understood but withheld, and that only the user can unblock
+            // it. Resolvers that must not stall a run should return an
+            // explicit `Allow` / `Deny` instead.
             PermissionDecision::Ask { reason } => {
+                let detail = reason
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("this tool requires explicit user approval");
                 return Ok(ToolResult::error(format!(
-                    "permission requires user prompt: {}",
-                    reason.unwrap_or_default()
+                    "awaiting user approval: {detail}. Do not retry — ask the user to \
+                     approve this action (or raise the permission mode) before continuing."
                 )));
             }
         }
@@ -322,7 +355,7 @@ mod pool_tests {
         assert_eq!(created.content["items"][0]["id"], 1);
         assert_eq!(created.content["items"][1]["id"], 2);
 
-        let nudge = pool.incomplete_todo_nudge();
+        let nudge = pool.incomplete_todo_nudge(ctx.as_ref());
         assert!(nudge.is_some());
 
         let updated = run_todo(
@@ -339,7 +372,7 @@ mod pool_tests {
         .await;
         assert!(!updated.is_error);
         assert_eq!(updated.content["items"][0]["status"], "done");
-        assert!(pool.incomplete_todo_nudge().is_none());
+        assert!(pool.incomplete_todo_nudge(ctx.as_ref()).is_none());
     }
 
     #[tokio::test]
@@ -361,6 +394,63 @@ mod pool_tests {
         )
         .await;
         assert!(second.is_error);
+    }
+
+    #[tokio::test]
+    async fn todo_lists_are_isolated_per_session_and_agent() {
+        let pool = ToolPool::new();
+        pool.register_todo_list(todo::TodoListTool::new());
+        let ctx_a = ToolUseContextBuilder::new(AgentId::new(), PathBuf::from("."))
+            .session_id("sess-a")
+            .build()
+            .0;
+        let ctx_b = ToolUseContextBuilder::new(AgentId::new(), PathBuf::from("."))
+            .session_id("sess-b")
+            .build()
+            .0;
+
+        run_todo(
+            &pool,
+            &ctx_a,
+            json!({
+                "action": "create",
+                "tasks": [{ "title": "voxel planet" }]
+            }),
+        )
+        .await;
+        let created_b = run_todo(
+            &pool,
+            &ctx_b,
+            json!({
+                "action": "create",
+                "tasks": [{ "title": "write chapter one" }]
+            }),
+        )
+        .await;
+        assert!(!created_b.is_error);
+        assert_eq!(created_b.content["items"][0]["title"], "write chapter one");
+        assert!(pool
+            .incomplete_todo_nudge(ctx_a.as_ref())
+            .unwrap()
+            .contains("voxel planet"));
+        assert!(pool
+            .incomplete_todo_nudge(ctx_b.as_ref())
+            .unwrap()
+            .contains("write chapter one"));
+
+        pool.clear_todo_scope(ctx_a.as_ref());
+        assert!(pool.incomplete_todo_nudge(ctx_a.as_ref()).is_none());
+        let recreate_a = run_todo(
+            &pool,
+            &ctx_a,
+            json!({
+                "action": "create",
+                "tasks": [{ "title": "fresh list" }]
+            }),
+        )
+        .await;
+        assert!(!recreate_a.is_error);
+        assert_eq!(recreate_a.content["items"][0]["title"], "fresh list");
     }
 
     struct DummyTool(ToolSpec);

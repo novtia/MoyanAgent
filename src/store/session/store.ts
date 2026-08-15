@@ -1021,7 +1021,7 @@ export const useSession = create<SessionStore>((set, get) => {
     composerDrafts.delete(pending.sessionId);
 
     try {
-      await api.answerAskUser(promptId, answer, items);
+      await api.answerAskUser(promptId, answer, items, pending.sessionId);
     } catch (e) {
       console.warn("[atelier] answer_ask_user failed", e);
     }
@@ -1194,18 +1194,25 @@ export const useSession = create<SessionStore>((set, get) => {
         );
         if (epoch !== getGenerationEpoch(sid)) return;
         await reloadActiveSessionIfViewing(sid);
+        // regenerate_image also rolls back writes left by an earlier attempt at
+        // this turn, which no tool event covers.
+        await refreshReaderAfterFileRollback(sid);
         await get().refreshList();
       } catch (e: unknown) {
         if (epoch !== getGenerationEpoch(sid)) return;
         if (isGenerationCancelled(e)) {
-          await persistPartialStreamIfAny(sid);
+          // The backend persists the interrupted turn itself (it holds the
+          // same block buffer that fed this UI), so saving here too would
+          // append a second assistant message for one cancelled turn.
           await reloadActiveSessionIfViewing(sid);
+          await refreshReaderAfterFileRollback(sid);
           await get().refreshList();
           return;
         }
         console.error(e);
         await persistPartialStreamIfAny(sid);
         await reloadActiveSessionIfViewing(sid);
+        await refreshReaderAfterFileRollback(sid);
         await get().refreshList();
       } finally {
         const wasCancelled = cancellingSessions.has(sid);
@@ -1392,7 +1399,8 @@ export const useSession = create<SessionStore>((set, get) => {
       } catch (e: unknown) {
         if (epoch !== getGenerationEpoch(sid)) return;
         if (isGenerationCancelled(e)) {
-          await persistPartialStreamIfAny(sid);
+          // Interrupted turns are recorded by the backend; see the matching
+          // note in `regenerate`.
           try {
             await reloadActiveSessionIfViewing(sid);
             await get().refreshList();

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::{json, Value};
 
+use crate::ai::agent::core::context::AbortSignal;
 use crate::ai::agent::tools::paragraph::paragraph_count;
 use crate::ai::agent::tools::project_path::{self, display_path, DIR_REF_DESC};
 use crate::ai::agent::tools::text_decode::decode_file_bytes;
@@ -17,6 +18,8 @@ use crate::error::{AppError, AppResult};
 const TOOL_NAME: &str = "ListFiles";
 const DEFAULT_MAX_ENTRIES: usize = 500;
 const MAX_ENTRIES_CAP: usize = 5_000;
+/// Largest file whose paragraphs are counted for the listing.
+const MAX_COUNT_BYTES: u64 = 8 * 1024 * 1024;
 
 /// File extensions treated as paragraph-countable text (same set as `Grep`).
 const TEXT_EXTENSIONS: &[&str] = &[
@@ -125,9 +128,28 @@ impl Tool for ListFilesTool {
                 )));
             }
 
-            let mut count = 0usize;
-            let mut truncated = false;
-            let entries = collect_tree(&canonical, max_entries, &mut count, &mut truncated)?;
+            // Walking a tree is blocking IO of unknown size; keep it off the
+            // async worker threads and let a cancelled turn stop it.
+            let abort = invocation.context.abort.clone();
+            let root = canonical.clone();
+            let walk = tokio::task::spawn_blocking(move || {
+                let mut state = WalkState {
+                    root: root.clone(),
+                    count: 0,
+                    truncated: false,
+                    max: max_entries,
+                    abort,
+                };
+                let entries = collect_tree(&root, 0, &mut state)?;
+                Ok::<_, AppError>((entries, state.truncated, state.abort.aborted()))
+            })
+            .await
+            .map_err(|e| AppError::Other(format!("{TOOL_NAME}: walk task failed: {e}")))?;
+            let (entries, truncated, cancelled) = walk?;
+
+            if cancelled {
+                return Ok(ToolResult::error(format!("{TOOL_NAME}: listing cancelled")));
+            }
 
             Ok(ToolResult::ok(json!({
                 "success": true,
@@ -139,12 +161,27 @@ impl Tool for ListFilesTool {
     }
 }
 
-fn collect_tree(
-    dir: &Path,
+struct WalkState {
+    root: PathBuf,
+    count: usize,
+    truncated: bool,
     max: usize,
-    count: &mut usize,
-    truncated: &mut bool,
-) -> AppResult<Vec<ListEntry>> {
+    abort: AbortSignal,
+}
+
+/// Deepest nesting the tree walk will report.
+const MAX_TREE_DEPTH: usize = 24;
+
+/// Build the nested listing.
+///
+/// Symlinks and Windows junctions are listed as-is but never descended into: a
+/// link back to an ancestor would otherwise recurse until the stack overflows,
+/// and a link out of the project would expose paths the caller never asked for.
+fn collect_tree(dir: &Path, depth: usize, state: &mut WalkState) -> AppResult<Vec<ListEntry>> {
+    if depth > MAX_TREE_DEPTH {
+        state.truncated = true;
+        return Ok(Vec::new());
+    }
     let mut rows: Vec<(String, PathBuf, bool)> = Vec::new();
 
     for entry in std::fs::read_dir(dir).map_err(|e| {
@@ -158,25 +195,36 @@ fn collect_tree(
         let file_type = entry
             .file_type()
             .map_err(|e| AppError::Other(format!("{TOOL_NAME}: file_type: {e}")))?;
-        rows.push((name, entry.path(), file_type.is_dir()));
+        if file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if !project_path::is_within(&state.root, &path) {
+            continue;
+        }
+        let descendable = file_type.is_dir() && !is_reparse_point(&path);
+        rows.push((name, path, descendable));
     }
 
     rows.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
 
     let mut out = Vec::with_capacity(rows.len());
     for (name, path, is_dir) in rows {
-        if *count >= max {
-            *truncated = true;
+        if state.abort.aborted() {
+            return Ok(out);
+        }
+        if state.count >= state.max {
+            state.truncated = true;
             break;
         }
-        *count += 1;
+        state.count += 1;
 
         if is_dir {
-            let children = if *count >= max {
-                *truncated = true;
+            let children = if state.count >= state.max {
+                state.truncated = true;
                 Vec::new()
             } else {
-                collect_tree(&path, max, count, truncated)?
+                collect_tree(&path, depth + 1, state)?
             };
             out.push(ListEntry {
                 name,
@@ -197,6 +245,22 @@ fn collect_tree(
     Ok(out)
 }
 
+/// True when `path` is a Windows reparse point (junction / directory symlink),
+/// which `file_type().is_dir()` reports as an ordinary directory.
+#[cfg(windows)]
+fn is_reparse_point(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    std::fs::symlink_metadata(path)
+        .map(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        .unwrap_or(true)
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_path: &Path) -> bool {
+    false
+}
+
 fn is_text_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -204,11 +268,23 @@ fn is_text_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Paragraph count for a listing row.
+///
+/// Reads at most [`MAX_COUNT_BYTES`]: the listing is a directory overview, and
+/// slurping every text file in a large project in full to count its lines is
+/// how a harmless `ListFiles` becomes a memory spike.
 fn file_paragraph_count(path: &Path) -> Option<usize> {
+    use std::io::Read;
+
     if !is_text_file(path) {
         return None;
     }
-    let bytes = std::fs::read(path).ok()?;
+    let file = std::fs::File::open(path).ok()?;
+    if file.metadata().ok()?.len() > MAX_COUNT_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_COUNT_BYTES).read_to_end(&mut bytes).ok()?;
     Some(paragraph_count(&decode_file_bytes(&bytes)))
 }
 

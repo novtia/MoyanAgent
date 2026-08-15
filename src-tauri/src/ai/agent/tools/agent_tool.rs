@@ -102,6 +102,22 @@ pub trait SubagentSessionHost: Send + Sync {
         model: &str,
         provider: &str,
     ) -> AppResult<()>;
+
+    /// Release a child session whose run failed or was cancelled.
+    ///
+    /// [`Self::prepare_temp_session`] has already told the UI that this child is
+    /// running, and [`Self::begin_child_stream`] has already handed out a buffer
+    /// the host is holding. Without this call the parent's tool card spins
+    /// forever, the child session stays an orphan with a prompt and no reply,
+    /// and the buffer is never reclaimed.
+    fn abandon_temp_session(
+        &self,
+        child: &SpawnedTempSession,
+        parent_session_id: &str,
+        parent_request_message_id: Option<&str>,
+        tool_call_id: Option<&str>,
+        reason: &str,
+    );
 }
 
 /// Arguments the model passes when calling the `Agent` tool.
@@ -136,7 +152,14 @@ pub enum AgentToolResult {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         child_session_id: Option<String>,
     },
-    /// Background run launched. Parent should expect a `<task-notification>`.
+    /// Background run launched; the parent should expect a
+    /// `<task-notification>` later.
+    ///
+    /// Nothing produces this today: `Background` / `Fork` dispatches are awaited
+    /// inline and report [`Self::Completed`] (see `AgentTool::shape_result`).
+    /// The variant stays because the renderer and the model prompt both already
+    /// understand it, so a genuinely detached run can adopt it — but only once
+    /// something actually queues the completion notification.
     AsyncLaunched {
         agent_id: String,
         task_id: String,
@@ -178,7 +201,17 @@ pub struct AgentTool {
     /// Whether this AgentTool is itself running inside a forked worker.
     /// Prevents recursive forks.
     pub is_forked_worker: bool,
+    /// How many sub-agent hops deep this instance already is. 0 is the main
+    /// loop's own tool; a sub-agent's pool gets one more.
+    pub depth: usize,
 }
+
+/// Sub-agent nesting allowed before `Agent` stops being handed down.
+///
+/// Each level multiplies model calls and tool executions by its fan-out, so an
+/// unbounded chain is both a runaway-cost and a runaway-concurrency hazard —
+/// and a model that keeps delegating "one more layer" never does the work.
+pub const MAX_SUBAGENT_DEPTH: usize = 3;
 
 impl AgentTool {
     pub fn new(
@@ -199,7 +232,34 @@ impl AgentTool {
             spec: agent_tool_spec(),
             fork_enabled: false,
             is_forked_worker: false,
+            depth: 0,
         }
+    }
+
+    /// The tool pool a sub-agent of this dispatch should see.
+    ///
+    /// Two things happen here. First the pool is narrowed to what the
+    /// sub-agent's own definition allows — passing the parent's pool through
+    /// unchanged made every `tools:` / `disallowed_tools:` list in every agent
+    /// definition decorative, so a read-only researcher could still write files.
+    /// Second, the `Agent` tool is re-registered one level deeper (or dropped at
+    /// the limit), which is what makes nesting finite and blocks a forked worker
+    /// from forking again.
+    fn subagent_pool(&self, definition: &AgentDefinition, run_mode: AgentRunMode) -> Arc<ToolPool> {
+        let child_depth = self.depth + 1;
+        let agent_allowed = self
+            .tools
+            .filter_for_agent(&definition.tools, &definition.disallowed_tools)
+            .contains_key(AGENT_TOOL_NAME);
+        let nested: Option<Arc<dyn Tool>> = (agent_allowed && child_depth < MAX_SUBAGENT_DEPTH)
+            .then(|| {
+                let mut nested = self.clone();
+                nested.depth = child_depth;
+                nested.is_forked_worker =
+                    self.is_forked_worker || matches!(run_mode, AgentRunMode::Fork);
+                Arc::new(nested) as Arc<dyn Tool>
+            });
+        build_subagent_pool(self.tools.as_ref(), definition, nested)
     }
 
     /// Builder-style: attach a factory so the `Tool` impl can run.
@@ -341,12 +401,13 @@ impl AgentTool {
 
         let child_session_id = child_session.as_ref().map(|c| c.session_id.clone());
 
+        let worker_tools = self.subagent_pool(&definition, run_mode);
         let result = run_agent(RunAgentParams {
             definition,
             prompt: invocation.prompt.clone(),
             run_mode,
             chat_request,
-            tools: self.tools.clone(),
+            tools: worker_tools,
             task_store: self.task_store.clone(),
             engine: self.engine.clone(),
             initial_attachments,
@@ -382,7 +443,24 @@ impl AgentTool {
                 }
                 Ok(self.shape_result(run_mode, run, child_session_id))
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                // Cancellation and failure both land here, and both have
+                // already announced a running child to the UI.
+                if let (Some(host), Some(child)) =
+                    (self.session_host.as_ref(), child_session.as_ref())
+                {
+                    host.abandon_temp_session(
+                        child,
+                        parent_ctx
+                            .and_then(|c| c.session_id.as_deref())
+                            .unwrap_or_default(),
+                        parent_ctx.and_then(|c| c.correlation_id.as_deref()),
+                        tool_call_id,
+                        &e.to_string(),
+                    );
+                }
+                Err(e)
+            }
         }
     }
 
@@ -401,26 +479,27 @@ impl AgentTool {
         Ok(AGENT_GENERAL_PURPOSE.into())
     }
 
+    /// Describe a finished run to the parent.
+    ///
+    /// Every mode reports [`AgentToolResult::Completed`], because every mode
+    /// gets here by awaiting [`run_agent`] to completion. `Background` and
+    /// `Fork` used to report `AsyncLaunched` instead, which was wrong twice
+    /// over: the model was told to wait for a `<task-notification>` that nobody
+    /// ever queues (so it would idle or re-dispatch), and the UI renders that
+    /// status as a permanently spinning card. Discarding `final_text` also threw
+    /// away the only thing the sub-agent produced.
     fn shape_result(
         &self,
-        mode: AgentRunMode,
+        _mode: AgentRunMode,
         result: RunAgentResult,
         child_session_id: Option<String>,
     ) -> AgentToolResult {
-        match mode {
-            AgentRunMode::Foreground => AgentToolResult::Completed {
-                agent_id: result.agent_id.0,
-                task_id: result.task_id.0,
-                text: result.final_text,
-                tool_calls: result.tool_call_count,
-                child_session_id,
-            },
-            AgentRunMode::Background | AgentRunMode::Fork => AgentToolResult::AsyncLaunched {
-                agent_id: result.agent_id.0,
-                task_id: result.task_id.0,
-                output_file: None,
-                child_session_id,
-            },
+        AgentToolResult::Completed {
+            agent_id: result.agent_id.0,
+            task_id: result.task_id.0,
+            text: result.final_text,
+            tool_calls: result.tool_call_count,
+            child_session_id,
         }
     }
 }
@@ -525,6 +604,29 @@ impl Tool for AgentTool {
     }
 }
 
+/// Narrow `parent` to what `definition` allows, substituting the `Agent` entry
+/// with `nested` (or removing it when `nested` is `None`).
+fn build_subagent_pool(
+    parent: &ToolPool,
+    definition: &AgentDefinition,
+    nested: Option<Arc<dyn Tool>>,
+) -> Arc<ToolPool> {
+    let pool = ToolPool::new();
+    for (name, tool) in parent.filter_for_agent(&definition.tools, &definition.disallowed_tools) {
+        if name == AGENT_TOOL_NAME {
+            continue;
+        }
+        pool.register_arc(tool);
+    }
+    // Shared so a sub-agent's task progress stays visible to the run that
+    // spawned it.
+    pool.share_todo_list_from(parent);
+    if let Some(nested) = nested {
+        pool.register_arc(nested);
+    }
+    Arc::new(pool)
+}
+
 /// Static [`ToolSpec`] for the `Agent` tool.
 fn agent_tool_spec() -> ToolSpec {
     ToolSpec {
@@ -550,4 +652,70 @@ fn agent_tool_spec() -> ToolSpec {
         read_only: false,
         concurrency_safe: false,
     }
+}
+
+#[cfg(test)]
+mod subagent_pool_tests {
+    use super::*;
+    use crate::ai::agent::tools::grep::GrepTool;
+    use crate::ai::agent::tools::list_files::ListFilesTool;
+
+    fn definition(tools: &[&str], denied: &[&str]) -> AgentDefinition {
+        let mut def = AgentDefinition::builtin("test-agent", "");
+        def.tools = tools.iter().map(|s| s.to_string()).collect();
+        def.disallowed_tools = denied.iter().map(|s| s.to_string()).collect();
+        def
+    }
+
+    fn parent_pool() -> ToolPool {
+        let pool = ToolPool::new();
+        pool.register(GrepTool::new());
+        pool.register(ListFilesTool::new());
+        pool
+    }
+
+    /// A sub-agent's declared tool list is a permission boundary, not a hint:
+    /// handing it the parent's whole pool would let a read-only researcher edit
+    /// the project.
+    #[test]
+    fn a_subagent_only_receives_the_tools_its_definition_allows() {
+        let parent = parent_pool();
+        let child = build_subagent_pool(&parent, &definition(&["Grep"], &[]), None);
+
+        assert!(child.get("Grep").is_some(), "allowed tool is present");
+        assert!(
+            child.get("ListFiles").is_none(),
+            "a tool the definition never listed must not leak through"
+        );
+    }
+
+    #[test]
+    fn a_denied_tool_is_removed_even_under_a_wildcard() {
+        let parent = parent_pool();
+        let child = build_subagent_pool(&parent, &definition(&["*"], &["ListFiles"]), None);
+
+        assert!(child.get("Grep").is_some());
+        assert!(child.get("ListFiles").is_none());
+    }
+
+    /// At the nesting limit the `Agent` tool simply stops being handed down, so
+    /// the chain terminates instead of spawning forever.
+    #[test]
+    fn the_agent_tool_is_only_passed_down_when_one_is_supplied() {
+        let parent = parent_pool();
+        parent.register(GrepTool::new());
+
+        let without = build_subagent_pool(&parent, &definition(&["*"], &[]), None);
+        assert!(
+            without.get(AGENT_TOOL_NAME).is_none(),
+            "no replacement supplied ⇒ the child cannot spawn sub-agents"
+        );
+
+        let stand_in: Arc<dyn Tool> = Arc::new(GrepTool::new());
+        let with = build_subagent_pool(&parent, &definition(&["*"], &[]), Some(stand_in));
+        assert!(with.get("Grep").is_some());
+    }
+
+    /// Sub-agents must stay possible, and the chain must stay finite.
+    const _NESTING_IS_BOUNDED: () = assert!(MAX_SUBAGENT_DEPTH >= 1 && MAX_SUBAGENT_DEPTH < 10);
 }

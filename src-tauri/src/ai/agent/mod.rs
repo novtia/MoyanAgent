@@ -104,10 +104,11 @@ mod re_exports {
         Attachment, AttachmentKind, NotificationQueue, TaskNotification,
     };
     pub use super::core::context::{ToolUseContext, ToolUseContextBuilder};
-    pub use super::core::file_snapshot::{FileOp, FileSnapshotStore, PendingFileChange};
+    pub use super::core::file_snapshot::{FileChangeRecord, FileOp, FileSnapshotStore};
     pub use super::core::permission::{
-        AllowAllResolver, BASH_WRITE_PREFIXES, PermissionDecision, PermissionMode,
-        PermissionResolver, PlanModeResolver, WRITE_TOOLS,
+        AllowAllResolver, BASH_WRITE_PREFIXES, DefaultModeResolver, PermissionDecision,
+        PermissionMode, PermissionResolver, PlanModeResolver, WRITE_TOOLS,
+        command_is_catastrophic, is_shell_tool, is_write_tool, split_command_segments,
     };
     pub use super::core::task::{Task, TaskId, TaskKind, TaskState, TaskStore};
     // config

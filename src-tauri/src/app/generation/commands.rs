@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
-use crate::ai::agent::{FileSnapshotStore, RoleStateStore};
+use crate::ai::agent::RoleStateStore;
 use crate::ai::{chat, parameters, router, session_log, token_log};
 use crate::data::{db, session, settings};
 use crate::error::{AppError, AppResult};
@@ -141,7 +141,6 @@ pub(crate) fn finalize_generate_assistant_message(
     mut resp: chat::GenerateResponse,
     mut blocks: Vec<serde_json::Value>,
     role_states: &RoleStateStore,
-    file_snapshots: &FileSnapshotStore,
     token_stats: &token_log::TokenStatsRecorder,
     session_logger: &session_log::SessionLogger,
     agent_type: &str,
@@ -283,20 +282,15 @@ pub(crate) fn finalize_generate_assistant_message(
         );
     }
 
-    // Bind any file mutations captured during this generation to this message
-    // so they can be rolled back when it is deleted / regenerated.
-    let file_changes = file_snapshots.take(session_id);
-    if !file_changes.is_empty() {
-        if let Err(e) = crate::data::file_snapshot::save_changes(
-            conn,
-            session_id,
-            &assistant.id,
-            &file_changes,
-        ) {
-            eprintln!(
-                "finalize_generate: save_changes failed for session {session_id}: {e}"
-            );
-        }
+    // Bind the file mutations this turn already recorded to the message that
+    // produced them, so they roll back when it is deleted / regenerated.
+    if let Err(e) = crate::data::file_snapshot::bind_message(
+        conn,
+        session_id,
+        user_message_id,
+        &assistant.id,
+    ) {
+        eprintln!("finalize_generate: file snapshot bind failed for session {session_id}: {e}");
     }
     if let Err(e) = crate::data::pending_diff::bind_message(
         conn,
@@ -629,7 +623,6 @@ pub async fn generate_image(
                 resp,
                 blocks,
                 &state.role_states,
-                &state.file_snapshots,
                 &state.token_stats,
                 &state.session_logger,
                 generation_agent,
@@ -637,7 +630,10 @@ pub async fn generate_image(
                 &log_provider,
             )
         }
-        Err(AppError::Canceled) => Err(AppError::Canceled),
+        Err(AppError::Canceled) => {
+            persist_cancelled_turn(&state, &req.session_id, &stream_blocks, &user_msg.id);
+            Err(AppError::Canceled)
+        }
         Err(e) => {
             let conn = state.conn()?;
             let blocks = snapshot_stream_blocks(&stream_blocks);
@@ -648,7 +644,6 @@ pub async fn generate_image(
                 None,
                 None,
                 serde_json::json!({ "partial_before_error": true }),
-                &state.file_snapshots,
                 Some(user_msg.id.as_str()),
             )?;
             let msg_text = format!("{}", e);
@@ -677,11 +672,51 @@ pub async fn generate_image(
     }
 }
 
+/// Persist what an interrupted turn produced, from the backend's own view of
+/// the stream.
+///
+/// The renderer used to own this: it accumulated deltas and called
+/// `save_cancelled_message` after the invoke rejected. That loses the turn
+/// whenever the renderer never gets there — window closed mid-generation, a
+/// reload, an exception on the cancel path — and it also leaves the file
+/// snapshots recorded by tools during the turn unbound, so deleting the
+/// (missing) assistant message can no longer roll them back. The backend holds
+/// the same block buffer that fed the UI, so it can do this unconditionally.
+///
+/// Failures are logged rather than propagated: the caller is already returning
+/// [`AppError::Canceled`], and that is the more useful error to surface.
+fn persist_cancelled_turn(
+    state: &AppState,
+    session_id: &str,
+    stream_blocks: &super::streaming::StreamBlocks,
+    request_message_id: &str,
+) {
+    let blocks = snapshot_stream_blocks(stream_blocks);
+    let conn = match state.conn() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("save cancelled turn: db connection for {session_id}: {e}");
+            return;
+        }
+    };
+    if let Err(e) = persist_streamed_assistant_snapshot(
+        &conn,
+        session_id,
+        &blocks,
+        None,
+        None,
+        serde_json::json!({ "cancelled": true }),
+        Some(request_message_id),
+    ) {
+        eprintln!("save cancelled turn: persist failed for {session_id}: {e}");
+    }
+}
+
 /// Save partial assistant content when the user interrupts generation.
 ///
-/// The frontend accumulates streaming text in a temporary in-memory message.
-/// After cancellation, it calls this command to persist whatever was generated
-/// before the interrupt so the content isn't lost on session reload.
+/// Retained as a fallback for interrupt paths that never reach the generation
+/// command's own cancellation handling (see [`persist_cancelled_turn`], which is
+/// what normally records an interrupted turn).
 #[tauri::command]
 pub fn save_cancelled_message(
     state: tauri::State<Arc<AppState>>,
@@ -703,7 +738,6 @@ pub fn save_cancelled_message(
         Some(text.as_str()),
         Some(thinking.as_str()),
         serde_json::json!({ "cancelled": true }),
-        &state.file_snapshots,
         None,
     )
 }
@@ -752,6 +786,19 @@ pub async fn regenerate_image(
     let prompt = user_msg_existing.text.as_deref().unwrap_or("");
     if prompt.trim().is_empty() && user_msg_existing.images.is_empty() {
         return Err(AppError::Invalid("用户消息没有提示词或媒体附件".into()));
+    }
+
+    // Reclaim writes from a previous attempt at this same turn that never got
+    // an assistant message (cancelled, crashed, or errored before the partial
+    // snapshot could be saved). Deleting the later messages does not cover
+    // them because they are still bound only to this user message.
+    {
+        let conn = state.conn()?;
+        crate::app::messages::rollback_workspace_from_message(
+            &conn,
+            &req.session_id,
+            &req.user_message_id,
+        );
     }
 
     let (
@@ -1004,7 +1051,6 @@ pub async fn regenerate_image(
                 resp,
                 blocks,
                 &state.role_states,
-                &state.file_snapshots,
                 &state.token_stats,
                 &state.session_logger,
                 generation_agent,
@@ -1012,7 +1058,15 @@ pub async fn regenerate_image(
                 &log_provider,
             )
         }
-        Err(AppError::Canceled) => Err(AppError::Canceled),
+        Err(AppError::Canceled) => {
+            persist_cancelled_turn(
+                &state,
+                &req.session_id,
+                &stream_blocks,
+                &req.user_message_id,
+            );
+            Err(AppError::Canceled)
+        }
         Err(e) => {
             let conn = state.conn()?;
             let blocks = snapshot_stream_blocks(&stream_blocks);
@@ -1023,7 +1077,6 @@ pub async fn regenerate_image(
                 None,
                 None,
                 serde_json::json!({ "partial_before_error": true }),
-                &state.file_snapshots,
                 Some(req.user_message_id.as_str()),
             )?;
             let msg_text = format!("{}", e);

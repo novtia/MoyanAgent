@@ -4,7 +4,6 @@ use tauri::{AppHandle, Emitter};
 
 use crate::ai::agent::exec::query::ToolEventCallback;
 use crate::ai::agent::types::MessageEvent;
-use crate::ai::agent::FileSnapshotStore;
 use crate::ai::chat;
 use crate::data::{db, session};
 use crate::error::AppResult;
@@ -33,7 +32,6 @@ pub(crate) fn persist_streamed_assistant_snapshot(
     fallback_text: Option<&str>,
     fallback_thinking: Option<&str>,
     mut params: serde_json::Value,
-    file_snapshots: &FileSnapshotStore,
     request_message_id: Option<&str>,
 ) -> AppResult<()> {
     use crate::ai::stream_split::strip_leaked_host_tool_log;
@@ -79,6 +77,9 @@ pub(crate) fn persist_streamed_assistant_snapshot(
         thinking = thinking.trim().to_string();
     }
 
+    let mut cleaned_blocks = cleaned_blocks;
+    normalize_interrupted_blocks(&mut cleaned_blocks);
+
     let has_blocks = !cleaned_blocks.is_empty();
     if text.is_empty() && thinking.is_empty() && !has_blocks {
         return Ok(());
@@ -113,20 +114,21 @@ pub(crate) fn persist_streamed_assistant_snapshot(
     let assistant =
         session::insert_message(conn, session_id, "assistant", text_opt, Some(&params_json))?;
 
-    // Bind any file mutations captured before the interrupt / error to this
-    // partial message so they roll back if the message is deleted.
-    let file_changes = file_snapshots.take(session_id);
-    if !file_changes.is_empty() {
-        if let Err(e) = crate::data::file_snapshot::save_changes(
+    // Bind the file mutations recorded before the interrupt / error to this
+    // partial message so they roll back if the message is deleted. Without a
+    // known request message (cancel save) everything still unbound in the
+    // session belongs to the turn that was just interrupted.
+    let bound = match request_message_id {
+        Some(req_id) => crate::data::file_snapshot::bind_message(
             conn,
             session_id,
+            req_id,
             &assistant.id,
-            &file_changes,
-        ) {
-            eprintln!(
-                "persist_streamed: save_changes failed for session {session_id}: {e}"
-            );
-        }
+        ),
+        None => crate::data::file_snapshot::bind_unbound(conn, session_id, &assistant.id),
+    };
+    if let Err(e) = bound {
+        eprintln!("persist_streamed: file snapshot bind failed for session {session_id}: {e}");
     }
     if let Some(req_id) = request_message_id {
         if let Err(e) =
@@ -142,6 +144,30 @@ pub(crate) fn persist_streamed_assistant_snapshot(
 
     session::recompute_context_window_used(conn, session_id)?;
     Ok(())
+}
+
+/// Close out blocks left mid-flight when a run is interrupted.
+///
+/// A `tool_use` block is written in `pending` state and only completed by its
+/// `ToolResult` event, which never arrives for the call that was in progress
+/// when the user hit Stop. Persisting it as-is stores a spinner: every later
+/// load of the session renders that card as still running, forever.
+pub(crate) fn normalize_interrupted_blocks(blocks: &mut [serde_json::Value]) {
+    for block in blocks.iter_mut() {
+        if block.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
+            continue;
+        }
+        let status = block.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        if !matches!(status, "pending" | "running" | "") {
+            continue;
+        }
+        if let Some(obj) = block.as_object_mut() {
+            obj.insert("status".into(), serde_json::Value::String("error".into()));
+            obj.insert("is_error".into(), serde_json::Value::Bool(true));
+            obj.entry("output")
+                .or_insert(serde_json::Value::String("Cancelled".into()));
+        }
+    }
 }
 
 /// Append a text delta to the ordered block list, merging with the
@@ -367,4 +393,42 @@ pub(crate) fn tool_event_callback(
         // aren't structural tool events - ignore them here.
         _ => {}
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A tool call that was still running at the interrupt must be stored as
+    /// finished-with-error; otherwise the reloaded session shows a card that
+    /// spins forever.
+    #[test]
+    fn interrupted_tool_calls_are_closed_out() {
+        let mut blocks = vec![
+            json!({ "type": "text", "content": "writing" }),
+            json!({ "type": "tool_use", "id": "1", "tool": "Write", "status": "pending" }),
+            json!({ "type": "tool_use", "id": "2", "tool": "Read", "status": "running" }),
+            json!({ "type": "tool_use", "id": "3", "tool": "Read" }),
+        ];
+        normalize_interrupted_blocks(&mut blocks);
+
+        for block in blocks.iter().skip(1) {
+            assert_eq!(block["status"], "error", "unfinished call: {block}");
+            assert_eq!(block["is_error"], true);
+            assert_eq!(block["output"], "Cancelled");
+        }
+        assert_eq!(blocks[0]["content"], "writing", "text is left alone");
+    }
+
+    #[test]
+    fn completed_tool_calls_are_left_untouched() {
+        let mut blocks = vec![
+            json!({ "type": "tool_use", "id": "1", "tool": "Read", "status": "success", "output": "ok" }),
+            json!({ "type": "tool_use", "id": "2", "tool": "Read", "status": "error", "output": "boom", "is_error": true }),
+        ];
+        let before = blocks.clone();
+        normalize_interrupted_blocks(&mut blocks);
+        assert_eq!(blocks, before);
+    }
 }

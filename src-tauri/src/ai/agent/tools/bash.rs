@@ -5,15 +5,22 @@
 //! returned stdout/stderr so the model can't OOM itself on a noisy
 //! command.
 //!
-//! Safety is enforced upstream:
+//! Safety comes from three places:
 //!
-//! - [`crate::ai::agent::core::permission::PlanModeResolver`] denies
-//!   any Bash call that starts with a mutating prefix
-//!   (`BASH_WRITE_PREFIXES`) when the active agent is in
-//!   [`crate::ai::agent::core::permission::PermissionMode::Plan`].
-//! - The host's own [`crate::ai::agent::core::permission::PermissionResolver`]
-//!   gets the full command on every invocation and can prompt / deny.
+//! - [`crate::ai::agent::core::permission::PlanModeResolver`] refuses Bash
+//!   outright while the agent is in
+//!   [`crate::ai::agent::core::permission::PermissionMode::Plan`], because a
+//!   shell command cannot be reliably classified as read-only.
+//! - [`crate::ai::agent::core::permission::DefaultModeResolver`] rejects
+//!   commands that would destroy the machine regardless of mode.
+//! - This tool confines the working directory to the project root, so a
+//!   command cannot be aimed at unrelated parts of the filesystem via `cwd`.
+//!
+//! None of that constrains what the command body itself can reach — a shell is
+//! not a sandbox — but it removes the accidents: a wrong `cwd`, a `Plan`-mode
+//! write, and the classic catastrophic one-liners.
 
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -22,6 +29,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use crate::ai::agent::tools::project_path;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 
@@ -112,27 +120,11 @@ impl Tool for BashTool {
                 .and_then(Value::as_u64)
                 .unwrap_or(DEFAULT_TIMEOUT_SECS)
                 .min(MAX_TIMEOUT_SECS);
-            let cwd = invocation
-                .input
-                .get("cwd")
-                .and_then(Value::as_str)
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| invocation.context.cwd.clone());
-
-            // Refuse to run without an explicit working directory. Falling
-            // through to the host process CWD would leak the app's own
-            // directory; the only valid CWD sources are the DB project
-            // path (via context) or an explicit absolute `cwd` argument.
-            if cwd.as_os_str().is_empty() {
-                return Ok(ToolResult::error(
-                    "Bash: no working directory available. Set the project's `path` in the \
-                     database, or pass an explicit absolute `cwd`. To detect the OS, read \
-                     `<env>Platform</env>` in the system prompt — do not run `uname`.",
-                ));
-            }
-            if !cwd.is_absolute() {
-                return Ok(ToolResult::error(cwd_validation_error(&cwd)));
-            }
+            let requested_cwd = invocation.input.get("cwd").and_then(Value::as_str);
+            let cwd = match resolve_cwd(&invocation.context.cwd, requested_cwd) {
+                Ok(dir) => dir,
+                Err(message) => return Ok(ToolResult::error(message)),
+            };
 
             let mut cmd = build_command(&command);
             cmd.current_dir(&cwd);
@@ -148,30 +140,59 @@ impl Tool for BashTool {
             let mut child = cmd
                 .spawn()
                 .map_err(|e| AppError::Other(format!("Bash: spawn failed: {e}")))?;
+            let pid = child.id();
 
-            let mut stdout_buf = Vec::with_capacity(8 * 1024);
-            let mut stderr_buf = Vec::with_capacity(8 * 1024);
-            let mut stdout_pipe = child.stdout.take();
-            let mut stderr_pipe = child.stderr.take();
+            let stdout_pipe = child.stdout.take();
+            let stderr_pipe = child.stderr.take();
 
+            // Both pipes must be drained *concurrently*. Draining stdout to EOF
+            // first deadlocks any command that fills the stderr pipe buffer
+            // meanwhile: it blocks writing to stderr, so it never closes stdout,
+            // so neither side ever finishes and only the timeout breaks the tie.
             let exec = async {
-                if let Some(p) = stdout_pipe.take() {
-                    drain_capped(p, &mut stdout_buf).await;
-                }
-                if let Some(p) = stderr_pipe.take() {
-                    drain_capped(p, &mut stderr_buf).await;
-                }
-                child.wait().await
+                let (stdout_buf, stderr_buf, status) = tokio::join!(
+                    async {
+                        let mut buf = Vec::with_capacity(8 * 1024);
+                        if let Some(p) = stdout_pipe {
+                            drain_capped(p, &mut buf).await;
+                        }
+                        buf
+                    },
+                    async {
+                        let mut buf = Vec::with_capacity(8 * 1024);
+                        if let Some(p) = stderr_pipe {
+                            drain_capped(p, &mut buf).await;
+                        }
+                        buf
+                    },
+                    child.wait(),
+                );
+                (stdout_buf, stderr_buf, status)
             };
 
-            let status = match timeout(Duration::from_secs(timeout_secs), exec).await {
-                Ok(res) => res.map_err(|e| AppError::Other(format!("Bash: wait failed: {e}")))?,
-                Err(_) => {
-                    return Ok(ToolResult::error(format!(
-                        "Bash: command timed out after {timeout_secs}s"
-                    )));
+            let (stdout_buf, stderr_buf, status) = tokio::select! {
+                biased;
+                // A cancelled turn must not leave a build or test run churning
+                // over project files. Dropping the future kills the shell
+                // (`kill_on_drop`), but its children survive that, so the tree
+                // is torn down explicitly.
+                () = invocation.context.abort.wait_aborted() => {
+                    kill_process_tree(pid);
+                    return Ok(ToolResult::error(
+                        "Bash: cancelled before the command finished".to_string(),
+                    ));
                 }
+                result = timeout(Duration::from_secs(timeout_secs), exec) => match result {
+                    Ok(v) => v,
+                    Err(_) => {
+                        kill_process_tree(pid);
+                        return Ok(ToolResult::error(format!(
+                            "Bash: command timed out after {timeout_secs}s"
+                        )));
+                    }
+                },
             };
+            let status = status.map_err(|e| AppError::Other(format!("Bash: wait failed: {e}")))?;
 
             let stdout = truncate_console(&stdout_buf);
             let stderr = truncate_console(&stderr_buf);
@@ -200,6 +221,81 @@ impl Tool for BashTool {
     }
 }
 
+/// Decide where the command runs.
+///
+/// `project_root` comes from the database project path; an explicit `cwd`
+/// argument may only narrow it. Letting the model pick a directory freely turns
+/// every shell call into a whole-filesystem tool: `cd C:\ && del /s` needs no
+/// suspicious-looking command, just a suspicious `cwd`.
+fn resolve_cwd(project_root: &Path, requested: Option<&str>) -> Result<PathBuf, String> {
+    // Refuse to run without a working directory. Falling through to the host
+    // process CWD would leak the app's own install directory.
+    if project_root.as_os_str().is_empty() {
+        return Err("Bash: no working directory available. Set the project's `path` in the \
+             database, or pass an explicit absolute `cwd` inside it. To detect the OS, read \
+             `<env>Platform</env>` in the system prompt — do not run `uname`."
+            .to_string());
+    }
+    if !project_root.is_absolute() {
+        return Err(cwd_validation_error(project_root));
+    }
+
+    let Some(raw) = requested.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(project_root.to_path_buf());
+    };
+
+    let requested = PathBuf::from(raw);
+    if !requested.is_absolute() {
+        return Err(cwd_validation_error(&requested));
+    }
+    if !project_path::is_within(project_root, &requested) {
+        return Err(format!(
+            "Bash: `cwd` must be inside the project folder `{}`, got `{}`. Run the command from \
+             the project and use relative paths.",
+            project_root.display(),
+            requested.display()
+        ));
+    }
+    if !requested.is_dir() {
+        return Err(format!(
+            "Bash: `cwd` is not an existing directory: `{}`",
+            requested.display()
+        ));
+    }
+    Ok(requested)
+}
+
+/// Kill the shell *and everything it started*.
+///
+/// `kill_on_drop` only reaps the shell itself, so a `npm test` or `cargo build`
+/// it launched keeps running — still writing to project files long after the
+/// tool reported a timeout or cancellation.
+#[cfg(windows)]
+fn kill_process_tree(pid: Option<u32>) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let Some(pid) = pid else { return };
+    let _ = std::process::Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &pid.to_string()])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[cfg(not(windows))]
+fn kill_process_tree(pid: Option<u32>) {
+    let Some(pid) = pid else { return };
+    // The shell is its own process-group leader (see `build_command`), so a
+    // negative pid signals the whole group in one call.
+    let _ = std::process::Command::new("kill")
+        .args(["-KILL", &format!("-{pid}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
 #[cfg(windows)]
 fn build_command(command: &str) -> Command {
     use std::os::windows::process::CommandExt;
@@ -217,6 +313,9 @@ fn build_command(command: &str) -> Command {
 fn build_command(command: &str) -> Command {
     let mut cmd = Command::new("sh");
     cmd.arg("-c").arg(command);
+    // Own process group, so [`kill_process_tree`] can signal the shell's
+    // descendants as well.
+    cmd.process_group(0);
     cmd
 }
 
@@ -359,5 +458,69 @@ mod output_tests {
         drain_capped(&b"hello"[..], &mut buf).await;
         assert_eq!(buf, b"hello");
         assert!(!truncate_console(&buf).1);
+    }
+}
+
+#[cfg(test)]
+mod cwd_tests {
+    use super::*;
+
+    fn project() -> PathBuf {
+        let root = std::env::temp_dir().join(format!("moyan-bash-cwd-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("chapters")).unwrap();
+        root
+    }
+
+    #[test]
+    fn defaults_to_the_project_root() {
+        let root = project();
+        assert_eq!(resolve_cwd(&root, None).unwrap(), root);
+        assert_eq!(
+            resolve_cwd(&root, Some("   ")).unwrap(),
+            root,
+            "a blank cwd is not a request"
+        );
+    }
+
+    #[test]
+    fn accepts_a_subdirectory_of_the_project() {
+        let root = project();
+        let nested = root.join("chapters");
+        assert_eq!(
+            resolve_cwd(&root, Some(nested.to_str().unwrap())).unwrap(),
+            nested
+        );
+    }
+
+    /// The whole point of the check: a shell aimed outside the project turns
+    /// every command into a filesystem-wide one.
+    #[test]
+    fn refuses_a_directory_outside_the_project() {
+        let root = project();
+        let outside = std::env::temp_dir();
+        let err = resolve_cwd(&root, Some(outside.to_str().unwrap()))
+            .expect_err("a parent directory is out of bounds");
+        assert!(err.contains("inside the project folder"), "got: {err}");
+
+        let escape = root.join("..").join("elsewhere");
+        assert!(
+            resolve_cwd(&root, Some(escape.to_str().unwrap())).is_err(),
+            "`..` must not walk out either"
+        );
+    }
+
+    #[test]
+    fn refuses_a_relative_or_missing_directory() {
+        let root = project();
+        assert!(resolve_cwd(&root, Some("chapters")).is_err(), "must be absolute");
+        let ghost = root.join("does-not-exist");
+        let err = resolve_cwd(&root, Some(ghost.to_str().unwrap())).expect_err("missing dir");
+        assert!(err.contains("not an existing directory"), "got: {err}");
+    }
+
+    #[test]
+    fn refuses_to_run_without_a_project_path() {
+        let err = resolve_cwd(Path::new(""), None).expect_err("no cwd at all");
+        assert!(err.contains("no working directory"), "got: {err}");
     }
 }

@@ -1,12 +1,14 @@
 //! Persistence for pending Edit review hunks (reader Keep/Undo UI).
 //!
-//! Unlike [`crate::data::file_snapshot`] (message-level rollback pre-images),
-//! these rows are the authoritative source for the post-apply review UI and
+//! These rows are the authoritative source for the post-apply review UI and
 //! survive tab close / app restart until the user accepts or rejects them.
-//! They also participate in delete-message rollback via `request_message_id`
-//! / `message_id` so disk can be restored even when `file_snapshots` are missing.
-
-use std::collections::HashMap;
+//!
+//! They are NOT a rollback source. [`crate::data::file_snapshot`] owns undoing
+//! workspace writes; a hunk here is a view of a mutation already recorded
+//! there, keyed by the same [`crate::data::paths::normalized_path_key`]. When a
+//! message is deleted the snapshot rollback drives disk and these rows are
+//! merely retired — two writers would fight, and this one cannot express
+//! "delete the file" at all.
 
 use rusqlite::params;
 use serde::Serialize;
@@ -158,45 +160,22 @@ pub fn bind_unbound(
     Ok(n)
 }
 
-/// Roll back every pending hunk tied to `message_id` (as assistant id or as
-/// the originating user `request_message_id`). Returns one revert per path
-/// using the earliest hunk's `text_before`.
-pub fn rollback_for_message(
-    conn: &DbConn,
-    session_id: &str,
-    message_id: &str,
-) -> AppResult<Vec<PendingDiffRevert>> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {SELECT_COLS} FROM pending_diffs
-         WHERE session_id = ?1
-           AND (message_id = ?2 OR request_message_id = ?2)
-         ORDER BY path ASC, seq ASC"
-    ))?;
-    let rows = stmt.query_map(params![session_id, message_id], row_from_query)?;
-    let mut by_path: HashMap<String, PendingDiffRow> = HashMap::new();
-    for row in rows {
-        let row = row?;
-        by_path.entry(row.path.clone()).or_insert(row);
-    }
-
-    let mut reverts = Vec::new();
-    for (path, first) in by_path {
-        reverts.push(PendingDiffRevert {
-            path: path.clone(),
-            text: first.text_before,
-            encoding: first.encoding,
-            had_bom: first.had_bom,
-        });
-    }
-
-    conn.execute(
+/// Drop every review row tied to `message_id` (as assistant id or as the
+/// originating user `request_message_id`).
+///
+/// These rows are a review overlay on mutations that `file_snapshots` already
+/// owns; deleting the message rolls the disk back from there, so this only has
+/// to retire the now-meaningless Keep/Undo entries. Writing `text_before` back
+/// here would fight the snapshot rollback and could resurrect a file it had
+/// just deleted.
+pub fn clear_for_message(conn: &DbConn, session_id: &str, message_id: &str) -> AppResult<usize> {
+    let n = conn.execute(
         "DELETE FROM pending_diffs
          WHERE session_id = ?1
            AND (message_id = ?2 OR request_message_id = ?2)",
         params![session_id, message_id],
     )?;
-
-    Ok(reverts)
+    Ok(n)
 }
 
 pub fn list_for_session(conn: &DbConn, session_id: &str) -> AppResult<Vec<PendingDiffRow>> {
@@ -307,11 +286,21 @@ pub fn reject_all(
     Ok(Some(revert))
 }
 
+/// Rows are stored under [`crate::data::paths::normalized_path_key`], but a
+/// caller may hold a path that no longer resolves the same way — most often
+/// after a rollback deleted the file, leaving only the parent directory to
+/// canonicalize against, so the file name keeps whatever case it was written
+/// with. Match the raw and normalized spellings, case-insensitively where the
+/// filesystem itself is.
 pub fn clear_path(conn: &DbConn, session_id: &str, path: &str) -> AppResult<()> {
-    conn.execute(
-        "DELETE FROM pending_diffs WHERE session_id = ?1 AND path = ?2",
-        params![session_id, path],
-    )?;
+    let normalized = crate::data::paths::normalized_path_key(std::path::Path::new(path));
+    #[cfg(windows)]
+    const SQL: &str = "DELETE FROM pending_diffs WHERE session_id = ?1
+                       AND (path COLLATE NOCASE = ?2 OR path COLLATE NOCASE = ?3)";
+    #[cfg(not(windows))]
+    const SQL: &str =
+        "DELETE FROM pending_diffs WHERE session_id = ?1 AND (path = ?2 OR path = ?3)";
+    conn.execute(SQL, params![session_id, path, normalized])?;
     Ok(())
 }
 
@@ -329,4 +318,62 @@ pub fn clear_paths(conn: &DbConn, session_id: &str, paths: &[String]) -> AppResu
         clear_path(conn, session_id, path)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::db::test_support::TempDb;
+
+    const SID: &str = "session-1";
+
+    fn workspace(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("atelier-diff-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::canonicalize(&dir).unwrap()
+    }
+
+    fn seed(conn: &DbConn, path: &str) {
+        insert(conn, SID, path, "a", "b", "a", "b", Some("utf-8"), false, Some("u1"))
+            .unwrap()
+            .expect("row stored");
+    }
+
+    #[test]
+    fn clear_path_matches_an_unnormalized_spelling_of_the_stored_key() {
+        let root = workspace("spelling");
+        let db = TempDb::new("diff-spelling");
+        let conn = db.conn();
+        let file = root.join("notes.md");
+        std::fs::write(&file, "x").unwrap();
+
+        seed(&conn, &crate::data::paths::normalized_path_key(&file));
+        // Same file, spelled with a redundant current-directory component.
+        let detour = root.join(".").join("notes.md");
+        clear_path(&conn, SID, &detour.to_string_lossy()).unwrap();
+
+        assert!(list_for_session(&conn, SID).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn clear_path_ignores_case_when_the_rolled_back_file_is_already_gone() {
+        let root = workspace("case");
+        let db = TempDb::new("diff-case");
+        let conn = db.conn();
+        let file = root.join("Chapter.md");
+        std::fs::write(&file, "x").unwrap();
+        seed(&conn, &crate::data::paths::normalized_path_key(&file));
+
+        // A snapshot rollback deletes the file first, so the surviving path is
+        // only case-accurate up to the parent directory.
+        std::fs::remove_file(&file).unwrap();
+        clear_path(&conn, SID, &root.join("chapter.md").to_string_lossy()).unwrap();
+
+        assert!(list_for_session(&conn, SID).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

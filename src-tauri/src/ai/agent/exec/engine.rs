@@ -165,6 +165,18 @@ impl ProviderQueryEngine {
     }
 }
 
+/// Clears this run's TodoList when the query future completes (ok, err, or cancel).
+struct ClearTodoOnDrop {
+    tools: Arc<ToolPool>,
+    context: Arc<ToolUseContext>,
+}
+
+impl Drop for ClearTodoOnDrop {
+    fn drop(&mut self) {
+        self.tools.clear_todo_scope(self.context.as_ref());
+    }
+}
+
 impl QueryEngine for ProviderQueryEngine {
     fn query<'a>(
         &'a self,
@@ -195,6 +207,11 @@ impl QueryEngine for ProviderQueryEngine {
                 chat.tools = collect_tool_definitions(&tools);
             }
 
+            let _todo_guard = ClearTodoOnDrop {
+                tools: tools.clone(),
+                context: context.clone(),
+            };
+
             let mut events: Vec<MessageEvent> = Vec::new();
             let mut usage = crate::ai::tokens::TokenUsage::default();
             let mut tool_call_count: u32 = 0;
@@ -220,6 +237,9 @@ impl QueryEngine for ProviderQueryEngine {
             // One shrink-and-retry per run. A second overflow means the shrink
             // did not help and retrying would just burn another request.
             let mut overflow_retried = false;
+            // History length right after the last compaction attempt; guards
+            // against re-summarising a history that has not grown since.
+            let mut compacted_history_len: Option<usize> = None;
             // The user's configured ceiling. Each turn re-derives its clamp
             // from this rather than from the previous turn's clamped value, so
             // room freed by a compaction is handed back to the completion
@@ -275,12 +295,23 @@ impl QueryEngine for ProviderQueryEngine {
                 // already exceed the window, which the provider answers with a
                 // 400 rather than a usage report.
                 if let Some(policy) = compaction.as_ref() {
-                    if compaction_mod::should_compact_chat(&chat, &usage, policy) {
+                    // At most one summariser call per history state. Compaction
+                    // cannot shrink the `keep_recent` turns it preserves, so if
+                    // those alone still read as over-occupancy the naive check
+                    // would compact again on every remaining turn of the run —
+                    // an extra request each time, for a history that is already
+                    // as small as this policy can make it.
+                    let history_grew =
+                        compacted_history_len.is_none_or(|len| chat.history.len() > len);
+                    if history_grew && compaction_mod::should_compact_chat(&chat, &usage, policy) {
                         if let Err(e) =
                             compaction_mod::compact(&mut chat, self.provider.as_ref(), policy).await
                         {
                             eprintln!("[atelier] context compaction failed: {e}");
                         }
+                        // Latched on the attempt, not on success: a summariser
+                        // that just failed will keep failing this turn.
+                        compacted_history_len = Some(chat.history.len());
                     }
                     chat.parameters.model.max_tokens = configured_max_tokens;
                     compaction_mod::clamp_completion_budget(&mut chat, policy);
@@ -312,6 +343,9 @@ impl QueryEngine for ProviderQueryEngine {
                         if !shrank {
                             return Err(e);
                         }
+                        // The shrink already summarised or dropped older turns,
+                        // so the pre-call check must not immediately do it again.
+                        compacted_history_len = Some(chat.history.len());
                         eprintln!(
                             "[atelier] upstream rejected the request for context length; \
                              retrying with a compacted conversation"
@@ -395,7 +429,7 @@ impl QueryEngine for ProviderQueryEngine {
                 final_videos = response.videos.clone();
 
                 if tool_uses.is_empty() {
-                    if let Some(nudge) = tools.incomplete_todo_nudge() {
+                    if let Some(nudge) = tools.incomplete_todo_nudge(context.as_ref()) {
                         if todo_nudges < MAX_TODO_NUDGES {
                             todo_nudges += 1;
                             inject_todo_continuation(&mut chat, &nudge);

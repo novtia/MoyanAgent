@@ -3,9 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::ai::agent::core::context::AbortHandle;
 use crate::ai::agent::{
-    AgentRegistry, FileSnapshotStore, FsSessionMemoryExtractor, FsUserContextLoader,
-    NotificationQueue, ProviderEngine, QueryEngine, RoleStateStore, StaticMcpRegistry, TaskStore,
-    ToolPool,
+    AgentRegistry, FsSessionMemoryExtractor, FsUserContextLoader, NotificationQueue,
+    ProviderEngine, QueryEngine, RoleStateStore, StaticMcpRegistry, TaskStore, ToolPool,
 };
 use crate::ai::{session_log, token_log};
 use crate::data::db::{self, DbPool};
@@ -41,10 +40,6 @@ pub struct AppState {
     pub role_states: Arc<RoleStateStore>,
     /// AskUser human-in-the-loop wait table (tool + `answer_ask_user` command).
     pub prompt_registry: Arc<crate::ai::agent::tools::prompt_registry::PromptRegistry>,
-    /// Shared, session-scoped buffer of pending agent file mutations. Drained
-    /// per assistant message into `file_snapshots` for delete/regenerate
-    /// rollback of created / updated / deleted files.
-    pub file_snapshots: Arc<FileSnapshotStore>,
     /// Token usage statistics recorder (SQLite only, for analytics/billing).
     pub token_stats: Arc<token_log::TokenStatsRecorder>,
     /// Session content logger (per-session JSON files, for debugging).

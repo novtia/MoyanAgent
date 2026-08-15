@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
+use crate::ai::agent::core::context::AbortSignal;
 use crate::ai::agent::tools::paragraph::split_paragraphs;
 use crate::ai::agent::tools::project_path::{self, display_path, FILE_REF_DESC};
 use crate::ai::agent::tools::text_decode::decode_file_bytes;
@@ -26,6 +27,11 @@ const MAX_FILES_CAP: usize = 2_000;
 /// Trim each reported paragraph to this many characters so a single huge
 /// line can't blow up the tool result.
 const SNIPPET_MAX_CHARS: usize = 240;
+/// Deepest directory nesting the recursive scan will walk.
+const MAX_SCAN_DEPTH: usize = 24;
+/// Only this much of any one file is scanned. Without a bound, a single
+/// multi-gigabyte log in the project turns a search into an out-of-memory kill.
+const MAX_FILE_SCAN_BYTES: u64 = 8 * 1024 * 1024;
 
 /// File extensions treated as searchable text when scanning a directory.
 const TEXT_EXTENSIONS: &[&str] = &[
@@ -170,102 +176,183 @@ impl Tool for GrepTool {
                 AppError::Other(format!("{TOOL_NAME}: canonicalize {:?}: {e}", path))
             })?;
 
-            let needle = if case_sensitive {
-                query.clone()
-            } else {
-                query.to_lowercase()
-            };
+            // Scanning a directory tree is unbounded blocking IO. On the async
+            // runtime it would occupy a worker thread for the whole search and
+            // ignore cancellation until the last file; `spawn_blocking` plus an
+            // abort check per file makes it interruptible and keeps the runtime
+            // responsive.
+            let abort = invocation.context.abort.clone();
+            let scan_root = canonical.clone();
+            let scan_query = query.clone();
+            let scan = tokio::task::spawn_blocking(move || {
+                run_scan(ScanRequest {
+                    root: scan_root,
+                    query: scan_query,
+                    case_sensitive,
+                    recursive,
+                    max_matches,
+                    abort,
+                })
+            })
+            .await
+            .map_err(|e| AppError::Other(format!("{TOOL_NAME}: scan task failed: {e}")))?;
 
-            // Collect the file(s) to scan.
-            let mut files: Vec<PathBuf> = Vec::new();
-            let mut files_capped = false;
-            if canonical.is_dir() {
-                collect_text_files(&canonical, recursive, &mut files, &mut files_capped);
-            } else {
-                files.push(canonical.clone());
-            }
-
-            let mut file_results: Vec<Value> = Vec::new();
-            let mut total_matches = 0usize;
-            let mut matches_capped = false;
-
-            'outer: for file in &files {
-                let Ok(bytes) = std::fs::read(file) else {
-                    continue;
-                };
-                let text = decode_file_bytes(&bytes);
-                let mut matches: Vec<Value> = Vec::new();
-
-                for (i, line) in split_paragraphs(&text).into_iter().enumerate() {
-                    let hay = if case_sensitive {
-                        line.clone()
-                    } else {
-                        line.to_lowercase()
-                    };
-                    let occurrences = count_occurrences(&hay, &needle);
-                    if occurrences == 0 {
-                        continue;
-                    }
-                    matches.push(json!({
-                        "paragraph": i + 1,
-                        "label": format!("[P{:03}]", i + 1),
-                        "occurrences": occurrences,
-                        "text": snippet(&line),
-                    }));
-                    total_matches += 1;
-                    if total_matches >= max_matches {
-                        matches_capped = true;
-                    }
-                    if matches_capped {
-                        if !matches.is_empty() {
-                            file_results.push(json!({
-                                "path": display_path(file),
-                                "matches": matches,
-                            }));
-                        }
-                        break 'outer;
-                    }
-                }
-
-                if !matches.is_empty() {
-                    file_results.push(json!({
-                        "path": display_path(file),
-                        "matches": matches,
-                    }));
-                }
+            if scan.cancelled {
+                return Ok(ToolResult::error(format!(
+                    "{TOOL_NAME}: search cancelled"
+                )));
             }
 
             // For the single-file case, flatten the matches to the top level
             // so the model sees paragraph positions directly.
             if !canonical.is_dir() {
-                let matches = file_results
+                let matches = scan
+                    .file_results
                     .into_iter()
                     .next()
                     .and_then(|f| f.get("matches").cloned())
                     .unwrap_or_else(|| json!([]));
-                return Ok(ToolResult::ok(json!({
+                let mut body = json!({
                     "path": display_path(&canonical),
                     "query": query,
                     "case_sensitive": case_sensitive,
-                    "total_matches": total_matches,
-                    "truncated": matches_capped,
+                    "total_matches": scan.total_matches,
+                    "truncated": scan.matches_capped,
                     "matches": matches,
-                })));
+                });
+                if scan.files_truncated > 0 {
+                    body["file_truncated"] = json!(true);
+                }
+                return Ok(ToolResult::ok(body));
             }
 
-            Ok(ToolResult::ok(json!({
+            let mut body = json!({
                 "path": display_path(&canonical),
                 "query": query,
                 "case_sensitive": case_sensitive,
                 "recursive": recursive,
-                "files_searched": files.len(),
-                "files_capped": files_capped,
-                "total_matches": total_matches,
-                "truncated": matches_capped,
-                "results": file_results,
-            })))
+                "files_searched": scan.files_searched,
+                "files_capped": scan.files_capped,
+                "total_matches": scan.total_matches,
+                "truncated": scan.matches_capped,
+                "results": scan.file_results,
+            });
+            if scan.files_truncated > 0 {
+                body["files_truncated"] = json!(scan.files_truncated);
+            }
+            Ok(ToolResult::ok(body))
         })
     }
+}
+
+struct ScanRequest {
+    root: PathBuf,
+    query: String,
+    case_sensitive: bool,
+    recursive: bool,
+    max_matches: usize,
+    abort: AbortSignal,
+}
+
+#[derive(Default)]
+struct ScanOutcome {
+    file_results: Vec<Value>,
+    files_searched: usize,
+    total_matches: usize,
+    matches_capped: bool,
+    files_capped: bool,
+    /// Files whose tail was not scanned because of [`MAX_FILE_SCAN_BYTES`].
+    files_truncated: usize,
+    cancelled: bool,
+}
+
+fn run_scan(req: ScanRequest) -> ScanOutcome {
+    let mut out = ScanOutcome::default();
+    let needle = if req.case_sensitive {
+        req.query.clone()
+    } else {
+        req.query.to_lowercase()
+    };
+
+    let mut files: Vec<PathBuf> = Vec::new();
+    if req.root.is_dir() {
+        collect_text_files(
+            &req.root,
+            &req.root,
+            req.recursive,
+            0,
+            &mut files,
+            &mut out.files_capped,
+        );
+    } else {
+        files.push(req.root.clone());
+    }
+    out.files_searched = files.len();
+
+    'outer: for file in &files {
+        if req.abort.aborted() {
+            out.cancelled = true;
+            return out;
+        }
+        let Some((bytes, truncated)) = read_prefix(file) else {
+            continue;
+        };
+        if truncated {
+            out.files_truncated += 1;
+        }
+        let text = decode_file_bytes(&bytes);
+        let mut matches: Vec<Value> = Vec::new();
+
+        for (i, line) in split_paragraphs(&text).into_iter().enumerate() {
+            let hay = if req.case_sensitive {
+                line.clone()
+            } else {
+                line.to_lowercase()
+            };
+            let occurrences = count_occurrences(&hay, &needle);
+            if occurrences == 0 {
+                continue;
+            }
+            matches.push(json!({
+                "paragraph": i + 1,
+                "label": format!("[P{:03}]", i + 1),
+                "occurrences": occurrences,
+                "text": snippet(&line),
+            }));
+            out.total_matches += 1;
+            if out.total_matches >= req.max_matches {
+                out.matches_capped = true;
+                out.file_results.push(json!({
+                    "path": display_path(file),
+                    "matches": matches,
+                }));
+                break 'outer;
+            }
+        }
+
+        if !matches.is_empty() {
+            out.file_results.push(json!({
+                "path": display_path(file),
+                "matches": matches,
+            }));
+        }
+    }
+
+    out
+}
+
+/// Read at most [`MAX_FILE_SCAN_BYTES`] of `path`, reporting whether the file
+/// continued past the cap.
+fn read_prefix(path: &Path) -> Option<(Vec<u8>, bool)> {
+    use std::io::Read;
+
+    let file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let mut buf = Vec::with_capacity(len.min(MAX_FILE_SCAN_BYTES) as usize);
+    file.take(MAX_FILE_SCAN_BYTES)
+        .read_to_end(&mut buf)
+        .ok()?;
+    Some((buf, len > MAX_FILE_SCAN_BYTES))
 }
 
 /// Count non-overlapping occurrences of `needle` in `hay`.
@@ -298,7 +385,24 @@ fn is_text_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn collect_text_files(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>, capped: &mut bool) {
+/// Gather the text files to scan.
+///
+/// Symlinks and Windows junctions are skipped rather than followed: one link
+/// pointing at a parent directory makes the walk recurse forever, and one
+/// pointing outside the project makes a project-scoped search report files the
+/// caller never granted access to.
+fn collect_text_files(
+    dir: &Path,
+    root: &Path,
+    recursive: bool,
+    depth: usize,
+    out: &mut Vec<PathBuf>,
+    capped: &mut bool,
+) {
+    if depth > MAX_SCAN_DEPTH {
+        *capped = true;
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -307,18 +411,45 @@ fn collect_text_files(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>, cappe
             *capped = true;
             return;
         }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
-            if recursive {
-                collect_text_files(&path, recursive, out, capped);
-                if *capped {
+        if file_type.is_dir() {
+            if recursive && !is_reparse_point(&path) {
+                collect_text_files(&path, root, recursive, depth + 1, out, capped);
+                // Only a full result set ends the walk. A subtree skipped for
+                // being too deep still leaves this directory's own files, and
+                // the siblings after it, worth collecting.
+                if out.len() >= MAX_FILES_CAP {
+                    *capped = true;
                     return;
                 }
             }
-        } else if is_text_file(&path) {
+        } else if file_type.is_file() && is_text_file(&path) && project_path::is_within(root, &path)
+        {
             out.push(path);
         }
     }
+}
+
+/// True when `path` is a Windows reparse point (junction / directory symlink),
+/// which `file_type().is_dir()` reports as an ordinary directory.
+#[cfg(windows)]
+fn is_reparse_point(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    std::fs::symlink_metadata(path)
+        .map(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        .unwrap_or(true)
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(_path: &Path) -> bool {
+    false
 }
 
 #[cfg(test)]
@@ -344,5 +475,57 @@ mod tests {
     #[test]
     fn snippet_keeps_short() {
         assert_eq!(snippet("hello"), "hello");
+    }
+
+    /// A deep tree must stop the walk instead of the stack.
+    #[test]
+    fn collection_stops_at_the_depth_limit() {
+        let root =
+            std::env::temp_dir().join(format!("moyan-grep-depth-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut deep = root.clone();
+        for level in 0..(MAX_SCAN_DEPTH + 5) {
+            deep = deep.join(format!("l{level}"));
+        }
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("buried.txt"), "needle").unwrap();
+        std::fs::write(root.join("top.txt"), "needle").unwrap();
+
+        let mut files = Vec::new();
+        let mut capped = false;
+        collect_text_files(&root, &root, true, 0, &mut files, &mut capped);
+
+        assert!(capped, "the walk reports that it stopped early");
+        assert!(
+            files.iter().any(|p| p.ends_with("top.txt")),
+            "shallow files are still found"
+        );
+        assert!(
+            !files.iter().any(|p| p.ends_with("buried.txt")),
+            "the walk must not descend past the limit"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_huge_file_is_scanned_only_up_to_the_cap() {
+        let dir = std::env::temp_dir().join(format!("moyan-grep-cap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let big = dir.join("big.txt");
+        let filler = vec![b'a'; (MAX_FILE_SCAN_BYTES + 1024) as usize];
+        std::fs::write(&big, filler).unwrap();
+
+        let (bytes, truncated) = read_prefix(&big).expect("readable");
+        assert_eq!(bytes.len() as u64, MAX_FILE_SCAN_BYTES);
+        assert!(truncated, "the caller must learn the tail was skipped");
+
+        let small = dir.join("small.txt");
+        std::fs::write(&small, "hello").unwrap();
+        let (bytes, truncated) = read_prefix(&small).expect("readable");
+        assert_eq!(bytes, b"hello");
+        assert!(!truncated);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
