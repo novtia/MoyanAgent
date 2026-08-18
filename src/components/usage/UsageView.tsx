@@ -43,7 +43,7 @@ interface OverviewData {
   tools: ToolUsageRow[];
 }
 
-export function UsageView() {
+export function UsageView({ onBack }: { onBack?: () => void }) {
   const { t } = useTranslation();
   const [scope, setScope] = useState<UsageScope>("7d");
   const [page, setPage] = useState(0);
@@ -193,6 +193,11 @@ export function UsageView() {
     <main className={`usage${refreshing ? " is-refreshing" : ""}`}>
       <div className="usage-panel">
         <header className="usage-page-head">
+          {onBack && (
+            <button type="button" className="mobile-back" onClick={onBack}>
+              {t("common.back")}
+            </button>
+          )}
           <div className="usage-page-head-main">
             <h1 className="usage-page-title">{t("usage.title")}</h1>
             <p className="usage-page-subtitle">{t("usage.subtitle")}</p>

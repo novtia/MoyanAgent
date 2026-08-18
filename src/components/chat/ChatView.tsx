@@ -14,6 +14,7 @@ import type { AttachmentDraft, ImageRefAbs } from "../../types";
 import { useChatFind } from "../../store/chatFind";
 
 interface ChatViewProps {
+  onOpenMenu?: () => void;
   onEditAttachment: (a: AttachmentDraft) => void;
   onPreviewImage: (img: ImageRefAbs) => void;
   onOpenSettings: () => void;
@@ -21,6 +22,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({
+  onOpenMenu,
   onEditAttachment,
   onPreviewImage,
   onOpenSettings,
@@ -91,47 +93,59 @@ export function ChatView({
 
   const isTemporary = !!session?.is_temporary;
   const title = session?.title || t("chat.defaultTitle");
+  const moreMenu = !isEmpty ? (
+    <div className="chat-topbar-more" ref={moreRef}>
+      <button
+        type="button"
+        className="ghost-btn"
+        title={t("chat.moreTitle")}
+        onClick={() => setMoreOpen((v) => !v)}
+      >
+        <DotsIcon />
+      </button>
+      {moreOpen && (
+        <div className="chat-more-menu">
+          <button
+            type="button"
+            className="chat-more-item danger"
+            onClick={async () => {
+              if (!session) return;
+              const ok = await dialog.confirm(
+                t("chat.deleteSessionConfirm", { title }),
+                { type: "danger", confirmLabel: t("common.delete"), title: t("chat.deleteSession") },
+              );
+              if (ok) {
+                remove(session.id);
+                setMoreOpen(false);
+              }
+            }}
+          >
+            {t("chat.deleteSession")}
+          </button>
+        </div>
+      )}
+    </div>
+  ) : null;
 
   return (
     <main className="chat">
       <div className="chat-main">
         <div className="chat-topbar">
           <div className="chat-topbar-left">
-            {isEmpty ? null : <ChatSessionBreadcrumb />}
-            {!isEmpty && (
-              <div className="chat-topbar-more" ref={moreRef}>
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  title={t("chat.moreTitle")}
-                  onClick={() => setMoreOpen((v) => !v)}
-                >
-                  <DotsIcon />
-                </button>
-                {moreOpen && (
-                  <div className="chat-more-menu">
-                    <button
-                      type="button"
-                      className="chat-more-item danger"
-                      onClick={async () => {
-                        if (!session) return;
-                        const ok = await dialog.confirm(
-                          t("chat.deleteSessionConfirm", { title }),
-                          { type: "danger", confirmLabel: t("common.delete"), title: t("chat.deleteSession") },
-                        );
-                        if (ok) {
-                          remove(session.id);
-                          setMoreOpen(false);
-                        }
-                      }}
-                    >
-                      {t("chat.deleteSession")}
-                    </button>
-                  </div>
-                )}
-              </div>
+            {onOpenMenu && (
+              <button
+                type="button"
+                className="ghost-btn chat-menu-btn"
+                title={t("chat.openMenu")}
+                aria-label={t("chat.openMenu")}
+                onClick={onOpenMenu}
+              >
+                <MenuIcon />
+              </button>
             )}
-            {!isEmpty && (
+            {isEmpty ? null : <ChatSessionBreadcrumb />}
+            {!onOpenMenu && moreMenu}
+            {!isEmpty && !onOpenMenu && (
               <span
                 className={`chat-status ${busy ? "busy" : ""}`}
                 title={
@@ -151,7 +165,9 @@ export function ChatView({
               </span>
             )}
           </div>
+          <span className="chat-topbar-session">{title}</span>
           <div className="chat-topbar-right">
+            {onOpenMenu && moreMenu}
             <div className="chat-topbar-font" ref={fontRef}>
               <button
                 type="button"
@@ -203,6 +219,22 @@ export function ChatView({
         onPreviewImage={onPreviewImage}
       />
     </main>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+    >
+      <line x1="4" y1="7" x2="20" y2="7" />
+      <line x1="4" y1="12" x2="20" y2="12" />
+      <line x1="4" y1="17" x2="20" y2="17" />
+    </svg>
   );
 }
 

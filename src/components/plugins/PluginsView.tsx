@@ -19,7 +19,7 @@ function skillGlyph(skill: SkillInfo): string {
   return s[0];
 }
 
-export function PluginsView() {
+export function PluginsView({ onBack }: { onBack?: () => void }) {
   const { t } = useTranslation();
   const loadSettings = useSettings((s) => s.load);
   const [tab, setTab] = useState<MarketTab>("skills");
@@ -138,6 +138,11 @@ export function PluginsView() {
     <div className={`plugins ${busy ? "is-refreshing" : ""}`}>
       <div className="plugins-panel">
         <header className="plugins-header">
+          {onBack && (
+            <button type="button" className="mobile-back" onClick={onBack}>
+              {t("common.back")}
+            </button>
+          )}
           <div className="plugins-header-main">
             <h1 className="plugins-header-title">{t("plugins.title")}</h1>
             <p className="plugins-header-subtitle">{t("plugins.subtitle")}</p>

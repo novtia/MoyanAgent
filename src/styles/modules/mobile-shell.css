@@ -1,0 +1,592 @@
+/* ───── mobile shell (html[data-shell="mobile"]) ───── */
+html[data-shell="mobile"] {
+  --titlebar-height: 0px;
+  --sidebar-width: 0px !important;
+  /* Beat appearance store's inline --chat-content-width (760px etc.). */
+  --chat-content-width: 100% !important;
+  --msg-timeline-width: 0px;
+  --msg-timeline-gutter: 12px;
+  --chat-topbar-padding-x: 8px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --ime-bottom: 0px;
+}
+
+html[data-platform="android"][data-shell="mobile"] {
+  /* Until native inset JS runs — punch-hole + status bar. */
+  --safe-top: max(env(safe-area-inset-top, 0px), 44px);
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), 20px);
+}
+
+html[data-shell="mobile"],
+html[data-shell="mobile"] body,
+html[data-shell="mobile"] #root {
+  height: var(--app-height, 100dvh);
+  max-height: var(--app-height, 100dvh);
+  min-height: 0;
+}
+
+html[data-shell="mobile"] .app-shell {
+  padding-top: var(--safe-top);
+  padding-bottom: max(var(--safe-bottom), var(--ime-bottom, 0px));
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+  box-sizing: border-box;
+}
+
+html[data-shell="mobile"][data-ime="open"] .empty-chat {
+  justify-content: flex-end;
+}
+
+html[data-shell="mobile"] .stage {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+html[data-shell="mobile"] .stage > .chat,
+html[data-shell="mobile"] .stage > .usage,
+html[data-shell="mobile"] .stage > .plugins,
+html[data-shell="mobile"] .stage > .settings {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+}
+
+html[data-shell="mobile"] .chat,
+html[data-shell="mobile"] .chat-main {
+  width: 100%;
+  max-width: none;
+}
+
+html[data-shell="mobile"] .side {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 82%;
+  max-width: 320px;
+  z-index: 30;
+  transform: translateX(-102%);
+  transition: transform 0.28s var(--ease-pop);
+  box-shadow: none;
+  visibility: visible;
+  overflow: hidden;
+}
+
+html[data-shell="mobile"] .app-shell.drawer-open .side {
+  transform: translateX(0);
+  box-shadow: var(--shadow-2);
+}
+
+html[data-shell="mobile"] .drawer-scrim {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 24;
+  border: none;
+  padding: 0;
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+  cursor: pointer;
+}
+
+html[data-shell="mobile"] .app-shell.drawer-open .drawer-scrim {
+  display: block;
+}
+
+html[data-shell="mobile"] .side-nav-item {
+  min-height: 44px;
+}
+
+html[data-shell="mobile"] .chat-topbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  min-height: 52px;
+  gap: 4px;
+}
+
+html[data-shell="mobile"] .chat-topbar-left,
+html[data-shell="mobile"] .chat-topbar-right {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  min-width: 44px;
+}
+
+html[data-shell="mobile"] .chat-topbar-right {
+  margin-left: auto;
+}
+
+html[data-shell="mobile"] .chat-topbar-session {
+  position: absolute;
+  left: 132px;
+  right: 132px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 0;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  pointer-events: none;
+}
+
+html[data-shell="mobile"] .chat-topbar-breadcrumb,
+html[data-shell="mobile"] .chat-status {
+  display: none;
+}
+
+html[data-shell="mobile"] .chat-menu-btn,
+html[data-shell="mobile"] .ghost-btn {
+  width: 44px;
+  height: 44px;
+  flex: none;
+}
+
+html[data-shell="mobile"] .chat-more-menu {
+  left: auto;
+  right: 0;
+  transform-origin: top right;
+}
+
+html[data-shell="mobile"] .chat-gallery,
+html[data-shell="mobile"] .chat-gallery.open {
+  position: fixed;
+  top: var(--safe-top);
+  right: var(--safe-right);
+  bottom: max(var(--safe-bottom), var(--ime-bottom, 0px));
+  left: var(--safe-left);
+  z-index: 40;
+  flex: none !important;
+  width: auto !important;
+  max-width: none !important;
+  height: auto !important;
+  border-left: none;
+  background: var(--bg);
+  transition: none;
+  padding: 0;
+}
+
+html[data-shell="mobile"] .chat-gallery:not(.open) {
+  display: none;
+}
+
+html[data-shell="mobile"] .chat-gallery-inner {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0;
+  height: 100%;
+}
+
+html[data-shell="mobile"] .chat-gallery-resizer {
+  display: none;
+}
+
+html[data-shell="mobile"] .right-panel-picker {
+  flex: 1;
+  width: 100%;
+  max-width: none;
+  padding: 20px 16px 32px;
+}
+
+html[data-shell="mobile"] .right-panel-picker-card {
+  width: 100%;
+}
+
+html[data-shell="mobile"] .right-panel-tabbar {
+  min-height: 52px;
+}
+
+html[data-shell="mobile"] .messages,
+html[data-shell="mobile"] .messages:not(.is-empty) {
+  padding: 8px 12px 16px;
+}
+
+html[data-shell="mobile"] .messages-inner,
+html[data-shell="mobile"] .messages-shell > .messages-inner,
+html[data-shell="mobile"] .empty-chat-inner,
+html[data-shell="mobile"] .composer-card {
+  max-width: none;
+  width: 100%;
+}
+
+html[data-shell="mobile"] .empty-chat {
+  padding: 16px 16px 12px;
+}
+
+html[data-shell="mobile"] .composer-dock,
+html[data-shell="mobile"] .messages:not(.is-empty) ~ .composer-dock {
+  padding: 0 12px 10px;
+}
+
+html[data-shell="mobile"] .composer-bar {
+  --composer-ctrl: 28px;
+  gap: 6px;
+  align-items: center;
+}
+
+html[data-shell="mobile"] .composer-bar-left {
+  flex: 0 1 auto;
+  gap: 4px;
+  align-items: center;
+}
+
+html[data-shell="mobile"] .composer-bar-left > * {
+  flex-shrink: 0;
+}
+
+html[data-shell="mobile"] .composer-bar-right {
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: flex-end;
+  gap: 4px;
+  align-items: center;
+}
+
+html[data-shell="mobile"] .composer-ring-model-cluster {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+html[data-shell="mobile"] .composer-model {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+html[data-shell="mobile"] .composer-btn,
+html[data-shell="mobile"] .composer-mention-btn,
+html[data-shell="mobile"] .composer-pill,
+html[data-shell="mobile"] .send-btn,
+html[data-shell="mobile"] .composer-context-ring {
+  box-sizing: border-box;
+  height: var(--composer-ctrl);
+  min-height: var(--composer-ctrl);
+  max-height: var(--composer-ctrl);
+}
+
+html[data-shell="mobile"] .composer-btn,
+html[data-shell="mobile"] .composer-mention-btn,
+html[data-shell="mobile"] .composer-thinking .composer-pill,
+html[data-shell="mobile"] .composer-params .composer-pill,
+html[data-shell="mobile"] .send-btn,
+html[data-shell="mobile"] .composer-context-ring {
+  width: var(--composer-ctrl);
+  min-width: var(--composer-ctrl);
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
+
+html[data-shell="mobile"] .composer-pill {
+  padding: 0 8px;
+}
+
+html[data-shell="mobile"] .composer-pill.model {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+html[data-shell="mobile"] .composer-pill.model > span {
+  max-width: none;
+  flex: 1 1 auto;
+}
+
+html[data-shell="mobile"] .composer-mode-pill {
+  max-width: 72px;
+}
+
+html[data-shell="mobile"] .composer-mode-label {
+  max-width: 44px;
+}
+
+html[data-shell="mobile"] .composer-thinking-label,
+html[data-shell="mobile"] .composer-thinking .composer-pill > svg:last-child {
+  display: none;
+}
+
+html[data-shell="mobile"] .composer-btn svg,
+html[data-shell="mobile"] .composer-pill svg,
+html[data-shell="mobile"] .send-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+html[data-shell="mobile"] .composer-context-ring {
+  font-size: 16px;
+}
+
+/* Paperclip stays hidden on a narrow composer; keep the @ mention button. */
+html[data-shell="mobile"] .composer-mention-btn {
+  display: inline-flex;
+}
+
+/* Popovers attach to the whole composer card so they are not clipped to a
+   36px trigger and do not overflow the left/right edges of the phone. */
+html[data-shell="mobile"] .composer-model,
+html[data-shell="mobile"] .composer-thinking,
+html[data-shell="mobile"] .composer-mode-wrap,
+html[data-shell="mobile"] .composer-params,
+html[data-shell="mobile"] .composer-mention-wrap {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  height: var(--composer-ctrl);
+}
+
+html[data-shell="mobile"] .composer-mode-popover,
+html[data-shell="mobile"] .model-popover,
+html[data-shell="mobile"] .params-popover,
+html[data-shell="mobile"] .composer-mention-popover,
+html[data-shell="mobile"] .composer-mention-popover.is-caret {
+  left: 8px;
+  right: 8px;
+  width: auto;
+  max-width: none;
+  bottom: calc(100% + 6px);
+  top: auto;
+  max-height: min(42dvh, 320px);
+  z-index: 80;
+}
+
+html[data-shell="mobile"] .composer-mode-popover,
+html[data-shell="mobile"] .params-popover {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+html[data-shell="mobile"] .composer-mention-popover-body {
+  max-height: none;
+}
+
+html[data-shell="mobile"] .model-popover.model-popover-below {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+html[data-shell="mobile"] .composer-card:has(.model-popover),
+html[data-shell="mobile"] .composer-card:has(.composer-mode-popover),
+html[data-shell="mobile"] .composer-card:has(.params-popover),
+html[data-shell="mobile"] .composer-card:has(.composer-mention-popover) {
+  z-index: 20;
+}
+
+html[data-shell="mobile"] .empty-chat:has(.model-popover),
+html[data-shell="mobile"] .empty-chat:has(.composer-mode-popover),
+html[data-shell="mobile"] .empty-chat:has(.params-popover),
+html[data-shell="mobile"] .empty-chat:has(.composer-mention-popover),
+html[data-shell="mobile"] .chat-main:has(.model-popover),
+html[data-shell="mobile"] .chat-main:has(.composer-mode-popover),
+html[data-shell="mobile"] .chat-main:has(.params-popover),
+html[data-shell="mobile"] .chat-main:has(.composer-mention-popover),
+html[data-shell="mobile"] .chat:has(.model-popover),
+html[data-shell="mobile"] .chat:has(.composer-mode-popover),
+html[data-shell="mobile"] .chat:has(.params-popover),
+html[data-shell="mobile"] .chat:has(.composer-mention-popover) {
+  overflow: visible;
+}
+
+html[data-shell="mobile"] .send-btn {
+  border-radius: 50%;
+}
+
+html[data-shell="mobile"] .settings {
+  flex-direction: column;
+}
+
+html[data-shell="mobile"] .settings-side {
+  width: 100%;
+  border-right: none;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 8px 0;
+}
+
+html[data-shell="mobile"] .settings-back {
+  min-height: 44px;
+}
+
+html[data-shell="mobile"] .settings-nav {
+  flex-direction: row;
+  overflow-x: auto;
+  gap: 2px;
+  margin: 0 0 8px;
+  padding: 3px;
+  background: var(--bg-sunk);
+  border-radius: 10px;
+  scrollbar-width: none;
+}
+
+html[data-shell="mobile"] .settings-nav::-webkit-scrollbar {
+  display: none;
+}
+
+html[data-shell="mobile"] .settings-nav-item {
+  flex: 1 0 auto;
+  min-height: 36px;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+html[data-shell="mobile"] .settings-nav-icon {
+  display: none;
+}
+
+html[data-shell="mobile"] .modal-backdrop,
+html[data-shell="mobile"] .search-backdrop {
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  padding-top: var(--safe-top);
+  padding-bottom: max(var(--safe-bottom), var(--ime-bottom, 0px));
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+html[data-shell="mobile"] .modal,
+html[data-shell="mobile"] .config-modal,
+html[data-shell="mobile"] .agent-flow-editor-modal,
+html[data-shell="mobile"] .agent-flow-modal,
+html[data-shell="mobile"] .rs-edit-modal,
+html[data-shell="mobile"] .model-settings-modal,
+html[data-shell="mobile"] .search-dialog {
+  width: 100% !important;
+  max-width: none;
+  height: 100% !important;
+  max-height: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+html[data-shell="mobile"] .modal-head {
+  padding: 10px 12px;
+  gap: 8px;
+}
+
+html[data-shell="mobile"] .modal-head h3 {
+  font-size: 16px;
+}
+
+html[data-shell="mobile"] .config-modal-subtitle {
+  max-width: 40vw;
+}
+
+html[data-shell="mobile"] .config-modal-body {
+  flex-direction: column;
+}
+
+html[data-shell="mobile"] .config-modal-nav {
+  width: auto;
+  flex: none;
+  flex-direction: row;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  gap: 2px;
+  margin: 8px 12px 0;
+  padding: 3px;
+  background: var(--bg-sunk);
+  border-right: none;
+  border-radius: 10px;
+  scrollbar-width: none;
+}
+
+html[data-shell="mobile"] .config-modal-nav::-webkit-scrollbar {
+  display: none;
+}
+
+html[data-shell="mobile"] .config-modal-nav-item {
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: center;
+  gap: 0;
+  padding: 8px 10px;
+  min-height: 36px;
+  border-radius: 8px;
+}
+
+html[data-shell="mobile"] .config-modal-nav-icon,
+html[data-shell="mobile"] .config-modal-nav-desc,
+html[data-shell="mobile"] .config-modal-nav-note {
+  display: none;
+}
+
+html[data-shell="mobile"] .config-modal-nav-label {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+html[data-shell="mobile"] .config-modal-content {
+  padding: 16px 16px 20px;
+}
+
+html[data-shell="mobile"] .config-modal-prompt {
+  min-height: 160px;
+}
+
+html[data-shell="mobile"] .modal-foot {
+  padding: 10px 12px;
+  gap: 8px;
+}
+
+html[data-shell="mobile"] .modal-foot .btn,
+html[data-shell="mobile"] .modal-head .close {
+  min-height: 36px;
+}
+
+html[data-shell="mobile"] .mobile-back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
+  margin: 0 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+html[data-shell="mobile"] .usage-panel,
+html[data-shell="mobile"] .plugins-panel {
+  padding: 16px 16px 48px;
+}
+
+html[data-shell="mobile"] .toast-host {
+  top: 12px;
+}
+
+.chat-topbar-session {
+  display: none;
+}
+
+.drawer-scrim {
+  display: none;
+}
+
+.mobile-back {
+  display: none;
+}

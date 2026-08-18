@@ -228,13 +228,17 @@ fn resolve_project_root(cwd: &Path) -> AppResult<PathBuf> {
     if !cwd.as_os_str().is_empty() && cwd.is_absolute() {
         return Ok(cwd.to_path_buf());
     }
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .ok_or_else(|| {
-            AppError::Other(format!("{TOOL_NAME}: cannot resolve user home directory"))
-        })?;
-    Ok(home.join("Documents").join(FALLBACK_DIR_NAME))
+    let home = crate::data::paths::user_home_dir().map_err(|e| {
+        AppError::Other(format!("{TOOL_NAME}: cannot resolve user home directory: {e}"))
+    })?;
+    #[cfg(target_os = "android")]
+    {
+        Ok(home.join(FALLBACK_DIR_NAME))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(home.join("Documents").join(FALLBACK_DIR_NAME))
+    }
 }
 
 /// Resolve the output directory: project root, optionally extended by a

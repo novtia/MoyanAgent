@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useTranslation } from "react-i18next";
 import { Sidebar } from "./components/layout/Sidebar";
 import { ChatView } from "./components/chat/ChatView";
 import { ImageEditor } from "./components/editor/ImageEditor";
@@ -30,6 +30,11 @@ import {
 } from "./sessionGallery";
 import { api } from "./api/tauri";
 import type { AttachmentDraft, ImageRefAbs } from "./types";
+import {
+  useAppHeight,
+  useMobileShell,
+  useSyncMobileShellAttr,
+} from "./hooks/useMobileShell";
 
 type AppRoute =
   | { view: "chat" }
@@ -77,8 +82,13 @@ export default function App() {
   const [route, setRoute] = useState<AppRoute>(() => parseRoute());
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [webSearchOpen, setWebSearchOpen] = useState(false);
+  const isMobile = useMobileShell();
+  useSyncMobileShellAttr(isMobile);
+  useAppHeight();
+  const { t } = useTranslation();
 
   useEffect(() => {
     loadSettings();
@@ -86,26 +96,9 @@ export default function App() {
     refreshProjects();
   }, [loadSettings, refreshList, refreshProjects]);
 
-  // Keep shell height in sync with the native window — 100vh alone can lag in WebView2.
-  useLayoutEffect(() => {
-    const root = document.documentElement;
-    const syncHeight = () => {
-      root.style.setProperty("--app-height", `${window.innerHeight}px`);
-    };
-    syncHeight();
-    window.addEventListener("resize", syncHeight);
-    let unlisten: (() => void) | undefined;
-    getCurrentWindow()
-      .onResized(syncHeight)
-      .then((fn) => {
-        unlisten = fn;
-      })
-      .catch(() => {});
-    return () => {
-      window.removeEventListener("resize", syncHeight);
-      unlisten?.();
-    };
-  }, []);
+  useEffect(() => {
+    if (!isMobile) setMobileDrawerOpen(false);
+  }, [isMobile]);
 
   useEffect(() => {
     const onHashChange = () => setRoute(parseRoute());
@@ -167,21 +160,26 @@ export default function App() {
     !activeProvider.api_key?.trim() ||
     !activeProvider.endpoint?.trim() ||
     !activeModel;
+  const closeDrawer = () => setMobileDrawerOpen(false);
   const openChat = () => {
     window.location.hash = "#/";
     setRoute({ view: "chat" });
+    closeDrawer();
   };
   const openUsage = () => {
     window.location.hash = "#/usage";
     setRoute({ view: "usage" });
+    closeDrawer();
   };
   const openPlugins = () => {
     window.location.hash = "#/plugins";
     setRoute({ view: "plugins" });
+    closeDrawer();
   };
   const openSettings = (tab: SettingsTab = "appearance") => {
     window.location.hash = `#/settings/${tab}`;
     setRoute({ view: "settings", tab });
+    closeDrawer();
   };
   const onNewChat = async () => {
     await createNew();
@@ -190,20 +188,26 @@ export default function App() {
 
   return (
     <>
-      <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-        <TitleBar
-          onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
-          sidebarCollapsed={sidebarCollapsed}
-          canGoBack={
-            route.view === "settings" ||
-            route.view === "usage" ||
-            route.view === "plugins"
-          }
-          onBack={openChat}
-          onNewChat={onNewChat}
-          onOpenSearch={() => setSearchOpen(true)}
-          onOpenSettings={() => openSettings("appearance")}
-        />
+      <div
+        className={`app-shell${
+          !isMobile && sidebarCollapsed ? " sidebar-collapsed" : ""
+        }${isMobile && mobileDrawerOpen ? " drawer-open" : ""}`}
+      >
+        {!isMobile && (
+          <TitleBar
+            onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+            sidebarCollapsed={sidebarCollapsed}
+            canGoBack={
+              route.view === "settings" ||
+              route.view === "usage" ||
+              route.view === "plugins"
+            }
+            onBack={openChat}
+            onNewChat={onNewChat}
+            onOpenSearch={() => setSearchOpen(true)}
+            onOpenSettings={() => openSettings("appearance")}
+          />
+        )}
         <div className="stage">
           {route.view === "settings" ? (
             <SettingsView
@@ -215,9 +219,20 @@ export default function App() {
             />
           ) : (
             <>
+              {isMobile && (
+                <button
+                  type="button"
+                  className="drawer-scrim"
+                  aria-label={t("common.close")}
+                  onClick={closeDrawer}
+                />
+              )}
               <Sidebar
                 onOpenChat={openChat}
-                onOpenSearch={() => setSearchOpen(true)}
+                onOpenSearch={() => {
+                  setSearchOpen(true);
+                  closeDrawer();
+                }}
                 onOpenSettings={() => openSettings("appearance")}
                 onOpenUsage={openUsage}
                 onOpenPlugins={openPlugins}
@@ -226,11 +241,14 @@ export default function App() {
                 settingsActive={false}
               />
               {route.view === "usage" ? (
-                <UsageView />
+                <UsageView onBack={isMobile ? openChat : undefined} />
               ) : route.view === "plugins" ? (
-                <PluginsView />
+                <PluginsView onBack={isMobile ? openChat : undefined} />
               ) : (
                 <ChatView
+                  onOpenMenu={
+                    isMobile ? () => setMobileDrawerOpen(true) : undefined
+                  }
                   onEditAttachment={(a) => setEditorTarget(a)}
                   onPreviewImage={(img: ImageRefAbs) => {
                     if (img.mime.startsWith("video/")) {

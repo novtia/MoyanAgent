@@ -33,6 +33,8 @@ void i18n.use(initReactI18next).init({
     escapeValue: false,
   },
   returnNull: false,
+  // No <Suspense> around the tree; default true leaves Android WebView blank.
+  react: { useSuspense: false },
 });
 
 export function setLanguage(lang: SupportedLanguage) {

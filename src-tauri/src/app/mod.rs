@@ -126,7 +126,7 @@ pub fn run() {
                 provider_engine.clone(),
                 permission_resolver,
             ));
-            let logs_dir = paths::token_logs_dir()?;
+            let logs_dir = paths::token_logs_dir(handle)?;
             let token_stats = Arc::new(token_log::TokenStatsRecorder::new(pool.clone()));
             let session_logger = Arc::new(session_log::SessionLogger::new(logs_dir));
             let session_host: Arc<dyn SubagentSessionHost> = Arc::new(subagent::TauriSubagentHost::new(

@@ -75,6 +75,7 @@ export const api = {
   getAppInfo: () =>
     invoke<{
       version: string;
+      platform: string;
       data_dir: string;
       db_path: string;
       sessions_dir: string;

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
     <title>Lumen</title>
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -10,6 +10,8 @@
     <link
       href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@300;400;500;600&family=Quicksand:wght@400;500;600;700&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
     />
     <script>
       (() => {
@@ -20,9 +22,13 @@
           ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
           : mode;
         const darkLike = resolved === "dark" || resolved === "ink";
-        document.documentElement.dataset.themeMode = mode;
-        document.documentElement.dataset.theme = resolved;
-        document.documentElement.style.colorScheme = darkLike ? "dark" : "light";
+        const root = document.documentElement;
+        root.dataset.themeMode = mode;
+        root.dataset.theme = resolved;
+        root.style.colorScheme = darkLike ? "dark" : "light";
+        if (/Android/i.test(navigator.userAgent)) root.dataset.platform = "android";
+        const h = window.visualViewport?.height || window.innerHeight;
+        if (h > 0) root.style.setProperty("--app-height", `${Math.round(h)}px`);
       })();
     </script>
   </head>

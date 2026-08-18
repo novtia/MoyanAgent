@@ -7,6 +7,7 @@ use crate::error::AppError;
 #[derive(Debug, Serialize)]
 pub(crate) struct AppInfo {
     pub(crate) version: String,
+    pub(crate) platform: String,
     pub(crate) data_dir: String,
     pub(crate) db_path: String,
     pub(crate) sessions_dir: String,
@@ -19,6 +20,7 @@ pub fn get_app_info(app: AppHandle) -> Result<AppInfo, AppError> {
     let sessions_dir = paths::sessions_dir(&app)?;
     Ok(AppInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
+        platform: std::env::consts::OS.to_string(),
         data_dir: data_dir.to_string_lossy().into_owned(),
         db_path: db_path.to_string_lossy().into_owned(),
         sessions_dir: sessions_dir.to_string_lossy().into_owned(),
@@ -34,16 +36,35 @@ pub fn open_path(path: String) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("explorer").arg(&path).spawn()?;
+        Ok(())
     }
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open").arg(&path).spawn()?;
+        Ok(())
     }
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open").arg(&path).spawn()?;
+        Ok(())
     }
-    Ok(())
+    #[cfg(target_os = "android")]
+    {
+        Err(AppError::Invalid(
+            "opening local paths is not supported on Android yet".into(),
+        ))
+    }
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android"
+    )))]
+    {
+        Err(AppError::Invalid(
+            "opening local paths is not supported on this platform".into(),
+        ))
+    }
 }
 
 /// Open an absolute http(s) URL in the user's default browser.
@@ -57,16 +78,35 @@ pub fn open_url(url: String) -> Result<(), AppError> {
     {
         // `explorer <url>` reliably hands off to the default browser.
         std::process::Command::new("explorer").arg(trimmed).spawn()?;
+        Ok(())
     }
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open").arg(trimmed).spawn()?;
+        Ok(())
     }
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open").arg(trimmed).spawn()?;
+        Ok(())
     }
-    Ok(())
+    #[cfg(target_os = "android")]
+    {
+        Err(AppError::Invalid(
+            "opening URLs is not supported on Android yet".into(),
+        ))
+    }
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android"
+    )))]
+    {
+        Err(AppError::Invalid(
+            "opening URLs is not supported on this platform".into(),
+        ))
+    }
 }
 
 #[tauri::command]

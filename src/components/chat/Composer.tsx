@@ -46,6 +46,7 @@ import { ComposerAskUserBar } from "./ComposerAskUserBar";
 import { ComposerFileTree } from "./ComposerFileTree";
 import { READER_FILE_DRAG_TYPE } from "../../utils/readerDrag";
 import { ATELIER_DRAG_TYPE } from "./rightPanel/gallery";
+import { useMobileShell } from "../../hooks/useMobileShell";
 
 function nativeFilePath(file: File) {
   return (file as File & { path?: string }).path || "";
@@ -180,6 +181,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const settings = useSettings((s) => s.settings);
   const update = useSettings((s) => s.update);
   const projects = useProject((s) => s.projects);
+  const isMobileShell = useMobileShell();
 
   const projectRoot = useMemo(() => {
     const projectId = session?.project_id ?? null;
@@ -243,7 +245,10 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     [settings?.model_services],
   );
   const modelName = shortModelName(session?.model ?? settings?.model);
-  const modelLabel = modelName.length > 12 ? `${modelName.slice(0, 12)}…` : modelName;
+  const modelLabel =
+    !isMobileShell && modelName.length > 12
+      ? `${modelName.slice(0, 12)}…`
+      : modelName;
   const ratioLabel = aspectRatio === "auto" ? t("composer.ratioAuto") : aspectRatio;
   const sizeLabel = imageSize === "auto" ? t("composer.sizeAuto") : imageSize;
 
@@ -504,7 +509,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   }, [mentionOpen, closeMentionPanel]);
 
   useLayoutEffect(() => {
-    if (!mentionOpen || !mentionAnchor) {
+    if (!mentionOpen || !mentionAnchor || isMobileShell) {
       setMentionCaretStyle(undefined);
       return;
     }
@@ -525,7 +530,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
       }
       window.removeEventListener("resize", update);
     };
-  }, [mentionOpen, mentionAnchor]);
+  }, [mentionOpen, mentionAnchor, isMobileShell]);
 
   useEffect(() => {
     if (!modelOpen) return;
@@ -544,14 +549,30 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     if (!root) return;
 
     const updateMaxHeight = () => {
+      const isMobile = isMobileShell;
       const topbar = document.querySelector(".chat-topbar");
       const topbarBottom = topbar?.getBoundingClientRect().bottom ?? 0;
       const marginBelowTopbar = 8;
-      const topLimit = topbar ? topbarBottom + marginBelowTopbar : marginBelowTopbar;
-      const r = root.getBoundingClientRect();
+      const vv = window.visualViewport;
+      const viewTop = vv ? vv.offsetTop + 8 : 8;
+      const topLimit = Math.max(
+        viewTop,
+        topbar ? topbarBottom + marginBelowTopbar : marginBelowTopbar,
+      );
+      const card = root.closest(".composer-card") as HTMLElement | null;
+      const r = (isMobile && card ? card : root).getBoundingClientRect();
       const anchorTop = r.top;
       const popoverBottom = anchorTop - MODEL_POPOVER_GAP;
       const rawAbove = Math.floor(popoverBottom - topLimit);
+
+      if (isMobile) {
+        // Always open above the card so the list stays inside the visual viewport
+        // (keyboard + adjustResize leaves little room below the composer).
+        setModelPopoverBelow(false);
+        const vvCap = Math.floor((vv?.height ?? window.innerHeight) * 0.42);
+        setModelPopoverMaxPx(Math.min(320, vvCap, Math.max(0, rawAbove)));
+        return;
+      }
 
       if (rawAbove >= MODEL_POPOVER_MIN_SPACE_ABOVE) {
         setModelPopoverBelow(false);
@@ -562,7 +583,9 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
 
       const shell =
         (document.querySelector(".chat-main") as HTMLElement | null) ?? document.documentElement;
-      const bottomLimit = shell.getBoundingClientRect().bottom;
+      const bottomLimit = vv
+        ? vv.offsetTop + vv.height
+        : shell.getBoundingClientRect().bottom;
       const marginAboveBottom = 12;
       const anchorBottom = r.bottom;
       const popoverTop = anchorBottom + MODEL_POPOVER_GAP;
@@ -578,13 +601,18 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
       n.addEventListener("scroll", updateMaxHeight, { passive: true });
     }
     window.addEventListener("resize", updateMaxHeight);
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", updateMaxHeight);
+    vv?.addEventListener("scroll", updateMaxHeight);
     return () => {
       for (const n of scrollNodes) {
         n.removeEventListener("scroll", updateMaxHeight);
       }
       window.removeEventListener("resize", updateMaxHeight);
+      vv?.removeEventListener("resize", updateMaxHeight);
+      vv?.removeEventListener("scroll", updateMaxHeight);
     };
-  }, [modelOpen]);
+  }, [modelOpen, isMobileShell]);
 
   const pickModel = async (providerId: string, model: ModelServiceModel) => {
     setModelOpen(false);
@@ -1063,7 +1091,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
             <div className="composer-mention-wrap" ref={mentionRef}>
               <button
                 type="button"
-                className={`composer-btn composer-add-btn ${mentionOpen ? "active" : ""}`}
+                className={`composer-btn composer-mention-btn ${mentionOpen ? "active" : ""}`}
                 title={t("composer.addFileMention")}
                 onMouseDown={() => editorRef.current?.rememberSelection()}
                 onClick={toggleMentionPanel}
@@ -1073,11 +1101,15 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
               {mentionOpen && (
                 <div
                   className={`composer-mention-popover${
-                    mentionAnchor ? " is-caret" : ""
+                    mentionAnchor && !isMobileShell ? " is-caret" : ""
                   }`}
                   role="dialog"
                   aria-label={t("composer.mentionPickerTitle")}
-                  style={mentionAnchor ? mentionCaretStyle : undefined}
+                  style={
+                    mentionAnchor && !isMobileShell
+                      ? mentionCaretStyle
+                      : undefined
+                  }
                 >
                   <div className="composer-mention-popover-title">
                     {t("composer.mentionPickerTitle")}
@@ -1193,7 +1225,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                   onClick={() => setThinkingOpen((v) => !v)}
                 >
                   <BrainIcon />
-                  <span>{thinkingLabel}</span>
+                  <span className="composer-thinking-label">{thinkingLabel}</span>
                   <CaretIcon />
                 </button>
                 {thinkingOpen && (

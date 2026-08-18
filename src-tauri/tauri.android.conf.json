@@ -1,0 +1,17 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Lumen",
+        "width": 360,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "dragDropEnabled": false,
+        "devtools": true
+      }
+    ]
+  }
+}

@@ -858,7 +858,8 @@
   padding: 0;
   transition: all 0.12s;
 }
-.composer-btn:hover {
+.composer-btn:hover,
+.composer-btn.active {
   border-color: var(--line-strong);
   background: var(--bg-soft);
   color: var(--ink);

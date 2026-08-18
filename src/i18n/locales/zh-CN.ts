@@ -130,6 +130,7 @@ const zhCN = {
     statusPolling: "视频生成中",
     statusReady: "就绪",
     heroTitle: "今天想做什么？",
+    openMenu: "菜单",
     galleryToggle: "侧边栏",
     galleryTitle: "会话图库",
     galleryEmpty: "本会话暂无媒体",

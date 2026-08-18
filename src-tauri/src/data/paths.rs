@@ -11,12 +11,64 @@ pub const MOYAN_DOCS_ROOT: &str = "MoYanAgent";
 pub const MOYAN_LOGS_DIR: &str = "logs";
 pub const MOYAN_PROJECTS_DIR: &str = "Project";
 
+/// User home, or the Android app sandbox when `HOME`/`USERPROFILE` are absent.
+pub fn user_home_dir() -> AppResult<PathBuf> {
+    #[cfg(target_os = "android")]
+    {
+        android_sandbox_dir()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(PathBuf::from)
+            .ok_or_else(|| AppError::Config("cannot resolve user home directory".into()))
+    }
+}
+
+#[cfg(target_os = "android")]
+fn android_sandbox_dir() -> AppResult<PathBuf> {
+    if let Some(home) = std::env::var_os("HOME").filter(|s| !s.is_empty()) {
+        return Ok(PathBuf::from(home));
+    }
+    std::env::current_dir().map_err(|e| {
+        AppError::Config(format!("cannot resolve android sandbox directory: {e}"))
+    })
+}
+
 fn user_documents_dir() -> AppResult<PathBuf> {
-    let home = std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .ok_or_else(|| AppError::Config("cannot resolve user home directory".into()))?;
-    Ok(home.join("Documents"))
+    #[cfg(target_os = "android")]
+    {
+        android_sandbox_dir()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(user_home_dir()?.join("Documents"))
+    }
+}
+
+/// `Documents/MoYanAgent`, preferring Tauri `app_data_dir` on Android.
+pub fn user_moyan_root_for_app(app: &AppHandle) -> AppResult<PathBuf> {
+    #[cfg(target_os = "android")]
+    {
+        let dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| AppError::Config(format!("app_data_dir: {e}")))?
+            .join(MOYAN_DOCS_ROOT);
+        std::fs::create_dir_all(&dir).map_err(|e| {
+            AppError::Other(format!(
+                "failed to create MoYanAgent root {}: {e}",
+                dir.display()
+            ))
+        })?;
+        return Ok(dir);
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        user_moyan_root()
+    }
 }
 
 /// `Documents/MoYanAgent` — created on first use.
@@ -32,8 +84,8 @@ pub fn user_moyan_root() -> AppResult<PathBuf> {
 }
 
 /// `Documents/MoYanAgent/logs/{session_id}.jsonl` — per-session token JSONL logs.
-pub fn token_logs_dir() -> AppResult<PathBuf> {
-    let dir = user_moyan_root()?.join(MOYAN_LOGS_DIR);
+pub fn token_logs_dir(app: &AppHandle) -> AppResult<PathBuf> {
+    let dir = user_moyan_root_for_app(app)?.join(MOYAN_LOGS_DIR);
     std::fs::create_dir_all(&dir).map_err(|e| {
         AppError::Other(format!(
             "failed to create token logs directory {}: {e}",

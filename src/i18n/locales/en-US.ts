@@ -133,6 +133,7 @@ const enUS: Resource = {
     statusPolling: "Generating video",
     statusReady: "Ready",
     heroTitle: "What should we work on?",
+    openMenu: "Menu",
     galleryToggle: "Side panel",
     galleryTitle: "Session gallery",
     galleryEmpty: "No media in this chat yet",

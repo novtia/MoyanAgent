@@ -13,6 +13,7 @@ import { DevelopingRow } from "./DevelopingRow";
 import { MessageRow } from "./MessageRow";
 import { MessageTimeline } from "./MessageTimeline";
 import { useVirtualMessages } from "./useVirtualMessages";
+import { useMobileShell } from "../../../hooks/useMobileShell";
 
 function VirtualRow({
   index,
@@ -53,6 +54,7 @@ function escapeAttrSelector(id: string): string {
 
 export function MessageList({ onPreviewImage }: MessageListProps) {
   const { t } = useTranslation();
+  const isMobileShell = useMobileShell();
   const active = useSession((s) => s.active);
   const busy = useSession((s) => s.busy);
   const outline = useSession((s) => s.outline);
@@ -359,7 +361,7 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
   }, [ensureMessageLoaded, resetHeights, scrollToIndex, virtualEnabled]);
 
   const isEmpty = messages.length === 0 && !busy;
-  const showTimeline = !isEmpty && outline.length > 0;
+  const showTimeline = !isEmpty && outline.length > 0 && !isMobileShell;
 
   const start = virtualEnabled ? range.start : 0;
   const end = virtualEnabled ? range.end : messages.length;
