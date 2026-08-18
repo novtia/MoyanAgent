@@ -19,6 +19,7 @@ use crate::ai::agent::core::permission::PermissionMode;
 use crate::ai::agent::tools::agent_tool::AGENT_TOOL_NAME;
 
 pub const AGENT_GENERAL_PURPOSE: &str = "general-purpose";
+pub const AGENT_ANCHORED: &str = "anchored";
 pub const AGENT_CHAT: &str = "chat";
 pub const AGENT_EXPLORE: &str = "Explore";
 pub const AGENT_PLAN: &str = "Plan";
@@ -57,6 +58,7 @@ fn read_only_deny() -> Vec<String> {
 pub fn builtin_definitions() -> Vec<AgentDefinition> {
     vec![
         general_purpose(),
+        anchored(),
         chat(),
         explore(),
         plan(),
@@ -74,6 +76,25 @@ fn general_purpose() -> AgentDefinition {
     let mut d = AgentDefinition::builtin(AGENT_GENERAL_PURPOSE, prompts::GENERAL_PURPOSE_PROMPT);
     d.when_to_use = prompts::GENERAL_PURPOSE_WHEN_TO_USE.into();
     d.tools = vec!["*".into()];
+    d
+}
+
+fn anchored() -> AgentDefinition {
+    // `general-purpose` with two-stage tool exposure: the pool is identical,
+    // only the first request's wire catalog is narrowed to `Read`. The extra
+    // prompt section tells the model the short list is a transport detail so
+    // it doesn't plan around read-only access.
+    let mut d = AgentDefinition::builtin(
+        AGENT_ANCHORED,
+        format!(
+            "{}\n\n{}",
+            prompts::GENERAL_PURPOSE_PROMPT,
+            prompts::ANCHORED_TOOL_NOTICE
+        ),
+    );
+    d.when_to_use = prompts::ANCHORED_WHEN_TO_USE.into();
+    d.tools = vec!["*".into()];
+    d.anchor_tools = vec!["Read".into()];
     d
 }
 

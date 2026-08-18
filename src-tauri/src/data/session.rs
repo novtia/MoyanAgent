@@ -18,6 +18,9 @@ fn decode_llm_params(raw: Option<String>) -> ModelParamSettings {
 /// Persisted `sessions.agent_type` values the UI may set for main-chat generation.
 pub const SESSION_AGENT_GENERAL: &str = "general-purpose";
 pub const SESSION_AGENT_PLAN: &str = "Plan";
+/// Agent mode with two-stage tool exposure (first request advertises `Read`
+/// only). Same capabilities as [`SESSION_AGENT_GENERAL`].
+pub const SESSION_AGENT_ANCHORED: &str = "anchored";
 /// Default main-session mode: normal chat with AskUser + web tools only.
 pub const SESSION_AGENT_CHAT: &str = "chat";
 /// TRPG director mode (project sessions only).
@@ -36,6 +39,7 @@ pub fn generation_agent_definition_key(stored: &str) -> &'static str {
         SESSION_AGENT_CHAT => SESSION_AGENT_CHAT,
         SESSION_AGENT_PLAN => SESSION_AGENT_PLAN,
         SESSION_AGENT_DIRECTOR => SESSION_AGENT_DIRECTOR,
+        SESSION_AGENT_ANCHORED => SESSION_AGENT_ANCHORED,
         _ => SESSION_AGENT_GENERAL,
     }
 }
@@ -118,10 +122,7 @@ impl<'de> Deserialize<'de> for ChainNode {
             },
         }
         Ok(match Raw::deserialize(d)? {
-            Raw::Bare(s) => ChainNode {
-                agent_type: s,
-                overrides: None,
-            },
+            Raw::Bare(s) => ChainNode::bare(s),
             Raw::Full {
                 agent_type,
                 overrides,
@@ -455,12 +456,13 @@ pub fn set_agent_type(conn: &DbConn, id: &str, agent_type: &str) -> AppResult<()
         && t != SESSION_AGENT_PLAN
         && t != SESSION_AGENT_CHAT
         && t != SESSION_AGENT_DIRECTOR
+        && t != SESSION_AGENT_ANCHORED
     {
         return Err(AppError::Invalid(format!(
-            "agent_type must be \"{SESSION_AGENT_GENERAL}\", \"{SESSION_AGENT_PLAN}\", \"{SESSION_AGENT_CHAT}\", or \"{SESSION_AGENT_DIRECTOR}\""
+            "agent_type must be \"{SESSION_AGENT_GENERAL}\", \"{SESSION_AGENT_PLAN}\", \"{SESSION_AGENT_CHAT}\", \"{SESSION_AGENT_DIRECTOR}\", or \"{SESSION_AGENT_ANCHORED}\""
         )));
     }
-    // Agent / Plan / Director are project-session modes only. Standalone stays on ask/chat.
+    // Agent / Plan / Director / Anchored are project-session modes only. Standalone stays on ask/chat.
     if t != SESSION_AGENT_CHAT {
         let project_id: Option<String> = conn
             .query_row(

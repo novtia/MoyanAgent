@@ -26,6 +26,7 @@ import {
   VIDEO_RESOLUTIONS,
   type VideoGenerationMode,
 } from "../../config/videoGeneration";
+import type { ComposerChatMode } from "../../config/chatMode";
 import type { AttachmentDraft, ModelServiceModel, SkillInfo } from "../../types";
 import {
   ComposerEditor,
@@ -52,6 +53,40 @@ function nativeFilePath(file: File) {
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i;
 const AUDIO_EXT_RE = /\.(wav|mp3)$/i;
+
+type ChatModeOption = {
+  mode: ComposerChatMode;
+  /** Accent class on the pill; the default Agent mode carries none. */
+  pillClass: string;
+  labelKey: string;
+  hintKey: string;
+};
+
+const AGENT_MODE: ChatModeOption = {
+  mode: "agent",
+  pillClass: "",
+  labelKey: "modeAgent",
+  hintKey: "modeAgentHint",
+};
+
+/** Chat modes offered by the pill, in the order they are listed. */
+const CHAT_MODES: ChatModeOption[] = [
+  { mode: "chat", pillClass: "is-ask", labelKey: "modeAsk", hintKey: "modeAskHint" },
+  AGENT_MODE,
+  {
+    mode: "anchored",
+    pillClass: "is-anchored",
+    labelKey: "modeAnchored",
+    hintKey: "modeAnchoredHint",
+  },
+  { mode: "plan", pillClass: "is-plan", labelKey: "modePlan", hintKey: "modePlanHint" },
+  {
+    mode: "director",
+    pillClass: "is-director",
+    labelKey: "modeDirector",
+    hintKey: "modeDirectorHint",
+  },
+];
 
 function isImageFile(file: File): boolean {
   return file.type.startsWith("image/") || IMAGE_EXT_RE.test(file.name);
@@ -102,6 +137,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
   const thinkingEnabled = useSession((s) => s.composer.thinkingEnabled);
   const thinkingEffort = useSession((s) => s.composer.thinkingEffort);
   const chatMode = useSession((s) => s.composer.chatMode);
+  const activeMode = CHAT_MODES.find((m) => m.mode === chatMode) ?? AGENT_MODE;
   const promptEmpty = useSession((s) => s.composer.prompt.trim().length === 0);
   const setAspectRatio = useSession((s) => s.setAspectRatio);
   const setImageSize = useSession((s) => s.setImageSize);
@@ -947,26 +983,14 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
               <div className="composer-mode-wrap" ref={modeRef}>
                 <button
                   type="button"
-                  className={`composer-pill composer-mode-pill ${
-                    chatMode === "plan"
-                      ? "is-plan"
-                      : chatMode === "chat"
-                        ? "is-ask"
-                        : chatMode === "director"
-                          ? "is-director"
-                          : ""
-                  } ${modeOpen ? "active" : ""}`}
+                  className={`composer-pill composer-mode-pill ${activeMode.pillClass} ${
+                    modeOpen ? "active" : ""
+                  }`}
                   title={t("composer.modePickerTitle")}
                   onClick={() => setModeOpen((v) => !v)}
                 >
                   <span className="composer-mode-label">
-                    {chatMode === "plan"
-                      ? t("composer.modePlan")
-                      : chatMode === "chat"
-                        ? t("composer.modeAsk")
-                        : chatMode === "director"
-                          ? t("composer.modeDirector")
-                          : t("composer.modeAgent")}
+                    {t(`composer.${activeMode.labelKey}`)}
                   </span>
                   <CaretIcon />
                 </button>
@@ -977,58 +1001,26 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                     aria-label={t("composer.modePickerTitle")}
                     onMouseDown={(e) => e.stopPropagation()}
                   >
-                    <button
-                      type="button"
-                      role="option"
-                      className={`composer-mode-option ${chatMode === "chat" ? "active" : ""}`}
-                      onClick={() => {
-                        void setChatMode("chat");
-                        setModeOpen(false);
-                      }}
-                    >
-                      <span className="composer-mode-option-title">{t("composer.modeAsk")}</span>
-                      <span className="composer-mode-option-desc">{t("composer.modeAskHint")}</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="option"
-                      className={`composer-mode-option ${chatMode === "agent" ? "active" : ""}`}
-                      onClick={() => {
-                        void setChatMode("agent");
-                        setModeOpen(false);
-                      }}
-                    >
-                      <span className="composer-mode-option-title">{t("composer.modeAgent")}</span>
-                      <span className="composer-mode-option-desc">{t("composer.modeAgentHint")}</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="option"
-                      className={`composer-mode-option ${chatMode === "plan" ? "active" : ""}`}
-                      onClick={() => {
-                        void setChatMode("plan");
-                        setModeOpen(false);
-                      }}
-                    >
-                      <span className="composer-mode-option-title">{t("composer.modePlan")}</span>
-                      <span className="composer-mode-option-desc">{t("composer.modePlanHint")}</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="option"
-                      className={`composer-mode-option ${chatMode === "director" ? "active" : ""}`}
-                      onClick={() => {
-                        void setChatMode("director");
-                        setModeOpen(false);
-                      }}
-                    >
-                      <span className="composer-mode-option-title">
-                        {t("composer.modeDirector")}
-                      </span>
-                      <span className="composer-mode-option-desc">
-                        {t("composer.modeDirectorHint")}
-                      </span>
-                    </button>
+                    {CHAT_MODES.map(({ mode, labelKey, hintKey }) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        role="option"
+                        aria-selected={chatMode === mode}
+                        className={`composer-mode-option ${chatMode === mode ? "active" : ""}`}
+                        onClick={() => {
+                          void setChatMode(mode);
+                          setModeOpen(false);
+                        }}
+                      >
+                        <span className="composer-mode-option-title">
+                          {t(`composer.${labelKey}`)}
+                        </span>
+                        <span className="composer-mode-option-desc">
+                          {t(`composer.${hintKey}`)}
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>

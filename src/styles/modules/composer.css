@@ -907,6 +907,11 @@
   color: var(--ink-2);
 }
 
+.composer-mode-pill.is-anchored {
+  border-color: rgba(70, 90, 160, 0.45);
+  color: var(--ink-2);
+}
+
 .composer-mode-label {
   max-width: 96px;
   white-space: nowrap;

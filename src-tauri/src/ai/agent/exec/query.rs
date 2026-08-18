@@ -31,6 +31,10 @@ pub struct QueryRequest {
     pub source: QuerySource,
     pub max_turns: Option<u32>,
     pub initial_attachments: Vec<Attachment>,
+    /// Names from [`crate::ai::agent::config::definition::AgentDefinition::anchor_tools`].
+    /// Non-empty ⇒ the first request advertises only these tools and the
+    /// full catalog is restored after the first tool-call round.
+    pub tool_anchor: Vec<String>,
     /// Optional streaming callback. Forwarded to the underlying provider
     /// on each turn.
     pub on_text_delta: Option<TextDeltaCallback>,
@@ -48,6 +52,7 @@ impl QueryRequest {
             source,
             max_turns: None,
             initial_attachments: Vec::new(),
+            tool_anchor: Vec::new(),
             on_text_delta: None,
             on_tool_event: None,
         }

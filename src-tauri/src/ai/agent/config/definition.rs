@@ -70,6 +70,16 @@ pub struct AgentDefinition {
     #[serde(default, rename = "disallowedTools")]
     pub disallowed_tools: Vec<String>,
 
+    /// Two-stage tool exposure. When non-empty, the *first* provider request
+    /// of a run advertises only these tools on the wire; the rest of `tools`
+    /// is handed back as soon as the model's first tool-call round finishes.
+    ///
+    /// Purely a transport-level staging: the agent can execute anything
+    /// `tools` / `disallowedTools` resolve to from the very first turn, so a
+    /// name listed here must also survive that filter to have any effect.
+    #[serde(default, rename = "anchorTools")]
+    pub anchor_tools: Vec<String>,
+
     #[serde(default)]
     pub skills: Vec<String>,
     #[serde(default, rename = "mcpServers")]
@@ -140,6 +150,7 @@ impl AgentDefinition {
             system_prompt: system_prompt.into(),
             tools: vec!["*".into()],
             disallowed_tools: vec![],
+            anchor_tools: vec![],
             skills: vec![],
             mcp_servers: vec![],
             required_mcp_servers: vec![],

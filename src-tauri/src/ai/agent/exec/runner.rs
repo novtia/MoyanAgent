@@ -234,6 +234,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         tools,
         initial_attachments,
         definition.max_turns,
+        definition.anchor_tools.clone(),
         on_text_delta,
         on_tool_event,
     )
@@ -274,6 +275,7 @@ async fn drive(
     tools: Arc<ToolPool>,
     initial_attachments: Vec<Attachment>,
     max_turns: Option<u32>,
+    tool_anchor: Vec<String>,
     on_text_delta: Option<TextDeltaCallback>,
     on_tool_event: Option<ToolEventCallback>,
 ) -> AppResult<QueryResult> {
@@ -282,6 +284,7 @@ async fn drive(
         source: context.query_source,
         max_turns,
         initial_attachments,
+        tool_anchor,
         on_text_delta,
         on_tool_event,
     };

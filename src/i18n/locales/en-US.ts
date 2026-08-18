@@ -428,6 +428,7 @@ const enUS: Resource = {
     customGroup: "Custom agents",
     builtinNames: {
       "general-purpose": "General",
+      anchored: "Anchored",
       chat: "Chat",
       Explore: "Explore",
       Plan: "Plan",
@@ -568,6 +569,9 @@ const enUS: Resource = {
     modeAskHint: "Q&A only — AskUser and web tools, no project file access",
     modeAgent: "Agent",
     modeAgentHint: "Full execution with read/edit/write tools",
+    modeAnchored: "Anchored",
+    modeAnchoredHint:
+      "Agent capabilities, but the first request exposes Read only — the rest return after the first tool call",
     modePlan: "Plan",
     modePlanHint: "Explore and plan only — workspace writes are blocked",
     modeDirector: "Director",

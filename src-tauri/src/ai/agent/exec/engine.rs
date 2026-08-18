@@ -190,6 +190,7 @@ impl QueryEngine for ProviderQueryEngine {
                 source: _,
                 max_turns,
                 initial_attachments,
+                tool_anchor,
                 on_text_delta,
                 on_tool_event,
             } = request;
@@ -200,11 +201,24 @@ impl QueryEngine for ProviderQueryEngine {
             // the TS query loop.
             inject_attachments_into_history(&mut chat, &initial_attachments);
 
-            // Populate the tool schema once. The engine is the source of
-            // truth for which tools the model may call — host code only
-            // needs to register tools into the `ToolPool`.
+            // Populate the tool schema. The engine is the source of truth
+            // for which tools the model may call — host code only needs to
+            // register tools into the `ToolPool`. Anchored agents get a
+            // deliberately short catalog for the first request only; see
+            // [`ToolAnchor`].
+            let mut anchor: Option<ToolAnchor> = None;
             if chat.tools.is_empty() && !tools_is_empty(&tools) {
-                chat.tools = collect_tool_definitions(&tools);
+                // A request that continues a provider-side cache chain sends
+                // no tool list at all — the chain head's list still governs —
+                // so there is nothing to stage here, and releasing later would
+                // break the chain for no change in what the model sees. Later
+                // turns of a cached session are already inside the trajectory
+                // the first one established, which is what anchoring buys.
+                let resuming = continues_cache_chain(chat.previous_response_id.as_deref());
+                let staging: &[String] = if resuming { &[] } else { &tool_anchor };
+                let staged = ToolAnchor::new(collect_tool_definitions(&tools), staging);
+                chat.tools = staged.initial();
+                anchor = staged.is_staged().then_some(staged);
             }
 
             let _todo_guard = ClearTodoOnDrop {
@@ -553,6 +567,17 @@ impl QueryEngine for ProviderQueryEngine {
                     crate::ai::agent::memory::tool_chain::DEFAULT_MAX_NON_TODO_TOOL_ROUNDS,
                 );
 
+                // The model committed to the anchored trajectory by calling a
+                // tool, so give it back the catalog it was actually filtered
+                // for. Volcengine's Session cache pins tools to the chain head
+                // and omits them from continuation requests, so the wider
+                // catalog would never reach the model over an existing chain —
+                // start a new one. That costs a single cache miss, once.
+                if let Some(full) = anchor.as_mut().and_then(|a| a.release()) {
+                    chat.tools = full;
+                    chat.previous_response_id = None;
+                }
+
                 // Drain any nested-memory triggers that the tool calls
                 // recorded (e.g. via `FileReadTool`). Matching memory
                 // files are converted to hidden user-meta history turns
@@ -656,6 +681,65 @@ fn collect_tool_definitions(tools: &ToolPool) -> Vec<crate::ai::chat::ToolDefini
             }
         })
         .collect()
+}
+
+/// True when this request resumes a server-side conversation, in which case
+/// the provider serialiser omits the tool list entirely.
+fn continues_cache_chain(previous_response_id: Option<&str>) -> bool {
+    previous_response_id
+        .map(str::trim)
+        .is_some_and(|id| !id.is_empty())
+}
+
+/// Two-stage tool exposure for "anchored" agents.
+///
+/// A model's first request decides which behavioural policy it settles into
+/// for the rest of the run, and a large tool catalog pulls some models into a
+/// verbose, step-narrating style. Advertising a single tool up front keeps
+/// that first decision in the region a small-scaffold prompt was trained on;
+/// once the model has answered with a tool call the full catalog goes back on
+/// the wire, so nothing is actually taken away from it.
+///
+/// This is transport staging only. The [`ToolPool`] is never narrowed, so a
+/// model that calls a stage-2 tool during stage 1 is still served normally.
+struct ToolAnchor {
+    full: Vec<crate::ai::chat::ToolDefinition>,
+    /// The stage-1 catalog, or `None` once the full catalog has been released
+    /// (and when the anchor was a no-op to begin with).
+    staged: Option<Vec<crate::ai::chat::ToolDefinition>>,
+}
+
+impl ToolAnchor {
+    /// Names absent from `full` are ignored. An anchor that selects nothing,
+    /// or that already covers the whole catalog, degrades to no anchoring —
+    /// staging either would only cost a cache miss for no change in what the
+    /// model sees.
+    fn new(full: Vec<crate::ai::chat::ToolDefinition>, anchor: &[String]) -> Self {
+        let wanted: std::collections::HashSet<&str> =
+            anchor.iter().map(String::as_str).collect();
+        let staged: Vec<_> = full
+            .iter()
+            .filter(|d| wanted.contains(d.name.as_str()))
+            .cloned()
+            .collect();
+        let staged = (!staged.is_empty() && staged.len() < full.len()).then_some(staged);
+        Self { full, staged }
+    }
+
+    /// Catalog for the first request.
+    fn initial(&self) -> Vec<crate::ai::chat::ToolDefinition> {
+        self.staged.clone().unwrap_or_else(|| self.full.clone())
+    }
+
+    /// Whether this anchor actually narrows anything.
+    fn is_staged(&self) -> bool {
+        self.staged.is_some()
+    }
+
+    /// Hand back the full catalog, exactly once.
+    fn release(&mut self) -> Option<Vec<crate::ai::chat::ToolDefinition>> {
+        self.staged.take().map(|_| self.full.clone())
+    }
 }
 
 /// Accumulate token usage across multiple API turns (tool-call rounds).
@@ -810,6 +894,151 @@ pub async fn run_chat_request(
             store.fail(&task_id, e.to_string());
             Err(e)
         }
+    }
+}
+
+#[cfg(test)]
+mod tool_anchor_tests {
+    use super::ToolAnchor;
+    use crate::ai::chat::ToolDefinition;
+
+    /// The `general-purpose` catalog as `collect_tool_definitions` produces
+    /// it: every registered tool, sorted by name.
+    const STANDARD: &[&str] = &[
+        "Agent", "AskUser", "Bash", "ConsultRoles", "CreateDoc", "Delete", "Edit", "Grep",
+        "ListFiles", "Read", "RoleState", "TodoList", "WebFetch", "WebSearch", "Write",
+    ];
+
+    fn catalog(names: &[&str]) -> Vec<ToolDefinition> {
+        names
+            .iter()
+            .map(|n| ToolDefinition {
+                name: (*n).to_string(),
+                description: String::new(),
+                schema: serde_json::json!({}),
+            })
+            .collect()
+    }
+
+    fn names(defs: &[ToolDefinition]) -> Vec<String> {
+        defs.iter().map(|d| d.name.clone()).collect()
+    }
+
+    fn read_anchor() -> Vec<String> {
+        vec!["Read".to_string()]
+    }
+
+    /// The whole point of the anchored mode: whatever else is registered, the
+    /// opening request puts one tool on the wire.
+    #[test]
+    fn first_request_advertises_the_anchor_alone() {
+        let anchor = ToolAnchor::new(catalog(STANDARD), &read_anchor());
+        assert!(anchor.is_staged());
+        assert_eq!(names(&anchor.initial()), vec!["Read"]);
+    }
+
+    #[test]
+    fn the_full_catalog_comes_back_after_the_first_tool_round() {
+        let mut anchor = ToolAnchor::new(catalog(STANDARD), &read_anchor());
+        let released = anchor.release().expect("first round restores every tool");
+        assert_eq!(names(&released), STANDARD);
+    }
+
+    /// Releasing is a one-shot handover. Rewriting `chat.tools` on every
+    /// later round would keep re-sending an identical array — harmless in
+    /// content, but it re-enters the Volcengine chain-head path each time.
+    #[test]
+    fn later_rounds_leave_the_catalog_alone() {
+        let mut anchor = ToolAnchor::new(catalog(STANDARD), &read_anchor());
+        anchor.release();
+        assert!(anchor.release().is_none());
+    }
+
+    /// `FileRead` is the name the prompts use; the registered tool is `Read`.
+    /// A typo like that must not silently ship an empty tool array.
+    #[test]
+    fn an_anchor_that_matches_no_registered_tool_is_ignored() {
+        let anchor = ToolAnchor::new(catalog(STANDARD), &["FileRead".to_string()]);
+        assert!(!anchor.is_staged());
+        assert_eq!(names(&anchor.initial()), STANDARD);
+    }
+
+    #[test]
+    fn agents_without_an_anchor_are_untouched() {
+        let anchor = ToolAnchor::new(catalog(STANDARD), &[]);
+        assert!(!anchor.is_staged());
+        assert_eq!(names(&anchor.initial()), STANDARD);
+    }
+
+    /// Staging the entire catalog changes nothing the model can see, so it
+    /// should not trigger the mid-run catalog swap (and its cache miss).
+    #[test]
+    fn anchoring_everything_is_not_anchoring() {
+        let all: Vec<String> = STANDARD.iter().map(|s| s.to_string()).collect();
+        assert!(!ToolAnchor::new(catalog(STANDARD), &all).is_staged());
+    }
+
+    /// A narrowed agent (`disallowedTools`, per-node overrides) reaches the
+    /// engine with a smaller pool; stage 2 must restore *that* pool, never
+    /// the globally registered set.
+    #[test]
+    fn release_restores_the_pool_the_agent_was_filtered_for() {
+        let filtered = &["Bash", "Grep", "Read"];
+        let mut anchor = ToolAnchor::new(catalog(filtered), &read_anchor());
+        assert_eq!(names(&anchor.initial()), vec!["Read"]);
+        assert_eq!(names(&anchor.release().unwrap()), filtered);
+    }
+}
+
+#[cfg(test)]
+mod cache_chain_tests {
+    use super::continues_cache_chain;
+
+    /// Every user turn after the first restores the session's chain tip, and
+    /// a continuation request carries no tool list — so staging one there
+    /// would send nothing and only cost a cache miss when it was released.
+    #[test]
+    fn a_stored_chain_tip_counts_as_resuming() {
+        assert!(continues_cache_chain(Some("resp_abc")));
+    }
+
+    #[test]
+    fn a_fresh_session_does_not() {
+        assert!(!continues_cache_chain(None));
+        assert!(!continues_cache_chain(Some("")));
+        assert!(!continues_cache_chain(Some("   ")));
+    }
+}
+
+#[cfg(test)]
+mod builtin_anchor_tests {
+    use crate::ai::agent::config::builtin::{builtin_definitions, AGENT_ANCHORED};
+
+    /// `anchored` only differs from `general-purpose` in how the catalog is
+    /// staged — it must keep full tool access, or stage 2 restores nothing.
+    #[test]
+    fn the_anchored_agent_stages_read_over_a_full_pool() {
+        let def = builtin_definitions()
+            .into_iter()
+            .find(|d| d.agent_type == AGENT_ANCHORED)
+            .expect("anchored is registered as a built-in");
+        assert_eq!(def.tools, vec!["*".to_string()]);
+        assert_eq!(def.anchor_tools, vec!["Read".to_string()]);
+        assert!(def.disallowed_tools.is_empty());
+    }
+
+    /// The short opening tool list reads as "your tools were taken away"
+    /// unless the prompt says otherwise.
+    #[test]
+    fn the_anchored_prompt_explains_the_short_tool_list() {
+        let def = builtin_definitions()
+            .into_iter()
+            .find(|d| d.agent_type == AGENT_ANCHORED)
+            .unwrap();
+        assert!(def.system_prompt.contains("Tool availability:"));
+        assert!(def
+            .system_prompt
+            .contains(crate::ai::agent::config::prompts::GENERAL_PURPOSE_PROMPT));
     }
 }
 

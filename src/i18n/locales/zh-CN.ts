@@ -422,6 +422,7 @@ const zhCN = {
     customGroup: "自定义 agent",
     builtinNames: {
       "general-purpose": "通用",
+      anchored: "锚定",
       chat: "普通对话",
       Explore: "探索",
       Plan: "规划",
@@ -558,6 +559,8 @@ const zhCN = {
     modeAskHint: "普通问答，仅提问与联网，不读写项目文件",
     modeAgent: "Agent",
     modeAgentHint: "完整执行，可读写与编辑项目文件",
+    modeAnchored: "锚定",
+    modeAnchoredHint: "能力同 Agent，但首轮请求只暴露 Read，首次工具调用后恢复全部工具",
     modePlan: "Plan",
     modePlanHint: "只读探索与规划，禁止改写工作区文件",
     modeDirector: "导演",
