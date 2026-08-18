@@ -128,18 +128,21 @@ html[data-shell="mobile"] .chat-topbar-right {
 
 html[data-shell="mobile"] .chat-topbar-session {
   position: absolute;
-  left: 132px;
-  right: 132px;
-  top: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  right: auto;
+  bottom: auto;
   z-index: 0;
-  min-width: 0;
+  display: block;
+  width: auto;
+  max-width: calc(100% - 120px);
+  margin: 0;
+  padding: 0;
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.01em;
+  line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -147,6 +150,7 @@ html[data-shell="mobile"] .chat-topbar-session {
   pointer-events: none;
 }
 
+html[data-shell="mobile"] .chat-topbar-title,
 html[data-shell="mobile"] .chat-topbar-breadcrumb,
 html[data-shell="mobile"] .chat-status {
   display: none;
@@ -577,6 +581,10 @@ html[data-shell="mobile"] .plugins-panel {
 
 html[data-shell="mobile"] .toast-host {
   top: 12px;
+}
+
+html[data-shell="mobile"] .chat-topbar-session {
+  display: block;
 }
 
 .chat-topbar-session {

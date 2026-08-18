@@ -230,6 +230,7 @@ impl Tool for FileReadTool {
             let (path, range) = resolve_read_target(raw_path, from, to)?;
             let canonical =
                 project_path::resolve_project_file(&invocation.context.cwd, &path, TOOL_NAME)?;
+            crate::ai::agent::tools::pe_docs::refuse_nondoc(TOOL_NAME, &canonical)?;
 
             if !canonical.is_file() {
                 return Ok(ToolResult::error(format!(

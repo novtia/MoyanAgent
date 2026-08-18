@@ -73,6 +73,7 @@ impl Tool for FileWriteTool {
             // root, never on a same-named file the search happens to find in a
             // subfolder — Write overwrites, so guessing costs the user data.
             let path = strict_path_arg(&invocation.input, WRITE_TOOL, &invocation.context.cwd)?;
+            crate::ai::agent::tools::pe_docs::refuse_nondoc(WRITE_TOOL, &path)?;
             // Written verbatim: JSON parsing already resolved the escapes, so any
             // remaining `\n` / `\\` / `\"` is literal source text.
             let content = invocation
@@ -224,6 +225,7 @@ impl Tool for FileEditTool {
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
             let path = path_arg(&invocation.input, EDIT_TOOL, &invocation.context.cwd)?;
+            crate::ai::agent::tools::pe_docs::refuse_nondoc(EDIT_TOOL, &path)?;
             // Verbatim strings: JSON parsing already resolved the escapes, so any
             // remaining `\n` / `\\` / `\"` is literal source text to match as-is.
             let raw_old = invocation

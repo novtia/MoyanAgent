@@ -28,6 +28,7 @@ pub mod fs;
 pub mod grep;
 pub mod list_files;
 pub mod paragraph;
+pub mod pe_docs;
 pub mod project_path;
 pub mod prompt_registry;
 pub mod read_receipt;

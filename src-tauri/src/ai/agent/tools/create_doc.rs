@@ -3,9 +3,9 @@
 //! Unlike [`crate::ai::agent::tools::edit::FileWriteTool`] (which takes a
 //! full path), `CreateDoc` asks the model for only three things: a `title`,
 //! the `content`, and a `doc_type` (`md` or `txt`), plus an optional `folder`
-//! breadcrumb within the project. The file
-//! is written under the session's project working directory
-//! (`ToolUseContext::cwd`), falling back to `~/Documents/moyanagent` when the
+//! breadcrumb within the project. The file is written under the session's
+//! project working directory (`ToolUseContext::cwd`), falling back to
+//! `Documents/MoYanAgent` (or the Android/iOS app-library equivalent) when the
 //! session has no project path. Writes are always confined to that project
 //! root — `folder` cannot escape it. The successful result echoes the full text,
 //! file metadata, and a non-whitespace character count (`chars`) so the model
@@ -27,9 +27,6 @@ use crate::error::{AppError, AppResult};
 
 const TOOL_NAME: &str = "CreateDoc";
 
-/// Sub-directory used when no project working directory is available.
-const FALLBACK_DIR_NAME: &str = "moyanagent";
-
 #[derive(Clone)]
 pub struct CreateDocTool {
     spec: ToolSpec,
@@ -44,7 +41,7 @@ impl CreateDocTool {
                 name: TOOL_NAME.to_string(),
                 description: "Create a text document from a title, its content, and a type. \
                     The file is saved inside the current project folder only \
-                    (or the user's Documents folder when no project is set). \
+                    (or the MoYanAgent documents library when no project is set). \
                     Optionally pass `folder` to place it in a subfolder: a single \
                     name like `notes`, or a nested breadcrumb like `chapters/01` \
                     or `chapters > 01`. \
@@ -223,22 +220,9 @@ impl Tool for CreateDocTool {
 }
 
 /// Resolve the project root: session working directory when absolute, otherwise
-/// `~/Documents/<FALLBACK_DIR_NAME>`.
+/// [`crate::data::paths::user_moyan_root`].
 fn resolve_project_root(cwd: &Path) -> AppResult<PathBuf> {
-    if !cwd.as_os_str().is_empty() && cwd.is_absolute() {
-        return Ok(cwd.to_path_buf());
-    }
-    let home = crate::data::paths::user_home_dir().map_err(|e| {
-        AppError::Other(format!("{TOOL_NAME}: cannot resolve user home directory: {e}"))
-    })?;
-    #[cfg(target_os = "android")]
-    {
-        Ok(home.join(FALLBACK_DIR_NAME))
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        Ok(home.join("Documents").join(FALLBACK_DIR_NAME))
-    }
+    crate::ai::agent::tools::project_path::resolve_project_root(cwd)
 }
 
 /// Resolve the output directory: project root, optionally extended by a

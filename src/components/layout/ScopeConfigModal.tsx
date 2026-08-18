@@ -29,9 +29,13 @@ export interface ScopeConfigPathField {
   /** Current persisted path (null/empty means unset). */
   value: string | null;
   /** Open a folder picker; resolves to the chosen absolute path or null. */
-  onBrowse: () => Promise<string | null>;
+  onBrowse?: () => Promise<string | null>;
   /** Persist a new path value (empty string clears it). */
-  onSave: (path: string) => Promise<void> | void;
+  onSave?: (path: string) => Promise<void> | void;
+  /** PE: show the sandbox path but do not allow picking a system folder. */
+  readOnly?: boolean;
+  /** Optional hint under the path field. */
+  hint?: string;
 }
 
 interface ScopeConfigModalProps {
@@ -124,7 +128,7 @@ export function ScopeConfigModal({
   };
 
   const commitPath = (next: string) => {
-    if (!pathField) return;
+    if (!pathField || pathField.readOnly || !pathField.onSave) return;
     const trimmed = next.trim();
     if (trimmed === pathSavedRef.current.trim()) return;
     pathSavedRef.current = trimmed;
@@ -133,7 +137,7 @@ export function ScopeConfigModal({
   };
 
   const browsePath = async () => {
-    if (!pathField) return;
+    if (!pathField?.onBrowse) return;
     const picked = await pathField.onBrowse();
     if (picked == null) return;
     setPathDraft(picked);
@@ -294,8 +298,16 @@ export function ScopeConfigModal({
                         className="field-input field-input--mono config-modal-path-input"
                         value={pathDraft}
                         spellCheck={false}
-                        placeholder="例如 C:\\Users\\you\\Documents\\my-project"
-                        onChange={(e) => setPathDraft(e.target.value)}
+                        readOnly={pathField.readOnly}
+                        placeholder={
+                          pathField.readOnly
+                            ? "应用内文稿库"
+                            : "例如 C:\\Users\\you\\Documents\\my-project"
+                        }
+                        onChange={(e) => {
+                          if (pathField.readOnly) return;
+                          setPathDraft(e.target.value);
+                        }}
                         onBlur={(e) => commitPath(e.target.value)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
@@ -303,15 +315,18 @@ export function ScopeConfigModal({
                           }
                         }}
                       />
-                      <button
-                        type="button"
-                        className="cfg-reset-btn config-modal-path-browse"
-                        onClick={() => void browsePath()}
-                      >
-                        <FolderIcon />
-                        <span>浏览…</span>
-                      </button>
+                      {pathField.onBrowse && !pathField.readOnly && (
+                        <button
+                          type="button"
+                          className="cfg-reset-btn config-modal-path-browse"
+                          onClick={() => void browsePath()}
+                        >
+                          <FolderIcon />
+                          <span>浏览…</span>
+                        </button>
+                      )}
                     </div>
+                    {pathField.hint && <div className="hint">{pathField.hint}</div>}
                   </div>
                 )}
               </>

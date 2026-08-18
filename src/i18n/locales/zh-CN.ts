@@ -56,6 +56,9 @@ const zhCN = {
     expandProject: "展开项目会话",
     collapseProject: "收起项目会话",
     noProjectSessions: "暂无会话",
+    createDocProject: "创建文稿项目",
+    createDocProjectPrompt: "请输入文稿项目名称",
+    createDocProjectHint: "文稿保存在应用内，不是手机「文档」公共目录。",
   },
   plugins: {
     title: "插件与技能",
@@ -276,6 +279,7 @@ const zhCN = {
     newFilePrompt: "请输入文件名",
     newFolderPrompt: "请输入文件夹名称",
     newFileDefault: "新建文件.txt",
+    newFileDefaultPe: "新建文稿.md",
     newFolderDefault: "新建文件夹",
     renamePrompt: "请输入新名称",
     deleteFileConfirm: "确定删除文件「{{name}}」？",

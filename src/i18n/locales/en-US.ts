@@ -59,6 +59,9 @@ const enUS: Resource = {
     expandProject: "Expand project sessions",
     collapseProject: "Collapse project sessions",
     noProjectSessions: "No sessions",
+    createDocProject: "Create document project",
+    createDocProjectPrompt: "Enter a project name",
+    createDocProjectHint: "Documents are stored inside the app, not in the system Documents folder.",
   },
   plugins: {
     title: "Plugins & Skills",
@@ -279,6 +282,7 @@ const enUS: Resource = {
     newFilePrompt: "Enter file name",
     newFolderPrompt: "Enter folder name",
     newFileDefault: "new-file.txt",
+    newFileDefaultPe: "new-doc.md",
     newFolderDefault: "New folder",
     renamePrompt: "Enter new name",
     deleteFileConfirm: "Delete file \"{{name}}\"?",

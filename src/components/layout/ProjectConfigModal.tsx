@@ -4,6 +4,8 @@
  * UI is provided by the shared ScopeConfigModal (left nav + content panel).
  */
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { useTranslation } from "react-i18next";
+import { usePePlatform } from "../../hooks/useMobileShell";
 import { useProject } from "../../store/project";
 import type { Project } from "../../types";
 import { sanitizeFsPath } from "../../utils/sanitizePath";
@@ -16,6 +18,8 @@ interface ProjectConfigModalProps {
 }
 
 export function ProjectConfigModal({ project, onClose }: ProjectConfigModalProps) {
+  const { t } = useTranslation();
+  const isPe = usePePlatform();
   const updateConfig = useProject((s) => s.updateConfig);
   const updatePath = useProject((s) => s.updatePath);
   const rename = useProject((s) => s.rename);
@@ -40,17 +44,23 @@ export function ProjectConfigModal({ project, onClose }: ProjectConfigModalProps
       }}
       pathField={{
         value: project.path ? sanitizeFsPath(project.path) : project.path,
-        onBrowse: async () => {
-          const result = await openDialog({
-            directory: true,
-            multiple: false,
-            title: "选择项目文件夹",
-          });
-          return typeof result === "string" ? sanitizeFsPath(result) : null;
-        },
-        onSave: async (path) => {
-          await updatePath(project.id, path);
-        },
+        readOnly: isPe,
+        hint: isPe ? t("sidebar.createDocProjectHint") : undefined,
+        onBrowse: isPe
+          ? undefined
+          : async () => {
+              const result = await openDialog({
+                directory: true,
+                multiple: false,
+                title: "选择项目文件夹",
+              });
+              return typeof result === "string" ? sanitizeFsPath(result) : null;
+            },
+        onSave: isPe
+          ? undefined
+          : async (path) => {
+              await updatePath(project.id, path);
+            },
       }}
       onSave={async (systemPrompt, historyTurns, llmParams) => {
         await updateConfig(

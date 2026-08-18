@@ -11,6 +11,7 @@ import type { Project, SessionSummary } from "../../types";
 import { sanitizeFsPath } from "../../utils/sanitizePath";
 import { openContextMenu } from "../context-menu";
 import { toast, dialog } from "../ui";
+import { usePePlatform } from "../../hooks/useMobileShell";
 
 interface SidebarProps {
   onOpenSettings: () => void;
@@ -212,6 +213,8 @@ function ActiveSessionsSection({ onOpenChat }: ActiveSessionsSectionProps) {
 // ─── Shared project creation logic ───────────────────────────────────────────
 
 function useProjectActions() {
+  const { t } = useTranslation();
+  const isPe = usePePlatform();
   const projects = useProject((s) => s.projects);
   const createBlank = useProject((s) => s.createBlank);
   const createFromFolder = useProject((s) => s.createFromFolder);
@@ -221,7 +224,10 @@ function useProjectActions() {
   const [importing, setImporting] = useState(false);
 
   const handleCreateBlank = async () => {
-    const name = await dialog.prompt("请输入项目名称", { placeholder: "新项目" });
+    const name = await dialog.prompt(
+      isPe ? t("sidebar.createDocProjectPrompt") : "请输入项目名称",
+      { placeholder: isPe ? t("sidebar.createDocProject") : "新项目" },
+    );
     if (!name?.trim()) return;
     await createBlank(name.trim());
   };
@@ -266,7 +272,7 @@ function useProjectActions() {
     setTimeout(() => setShowSortHint(false), 1500);
   };
 
-  return { handleCreateBlank, handleCreateFromFolder, handleImportArchive, handleSort, showSortHint, importing };
+  return { handleCreateBlank, handleCreateFromFolder, handleImportArchive, handleSort, showSortHint, importing, isPe };
 }
 
 // ─── Shared action buttons (sort + new project dropdown) ──────────────────────
@@ -277,7 +283,8 @@ interface ProjectActionBtnsProps {
 }
 
 function ProjectActionBtns({ onSort, sortHint }: ProjectActionBtnsProps) {
-  const { handleCreateBlank, handleCreateFromFolder, handleImportArchive, importing } = useProjectActions();
+  const { t } = useTranslation();
+  const { handleCreateBlank, handleCreateFromFolder, handleImportArchive, importing, isPe } = useProjectActions();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const newBtnRef = useRef<HTMLButtonElement>(null);
@@ -322,6 +329,21 @@ function ProjectActionBtns({ onSort, sortHint }: ProjectActionBtnsProps) {
         <SortIcon />
       </button>
       <div className="side-nav-dropdown-anchor">
+        {isPe ? (
+          <button
+            ref={newBtnRef}
+            type="button"
+            className="side-icon-btn"
+            title={t("sidebar.createDocProject")}
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleCreateBlank();
+            }}
+          >
+            <PlusIcon />
+          </button>
+        ) : (
+          <>
         <button
           ref={newBtnRef}
           type="button"
@@ -352,6 +374,8 @@ function ProjectActionBtns({ onSort, sortHint }: ProjectActionBtnsProps) {
               <span>{importing ? "导入中…" : "从归档导入"}</span>
             </button>
           </div>
+        )}
+          </>
         )}
       </div>
     </div>

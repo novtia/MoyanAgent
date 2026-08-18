@@ -70,6 +70,9 @@ fn list_dir_entries(dir: &Path) -> AppResult<Vec<ProjectDirEntry>> {
         let file_type = entry
             .file_type()
             .map_err(|e| AppError::Other(format!("list_project_dir: file_type: {e}")))?;
+        if !crate::ai::agent::tools::pe_docs::include_listed_path(&path, file_type.is_dir()) {
+            continue;
+        }
         entries.push(ProjectDirEntry {
             name,
             path: path.to_string_lossy().into_owned(),
@@ -190,6 +193,7 @@ pub fn create_project_file(
     let file_path = PathBuf::from(&path);
     let cwd = session_project_cwd(&conn, &session_id);
     let resolved = validate_reader_write_path(&file_path, cwd.as_deref())?;
+    crate::ai::agent::tools::pe_docs::refuse_nondoc("create_project_file", &resolved)?;
     if resolved.exists() {
         return Err(AppError::Invalid(format!(
             "create_project_file: already exists: {}",
@@ -231,6 +235,9 @@ pub fn rename_project_path(
             "rename_project_path: destination already exists: {}",
             to_path.display()
         )));
+    }
+    if from_path.is_file() {
+        crate::ai::agent::tools::pe_docs::refuse_nondoc("rename_project_path", &to_path)?;
     }
     if let Some(parent) = to_path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -341,6 +348,7 @@ pub fn write_project_file_bytes(
 ) -> Result<(), AppError> {
     let conn = state.conn()?;
     let resolved = resolve_validated_path(&conn, &session_id, &path)?;
+    crate::ai::agent::tools::pe_docs::refuse_nondoc("write_project_file_bytes", &resolved)?;
     if resolved.exists() {
         return Err(AppError::Invalid(format!(
             "write_project_file_bytes: destination already exists: {}",

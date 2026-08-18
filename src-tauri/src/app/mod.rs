@@ -46,6 +46,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let handle = app.handle();
+            paths::init_user_roots(handle)?;
             let db_path = paths::db_path(handle)?;
             let pool = db::open_pool(&db_path)?;
 
@@ -79,6 +80,8 @@ pub fn run() {
             tools.register(crate::ai::agent::tools::delete::DeleteTool::new(
                 file_snapshots.clone(),
             ));
+            // Android/iOS has no usable programming shell (and is not PowerShell).
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             tools.register(crate::ai::agent::tools::bash::BashTool::new());
             tools.register_todo_list(crate::ai::agent::tools::todo::TodoListTool::new());
             let role_states = Arc::new(RoleStateStore::new());

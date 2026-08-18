@@ -27,6 +27,7 @@
         root.dataset.theme = resolved;
         root.style.colorScheme = darkLike ? "dark" : "light";
         if (/Android/i.test(navigator.userAgent)) root.dataset.platform = "android";
+        else if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) root.dataset.platform = "ios";
         const h = window.visualViewport?.height || window.innerHeight;
         if (h > 0) root.style.setProperty("--app-height", `${Math.round(h)}px`);
       })();

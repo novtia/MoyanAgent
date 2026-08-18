@@ -143,7 +143,7 @@ export function ChatView({
                 <MenuIcon />
               </button>
             )}
-            {isEmpty ? null : <ChatSessionBreadcrumb />}
+            {isEmpty || onOpenMenu ? null : <ChatSessionBreadcrumb />}
             {!onOpenMenu && moreMenu}
             {!isEmpty && !onOpenMenu && (
               <span
@@ -167,7 +167,6 @@ export function ChatView({
           </div>
           <span className="chat-topbar-session">{title}</span>
           <div className="chat-topbar-right">
-            {onOpenMenu && moreMenu}
             <div className="chat-topbar-font" ref={fontRef}>
               <button
                 type="button"

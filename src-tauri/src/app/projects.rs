@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 
-use crate::data::{project, session, settings};
+use crate::data::{paths, project, session, settings};
 use crate::error::AppError;
 
 use super::state::AppState;
@@ -21,11 +21,26 @@ pub fn list_projects(state: tauri::State<Arc<AppState>>) -> Result<Vec<project::
 
 #[tauri::command]
 pub fn create_project(
+    app: tauri::AppHandle,
     state: tauri::State<Arc<AppState>>,
     args: CreateProjectArgs,
 ) -> Result<project::Project, AppError> {
+    paths::init_user_roots(&app)?;
+    let name = args.name.trim();
+    if name.is_empty() {
+        return Err(AppError::Invalid("project name is required".into()));
+    }
+    let supplied = args.path.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let path = if paths::pe_platform() {
+        None
+    } else {
+        if let Some(p) = supplied {
+            paths::assert_allowed_project_path(p)?;
+        }
+        supplied
+    };
     let conn = state.conn()?;
-    project::create(&conn, &args.name, args.path.as_deref())
+    project::create(&conn, name, path)
 }
 
 #[tauri::command]
@@ -40,10 +55,12 @@ pub fn rename_project(
 
 #[tauri::command]
 pub fn update_project_path(
+    app: tauri::AppHandle,
     state: tauri::State<Arc<AppState>>,
     id: String,
     path: Option<String>,
 ) -> Result<(), AppError> {
+    paths::init_user_roots(&app)?;
     let conn = state.conn()?;
     project::set_path(&conn, &id, path.as_deref())
 }

@@ -35,6 +35,31 @@ export function useMobileShell(): boolean {
   return platform === "android" || platform === "ios" || narrow;
 }
 
+/** True on Android/iOS only — not the 900px desktop mobile shell. */
+export function usePePlatform(): boolean {
+  const [platform, setPlatform] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fromDom = document.documentElement.dataset.platform;
+    if (fromDom === "android" || fromDom === "ios") {
+      setPlatform(fromDom);
+    }
+    api
+      .getAppInfo()
+      .then((info) => {
+        setPlatform(info.platform);
+        if (info.platform) {
+          document.documentElement.dataset.platform = info.platform;
+        }
+      })
+      .catch(() => {
+        setPlatform((prev) => prev ?? "");
+      });
+  }, []);
+
+  return platform === "android" || platform === "ios";
+}
+
 export function useSyncMobileShellAttr(isMobile: boolean) {
   useLayoutEffect(() => {
     const root = document.documentElement;

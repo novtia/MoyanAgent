@@ -2,6 +2,7 @@ import {
   measureTextareaCharOffsetTop,
   textareaContentWidth,
 } from "./readerMirror";
+import { isPeDocFile, isPePlatform } from "./peDocs";
 
 export { measureTextareaCharOffsetTop, textareaContentWidth };
 
@@ -32,6 +33,7 @@ const TEXT_EXTENSIONS = [
 ];
 
 export function isSearchableTextFile(path: string): boolean {
+  if (isPePlatform()) return isPeDocFile(path);
   const lower = path.toLowerCase();
   return TEXT_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }

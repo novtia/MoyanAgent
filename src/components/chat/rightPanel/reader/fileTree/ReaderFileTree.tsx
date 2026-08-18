@@ -10,6 +10,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../../../api/tauri";
+import { usePePlatform } from "../../../../../hooks/useMobileShell";
 import { copyText } from "../../../../../utils/clipboard";
 import { READER_FILE_DRAG_TYPE } from "../../../../../utils/readerDrag";
 import { FileTypeIcon } from "../../../../../utils/fileIcons";
@@ -50,6 +51,7 @@ export type { ReaderFileTreeProps } from "../types";
 
 export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) {
   const { t } = useTranslation();
+  const isPe = usePePlatform();
   const activeId = useSession((s) => s.activeId);
   const projectId = useSession((s) => s.active?.session.project_id ?? null);
   const projects = useProject((s) => s.projects);
@@ -86,7 +88,7 @@ export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) 
       if (!activeId) return;
       const name = await dialog.prompt(t("fileExplorer.newFilePrompt"), {
         title: t("fileExplorer.newFile"),
-        defaultValue: t("fileExplorer.newFileDefault"),
+        defaultValue: t(isPe ? "fileExplorer.newFileDefaultPe" : "fileExplorer.newFileDefault"),
       });
       if (!name?.trim()) return;
       try {
@@ -98,7 +100,7 @@ export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) 
         toast.error(t("fileExplorer.createFailed"), { description: String(err) });
       }
     },
-    [activeId, expand, refresh, t],
+    [activeId, expand, refresh, t, isPe],
   );
 
   const newFolder = useCallback(

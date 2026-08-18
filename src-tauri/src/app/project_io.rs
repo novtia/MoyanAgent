@@ -23,6 +23,7 @@ pub fn write_project_file(
     let file_path = PathBuf::from(&path);
     let cwd = session_project_cwd(&conn, &session_id);
     let resolved = validate_reader_write_path(&file_path, cwd.as_deref())?;
+    crate::ai::agent::tools::pe_docs::refuse_nondoc("write_project_file", &resolved)?;
 
     write_text_file_labeled(&resolved, &content, encoding.as_deref(), had_bom)
         .map_err(|e| AppError::Other(format!("write_project_file: write {:?}: {e}", resolved)))?;
@@ -39,6 +40,7 @@ pub fn read_project_file(
     let file_path = PathBuf::from(&path);
     let cwd = session_project_cwd(&conn, &session_id);
     let resolved = validate_reader_write_path(&file_path, cwd.as_deref())?;
+    crate::ai::agent::tools::pe_docs::refuse_nondoc("read_project_file", &resolved)?;
     read_text_file(&resolved)
         .map(ProjectTextFile::from)
         .map_err(|e| AppError::Other(format!("read_project_file: read {:?}: {e}", resolved)))

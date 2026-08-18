@@ -82,6 +82,7 @@ impl Tool for DeleteTool {
             // at a file, but here it could unlink a same-named file the model
             // never mentioned, so a near miss is reported as a suggestion.
             let path = project_path::resolve_project_file_strict(cwd, raw, TOOL_NAME)?;
+            crate::ai::agent::tools::pe_docs::refuse_nondoc(TOOL_NAME, &path)?;
             if !path.exists() {
                 let hint = project_path::resolve_project_file(cwd, raw, TOOL_NAME)
                     .ok()

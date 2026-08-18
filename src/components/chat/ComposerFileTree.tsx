@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../../api/tauri";
 import { useFileExplorer } from "../../store/fileExplorer";
 import type { ProjectDirEntry } from "../../types";
+import { isPeDocFile, isPePlatform } from "../../utils/peDocs";
 
 export interface ComposerFileTreeProps {
   sessionId: string;
@@ -41,7 +42,9 @@ function TreeLevel({ sessionId, dirPath, depth, onPick }: TreeLevelProps) {
       .listProjectDir(sessionId, dirPath)
       .then((list) => {
         if (!cancelled) {
-          setEntries(list);
+          setEntries(
+            isPePlatform() ? list.filter((e) => e.isDir || isPeDocFile(e.path)) : list,
+          );
           setLoading(false);
         }
       })

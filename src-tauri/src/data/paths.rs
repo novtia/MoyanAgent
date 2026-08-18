@@ -11,13 +11,77 @@ pub const MOYAN_DOCS_ROOT: &str = "MoYanAgent";
 pub const MOYAN_LOGS_DIR: &str = "logs";
 pub const MOYAN_PROJECTS_DIR: &str = "Project";
 
-/// User home, or the Android app sandbox when `HOME`/`USERPROFILE` are absent.
-pub fn user_home_dir() -> AppResult<PathBuf> {
-    #[cfg(target_os = "android")]
+/// App private files dir on Android/iOS, set once from [`init_user_roots`].
+#[cfg(any(target_os = "android", target_os = "ios"))]
+static MOBILE_HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Pin mobile paths to Tauri `app_data_dir` so blank projects, CreateDoc, and
+/// the reader all share one tree. Call from app `setup`.
+pub fn init_user_roots(app: &AppHandle) -> AppResult<()> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        android_sandbox_dir()
+        let home = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| AppError::Config(format!("app_data_dir: {e}")))?;
+        std::fs::create_dir_all(&home).map_err(|e| {
+            AppError::Other(format!(
+                "failed to create app data dir {}: {e}",
+                home.display()
+            ))
+        })?;
+        let _ = MOBILE_HOME.set(home);
     }
-    #[cfg(not(target_os = "android"))]
+    user_moyan_root_for_app(app)?;
+    blank_projects_root()?;
+    Ok(())
+}
+
+/// Android/iOS document-library mode: no system folder picker, no Bash.
+pub fn pe_platform() -> bool {
+    cfg!(any(target_os = "android", target_os = "ios"))
+}
+
+/// Reject SAF `content://` URIs and any path outside `{app_data_dir}/MoYanAgent`.
+/// Desktop always accepts the path (folder pickers return real filesystem paths).
+pub fn assert_allowed_project_path(path: &str) -> AppResult<()> {
+    if !pe_platform() {
+        return Ok(());
+    }
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Invalid(
+            "project path cannot be empty on this device".into(),
+        ));
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("content:") || lower.starts_with("file:") {
+        return Err(AppError::Invalid(
+            "system folder URIs are not supported; documents stay in the app library".into(),
+        ));
+    }
+    let candidate = PathBuf::from(trimmed);
+    if !candidate.is_absolute() {
+        return Err(AppError::Invalid(
+            "project path must be an absolute path inside the app library".into(),
+        ));
+    }
+    let root = user_moyan_root()?;
+    if !is_within(&root, &candidate) {
+        return Err(AppError::Invalid(
+            "project path must stay inside the app library".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// User home, or the Android/iOS app sandbox when initialised.
+pub fn user_home_dir() -> AppResult<PathBuf> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        mobile_sandbox_dir()
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         std::env::var_os("USERPROFILE")
             .or_else(|| std::env::var_os("HOME"))
@@ -26,30 +90,33 @@ pub fn user_home_dir() -> AppResult<PathBuf> {
     }
 }
 
-#[cfg(target_os = "android")]
-fn android_sandbox_dir() -> AppResult<PathBuf> {
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn mobile_sandbox_dir() -> AppResult<PathBuf> {
+    if let Some(home) = MOBILE_HOME.get() {
+        return Ok(home.clone());
+    }
     if let Some(home) = std::env::var_os("HOME").filter(|s| !s.is_empty()) {
         return Ok(PathBuf::from(home));
     }
     std::env::current_dir().map_err(|e| {
-        AppError::Config(format!("cannot resolve android sandbox directory: {e}"))
+        AppError::Config(format!("cannot resolve mobile sandbox directory: {e}"))
     })
 }
 
 fn user_documents_dir() -> AppResult<PathBuf> {
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        android_sandbox_dir()
+        user_home_dir()
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         Ok(user_home_dir()?.join("Documents"))
     }
 }
 
-/// `Documents/MoYanAgent`, preferring Tauri `app_data_dir` on Android.
+/// `Documents/MoYanAgent` on desktop; `{app_data_dir}/MoYanAgent` on mobile.
 pub fn user_moyan_root_for_app(app: &AppHandle) -> AppResult<PathBuf> {
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let dir = app
             .path()
@@ -64,7 +131,7 @@ pub fn user_moyan_root_for_app(app: &AppHandle) -> AppResult<PathBuf> {
         })?;
         return Ok(dir);
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let _ = app;
         user_moyan_root()

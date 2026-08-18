@@ -175,6 +175,7 @@ impl Tool for GrepTool {
             let canonical = std::fs::canonicalize(&path).map_err(|e| {
                 AppError::Other(format!("{TOOL_NAME}: canonicalize {:?}: {e}", path))
             })?;
+            crate::ai::agent::tools::pe_docs::refuse_nondoc(TOOL_NAME, &canonical)?;
 
             // Scanning a directory tree is unbounded blocking IO. On the async
             // runtime it would occupy a worker thread for the whole search and
@@ -379,6 +380,9 @@ fn snippet(s: &str) -> String {
 }
 
 fn is_text_file(path: &Path) -> bool {
+    if crate::ai::agent::tools::pe_docs::pe_docs_only() {
+        return crate::ai::agent::tools::pe_docs::is_doc_path(path);
+    }
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| TEXT_EXTENSIONS.contains(&e.to_lowercase().as_str()))

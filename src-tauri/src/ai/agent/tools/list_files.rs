@@ -203,6 +203,9 @@ fn collect_tree(dir: &Path, depth: usize, state: &mut WalkState) -> AppResult<Ve
             continue;
         }
         let descendable = file_type.is_dir() && !is_reparse_point(&path);
+        if !crate::ai::agent::tools::pe_docs::include_listed_path(&path, descendable) {
+            continue;
+        }
         rows.push((name, path, descendable));
     }
 
@@ -262,6 +265,9 @@ fn is_reparse_point(_path: &Path) -> bool {
 }
 
 fn is_text_file(path: &Path) -> bool {
+    if crate::ai::agent::tools::pe_docs::pe_docs_only() {
+        return crate::ai::agent::tools::pe_docs::is_doc_path(path);
+    }
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| TEXT_EXTENSIONS.contains(&e.to_lowercase().as_str()))

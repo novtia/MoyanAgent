@@ -98,7 +98,10 @@ fn normalize_optional_project_path(path: Option<&str>) -> Option<String> {
 
 pub fn create(conn: &DbConn, name: &str, path: Option<&str>) -> AppResult<Project> {
     let resolved_path = match path {
-        Some(p) if !p.trim().is_empty() => Some(normalize_project_path(p)),
+        Some(p) if !p.trim().is_empty() => {
+            paths::assert_allowed_project_path(p)?;
+            Some(normalize_project_path(p))
+        }
         _ => Some(
             allocate_blank_project_dir(name)?
                 .to_string_lossy()
@@ -219,6 +222,16 @@ pub fn rename(conn: &DbConn, id: &str, name: &str) -> AppResult<()> {
 /// Update a project's working-directory path. An empty / whitespace-only
 /// value clears the path (stored as NULL).
 pub fn set_path(conn: &DbConn, id: &str, path: Option<&str>) -> AppResult<()> {
+    if paths::pe_platform() {
+        let Some(p) = path.map(str::trim).filter(|s| !s.is_empty()) else {
+            return Err(AppError::Invalid(
+                "cannot clear or replace the project path on this device".into(),
+            ));
+        };
+        paths::assert_allowed_project_path(p)?;
+    } else if let Some(p) = path.map(str::trim).filter(|s| !s.is_empty()) {
+        paths::assert_allowed_project_path(p)?;
+    }
     let normalized = normalize_optional_project_path(path);
     let updated = now_ms();
     let n = conn.execute(
