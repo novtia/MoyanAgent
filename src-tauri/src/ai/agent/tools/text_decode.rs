@@ -191,6 +191,217 @@ fn normalize_tool_string_once(s: &str) -> String {
     out
 }
 
+/// ASCII `"` plus typographic / CJK doubles (`“”「」『』…`).
+pub fn is_double_quote(c: char) -> bool {
+    matches!(
+        c,
+        '"' | '\u{201C}'
+            | '\u{201D}'
+            | '\u{201E}'
+            | '\u{201F}'
+            | '\u{00AB}'
+            | '\u{00BB}'
+            | '\u{300C}'
+            | '\u{300D}'
+            | '\u{300E}'
+            | '\u{300F}'
+            | '\u{FF02}'
+    )
+}
+
+/// ASCII `'` plus typographic singles (`‘’`).
+pub fn is_single_quote(c: char) -> bool {
+    matches!(
+        c,
+        '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}' | '\u{FF07}'
+    )
+}
+
+pub fn is_quote_char(c: char) -> bool {
+    is_double_quote(c) || is_single_quote(c)
+}
+
+/// Fold quote glyphs to ASCII so `“你好”` / `「你好」` / `"你好"` compare equal.
+pub fn fold_quote_char(c: char) -> char {
+    if is_double_quote(c) {
+        '"'
+    } else if is_single_quote(c) {
+        '\''
+    } else {
+        c
+    }
+}
+
+#[derive(Clone, Copy)]
+enum QuoteSide {
+    Opening,
+    Closing,
+    Neutral,
+}
+
+fn double_quote_side(c: char) -> QuoteSide {
+    match c {
+        '\u{201C}' | '\u{00AB}' | '\u{300C}' | '\u{300E}' | '\u{201F}' => QuoteSide::Opening,
+        '\u{201D}' | '\u{00BB}' | '\u{300D}' | '\u{300F}' => QuoteSide::Closing,
+        _ => QuoteSide::Neutral,
+    }
+}
+
+fn single_quote_side(c: char) -> QuoteSide {
+    match c {
+        '\u{2018}' | '\u{201B}' => QuoteSide::Opening,
+        '\u{2019}' => QuoteSide::Closing,
+        _ => QuoteSide::Neutral,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PairStyle {
+    open: char,
+    close: char,
+}
+
+fn detect_quote_style(
+    sample: &str,
+    is_q: fn(char) -> bool,
+    side: fn(char) -> QuoteSide,
+) -> Option<PairStyle> {
+    let mut open = None;
+    let mut close = None;
+    let mut neutral = None;
+    for c in sample.chars() {
+        if !is_q(c) {
+            continue;
+        }
+        match side(c) {
+            QuoteSide::Opening => {
+                if open.is_none() {
+                    open = Some(c);
+                }
+            }
+            QuoteSide::Closing => {
+                if close.is_none() {
+                    close = Some(c);
+                }
+            }
+            QuoteSide::Neutral => {
+                if neutral.is_none() {
+                    neutral = Some(c);
+                }
+            }
+        }
+    }
+    match (open, close, neutral) {
+        (Some(o), Some(c), _) => Some(PairStyle { open: o, close: c }),
+        (Some(o), None, Some(n)) => Some(PairStyle { open: o, close: n }),
+        (None, Some(c), Some(n)) => Some(PairStyle { open: n, close: c }),
+        (Some(o), None, None) => Some(PairStyle { open: o, close: o }),
+        (None, Some(c), None) => Some(PairStyle { open: c, close: c }),
+        (None, None, Some(n)) => Some(PairStyle { open: n, close: n }),
+        (None, None, None) => None,
+    }
+}
+
+fn apply_quote_style(style: PairStyle, side: QuoteSide, open_next: &mut bool) -> char {
+    if style.open == style.close {
+        return style.open;
+    }
+    match side {
+        QuoteSide::Opening => {
+            *open_next = false;
+            style.open
+        }
+        QuoteSide::Closing => {
+            *open_next = true;
+            style.close
+        }
+        QuoteSide::Neutral => {
+            if *open_next {
+                *open_next = false;
+                style.open
+            } else {
+                *open_next = true;
+                style.close
+            }
+        }
+    }
+}
+
+/// Rewrite quote glyphs in `text` to match the style used in `sample`.
+///
+/// Used when Edit located `old_string` via quote-folding: the file keeps its
+/// existing `"` / `“”` / `「」`, and `new_string` is rewritten to the same glyphs
+/// so a curly-quote model call does not pollute an ASCII-quote chapter.
+pub fn remap_quotes_to_sample(text: &str, sample: &str) -> String {
+    let double = detect_quote_style(sample, is_double_quote, double_quote_side);
+    let single = detect_quote_style(sample, is_single_quote, single_quote_side);
+    let mut d_open_next = true;
+    let mut s_open_next = true;
+    text.chars()
+        .map(|c| {
+            if is_double_quote(c) {
+                match double {
+                    Some(style) => {
+                        apply_quote_style(style, double_quote_side(c), &mut d_open_next)
+                    }
+                    None => c,
+                }
+            } else if is_single_quote(c) {
+                match single {
+                    Some(style) => {
+                        apply_quote_style(style, single_quote_side(c), &mut s_open_next)
+                    }
+                    None => c,
+                }
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// Non-overlapping byte ranges in `haystack` whose quote-folded text equals `needle`.
+///
+/// Empty when `needle` contains no quote glyphs — in that case folding cannot
+/// find a match that exact search missed.
+pub fn find_quote_folded_ranges(haystack: &str, needle: &str) -> Vec<(usize, usize)> {
+    if needle.is_empty() || !needle.chars().any(is_quote_char) {
+        return Vec::new();
+    }
+    let needle_folded: Vec<char> = needle.chars().map(fold_quote_char).collect();
+    let n = needle_folded.len();
+    let hay: Vec<(usize, char)> = haystack
+        .char_indices()
+        .map(|(i, c)| (i, fold_quote_char(c)))
+        .collect();
+    let hay_len = hay.len();
+    if n == 0 || hay_len < n {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + n <= hay_len {
+        let matched = hay[i..i + n]
+            .iter()
+            .zip(needle_folded.iter())
+            .all(|((_, fc), nc)| fc == nc);
+        if matched {
+            let start = hay[i].0;
+            let end = if i + n < hay_len {
+                hay[i + n].0
+            } else {
+                haystack.len()
+            };
+            out.push((start, end));
+            i += n;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
 /// Decode file bytes for text consumers (returns Unicode text only).
 pub fn decode_file_bytes(bytes: &[u8]) -> String {
     detect_and_decode(bytes).text
@@ -374,6 +585,39 @@ mod tests {
     fn normalize_resolves_double_escaped_quotes() {
         let input = "\\\\\\\"hello\\\\\\\"";
         assert_eq!(normalize_tool_string(input), "\"hello\"");
+    }
+
+    #[test]
+    fn quote_fold_finds_curly_needle_in_ascii_haystack() {
+        let file = "他说\"你好\"。";
+        let needle = "他说\u{201C}你好\u{201D}。";
+        let ranges = find_quote_folded_ranges(file, needle);
+        assert_eq!(ranges, vec![(0, file.len())]);
+    }
+
+    #[test]
+    fn quote_fold_finds_ascii_needle_in_corner_brackets() {
+        let file = "他说「你好」。";
+        let needle = "他说\"你好\"。";
+        let ranges = find_quote_folded_ranges(file, needle);
+        assert_eq!(ranges, vec![(0, file.len())]);
+    }
+
+    #[test]
+    fn quote_fold_skips_needles_without_quotes() {
+        assert!(find_quote_folded_ranges("hello", "hello").is_empty());
+    }
+
+    #[test]
+    fn remap_curly_new_string_to_ascii_file_span() {
+        let out = remap_quotes_to_sample("他说\u{201C}再见\u{201D}。", "他说\"你好\"。");
+        assert_eq!(out, "他说\"再见\"。");
+    }
+
+    #[test]
+    fn remap_ascii_new_string_to_corner_brackets() {
+        let out = remap_quotes_to_sample("他说\"再见\"。", "他说「你好」。");
+        assert_eq!(out, "他说「再见」。");
     }
 
     #[test]

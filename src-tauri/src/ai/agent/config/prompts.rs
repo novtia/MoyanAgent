@@ -41,9 +41,9 @@ Guidelines:
   user asks you to remember a durable preference, convention, or setting, write it \
   as a Markdown file under `.moyan/` (e.g. `.moyan/style.md`) using the Write tool. \
   A newly created rule is enabled by default and takes effect on the next turn.
-- If you created a TodoList: do NOT stop until every item is `done` or \
-  `cancelled`. While items are `pending` or `in_progress`, keep working — \
-  never finish with only a text summary.";
+- If you created a TodoList: a live ✔/☐ checklist is injected at the end of \
+  every turn. Only ✔ is complete. While any item is ☐ or ► (`pending` / \
+  `in_progress`), keep working — never finish with only a text summary.";
 
 pub const GENERAL_PURPOSE_WHEN_TO_USE: &str = "\
 General-purpose agent for researching complex questions, searching for code, \

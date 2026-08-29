@@ -24,6 +24,10 @@ import {
   createReaderCodeMirrorTheme,
   type ReaderCodeMirrorLayout,
 } from "./readerCodeMirror/theme";
+import {
+  readerViewportTop,
+  rememberReaderViewport,
+} from "../../../../utils/readerViewport";
 
 export type ReaderCodeMirrorDiffVariant = "none" | "delete" | "insert";
 
@@ -179,6 +183,22 @@ export function ReaderCodeMirror({
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
 
+    const scrollEl = view.scrollDOM;
+    if (layout === "document" && filePath) {
+      scrollEl.scrollTop = readerViewportTop(filePath);
+      const onScroll = () => {
+        const path = filePathRef.current?.trim() || filePath;
+        rememberReaderViewport(path, scrollEl.scrollTop);
+      };
+      scrollEl.addEventListener("scroll", onScroll, { passive: true });
+      return () => {
+        onScroll();
+        scrollEl.removeEventListener("scroll", onScroll);
+        view.destroy();
+        viewRef.current = null;
+      };
+    }
+
     return () => {
       view.destroy();
       viewRef.current = null;
@@ -200,12 +220,17 @@ export function ReaderCodeMirror({
     if (!view) return;
     const current = view.state.doc.toString();
     if (current === value) return;
+    const top = view.scrollDOM.scrollTop;
     syncingRef.current = true;
     view.dispatch({
       changes: { from: 0, to: current.length, insert: value },
     });
     syncingRef.current = false;
-  }, [value]);
+    view.scrollDOM.scrollTop = top;
+    if (layout === "document" && filePath) {
+      rememberReaderViewport(filePath, view.scrollDOM.scrollTop);
+    }
+  }, [value, layout, filePath]);
 
   useEffect(() => {
     if (layout !== "document") return;

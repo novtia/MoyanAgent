@@ -42,6 +42,34 @@ export function nowStamp(ts: number) {
   return d.toTimeString().slice(0, 8);
 }
 
+/**
+ * Spans shorter than this are treated as unmeasured rather than instant.
+ *
+ * Some providers hand over the whole reasoning in one chunk (Volcengine
+ * Responses surfaces it on `response.completed`), which the typewriter split
+ * replays with no delay at all. The elapsed span is then a few milliseconds of
+ * local replay, not how long the model thought, so there is nothing honest to
+ * show.
+ */
+export const MIN_MEASURABLE_THINKING_MS = 400;
+
+/**
+ * Split an elapsed span into the parts the duration labels interpolate.
+ *
+ * Sub-minute spans keep one decimal so the live counter visibly moves; past a
+ * minute the tenths are noise and the minute becomes the useful unit.
+ */
+export function splitElapsed(ms: number): { minutes: number; seconds: string } {
+  const total = Math.max(0, ms) / 1000;
+  if (total < 60) {
+    return { minutes: 0, seconds: total.toFixed(1) };
+  }
+  return {
+    minutes: Math.floor(total / 60),
+    seconds: String(Math.floor(total % 60)).padStart(2, "0"),
+  };
+}
+
 export async function copyText(text: string) {
   try {
     await copyTextToClipboard(text);

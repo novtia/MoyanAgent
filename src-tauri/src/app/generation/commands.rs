@@ -404,7 +404,7 @@ pub async fn generate_image(
             &req.session_id,
             None,
             history_turns.max(0) as usize,
-            history_token_budget(resolved.context_window),
+            history_token_budget(Some(resolved.context_window)),
         )?;
         let mut chat_request = router::build_chat_request(
             &resolved.provider,
@@ -415,7 +415,7 @@ pub async fn generate_image(
             hist,
             params.clone(),
         )?;
-        chat_request.context_window = resolved.context_window;
+        chat_request.context_window = Some(resolved.context_window);
         apply_session_response_cache(&conn, &req.session_id, &session_config, &mut chat_request)?;
         crate::ai::agent::exec::engine::inject_skill_cites_from_prompt(
             &app,
@@ -877,7 +877,7 @@ pub async fn regenerate_image(
             &req.session_id,
             Some(user_msg_existing.created_at),
             history_turns.max(0) as usize,
-            history_token_budget(resolved.context_window),
+            history_token_budget(Some(resolved.context_window)),
         )?;
         let mut chat_request = router::build_chat_request(
             &resolved.provider,
@@ -888,7 +888,7 @@ pub async fn regenerate_image(
             hist,
             params.clone(),
         )?;
-        chat_request.context_window = resolved.context_window;
+        chat_request.context_window = Some(resolved.context_window);
         // Regeneration rewrites history; always start a fresh cache chain.
         let _ = session::clear_response_cache(&conn, &req.session_id);
         chat_request.previous_response_id = None;
@@ -1178,6 +1178,7 @@ pub(crate) async fn generate_title_with_quick_model(
         previous_response_id: None,
         context_cache_enabled: false,
         context_window: None,
+        todo_snapshot: None,
     };
 
     let factory = crate::ai::providers::ProviderFactory::default();

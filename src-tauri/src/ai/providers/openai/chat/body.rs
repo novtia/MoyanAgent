@@ -61,6 +61,9 @@ pub(crate) fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) ->
         append_openai_assistant_tool_turn(&mut messages, pending);
     }
     append_openai_tool_results(&mut messages, &request.tool_results);
+    if let Some(snap) = request.todo_snapshot_text() {
+        messages.push(json!({ "role": "user", "content": snap }));
+    }
 
     let mut body = json!({
         "model": request.model,

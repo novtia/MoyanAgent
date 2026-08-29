@@ -50,14 +50,26 @@ export function appendDelta(
         break;
       }
     }
+    const now = Date.now();
     for (let i = segmentStart; i < blocks.length; i++) {
       const b = blocks[i];
       if (b.type === "thinking") {
         b.content = `${b.content}${delta}`;
+        // Mirrors `append_thinking_delta_block` on the Rust side, which stamps
+        // the copy that gets persisted. This one only has to carry the live
+        // bubble until the DB reload swaps in the authoritative blocks.
+        if (b.started_at !== undefined) {
+          b.duration_ms = Math.max(0, now - b.started_at);
+        }
         return;
       }
     }
-    blocks.splice(segmentStart, 0, { type: "thinking", content: delta });
+    blocks.splice(segmentStart, 0, {
+      type: "thinking",
+      content: delta,
+      started_at: now,
+      duration_ms: 0,
+    });
     return;
   }
 
@@ -270,7 +282,9 @@ async function handleReaderToolComplete(
 
   if (tool === "CreateDoc") {
     const doc = readerDocFromToolOutput(output);
-    if (doc) useReader.getState().openDoc(doc);
+    // Cache the new file in the reader store but do not steal the visible tab
+    // or bump openSeq — the user may be mid-read in another document.
+    if (doc) useReader.getState().openDoc(doc, { activate: false });
     return;
   }
 

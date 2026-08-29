@@ -416,7 +416,25 @@ pub(crate) async fn run_cancellable_generation(
         token_stats: Some(state.token_stats.clone()),
         session_logger: Some(state.session_logger.clone()),
     })
-    .await?;
+    .await;
+
+    // An upstream that rejected a request for length told us the model's real
+    // window on the way out. Record it against the session so the next turn
+    // enforces the right limit instead of rediscovering it the same way — this
+    // is the only channel through which a model missing from the local catalog
+    // ever learns how big it is.
+    let observed = match run.as_ref() {
+        Ok(r) => r.observed_context_window,
+        Err(e) => crate::error::error_context_overflow_report(e)
+            .and_then(|report| report.context_window),
+    };
+    if let Some(window) = observed.filter(|w| *w > 0) {
+        if let Ok(conn) = state.conn() {
+            let _ = crate::data::session::set_context_window(&conn, session_id, window);
+        }
+    }
+
+    let run = run?;
     Ok(chat::GenerateResponse {
         images: run.images,
         videos: run.videos,

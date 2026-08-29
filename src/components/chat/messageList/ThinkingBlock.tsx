@@ -3,17 +3,28 @@ import { useTranslation } from "react-i18next";
 import { highlightQuery } from "../../../utils/highlightQuery";
 import { ChunkedText } from "./ChunkedText";
 import { ThinkingChevronIcon, ThinkingIcon } from "./icons";
+import { MIN_MEASURABLE_THINKING_MS, splitElapsed } from "./utils";
 
 /** Matches the `.msg-thinking-panel` grid-template-rows transition (0.28s). */
 const COLLAPSE_MS = 320;
 
+/** Live counter cadence. Fast enough to look like a stopwatch, slow enough to
+ *  stay off the render hot path while deltas are streaming. */
+const TICK_MS = 100;
+
 export function ThinkingBlock({
   content,
   streaming,
+  startedAt,
+  durationMs,
   highlightQuery: query,
 }: {
   content: string;
   streaming: boolean;
+  /** Epoch ms of the first reasoning delta, when known. */
+  startedAt?: number;
+  /** Span already measured for this block — authoritative once it stops. */
+  durationMs?: number;
   highlightQuery?: string;
 }) {
   const { t } = useTranslation();
@@ -57,6 +68,36 @@ export function ThinkingBlock({
     setOpen((v) => !v);
   };
 
+  // While reasoning streams the counter runs off the local clock rather than
+  // `durationMs`, which only advances when a delta lands — a model that pauses
+  // mid-thought would otherwise look like it had stopped the stopwatch.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!streaming || startedAt === undefined) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [streaming, startedAt]);
+
+  const elapsed =
+    streaming && startedAt !== undefined
+      ? Math.max(durationMs ?? 0, now - startedAt)
+      : (durationMs ?? 0);
+
+  // Nothing to show for messages written before the span was recorded, or for
+  // providers that deliver reasoning in a single chunk.
+  const showElapsed = streaming
+    ? startedAt !== undefined
+    : elapsed >= MIN_MEASURABLE_THINKING_MS;
+  const { minutes, seconds } = splitElapsed(elapsed);
+  const elapsedLabel = streaming
+    ? minutes > 0
+      ? t("message.thinkingElapsedMinutes", { minutes, seconds })
+      : t("message.thinkingElapsedSeconds", { seconds })
+    : minutes > 0
+      ? t("message.thinkingDoneMinutes", { minutes, seconds })
+      : t("message.thinkingDoneSeconds", { seconds });
+
   return (
     <div
       className={`msg-thinking ${open ? "is-open" : ""} ${
@@ -84,6 +125,10 @@ export function ThinkingBlock({
             ? t("message.thinkingStreaming")
             : t("message.thinkingToggle")}
         </span>
+        {showElapsed && (
+          // Tabular figures so the ticking counter does not shift the chevron.
+          <span className="msg-thinking-elapsed">{elapsedLabel}</span>
+        )}
         <ThinkingChevronIcon />
       </div>
       <div

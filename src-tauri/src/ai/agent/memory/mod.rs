@@ -15,7 +15,7 @@
 //! - [`session`]       per-session `summary.md` extractor
 //! - [`nested`]        path-scoped rule injection driven by tool reads
 //! - [`compaction`]    history compression once token-budget crosses a threshold
-//! - [`tool_chain`]    in-loop tool round window (TodoList exempt)
+//! - [`tool_chain`]    in-loop tool round window (latest TodoList round only)
 
 pub mod compaction;
 pub mod nested;

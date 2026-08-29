@@ -30,6 +30,70 @@ use crate::error::{AppError, AppResult};
 
 const TOOL_NAME: &str = "Read";
 
+/// Largest slice of a document one `Read` may return, in characters.
+///
+/// A manuscript is routinely longer than the model's entire context window, so
+/// an unranged read of one is a request the provider can only reject. The cap is
+/// counted in characters rather than tokens because it has to hold for CJK prose
+/// (roughly one token per glyph) as well as for ASCII, and the CJK case is the
+/// expensive one.
+const READ_MAX_CHARS: usize = 40_000;
+
+/// Collect paragraphs `[from, to]`, stopping early once `max_chars` is spent.
+///
+/// Returns the slice, the last paragraph actually included, and whether the
+/// requested range was cut short. The first paragraph is always taken even if it
+/// alone busts the budget: returning nothing would read to the model as an empty
+/// file rather than a truncated one. The caller trims that case separately.
+fn collect_paragraphs(
+    text: &str,
+    from: usize,
+    to: usize,
+    max_chars: usize,
+) -> (String, usize, bool) {
+    let mut out = String::new();
+    let mut chars = 0usize;
+    let mut last = from.saturating_sub(1);
+    let mut capped = false;
+
+    for (i, line) in text.split('\n').enumerate() {
+        let n = i + 1;
+        if n < from {
+            continue;
+        }
+        if n > to {
+            break;
+        }
+        let line_chars = line.chars().count();
+        if n > from && chars + line_chars + 1 > max_chars {
+            capped = true;
+            break;
+        }
+        if n > from {
+            out.push('\n');
+            chars += 1;
+        }
+        out.push_str(line);
+        chars += line_chars;
+        last = n;
+    }
+
+    (out, last, capped)
+}
+
+/// Trim a single over-long paragraph, keeping its head.
+///
+/// Reached when a document has no line breaks at all — one paragraph holding
+/// the whole manuscript. Keeping the head (rather than eliding the middle) lets
+/// the model continue reading forward with `paragraph_from`, which is the
+/// affordance the result advertises.
+fn head_limit(text: &str, max_chars: usize) -> Option<String> {
+    if text.chars().count() <= max_chars {
+        return None;
+    }
+    Some(text.chars().take(max_chars).collect())
+}
+
 fn parse_p_number(s: &str) -> Option<usize> {
     let rest = s.strip_prefix('P').or_else(|| s.strip_prefix('p'))?;
     if rest.is_empty() || !rest.bytes().all(|b| b.is_ascii_digit()) {
@@ -167,7 +231,12 @@ impl FileReadTool {
                     context (at least 20 lines when the file is long enough). \
                     For open-ended prose tasks without a range mention, Read the full file \
                     once up front. After Edit fails, re-Read the relevant span before retrying. \
-                    Do not re-read before every Edit."
+                    Do not re-read before every Edit. \
+                    Long files come back one page at a time: when the result has \
+                    `truncated: true`, the text stops at `paragraph_to` and \
+                    `next_paragraph_from` is where the following page starts. Continue from \
+                    there only if you actually need the rest — prefer a targeted range over \
+                    paging through a whole manuscript."
                     .to_string(),
                 schema: serde_json::json!({
                     "type": "object",
@@ -265,19 +334,22 @@ impl Tool for FileReadTool {
                     }
                 };
 
-            let slice_text: String = text
-                .split('\n')
-                .enumerate()
-                .filter_map(|(i, line)| {
-                    let n = i + 1;
-                    if n >= paragraph_from && n <= paragraph_to {
-                        Some(line)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let (mut slice_text, mut paragraph_to, mut capped) =
+                collect_paragraphs(&text, paragraph_from, paragraph_to, READ_MAX_CHARS);
+            // A document with no line breaks is one enormous paragraph, which
+            // the per-paragraph loop above cannot split.
+            if let Some(head) = head_limit(&slice_text, READ_MAX_CHARS) {
+                slice_text = head;
+                capped = true;
+            }
+            if paragraph_to < paragraph_from {
+                paragraph_to = paragraph_from;
+            }
+            let next_paragraph_from = if capped && paragraph_to < paragraphs_total {
+                Some(paragraph_to + 1)
+            } else {
+                None
+            };
             let chars = slice_text.chars().filter(|c| !c.is_whitespace()).count();
             let paragraphs_returned = paragraph_to - paragraph_from + 1;
             let ranged = range.is_some();
@@ -310,6 +382,8 @@ impl Tool for FileReadTool {
                 "min_context_lines": MIN_READ_CONTEXT_LINES,
                 "paragraphs_returned": paragraphs_returned,
                 "ranged": ranged,
+                "truncated": capped,
+                "next_paragraph_from": next_paragraph_from,
                 "text": slice_text,
             })))
         })
@@ -380,6 +454,44 @@ mod read_range_tests {
         let text = res.content["text"].as_str().unwrap();
         assert!(text.contains("L3"));
         assert!(text.contains("L5"));
+        assert_eq!(res.content["truncated"], false);
+        assert!(res.content["next_paragraph_from"].is_null());
         let _ = Arc::clone(&ctx);
+    }
+
+    #[test]
+    fn a_short_range_is_returned_whole() {
+        let text = "one\ntwo\nthree\nfour";
+        let (slice, last, capped) = collect_paragraphs(text, 2, 3, READ_MAX_CHARS);
+        assert_eq!(slice, "two\nthree");
+        assert_eq!(last, 3);
+        assert!(!capped);
+    }
+
+    /// The regression: an unranged read of a manuscript used to return the whole
+    /// thing, which on its own exceeded the context window.
+    #[test]
+    fn a_long_document_stops_at_the_page_boundary() {
+        let body: String = (1..=5_000)
+            .map(|i| format!("paragraph {i} {}", "w".repeat(200)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let total = crate::ai::agent::tools::paragraph::paragraph_count(&body);
+        let (slice, last, capped) = collect_paragraphs(&body, 1, total, READ_MAX_CHARS);
+        assert!(capped, "a 1M-character document must not come back whole");
+        assert!(slice.chars().count() <= READ_MAX_CHARS);
+        assert!(last > 1, "at least one full page is returned");
+        assert!(last < total, "there is more to page through");
+        assert!(slice.starts_with("paragraph 1 "));
+    }
+
+    /// A novel saved without line breaks is one paragraph holding everything.
+    #[test]
+    fn a_single_enormous_paragraph_is_head_limited() {
+        let body = "z".repeat(READ_MAX_CHARS * 3);
+        let (slice, _, _) = collect_paragraphs(&body, 1, 1, READ_MAX_CHARS);
+        assert!(slice.chars().count() > READ_MAX_CHARS, "loop cannot split it");
+        let head = head_limit(&slice, READ_MAX_CHARS).expect("trimmed");
+        assert_eq!(head.chars().count(), READ_MAX_CHARS);
     }
 }

@@ -104,9 +104,126 @@ fn load_supplier_models(conn: &DbConn, supplier_id: &str) -> AppResult<Vec<Model
     Ok(out)
 }
 
+/// Fallback window for a model that neither the catalog tables nor the user's
+/// `model_services` describe.
+///
+/// Deliberately conservative. Enforcing a 128k budget on a model that really
+/// holds more only costs some capacity; the alternative — leaving the window
+/// `None` — switches off *every* budget check at once, because history
+/// trimming, the compaction threshold and the `max_tokens` clamp all read an
+/// unknown window as "no limit". That is how a request reaches a million
+/// tokens before anything inspects it.
+pub const DEFAULT_CONTEXT_WINDOW: i64 = 128_000;
+
+/// Ceiling on a user-configured `max_tokens` when the model does not publish
+/// its own output limit.
+///
+/// Providers charge the completion reservation against the context window, so an
+/// oversized value rejects requests whose messages would have fitted. Values far
+/// above this are almost always a context-window figure typed into the sampling
+/// field by mistake — no model in the catalog emits 128k tokens in one reply.
+pub const MAX_COMPLETION_TOKENS_CEILING: i64 = 65_536;
+
+/// Token limits known for a specific provider + model pair.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ModelLimits {
+    pub context_window: Option<i64>,
+    pub max_output_tokens: Option<i64>,
+}
+
+fn positive(value: Option<i64>) -> Option<i64> {
+    value.filter(|v| *v > 0)
+}
+
+/// The user's persisted `model_services` blob, if it parses.
+fn read_model_services(conn: &DbConn) -> Option<Vec<ModelProvider>> {
+    let json: String = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![crate::data::settings::KEY_MODEL_SERVICES],
+            |r| r.get(0),
+        )
+        .ok()?;
+    serde_json::from_str(&json).ok()
+}
+
+/// Limits recorded in the user's `model_services` settings blob.
+///
+/// The catalog tables only describe the builtin presets, so a model added by
+/// hand — or imported from a gateway's `/models` — is invisible to them. Since
+/// a session only captures a window when the model is (re)picked in the
+/// composer, older sessions on such a model have no window at all. Reading the
+/// settings blob is what makes the value typed into the UI take effect without
+/// forcing a reselect.
+fn lookup_in_model_services(
+    conn: &DbConn,
+    supplier_id: &str,
+    model_id: &str,
+) -> Option<ModelLimits> {
+    let sid = supplier_id.trim();
+    let mid = model_id.trim();
+    if sid.is_empty() || mid.is_empty() {
+        return None;
+    }
+    let services = read_model_services(conn)?;
+    let model = services
+        .iter()
+        .filter(|p| p.id.trim() == sid)
+        .flat_map(|p| p.models.iter())
+        .find(|m| m.id.trim() == mid)?;
+    Some(ModelLimits {
+        context_window: positive(model.context_window),
+        max_output_tokens: positive(model.max_output_tokens),
+    })
+}
+
+/// Resolve the token limits for `supplier_id` + `model_id`.
+///
+/// Precedence is user-first: an explicit value in `model_services` overrides
+/// the seeded catalog, so correcting a wrong window in the UI takes effect
+/// immediately.
+pub fn lookup_model_limits(
+    conn: &DbConn,
+    supplier_id: &str,
+    sdk_id: &str,
+    model_id: &str,
+) -> AppResult<ModelLimits> {
+    let from_settings = lookup_in_model_services(conn, supplier_id, model_id).unwrap_or_default();
+    let mut limits = from_settings;
+
+    if limits.context_window.is_none() {
+        limits.context_window = lookup_catalog_context_window(conn, supplier_id, sdk_id, model_id)?;
+    }
+    Ok(limits)
+}
+
 /// Catalog `context_window` for the active provider + model when the UI omits it
 /// (persisted `model_services` often strips fields not stored in JSON).
 pub fn lookup_context_window(
+    conn: &DbConn,
+    supplier_id: &str,
+    sdk_id: &str,
+    model_id: &str,
+) -> AppResult<Option<i64>> {
+    Ok(lookup_model_limits(conn, supplier_id, sdk_id, model_id)?.context_window)
+}
+
+/// The window as resolved for budget enforcement: never `None`, so the agent
+/// loop always has something to enforce. See [`DEFAULT_CONTEXT_WINDOW`].
+pub fn resolve_context_window(
+    conn: &DbConn,
+    supplier_id: &str,
+    sdk_id: &str,
+    model_id: &str,
+) -> i64 {
+    lookup_context_window(conn, supplier_id, sdk_id, model_id)
+        .ok()
+        .flatten()
+        .filter(|w| *w > 0)
+        .unwrap_or(DEFAULT_CONTEXT_WINDOW)
+}
+
+fn lookup_catalog_context_window(
     conn: &DbConn,
     supplier_id: &str,
     sdk_id: &str,

@@ -572,6 +572,22 @@ pub fn set_provider_model_and_context(
     Ok(())
 }
 
+/// Persist just the context window, leaving provider/model and any active
+/// cache chain alone.
+///
+/// Used when the window is *discovered* rather than chosen: resolved from the
+/// catalog for a session that never recorded one, or read back out of an
+/// upstream context-length rejection. Neither case should invalidate the
+/// Responses cache chain the way a model switch does.
+pub fn set_context_window(conn: &DbConn, id: &str, context_window: i64) -> AppResult<()> {
+    let updated = now_ms();
+    conn.execute(
+        "UPDATE sessions SET context_window=?1, updated_at=?2 WHERE id=?3",
+        params![context_window, updated, id],
+    )?;
+    Ok(())
+}
+
 /// Persist the latest Responses API cache chain tip for this session.
 pub fn set_response_cache(
     conn: &DbConn,

@@ -1,9 +1,16 @@
 //! File-mutation tools: `Write` (overwrite) and `Edit` (string replace).
 //!
-//! `Edit` has one operation: find an exact `old_string` in the file and
-//! replace it with `new_string`. By default `old_string` must match exactly
-//! once; if it occurs multiple times the edit is rejected unless
-//! `replace_all` is set. An empty `new_string` deletes the matched text.
+//! `Edit` has one operation: find an `old_string` in the file and replace it
+//! with `new_string`. By default `old_string` must match exactly once; if it
+//! occurs multiple times the edit is rejected unless `replace_all` is set. An
+//! empty `new_string` deletes the matched text.
+//!
+//! Matching prefers a verbatim substring. If that misses, Edit retries with
+//! unescaped JSON leftovers (`\"`) and with quote-folded text so ASCII `"`,
+//! typographic `“”`, and CJK `「」` are treated as the same glyph. A folded
+//! hit replaces the file's real span and rewrites `new_string` quotes to that
+//! span's style, so a curly-quote model call does not change the file's
+//! existing quote characters.
 //! Successful Write/Edit still refresh the read receipt so unchanged-file
 //! short-circuiting in Read stays accurate.
 
@@ -16,7 +23,8 @@ use crate::ai::agent::core::file_snapshot::{FileChangeRecord, FileOp, FileSnapsh
 use crate::ai::agent::tools::project_path::{self, display_path, FILE_REF_DESC};
 use crate::ai::agent::tools::read_receipt::record_receipt;
 use crate::ai::agent::tools::text_decode::{
-    detect_and_decode, normalize_tool_string, read_text_file, write_text_file, TextEncoding,
+    detect_and_decode, find_quote_folded_ranges, normalize_tool_string, read_text_file,
+    remap_quotes_to_sample, write_text_file, TextEncoding,
 };
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::data::db::DbPool;
@@ -164,10 +172,12 @@ impl FileEditTool {
             pool: None,
             spec: ToolSpec {
                 name: EDIT_TOOL.to_string(),
-                description: "Replace an exact substring in a file. \
-                    Pass `path`, `old_string`, and `new_string`. `old_string` is text copied VERBATIM from the file \
-                    (including whitespace and line breaks) and must be long enough to match EXACTLY ONE place — \
-                    include surrounding context to disambiguate. `new_string` is what replaces it. To DELETE, pass an \
+                description: "Replace a substring in a file. \
+                    Pass `path`, `old_string`, and `new_string`. `old_string` is text copied from the file \
+                    (including whitespace and line breaks) and must be long enough to match ONE place — \
+                    include surrounding context to disambiguate. ASCII quotes (`\"`) and typographic quotes \
+                    (`“”` `「」`) are treated as equivalent when locating `old_string`; the file keeps its \
+                    existing quote characters. `new_string` is what replaces the match. To DELETE, pass an \
                     empty `new_string`. To CONTINUE/APPEND after existing prose, set `old_string` to the tail of the \
                     current text and make `new_string` begin with that same text, then add the new prose (e.g. the \
                     file ends with `哦哦哦` → old_string `哦哦哦`, new_string `哦哦哦。后续新内容`). If `old_string` \
@@ -184,7 +194,7 @@ impl FileEditTool {
                         },
                         "old_string": {
                             "type": "string",
-                            "description": "Exact text to replace, copied verbatim from the file (whitespace and line breaks included). Must match exactly once unless `replace_all` is true. Include enough surrounding context to be unique."
+                            "description": "Text to replace, copied from the file (whitespace and line breaks included). Must match once unless `replace_all` is true. Include enough surrounding context to be unique. ASCII `\"` and typographic `“”`/`「」` are equivalent for matching."
                         },
                         "new_string": {
                             "type": "string",
@@ -252,57 +262,36 @@ impl Tool for FileEditTool {
                 ));
             }
             if raw_old == raw_new {
-                return Ok(ToolResult::error(
-                    "Edit: `old_string` and `new_string` are identical — nothing to change"
-                        .to_string(),
-                ));
+                return Ok(ToolResult::error(identical_error()));
             }
 
             let decoded = read_text_file(&path)
                 .map_err(|e| AppError::Other(format!("Edit: read {:?}: {e}", path)))?;
 
-            let mut occurrences = decoded.text.matches(&raw_old).count();
-            let (old_string, new_string) = if occurrences > 0 {
-                (raw_old, raw_new)
-            } else {
-                // Weak models sometimes double-escape prose (`\"你好\"`). Retry with
-                // the unescaped reading, replacing both sides so the pair stays
-                // consistent.
-                let unescaped_old = normalize_tool_string(&raw_old);
-                let retry = if unescaped_old == raw_old {
-                    0
-                } else {
-                    decoded.text.matches(&unescaped_old).count()
-                };
-                if retry == 0 {
-                    return Ok(not_found_error(&path));
+            let plan = match plan_edit(&decoded.text, &raw_old, &raw_new) {
+                Ok(plan) => plan,
+                Err(MatchError::NotFound) => return Ok(not_found_error(&path)),
+                Err(MatchError::Identical) => {
+                    return Ok(ToolResult::error(identical_error()));
                 }
-                occurrences = retry;
-                let unescaped_new = normalize_tool_string(&raw_new);
-                if unescaped_old == unescaped_new {
-                    return Ok(ToolResult::error(
-                        "Edit: `old_string` and `new_string` are identical — nothing to change"
-                            .to_string(),
-                    ));
-                }
-                (unescaped_old, unescaped_new)
             };
+            let occurrences = plan.occurrences();
             if occurrences > 1 && !replace_all {
                 return Ok(not_unique_error(occurrences));
             }
 
-            let match_start = decoded
-                .text
-                .find(&old_string)
-                .map(|byte_idx| decoded.text[..byte_idx].chars().count())
-                .unwrap_or(0);
-
             let text_before = decoded.text.clone();
-            let (updated, replaced_count) = if replace_all {
-                (decoded.text.replace(&old_string, &new_string), occurrences)
-            } else {
-                (decoded.text.replacen(&old_string, &new_string, 1), 1)
-            };
+            let applied = apply_edit(&decoded.text, plan, replace_all);
+            if applied.updated == text_before {
+                return Ok(ToolResult::error(identical_error()));
+            }
+            let AppliedEdit {
+                updated,
+                old_string,
+                new_string,
+                replaced_count,
+                match_start,
+            } = applied;
 
             // Snapshot the pre-image before mutating for rollback support,
             // reusing the read the replacement was computed from: re-reading
@@ -376,7 +365,8 @@ impl Tool for FileEditTool {
 
 fn not_found_error(path: &Path) -> ToolResult {
     ToolResult::error(format!(
-        "Edit: `old_string` not found in {}. Read the file again and copy the exact text.",
+        "Edit: `old_string` not found in {}. Read the file again and copy the exact text \
+         (quotes in JSON show as \\\" — that is ASCII `\"`, not `“`/`”`).",
         path.display()
     ))
 }
@@ -385,6 +375,150 @@ fn not_unique_error(occurrences: usize) -> ToolResult {
     ToolResult::error(format!(
         "Edit: `old_string` matched {occurrences} places — add more surrounding context to make it unique, or set `replace_all` to true."
     ))
+}
+
+fn identical_error() -> String {
+    "Edit: `old_string` and `new_string` are identical — nothing to change".to_string()
+}
+
+enum MatchError {
+    NotFound,
+    Identical,
+}
+
+enum MatchPlan {
+    Exact {
+        old: String,
+        new: String,
+        occurrences: usize,
+    },
+    Folded {
+        ranges: Vec<(usize, usize)>,
+        new: String,
+    },
+}
+
+impl MatchPlan {
+    fn occurrences(&self) -> usize {
+        match self {
+            Self::Exact { occurrences, .. } => *occurrences,
+            Self::Folded { ranges, .. } => ranges.len(),
+        }
+    }
+}
+
+struct AppliedEdit {
+    updated: String,
+    old_string: String,
+    new_string: String,
+    replaced_count: usize,
+    match_start: usize,
+}
+
+/// Prefer a verbatim substring; then unescaped JSON leftovers; then quote-folded
+/// matching so ASCII / curly / CJK quotes locate the same span.
+fn plan_edit(file: &str, raw_old: &str, raw_new: &str) -> Result<MatchPlan, MatchError> {
+    let exact = file.matches(raw_old).count();
+    if exact > 0 {
+        return Ok(MatchPlan::Exact {
+            old: raw_old.to_string(),
+            new: raw_new.to_string(),
+            occurrences: exact,
+        });
+    }
+
+    let folded = find_quote_folded_ranges(file, raw_old);
+    if !folded.is_empty() {
+        return Ok(MatchPlan::Folded {
+            ranges: folded,
+            new: raw_new.to_string(),
+        });
+    }
+
+    let unescaped_old = normalize_tool_string(raw_old);
+    if unescaped_old == raw_old {
+        return Err(MatchError::NotFound);
+    }
+    let unescaped_new = normalize_tool_string(raw_new);
+
+    let u_exact = file.matches(&unescaped_old).count();
+    if u_exact > 0 {
+        if unescaped_old == unescaped_new {
+            return Err(MatchError::Identical);
+        }
+        return Ok(MatchPlan::Exact {
+            old: unescaped_old,
+            new: unescaped_new,
+            occurrences: u_exact,
+        });
+    }
+
+    let u_folded = find_quote_folded_ranges(file, &unescaped_old);
+    if !u_folded.is_empty() {
+        if unescaped_old == unescaped_new {
+            return Err(MatchError::Identical);
+        }
+        return Ok(MatchPlan::Folded {
+            ranges: u_folded,
+            new: unescaped_new,
+        });
+    }
+
+    Err(MatchError::NotFound)
+}
+
+fn apply_edit(file: &str, plan: MatchPlan, replace_all: bool) -> AppliedEdit {
+    match plan {
+        MatchPlan::Exact {
+            old,
+            new,
+            occurrences,
+        } => {
+            let match_start = file
+                .find(&old)
+                .map(|byte_idx| file[..byte_idx].chars().count())
+                .unwrap_or(0);
+            let (updated, replaced_count) = if replace_all {
+                (file.replace(&old, &new), occurrences)
+            } else {
+                (file.replacen(&old, &new, 1), 1)
+            };
+            AppliedEdit {
+                updated,
+                old_string: old,
+                new_string: new,
+                replaced_count,
+                match_start,
+            }
+        }
+        MatchPlan::Folded { ranges, new } => {
+            let use_ranges: Vec<(usize, usize)> = if replace_all {
+                ranges
+            } else {
+                ranges.into_iter().take(1).collect()
+            };
+            let (first_start, first_end) = use_ranges[0];
+            let match_start = file[..first_start].chars().count();
+            let first_old = file[first_start..first_end].to_string();
+            let first_new = remap_quotes_to_sample(&new, &first_old);
+            let mut out = String::with_capacity(file.len().saturating_add(new.len()));
+            let mut last = 0;
+            for &(start, end) in &use_ranges {
+                out.push_str(&file[last..start]);
+                let span = &file[start..end];
+                out.push_str(&remap_quotes_to_sample(&new, span));
+                last = end;
+            }
+            out.push_str(&file[last..]);
+            AppliedEdit {
+                updated: out,
+                old_string: first_old,
+                new_string: first_new,
+                replaced_count: use_ranges.len(),
+                match_start,
+            }
+        }
+    }
 }
 
 fn require_nonempty_string(input: &Value, key: &str, tool: &str) -> AppResult<()> {
@@ -771,5 +905,77 @@ const re = /\d+\\s/g;
         .await;
         assert!(!r2.is_error, "second edit failed: {:?}", r2.content);
         assert_eq!(disk(&ctx, &name), "A2\nB\nC\nD");
+    }
+
+    #[tokio::test]
+    async fn edit_matches_curly_quotes_against_ascii_file() {
+        let (ctx, name) = seed("他说\"你好\"。");
+        read_receipt(&ctx, &name).await;
+        let res = run_edit(
+            &ctx,
+            json!({
+                "path": name,
+                "old_string": "他说\u{201C}你好\u{201D}。",
+                "new_string": "他说\u{201C}再见\u{201D}。",
+            }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "他说\"再见\"。");
+        assert_eq!(res.content["old_string"], "他说\"你好\"。");
+        assert_eq!(res.content["new_string"], "他说\"再见\"。");
+    }
+
+    #[tokio::test]
+    async fn edit_matches_ascii_quotes_against_corner_brackets() {
+        let (ctx, name) = seed("他说「你好」。");
+        read_receipt(&ctx, &name).await;
+        let res = run_edit(
+            &ctx,
+            json!({
+                "path": name,
+                "old_string": "他说\"你好\"。",
+                "new_string": "他说\"再见\"。",
+            }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "他说「再见」。");
+    }
+
+    #[tokio::test]
+    async fn edit_prefers_exact_match_when_quote_styles_coexist() {
+        let (ctx, name) = seed("ascii: \"你好\"\ncurly: \u{201C}你好\u{201D}\n");
+        read_receipt(&ctx, &name).await;
+        let res = run_edit(
+            &ctx,
+            json!({
+                "path": name,
+                "old_string": "\u{201C}你好\u{201D}",
+                "new_string": "OK",
+            }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "ascii: \"你好\"\ncurly: OK\n");
+    }
+
+    #[tokio::test]
+    async fn edit_quote_fold_replace_all() {
+        let (ctx, name) = seed("\"A\" and \"A\"");
+        read_receipt(&ctx, &name).await;
+        let res = run_edit(
+            &ctx,
+            json!({
+                "path": name,
+                "old_string": "\u{201C}A\u{201D}",
+                "new_string": "\u{201C}B\u{201D}",
+                "replace_all": true,
+            }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "\"B\" and \"B\"");
+        assert_eq!(res.content["replaced_count"], 2);
     }
 }

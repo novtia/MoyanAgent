@@ -16,6 +16,10 @@
 //! The TodoList maintains its own state entirely. Task titles and details
 //! are frozen at creation time; only their `status` can change via `update`.
 //!
+//! Historical `create`/`update` tool rounds are **not** kept in the prompt.
+//! Instead the query engine injects [`TodoListTool::prompt_snapshot`] at the
+//! **end** of every model request so a long context cannot bury the list.
+//!
 //! Each item has:
 //! - `id`     – simple sequential number assigned on creation (1, 2, 3, …).
 //! - `title`  – short task title (immutable).
@@ -83,6 +87,40 @@ impl TodoStore {
     fn list(&self) -> Vec<Value> {
         self.items.iter().map(TodoItem::to_json).collect()
     }
+
+    fn checklist(&self) -> String {
+        self.items
+            .iter()
+            .map(|t| {
+                let mark = status_mark(&t.status);
+                if t.detail.is_empty() {
+                    format!("{mark} #{} {} [{}]", t.id, t.title, t.status)
+                } else {
+                    format!(
+                        "{mark} #{} {} [{}] — {}",
+                        t.id, t.title, t.status, t.detail
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn has_incomplete(&self) -> bool {
+        self.items
+            .iter()
+            .any(|t| t.status == "pending" || t.status == "in_progress")
+    }
+}
+
+/// `✔` is the only completed mark. Anything else is unfinished work.
+fn status_mark(status: &str) -> &'static str {
+    match status {
+        "done" => "✔",
+        "cancelled" => "✕",
+        "in_progress" => "►",
+        _ => "☐",
+    }
 }
 
 /// Scope key isolating one agent run from every other session / sub-agent.
@@ -105,37 +143,54 @@ impl Default for TodoListTool {
 }
 
 impl TodoListTool {
-    /// Returns a nudge message when pending / in-progress items remain
-    /// in this run's list. Used by the query engine to continue the loop
-    /// instead of stopping early.
+    /// Compact live checklist injected at the end of every model request.
+    ///
+    /// Placed last so recency bias still sees it after a long transcript or
+    /// a compaction summary. `premature_stop` adds a "do not halt" rider
+    /// when the model tried to end the turn with unfinished items remaining.
+    pub fn prompt_snapshot(&self, ctx: &ToolUseContext, premature_stop: bool) -> Option<String> {
+        self.prompt_snapshot_for_key(&scope_key(ctx), premature_stop)
+    }
+
+    fn prompt_snapshot_for_key(&self, key: &str, premature_stop: bool) -> Option<String> {
+        let stores = self.stores.lock().ok()?;
+        let store = stores.get(key)?;
+        if !store.created || store.items.is_empty() {
+            return None;
+        }
+        let mut body = format!(
+            "<todolist>\n\
+             Live task list (authoritative — ignore earlier TodoList tool results).\n\
+             Only ✔ is complete. ☐ / ► items are NOT done and still need work.\n\
+             Do not stop until every item is ✔ (done) or ✕ (cancelled).\n\
+             {}\n</todolist>",
+            store.checklist()
+        );
+        if premature_stop && store.has_incomplete() {
+            body.push_str(
+                "\n\n[SYSTEM] You tried to stop with unfinished items. \
+                 Do NOT write a final reply. Finish each ☐ / ► item, then call \
+                 TodoList `update` to set its status to `done` (✔).",
+            );
+        }
+        Some(body)
+    }
+
+    /// Returns a nudge when pending / in_progress items remain in this
+    /// run's list. Used by the query engine to continue the loop.
     pub fn incomplete_nudge_message(&self, ctx: &ToolUseContext) -> Option<String> {
         self.incomplete_nudge_for_key(&scope_key(ctx))
     }
 
     fn incomplete_nudge_for_key(&self, key: &str) -> Option<String> {
-        let stores = self.stores.lock().ok()?;
-        let store = stores.get(key)?;
-        let incomplete: Vec<_> = store
-            .items
-            .iter()
-            .filter(|t| t.status == "pending" || t.status == "in_progress")
-            .collect();
-        if incomplete.is_empty() {
-            return None;
+        {
+            let stores = self.stores.lock().ok()?;
+            let store = stores.get(key)?;
+            if !store.has_incomplete() {
+                return None;
+            }
         }
-        let lines: Vec<String> = incomplete
-            .iter()
-            .map(|t| format!("- [#{}] ({}) {}", t.id, t.status, t.title))
-            .collect();
-        Some(format!(
-            "[SYSTEM] Your task list is NOT complete. {} item(s) remain:\n{}\n\
-             Continue working NOW: finish each remaining task using the appropriate \
-             tool, then call TodoList with action `update` to set that item's status \
-             to `done`. Do NOT stop with a summary or final reply until every item is \
-             `done` or `cancelled`.",
-            incomplete.len(),
-            lines.join("\n")
-        ))
+        self.prompt_snapshot_for_key(key, true)
     }
 
     /// Drop this run's list so the next generation can `create` again and
@@ -181,11 +236,15 @@ splitting one action into meaningless micro-tasks.\n\n\
 2. UPDATE status: as work progresses, call `update` with `tasks` as an array of \
    { id, status } to mark items `in_progress`, `done`, or `cancelled`. \
    Only the status changes — titles and details are immutable.\n\n\
+━━━ LIVE CHECKLIST ━━━\n\
+The runtime injects a live ✔/☐ checklist at the END of every model turn. \
+That snapshot is the source of truth; earlier TodoList tool results may be \
+dropped from context. Only ✔ means done. ☐ or ► means the item is unfinished \
+and you must keep working.\n\n\
 ━━━ DO NOT STOP EARLY ━━━\n\
-If ANY item is still `pending` or `in_progress`, you MUST keep working and then \
-call `update` to advance its status. Never end your turn with only a text summary \
-while tasks remain — the runtime will reject premature completion and ask you to \
-continue.\n\n\
+If ANY item is still `pending` or `in_progress` (no ✔), you MUST keep working \
+and then call `update` to mark it `done`. Never end your turn with only a text \
+summary while ☐ items remain — the runtime will reject premature completion.\n\n\
 Status lifecycle: pending → in_progress → done | cancelled"
                     .to_string(),
                 schema: json!({
@@ -472,10 +531,26 @@ mod tests {
             store.items[0].status = "done".into();
         }
         let msg = tool.incomplete_nudge_for_key("s#a").expect("nudge");
-        assert!(msg.contains("NOT complete"));
+        assert!(msg.contains("✔"));
+        assert!(msg.contains("☐"));
         assert!(msg.contains("task b"));
-        assert!(msg.contains("update"));
+        assert!(msg.contains("You tried to stop"));
         assert!(tool.incomplete_nudge_for_key("other").is_none());
+    }
+
+    #[test]
+    fn snapshot_is_injected_even_when_all_done() {
+        let tool = TodoListTool::new();
+        {
+            let mut stores = tool.stores.lock().unwrap();
+            let store = stores.entry("s#a".into()).or_default();
+            store.create(vec![("task".into(), String::new())]);
+            store.get_mut(1).unwrap().status = "done".into();
+        }
+        let snap = tool.prompt_snapshot_for_key("s#a", false).expect("snapshot");
+        assert!(snap.contains("✔ #1 task [done]"));
+        assert!(!snap.contains("You tried to stop"));
+        assert!(tool.prompt_snapshot_for_key("missing", false).is_none());
     }
 
     #[test]

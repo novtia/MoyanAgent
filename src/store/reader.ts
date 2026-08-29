@@ -682,7 +682,9 @@ export const useReader = create<ReaderStore>((set, get) => ({
           : t,
       );
       persistTabs(s.sessionId, tabs, s.activeTabId);
-      return { tabs, openSeq: s.openSeq + 1 };
+      // Do not bump openSeq: that forces the right-panel chrome onto this
+      // path and would yank the user out of whatever they were reading.
+      return { tabs };
     });
   },
 

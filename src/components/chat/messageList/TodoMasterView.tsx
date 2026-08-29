@@ -51,20 +51,7 @@ export function TodoMasterView({
                 className={`todo-item${done ? " done" : ""}${doing ? " doing" : ""}${cancelled ? " cancelled" : ""}`}
               >
                 <span className="todo-box" aria-hidden>
-                  {done ? (
-                    <svg
-                      width="9"
-                      height="9"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="3.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                  ) : null}
+                  {done ? "✔" : cancelled ? "✕" : null}
                 </span>
                 <div className="todo-item-main">
                   <div className="tt">{item.content}</div>

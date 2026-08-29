@@ -239,6 +239,12 @@ impl ToolPool {
         guard.as_ref()?.incomplete_nudge_message(ctx)
     }
 
+    /// Compact live ✔/☐ checklist for the current run, or `None` if no list.
+    pub fn todo_prompt_snapshot(&self, ctx: &ToolUseContext, premature_stop: bool) -> Option<String> {
+        let guard = self.todo_list.lock().ok()?;
+        guard.as_ref()?.prompt_snapshot(ctx, premature_stop)
+    }
+
     /// Drop this run's TodoList so the next generation starts empty.
     pub fn clear_todo_scope(&self, ctx: &ToolUseContext) {
         if let Ok(guard) = self.todo_list.lock() {
@@ -356,8 +362,16 @@ mod pool_tests {
         assert_eq!(created.content["items"][0]["id"], 1);
         assert_eq!(created.content["items"][1]["id"], 2);
 
+        let snap = pool
+            .todo_prompt_snapshot(ctx.as_ref(), false)
+            .expect("live snapshot");
+        assert!(snap.contains("☐"));
+        assert!(snap.contains("task one"));
+        assert!(!snap.contains("You tried to stop"));
+
         let nudge = pool.incomplete_todo_nudge(ctx.as_ref());
         assert!(nudge.is_some());
+        assert!(nudge.unwrap().contains("You tried to stop"));
 
         let updated = run_todo(
             &pool,

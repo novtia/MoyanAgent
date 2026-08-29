@@ -105,6 +105,7 @@ pub(crate) fn build_responses_full_input(request: &ChatRequest, cache_head: bool
         append_responses_pending_assistant(&mut input, pending);
     }
     append_responses_tool_results(&mut input, &request.tool_results);
+    append_responses_todo_snapshot(&mut input, request);
     input
 }
 
@@ -119,12 +120,14 @@ pub(crate) fn build_responses_delta_input(request: &ChatRequest) -> Vec<Value> {
             append_responses_tool_results(&mut input, &request.tool_results);
         }
         if !input.is_empty() {
+            append_responses_todo_snapshot(&mut input, request);
             return input;
         }
     }
     if let Some(round) = request.tool_chain.last() {
         append_responses_tool_results(&mut input, &round.results);
         if !input.is_empty() {
+            append_responses_todo_snapshot(&mut input, request);
             return input;
         }
     }
@@ -134,6 +137,7 @@ pub(crate) fn build_responses_delta_input(request: &ChatRequest) -> Vec<Value> {
         Some(&request.prompt),
         &request.attachments,
     ));
+    append_responses_todo_snapshot(&mut input, request);
     input
 }
 
@@ -195,6 +199,13 @@ pub(crate) fn append_responses_tool_results(
             "output": output,
         }));
     }
+}
+
+fn append_responses_todo_snapshot(input: &mut Vec<Value>, request: &ChatRequest) {
+    let Some(snap) = request.todo_snapshot_text() else {
+        return;
+    };
+    input.push(responses_message("user", Some(snap), &[]));
 }
 pub(crate) fn history_turn_to_responses_message(turn: &HistoryTurn) -> Option<Value> {
     let text = turn.text.as_deref();

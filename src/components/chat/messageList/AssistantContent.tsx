@@ -62,6 +62,8 @@ export function AssistantContent({
               key={`thinking:${i}`}
               content={block.content}
               streaming={isStreaming && live}
+              startedAt={block.started_at}
+              durationMs={block.duration_ms}
               highlightQuery={query}
             />
           );

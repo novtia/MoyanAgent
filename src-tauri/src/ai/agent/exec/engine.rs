@@ -235,22 +235,29 @@ impl QueryEngine for ProviderQueryEngine {
             let mut final_videos = Vec::new();
 
             // When the model tries to stop with unfinished TodoList items,
-            // inject a nudge so multi-step work can continue.
-            const MAX_TODO_NUDGES: u32 = 8;
+            // keep looping and re-inject the live ✔/☐ snapshot at the END
+            // of the next request. History nudges get buried (and compacted
+            // away) once the transcript is long — that's why the model
+            // used to forget remaining items.
+            const MAX_TODO_NUDGES: u32 = 32;
             let turn_limit = max_turns.unwrap_or(DEFAULT_MAX_TURNS).max(1);
             let mut turn_count: u32 = 0;
             let mut todo_nudges: u32 = 0;
+            let mut premature_todo_stop = false;
 
             // Bind the compaction policy to the model actually being called so
             // its thresholds track that model's window instead of a build-time
             // default chosen for 128k models.
-            let compaction = self
+            let mut compaction = self
                 .compaction
                 .clone()
                 .map(|p| p.with_context_window(chat.context_window));
             // One shrink-and-retry per run. A second overflow means the shrink
             // did not help and retrying would just burn another request.
             let mut overflow_retried = false;
+            // Window read out of an upstream rejection, reported so the host can
+            // persist it against the session.
+            let mut observed_context_window: Option<i64> = None;
             // History length right after the last compaction attempt; guards
             // against re-summarising a history that has not grown since.
             let mut compacted_history_len: Option<usize> = None;
@@ -265,6 +272,10 @@ impl QueryEngine for ProviderQueryEngine {
                     return Err(AppError::Canceled);
                 }
 
+                chat.todo_snapshot =
+                    tools.todo_prompt_snapshot(context.as_ref(), premature_todo_stop);
+                premature_todo_stop = false;
+
                 turn_count += 1;
                 if turn_count > turn_limit {
                     return Ok(QueryResult {
@@ -276,6 +287,7 @@ impl QueryEngine for ProviderQueryEngine {
                         images: final_images,
                         videos: final_videos,
                         response_id: chat.previous_response_id.clone(),
+                        observed_context_window,
                     });
                 }
 
@@ -317,7 +329,9 @@ impl QueryEngine for ProviderQueryEngine {
                     // as small as this policy can make it.
                     let history_grew =
                         compacted_history_len.is_none_or(|len| chat.history.len() > len);
-                    if history_grew && compaction_mod::should_compact_chat(&chat, &usage, policy) {
+                    if history_grew
+                        && compaction_mod::should_summarise_history(&chat, &usage, policy)
+                    {
                         if let Err(e) =
                             compaction_mod::compact(&mut chat, self.provider.as_ref(), policy).await
                         {
@@ -327,8 +341,13 @@ impl QueryEngine for ProviderQueryEngine {
                         // that just failed will keep failing this turn.
                         compacted_history_len = Some(chat.history.len());
                     }
+                    // Budget enforcement is deliberately outside the latch and
+                    // outside the "is there history to summarise" question. The
+                    // tool chain grows every single round while `history` stays
+                    // put, so a guard that only fires when history grows leaves
+                    // the fastest-growing part of the request unpoliced.
                     chat.parameters.model.max_tokens = configured_max_tokens;
-                    compaction_mod::clamp_completion_budget(&mut chat, policy);
+                    compaction_mod::enforce_request_budget(&mut chat, policy);
                 }
 
                 let turn_result = tokio::select! {
@@ -340,8 +359,21 @@ impl QueryEngine for ProviderQueryEngine {
                 let turn = match turn_result {
                     Ok(t) => t,
                     Err(e) => {
-                        let recoverable = !overflow_retried
-                            && crate::error::error_indicates_context_overflow(&e);
+                        // The rejection states the model's real window and its
+                        // own count of the messages. Folding both in before the
+                        // retry is what turns a blind second attempt into an
+                        // informed one — and teaches a model the catalog does
+                        // not describe how big it actually is.
+                        let report = crate::error::error_context_overflow_report(&e);
+                        if let (Some(report), Some(policy)) =
+                            (report.as_ref(), compaction.as_mut())
+                        {
+                            compaction_mod::apply_overflow_report(&mut chat, policy, report);
+                            if let Some(window) = report.context_window {
+                                observed_context_window = Some(window);
+                            }
+                        }
+                        let recoverable = !overflow_retried && report.is_some();
                         let shrank = match (recoverable, compaction.as_ref()) {
                             (true, Some(policy)) => {
                                 overflow_retried = true;
@@ -443,11 +475,13 @@ impl QueryEngine for ProviderQueryEngine {
                 final_videos = response.videos.clone();
 
                 if tool_uses.is_empty() {
-                    if let Some(nudge) = tools.incomplete_todo_nudge(context.as_ref()) {
+                    if tools.incomplete_todo_nudge(context.as_ref()).is_some() {
                         if todo_nudges < MAX_TODO_NUDGES {
                             todo_nudges += 1;
-                            inject_todo_continuation(&mut chat, &nudge);
+                            premature_todo_stop = true;
                             // Discard the premature summary — work continues.
+                            // The next iteration's todo_snapshot carries the
+                            // "do not stop" rider at the end of the request.
                             final_text = None;
                             final_thinking = None;
                             continue;
@@ -463,6 +497,7 @@ impl QueryEngine for ProviderQueryEngine {
                         images: final_images,
                         videos: final_videos,
                         response_id: chat.previous_response_id.clone(),
+                        observed_context_window,
                     });
                 }
 
@@ -565,6 +600,7 @@ impl QueryEngine for ProviderQueryEngine {
                 crate::ai::agent::memory::tool_chain::trim_tool_chain(
                     &mut chat.tool_chain,
                     crate::ai::agent::memory::tool_chain::DEFAULT_MAX_NON_TODO_TOOL_ROUNDS,
+                    crate::ai::agent::memory::tool_chain::token_budget(chat.context_window),
                 );
 
                 // The model committed to the anchored trajectory by calling a
@@ -791,17 +827,6 @@ fn commit_tool_round(chat: &mut ChatRequest) {
     chat.tool_chain.push(crate::ai::chat::ToolChainRound {
         assistant: pending,
         results: std::mem::take(&mut chat.tool_results),
-    });
-}
-
-/// Append a system nudge when the model tried to stop with open todos.
-fn inject_todo_continuation(chat: &mut ChatRequest, message: &str) {
-    chat.history.push(crate::ai::chat::HistoryTurn {
-        role: "user".into(),
-        text: Some(message.to_string()),
-        images: Vec::new(),
-        thinking_content: None,
-        timeline: Vec::new(),
     });
 }
 

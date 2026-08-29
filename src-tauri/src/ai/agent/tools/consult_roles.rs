@@ -33,10 +33,8 @@ use crate::error::{AppError, AppResult};
 
 pub const TOOL_NAME: &str = "ConsultRoles";
 
-/// Rough char→token heuristic used for the shared scene digest threshold.
-const CHARS_PER_TOKEN: usize = 4;
-/// Soft threshold (~50k tokens) before we side-channel summarise the scene.
-const COMPACT_TOKEN_THRESHOLD: usize = 50_000;
+/// Soft threshold before we side-channel summarise the scene.
+const COMPACT_TOKEN_THRESHOLD: i64 = 50_000;
 const SUMMARY_MAX_WORDS: u32 = 400;
 
 const MEMORY_DIR: &str = ".moyan/trpg-memory";
@@ -169,8 +167,14 @@ fn sanitize_role_id(role_id: &str) -> String {
         .collect()
 }
 
-fn estimate_tokens(text: &str) -> usize {
-    text.chars().count().saturating_add(CHARS_PER_TOKEN - 1) / CHARS_PER_TOKEN
+/// Shared estimator rather than a local `chars / 4`.
+///
+/// A scene in this app is Chinese prose, which tokenizers split at roughly one
+/// token per glyph. Dividing by four under-read it by ~4x, so the digest only
+/// kicked in around 200k characters — long after the scene had become the
+/// dominant cost of every consult request.
+fn estimate_tokens(text: &str) -> i64 {
+    crate::ai::tokens::estimate_text_tokens(text)
 }
 
 fn role_field<'a>(role: &'a Value, key: &str) -> Option<&'a str> {
@@ -311,6 +315,7 @@ async fn compact_scene(
     req.pending_assistant_turn = None;
     req.attachments.clear();
     req.previous_response_id = None;
+    req.todo_snapshot = None;
     req.system_prompt = "\
 You are a TRPG scene-compaction assistant. Summarise the public scene so \
 role agents can decide. Preserve: location, visible events, public dialogue, \
@@ -471,6 +476,7 @@ async fn run_ai_role(
     chat.history.clear();
     chat.attachments.clear();
     chat.previous_response_id = None;
+    chat.todo_snapshot = None;
     apply_role_model(&mut chat, &app_settings, &card);
     let used_model = Some(chat.model.clone());
 

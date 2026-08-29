@@ -689,6 +689,23 @@ mark.chat-find-mark,
   white-space: nowrap;
 }
 
+/* Elapsed reasoning time. Tabular figures keep the chevron from jittering as
+   the live counter ticks; the fixed min-width absorbs the digit the counter
+   gains on its way past 10 seconds. */
+.msg-thinking-elapsed {
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+}
+
+.msg-thinking.is-streaming .msg-thinking-elapsed {
+  min-width: 4.5em;
+}
+
 .msg-thinking-chevron {
   width: 14px;
   height: 14px;
@@ -1460,6 +1477,8 @@ button.flow-head:disabled {
   align-items: center;
   justify-content: center;
   color: transparent;
+  font-size: 9px;
+  line-height: 1;
 }
 .todo-item.done .todo-box {
   background: var(--ink);
@@ -1475,7 +1494,10 @@ button.flow-head:disabled {
   background: var(--ink);
   animation: stream-doc-blink 1.2s steps(1) infinite;
 }
-.todo-item.cancelled .todo-box { border-color: var(--line); }
+.todo-item.cancelled .todo-box {
+  border-color: var(--line);
+  color: var(--ink-mute);
+}
 .todo-item-main { flex: 1; min-width: 0; }
 .todo-item .tt { font-size: 12.5px; line-height: 1.5; color: var(--ink); }
 .todo-item.done .tt {

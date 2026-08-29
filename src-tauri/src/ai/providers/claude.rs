@@ -112,6 +112,7 @@ fn build_body(request: &ChatRequest) -> Value {
     if !request.tool_results.is_empty() {
         append_claude_tool_results(&mut messages, &request.tool_results);
     }
+    append_claude_todo_snapshot(&mut messages, request);
 
     let mut body = json!({
         "model": request.model,
@@ -189,6 +190,34 @@ fn append_claude_tool_results(messages: &mut Vec<Value>, tool_results: &[ToolRes
         })
         .collect();
     messages.push(json!({ "role": "user", "content": blocks }));
+}
+
+/// Anthropic requires alternating roles; tool_result is already a user
+/// message, so fold the live checklist into that last user turn when we can.
+fn append_claude_todo_snapshot(messages: &mut Vec<Value>, request: &ChatRequest) {
+    let Some(snap) = request.todo_snapshot_text() else {
+        return;
+    };
+    if let Some(last) = messages.last_mut() {
+        if last.get("role").and_then(|r| r.as_str()) == Some("user") {
+            match last.get_mut("content") {
+                Some(Value::Array(blocks)) => {
+                    blocks.push(json!({ "type": "text", "text": snap }));
+                    return;
+                }
+                Some(Value::String(s)) => {
+                    s.push_str("\n\n");
+                    s.push_str(snap);
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
+    messages.push(json!({
+        "role": "user",
+        "content": [{ "type": "text", "text": snap }]
+    }));
 }
 
 fn history_turn_to_message(turn: &HistoryTurn) -> Option<Value> {

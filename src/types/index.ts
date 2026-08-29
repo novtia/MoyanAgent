@@ -446,7 +446,26 @@ export interface ImageRefAbs {
  * `docs/工具调用_ui_渲染.plan.md`.
  */
 export type AssistantBlock =
-  | { type: "thinking"; content: string }
+  | {
+      type: "thinking";
+      content: string;
+      /**
+       * Epoch ms of the first reasoning delta in this block. Drives the live
+       * timer while the block is the tip of the stream.
+       */
+      started_at?: number;
+      /**
+       * Span from the first reasoning delta to the last, in ms. Written on
+       * every delta so it settles on the right value the moment reasoning
+       * stops, and persisted with the message so a reloaded session still
+       * shows how long the model thought.
+       *
+       * Absent on messages written before this field existed, and on providers
+       * that hand over the whole reasoning in one chunk (there is no span to
+       * measure) — the renderer shows no timer rather than a misleading zero.
+       */
+      duration_ms?: number;
+    }
   | { type: "text"; content: string }
   | {
       type: "tool_use";

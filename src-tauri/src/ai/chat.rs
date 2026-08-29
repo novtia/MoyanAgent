@@ -378,4 +378,18 @@ pub struct ChatRequest {
     /// uses it to size compaction and to clamp `max_tokens`, so leaving it
     /// `None` means "no budget enforcement" — the request goes out as built.
     pub context_window: Option<i64>,
+    /// Live TodoList checklist. Providers MUST emit this as the last user
+    /// message so a long transcript cannot bury unfinished items. `None`
+    /// when this run has no list.
+    pub todo_snapshot: Option<String>,
+}
+
+impl ChatRequest {
+    /// Trimmed live TodoList text, if this request carries one.
+    pub fn todo_snapshot_text(&self) -> Option<&str> {
+        self.todo_snapshot
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
 }

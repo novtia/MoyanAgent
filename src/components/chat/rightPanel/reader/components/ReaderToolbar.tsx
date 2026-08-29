@@ -23,7 +23,6 @@ export interface ReaderToolbarProps {
   isMarkdown: boolean;
   /** Media tabs hide Preview/Source and disable file-scoped find. */
   isMedia: boolean;
-  hasPendingDiff: boolean;
   hasFile: boolean;
   findOpen: boolean;
   showTree: boolean;
@@ -46,7 +45,6 @@ export function ReaderToolbar({
   preview,
   isMarkdown,
   isMedia,
-  hasPendingDiff,
   hasFile,
   findOpen,
   showTree,
@@ -98,7 +96,7 @@ export function ReaderToolbar({
               type="button"
               className={`reader-toolbar-btn${preview && isMarkdown ? " is-active" : ""}`}
               title={t("reader.preview")}
-              disabled={!isMarkdown || hasPendingDiff}
+              disabled={!isMarkdown}
               onClick={onPreview}
             >
               <EyeIcon />

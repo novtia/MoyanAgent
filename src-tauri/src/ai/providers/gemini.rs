@@ -126,6 +126,7 @@ fn build_body(request: &ChatRequest) -> Value {
         append_gemini_assistant_tool_turn(&mut contents, pending);
         append_gemini_tool_results(&mut contents, pending, &request.tool_results);
     }
+    append_gemini_todo_snapshot(&mut contents, request);
 
     let mut body = json!({ "contents": contents });
     let map = body.as_object_mut().unwrap();
@@ -210,6 +211,24 @@ fn append_gemini_tool_results(
         })
         .collect();
     contents.push(json!({ "role": "user", "parts": parts }));
+}
+
+fn append_gemini_todo_snapshot(contents: &mut Vec<Value>, request: &ChatRequest) {
+    let Some(snap) = request.todo_snapshot_text() else {
+        return;
+    };
+    if let Some(last) = contents.last_mut() {
+        if last.get("role").and_then(|r| r.as_str()) == Some("user") {
+            if let Some(parts) = last.get_mut("parts").and_then(|p| p.as_array_mut()) {
+                parts.push(json!({ "text": snap }));
+                return;
+            }
+        }
+    }
+    contents.push(json!({
+        "role": "user",
+        "parts": [{ "text": snap }]
+    }));
 }
 
 fn history_turn_to_content(turn: &HistoryTurn) -> Option<Value> {

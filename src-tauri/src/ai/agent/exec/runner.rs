@@ -99,6 +99,8 @@ pub struct RunAgentResult {
     pub videos: Vec<MediaResult>,
     /// Latest Responses API `response.id` for Session cache chaining.
     pub response_id: Option<String>,
+    /// See [`crate::ai::agent::exec::query::QueryResult::observed_context_window`].
+    pub observed_context_window: Option<i64>,
 }
 
 /// Drive a single sub-agent end-to-end.
@@ -259,6 +261,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
                 images: qr.images,
                 videos: qr.videos,
                 response_id: qr.response_id,
+                observed_context_window: qr.observed_context_window,
             })
         }
         Err(e) => {

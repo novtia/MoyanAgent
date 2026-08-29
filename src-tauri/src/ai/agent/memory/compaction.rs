@@ -17,8 +17,11 @@
 //! history was just rebuilt from the database.
 
 use crate::ai::agent::exec::engine::ProviderEngine;
+use crate::ai::agent::memory::tool_chain;
 use crate::ai::chat::{ChatRequest, HistoryTurn, TimelineSegment};
-use crate::ai::tokens::{estimate_chat_tokens, estimate_text_tokens, TokenUsage};
+use crate::ai::tokens::{
+    estimate_chat_tokens, estimate_text_tokens, truncate_tool_content, TokenUsage,
+};
 use crate::error::AppResult;
 
 /// Fraction of the context window that may be occupied by the prompt before
@@ -31,8 +34,18 @@ const MIN_DYNAMIC_THRESHOLD: i64 = 8_000;
 
 /// Slack kept between the projected request size and the hard window limit.
 /// Absorbs the estimator's error (it approximates a real tokenizer) plus
-/// provider-side framing we cannot see.
-const BUDGET_HEADROOM_RATIO: f64 = 0.1;
+/// provider-side framing we cannot see: the tool schema's JSON envelope, role
+/// delimiters, and reasoning content some providers replay back into the
+/// prompt. A tenth proved too tight against real rejections.
+const BUDGET_HEADROOM_RATIO: f64 = 0.15;
+
+/// Largest share of the request budget one tool result may claim.
+///
+/// A single uncapped result — a `Read` of a whole manuscript, say — can exceed
+/// the window by itself, and no amount of round-windowing or history
+/// compaction can undo that. Capping each result keeps one call from starving
+/// everything else out of the prompt.
+const MAX_SINGLE_RESULT_RATIO: f64 = 0.25;
 
 /// Floor for a clamped `max_tokens`. Below this the reply is too short to be
 /// worth sending, so we let the provider reject the request instead of
@@ -148,7 +161,7 @@ pub fn exceeds_budget(chat: &ChatRequest, policy: &CompactionPolicy) -> bool {
 /// - the local estimate, which covers what reported usage cannot: the first
 ///   call of a turn, whose history was just rebuilt from the database and may
 ///   already sit far past the window.
-pub fn should_compact_chat(
+pub fn should_summarise_history(
     chat: &ChatRequest,
     usage: &TokenUsage,
     policy: &CompactionPolicy,
@@ -162,6 +175,99 @@ pub fn should_compact_chat(
         .unwrap_or(0);
     let occupancy = reported.max(estimate_chat_tokens(chat));
     occupancy >= policy.effective_threshold() || exceeds_budget(chat, policy)
+}
+
+/// Bring the request inside the model's budget, by force if necessary.
+///
+/// This is the guard that has to hold when summarisation cannot help: it has no
+/// structural preconditions, needs no provider call, and runs on every turn.
+/// That matters because the fastest-growing part of a long agent turn is
+/// in-turn tool output, and [`compact`] only ever rewrites `history` —
+/// a run whose history is too short to summarise used to sail past every check
+/// while its `tool_chain` grew without bound.
+///
+/// Steps escalate in how much they cost the model:
+///
+/// 1. shrink the completion reservation (lossless — nothing leaves the prompt)
+/// 2. window the in-turn tool chain by tokens
+/// 3. elide the middle of any single oversized tool result
+/// 4. drop the oldest history turns outright
+///
+/// Returns `true` when the request is inside budget afterwards. `false` means
+/// every lever has been pulled and the request is still too big, which is worth
+/// logging but not worth blocking on — the upstream's own rejection carries the
+/// real numbers.
+pub fn enforce_request_budget(chat: &mut ChatRequest, policy: &CompactionPolicy) -> bool {
+    let Some(budget) = policy.request_budget() else {
+        // Unreachable in normal operation: the window is resolved to a concrete
+        // default before the request is built. Kept honest for direct callers.
+        return true;
+    };
+
+    // The prompt has to leave at least a floor's worth of room for the reply.
+    // Past that the completion reservation is negotiable and the prompt is not,
+    // so the shrink steps aim at the prompt and the reservation is sized once,
+    // afterwards, against whatever the prompt ended up costing. Clamping first
+    // would spend the reservation down to its floor and then have no way to
+    // hand back the room the shrinking freed.
+    let prompt_target = (budget - MIN_COMPLETION_TOKENS).max(1);
+    let configured = chat.parameters.model.max_tokens;
+
+    if estimate_chat_tokens(chat) > prompt_target {
+        let before = estimate_chat_tokens(chat);
+
+        tool_chain::trim_tool_chain(
+            &mut chat.tool_chain,
+            tool_chain::DEFAULT_MAX_NON_TODO_TOOL_ROUNDS,
+            tool_chain::token_budget(policy.context_window),
+        );
+
+        if estimate_chat_tokens(chat) > prompt_target {
+            cap_oversized_results(chat, (budget as f64 * MAX_SINGLE_RESULT_RATIO) as i64);
+        }
+
+        if estimate_chat_tokens(chat) > prompt_target && chat.history.len() > policy.keep_recent {
+            // Summarising would be gentler, but it needs a provider round-trip
+            // the caller may already have spent — or already have had fail.
+            // Dropping is the only lever left that is guaranteed to shrink.
+            let split = user_aligned_split(&chat.history, chat.history.len() - policy.keep_recent);
+            if split > 0 {
+                chat.history.drain(..split);
+                drop_response_cache_chain(chat);
+            }
+        }
+
+        let after = estimate_chat_tokens(chat);
+        if after > prompt_target {
+            eprintln!(
+                "[atelier] prompt still over budget after enforcement: \
+                 {after} estimated vs {prompt_target} allowed (was {before})"
+            );
+        }
+    }
+
+    chat.parameters.model.max_tokens = configured;
+    clamp_completion_budget(chat, policy);
+    !exceeds_budget(chat, policy)
+}
+
+/// Elide the middle of any tool result larger than `max_per_result`.
+///
+/// Covers both the results already committed to the chain and the ones staged
+/// for the next request, since the pending round is exactly the one carrying a
+/// fresh, uncapped read.
+fn cap_oversized_results(chat: &mut ChatRequest, max_per_result: i64) {
+    if max_per_result <= 0 {
+        return;
+    }
+    for result in &mut chat.tool_results {
+        truncate_tool_content(&mut result.content, max_per_result);
+    }
+    for round in &mut chat.tool_chain {
+        for result in &mut round.results {
+            truncate_tool_content(&mut result.content, max_per_result);
+        }
+    }
 }
 
 /// Shrink `max_tokens` so the completion reservation still fits beside the
@@ -222,6 +328,7 @@ pub async fn compact(
     summary_req.pending_assistant_turn = None;
     summary_req.attachments.clear();
     summary_req.previous_response_id = None;
+    summary_req.todo_snapshot = None;
     summary_req.parameters.model.max_tokens = None;
     summary_req.system_prompt = "You are a context-compaction assistant. \
         Summarise the conversation above so a fresh model can pick it up. \
@@ -282,7 +389,7 @@ pub async fn shrink_after_overflow(
     provider: &ProviderEngine,
     policy: &CompactionPolicy,
 ) -> bool {
-    let before = estimate_chat_tokens(chat);
+    let before = projected_request_tokens(chat);
 
     // In-turn tool output is the fastest-growing part of a long agent turn and
     // the cheapest to discard: only the round that produced the pending state
@@ -303,8 +410,45 @@ pub async fn shrink_after_overflow(
         }
     }
 
-    clamp_completion_budget(chat, policy);
-    estimate_chat_tokens(chat) < before
+    // The upstream has just told us the request was too big, so a budget that
+    // the local estimate thinks is satisfied is not to be trusted. Run the full
+    // ladder — it also caps the single oversized result that is the usual
+    // reason one round alone overflows.
+    enforce_request_budget(chat, policy);
+    projected_request_tokens(chat) < before
+}
+
+/// Fold the numbers from an upstream context-length rejection into the policy
+/// and the request.
+///
+/// The rejection is the only place a model's true window is ever stated, so a
+/// model missing from the catalog learns its window here — and the retry gets a
+/// budget to enforce instead of repeating the request that just failed.
+///
+/// `message_tokens` is the upstream's own count for the messages alone. Where it
+/// exceeds the local estimate, the estimator is under-reading this
+/// conversation (dense punctuation, a tokenizer that splits CJK differently),
+/// so the window is scaled down by the observed ratio to compensate.
+pub fn apply_overflow_report(
+    chat: &mut ChatRequest,
+    policy: &mut CompactionPolicy,
+    report: &crate::error::ContextOverflowReport,
+) {
+    let Some(window) = report.context_window.filter(|w| *w > 0) else {
+        return;
+    };
+
+    let estimated = estimate_chat_tokens(chat).max(1);
+    let effective = match report.message_tokens.filter(|m| *m > estimated) {
+        // Deflate the window by however much the estimate under-reads, so the
+        // budget computed from it corresponds to real tokens.
+        Some(actual) => ((window as f64) * (estimated as f64 / actual as f64)) as i64,
+        None => window,
+    };
+
+    let effective = effective.max(MIN_DYNAMIC_THRESHOLD);
+    chat.context_window = Some(effective);
+    *policy = policy.clone().with_context_window(Some(effective));
 }
 
 /// Move `split` back to the nearest turn that starts a user exchange.
@@ -510,7 +654,41 @@ mod budget_tests {
             previous_response_id: None,
             context_cache_enabled: false,
             context_window: Some(1_048_576),
+            todo_snapshot: None,
         }
+    }
+
+    /// A chat whose bulk sits in in-turn tool output rather than history — the
+    /// shape of a long agent run, and the one that used to escape every check.
+    fn chat_with_tool_rounds(
+        history_turns: usize,
+        rounds: usize,
+        tokens_per_round: usize,
+        max_tokens: Option<i64>,
+    ) -> ChatRequest {
+        use crate::ai::chat::{PendingAssistantTurn, ProviderToolCall, ToolResultMessage};
+
+        let mut c = chat(history_turns, 400, max_tokens);
+        c.tool_chain = (0..rounds)
+            .map(|i| crate::ai::chat::ToolChainRound {
+                assistant: PendingAssistantTurn {
+                    text: None,
+                    thinking_content: None,
+                    tool_calls: vec![ProviderToolCall {
+                        id: format!("call{i}"),
+                        name: "Read".into(),
+                        arguments: serde_json::json!({ "path": "manuscript.txt" }),
+                    }],
+                },
+                results: vec![ToolResultMessage {
+                    tool_call_id: format!("call{i}"),
+                    // 4 ASCII characters per estimated token.
+                    content: serde_json::json!({ "text": "m".repeat(tokens_per_round * 4) }),
+                    is_error: false,
+                }],
+            })
+            .collect();
+        c
     }
 
     fn policy_for(chat: &ChatRequest) -> CompactionPolicy {
@@ -544,6 +722,10 @@ mod budget_tests {
         assert_eq!(c.parameters.model.max_tokens, Some(8_192));
     }
 
+    /// An unknown window means no enforcement is *possible*, which is why the
+    /// resolution layer no longer produces one — see
+    /// `llm_catalog::DEFAULT_CONTEXT_WINDOW`. Kept as documentation of what the
+    /// policy does when handed `None` directly.
     #[test]
     fn unknown_window_disables_enforcement() {
         let mut c = chat(1, 3_600_000, Some(200_000));
@@ -560,7 +742,11 @@ mod budget_tests {
     #[test]
     fn first_call_of_a_turn_compacts_on_the_estimate_alone() {
         let c = chat(9, 100_000, Some(200_000));
-        assert!(should_compact_chat(&c, &TokenUsage::default(), &policy_for(&c)));
+        assert!(should_summarise_history(
+            &c,
+            &TokenUsage::default(),
+            &policy_for(&c)
+        ));
     }
 
     /// A multi-round turn sums each round's prompt into `total_tokens`, which
@@ -574,7 +760,7 @@ mod budget_tests {
             last_prompt_tokens: Some(33_000),
             ..Default::default()
         };
-        assert!(!should_compact_chat(&c, &usage, &policy_for(&c)));
+        assert!(!should_summarise_history(&c, &usage, &policy_for(&c)));
     }
 
     #[test]
@@ -586,7 +772,7 @@ mod budget_tests {
             last_prompt_tokens: Some(125_000),
             ..Default::default()
         };
-        assert!(should_compact_chat(&c, &usage, &policy_for(&c)));
+        assert!(should_summarise_history(&c, &usage, &policy_for(&c)));
     }
 
     #[test]
@@ -596,19 +782,86 @@ mod budget_tests {
             total_tokens: Some(125_000),
             ..Default::default()
         };
-        assert!(should_compact_chat(&c, &usage, &policy_for(&c)));
+        assert!(should_summarise_history(&c, &usage, &policy_for(&c)));
     }
 
-    /// Compacting needs something to compact; below that the only lever left
-    /// is the `max_tokens` clamp.
+    /// Summarising needs something to summarise. Budget enforcement, however,
+    /// must still run: the early return used to short-circuit *both*, which is
+    /// how a short-history run with a huge tool chain reached the provider
+    /// completely unpoliced.
     #[test]
-    fn short_history_is_never_compacted() {
-        let c = chat(CompactionPolicy::default().keep_recent + 1, 400, None);
+    fn short_history_is_not_summarised_but_is_still_enforced() {
+        let mut c = chat_with_tool_rounds(2, 5, 200_000, Some(128_000));
+        let p = policy_for(&c);
         let usage = TokenUsage {
             last_prompt_tokens: Some(500_000),
             ..Default::default()
         };
-        assert!(!should_compact_chat(&c, &usage, &policy_for(&c)));
+
+        assert!(
+            !should_summarise_history(&c, &usage, &p),
+            "there is no history worth summarising"
+        );
+        assert!(
+            exceeds_budget(&c, &p),
+            "precondition: the request is over the window"
+        );
+
+        assert!(enforce_request_budget(&mut c, &p));
+        assert!(!exceeds_budget(&c, &p));
+    }
+
+    /// The reported failure end to end, on the conservative default window a
+    /// model missing from the catalog now gets: 940k of tool output plus a
+    /// 128000-token completion reservation must not leave the process.
+    #[test]
+    fn a_default_window_still_enforces_a_budget() {
+        let mut c = chat_with_tool_rounds(2, 5, 200_000, Some(128_000));
+        c.context_window = Some(crate::data::llm_catalog::DEFAULT_CONTEXT_WINDOW);
+        let p = policy_for(&c);
+
+        assert!(enforce_request_budget(&mut c, &p));
+
+        let budget = p.request_budget().expect("window is known");
+        assert!(projected_request_tokens(&c) <= budget);
+        let max_tokens = c.parameters.model.max_tokens.expect("still set");
+        assert!(
+            max_tokens < 128_000,
+            "the completion reservation must shrink, got {max_tokens}"
+        );
+        assert!(max_tokens >= MIN_COMPLETION_TOKENS);
+    }
+
+    /// Shrinking the prompt has to hand the freed room back to the completion,
+    /// not leave the reply capped at its floor for the rest of the run.
+    #[test]
+    fn freed_room_is_returned_to_the_completion() {
+        let mut c = chat_with_tool_rounds(2, 5, 200_000, Some(16_384));
+        let p = policy_for(&c);
+        assert!(enforce_request_budget(&mut c, &p));
+        assert_eq!(
+            c.parameters.model.max_tokens,
+            Some(16_384),
+            "the whole configured reservation fits once the chain is windowed"
+        );
+    }
+
+    /// Requests that were never over budget must come out byte-identical, or
+    /// every turn would invalidate the provider's prompt cache.
+    #[test]
+    fn comfortable_requests_are_left_alone_by_enforcement() {
+        let mut c = chat_with_tool_rounds(2, 3, 500, Some(8_192));
+        let p = policy_for(&c);
+        let before = c.clone();
+        assert!(enforce_request_budget(&mut c, &p));
+        assert_eq!(c.tool_chain.len(), before.tool_chain.len());
+        assert_eq!(c.history.len(), before.history.len());
+        assert_eq!(c.parameters.model.max_tokens, Some(8_192));
+        assert_eq!(
+            estimate_chat_tokens(&c),
+            estimate_chat_tokens(&before),
+            "nothing was elided"
+        );
     }
 }
 

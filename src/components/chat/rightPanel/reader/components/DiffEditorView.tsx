@@ -21,6 +21,10 @@ import {
 import { DIFF_BAR_HIDE_MS } from "../constants";
 import { ReaderCodeMirror } from "../ReaderCodeMirror";
 import { ReaderDiffActionBar } from "../ReaderDiffActionBar";
+import {
+  readerViewportTop,
+  rememberReaderViewport,
+} from "../../../../../utils/readerViewport";
 
 export function DiffEditorView({
   tab,
@@ -120,20 +124,26 @@ export function DiffEditorView({
 
   useEffect(() => {
     lastScrolledHunkRef.current = null;
-    scrollTopRef.current = 0;
   }, [tab.path]);
 
-  // Track scroll so confirming a hunk (DOM rebuild) does not jump to top.
+  // Restore the last source viewport, then track scroll. Do not write 0 on
+  // mount — that would clobber the position saved by the plain editor.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    const saved = readerViewportTop(tab.path);
+    el.scrollTop = saved;
+    scrollTopRef.current = el.scrollTop;
     const onScroll = () => {
       scrollTopRef.current = el.scrollTop;
+      rememberReaderViewport(tab.path, el.scrollTop);
     };
-    onScroll();
     el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
-  }, []);
+    return () => {
+      rememberReaderViewport(tab.path, el.scrollTop);
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, [tab.path]);
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -152,8 +162,13 @@ export function DiffEditorView({
       hideBarTimerRef.current = null;
     }
     setHoveredBlockId(range.blockId);
-    // Only scroll on intentional hunk navigation — not when lineRanges
-    // rebuilds after accept/reject (that was jumping the viewport to top).
+    // Only scroll on intentional hunk navigation (the header arrows / bar).
+    // First paint and incoming agent edits must leave the viewport alone —
+    // the user may be reading a different part of this file.
+    if (lastScrolledHunkRef.current === null) {
+      lastScrolledHunkRef.current = activeHunkIndex;
+      return;
+    }
     const indexChanged = lastScrolledHunkRef.current !== activeHunkIndex;
     lastScrolledHunkRef.current = activeHunkIndex;
     if (!indexChanged) return;

@@ -64,5 +64,6 @@ pub fn build_chat_request(
         previous_response_id: None,
         context_cache_enabled,
         context_window: None,
+        todo_snapshot: None,
     })
 }

@@ -152,7 +152,6 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
         preview={preview}
         isMarkdown={!!isMarkdown}
         isMedia={!!isMedia}
-        hasPendingDiff={hasPendingDiff}
         hasFile={hasFile}
         findOpen={findOpen}
         showTree={showTree}

@@ -57,7 +57,10 @@ pub(crate) struct ResolvedGeneration {
     pub(crate) system_prompt: String,
     pub(crate) history_turns: i64,
     pub(crate) llm_params: settings::ModelParamSettings,
-    pub(crate) context_window: Option<i64>,
+    /// Always resolved to a concrete value — see
+    /// [`llm_catalog::DEFAULT_CONTEXT_WINDOW`]. An unknown window used to mean
+    /// "no budget enforcement", which silently disabled every guard at once.
+    pub(crate) context_window: i64,
 }
 
 /// Resolve every generation parameter for a session, sourcing model + provider
@@ -116,21 +119,102 @@ pub(crate) fn resolve_session_generation(
     // Sessions created before the model catalog carried a window — and any
     // whose stored value was dropped by a settings round-trip — still need one,
     // otherwise the agent loop has no budget to enforce and falls back to
-    // sending whatever it built.
-    let context_window = eff.context_window.filter(|w| *w > 0).or_else(|| {
-        llm_catalog::lookup_context_window(conn, &provider.id, &provider.sdk, &model)
-            .ok()
-            .flatten()
-    });
+    // sending whatever it built. Resolution never yields `None`: a model that
+    // no catalog row and no settings entry describes gets the conservative
+    // default rather than unlimited licence.
+    let limits =
+        llm_catalog::lookup_model_limits(conn, &provider.id, &provider.sdk, &model).unwrap_or_default();
+
+    let context_window = eff
+        .context_window
+        .filter(|w| *w > 0)
+        .or(limits.context_window)
+        .unwrap_or(llm_catalog::DEFAULT_CONTEXT_WINDOW);
+
+    let mut llm_params = eff.llm_params;
+    llm_params.max_tokens = clamp_completion_ceiling(llm_params.max_tokens, &limits);
+
+    // Persist it so the composer's context ring and the next turn agree with
+    // what was just enforced, and so the session stops re-deriving it. A
+    // project override still wins in `effective_session_params`, so recording
+    // the session's own value here is only ever additive.
+    if sess.context_window != Some(context_window) {
+        let _ = session::set_context_window(conn, &sess.id, context_window);
+    }
 
     Ok(ResolvedGeneration {
         provider,
         model,
         system_prompt: eff.system_prompt,
         history_turns: eff.history_turns,
-        llm_params: eff.llm_params,
+        llm_params,
         context_window,
     })
+}
+
+/// Cap the configured `max_tokens` at what the model can actually emit.
+///
+/// Providers count the completion reservation against the context window, so an
+/// oversized value rejects requests whose messages would have fitted — the model
+/// never gets a say. The catalog's own output limit is preferred when the model
+/// publishes one; otherwise a blanket ceiling catches the common mistake of
+/// typing a context window into the sampling field.
+fn clamp_completion_ceiling(
+    requested: Option<i64>,
+    limits: &llm_catalog::ModelLimits,
+) -> Option<i64> {
+    let requested = requested?;
+    let ceiling = limits
+        .max_output_tokens
+        .filter(|m| *m > 0)
+        .unwrap_or(llm_catalog::MAX_COMPLETION_TOKENS_CEILING);
+    Some(requested.min(ceiling))
+}
+
+#[cfg(test)]
+mod completion_ceiling_tests {
+    use super::*;
+
+    fn limits(max_output: Option<i64>) -> llm_catalog::ModelLimits {
+        llm_catalog::ModelLimits {
+            context_window: Some(1_000_000),
+            max_output_tokens: max_output,
+        }
+    }
+
+    /// The reported failure: 128000 reserved for the completion on a model whose
+    /// messages already filled the window.
+    #[test]
+    fn a_mistyped_context_window_is_capped() {
+        assert_eq!(
+            clamp_completion_ceiling(Some(128_000), &limits(None)),
+            Some(llm_catalog::MAX_COMPLETION_TOKENS_CEILING)
+        );
+    }
+
+    #[test]
+    fn the_models_own_limit_wins_when_published() {
+        assert_eq!(
+            clamp_completion_ceiling(Some(128_000), &limits(Some(8_192))),
+            Some(8_192)
+        );
+    }
+
+    #[test]
+    fn reasonable_values_are_left_alone() {
+        assert_eq!(clamp_completion_ceiling(Some(4_096), &limits(None)), Some(4_096));
+        assert_eq!(
+            clamp_completion_ceiling(Some(4_096), &limits(Some(8_192))),
+            Some(4_096)
+        );
+    }
+
+    /// Unset means "let the provider decide" and must stay unset — inventing a
+    /// reservation would charge the window for nothing.
+    #[test]
+    fn an_unset_value_stays_unset() {
+        assert_eq!(clamp_completion_ceiling(None, &limits(Some(8_192))), None);
+    }
 }
 
 /// Resolve the agent flow chain that should drive a session's generation.

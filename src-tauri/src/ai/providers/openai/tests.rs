@@ -5,7 +5,7 @@ use crate::ai::chat::{ChatRequest, TextDeltaCallback};
 use crate::ai::providers::OPENAI_RESPONSES_SDK;
 use crate::ai::{tokens, tokens::TokenUsage};
 
-use super::chat::body::append_openai_assistant_text_turn;
+use super::chat::body::{append_openai_assistant_text_turn, build_chat_body};
 use super::common::{
     finalize_pending_tool_calls, merge_usage, parse_tool_call_arguments, set_streaming,
     sse_event_name_and_data, upstream_rejects_streaming, without_streaming,
@@ -86,6 +86,7 @@ use super::responses::stream::{
             previous_response_id: Some("resp_prev".into()),
             context_cache_enabled: true,
             context_window: None,
+            todo_snapshot: None,
         };
         let body = build_responses_body(&request);
         assert_eq!(body["previous_response_id"], "resp_prev");
@@ -109,6 +110,62 @@ use super::responses::stream::{
         assert_eq!(head["thinking"]["type"], "enabled");
         assert_eq!(head["reasoning"]["effort"], "high");
         assert!(head["reasoning"].get("summary").is_none());
+    }
+
+    #[test]
+    fn todo_snapshot_is_the_last_input_item() {
+        let mut request = ChatRequest {
+            provider: crate::ai::chat::ProviderConfig {
+                id: "p".into(),
+                name: "p".into(),
+                sdk: OPENAI_RESPONSES_SDK.into(),
+                endpoint: "https://ark.cn-beijing.volces.com/api/v3/responses".into(),
+                api_key: "k".into(),
+                context_cache_enabled: false,
+            },
+            model: "doubao-seed".into(),
+            prompt: "continue".into(),
+            attachments: Vec::new(),
+            system_prompt: "sys".into(),
+            history: Vec::new(),
+            parameters: crate::ai::parameters::factory().build(
+                "auto".into(),
+                "auto".into(),
+                crate::data::settings::ModelParamSettings::default(),
+            ),
+            tools: Vec::new(),
+            tool_chain: Vec::new(),
+            tool_results: Vec::new(),
+            pending_assistant_turn: None,
+            previous_response_id: None,
+            context_cache_enabled: false,
+            context_window: None,
+            todo_snapshot: Some(
+                "<todolist>\n✔ #1 a [done]\n☐ #2 b [pending]\n</todolist>".into(),
+            ),
+        };
+        let chat = build_chat_body(&request, false);
+        let messages = chat["messages"].as_array().expect("messages");
+        let last = messages.last().expect("last");
+        assert_eq!(last["role"], "user");
+        assert!(last["content"].as_str().unwrap().contains("☐ #2 b"));
+
+        let responses = build_responses_body(&request);
+        let input = responses["input"].as_array().expect("input");
+        let last = input.last().expect("last");
+        assert_eq!(last["role"], "user");
+        let text = last["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("✔ #1 a"));
+
+        request.previous_response_id = Some("resp_prev".into());
+        request.context_cache_enabled = true;
+        request.provider.context_cache_enabled = true;
+        let delta = build_responses_body(&request);
+        let input = delta["input"].as_array().expect("delta input");
+        let last = input.last().expect("last");
+        assert_eq!(last["role"], "user");
+        let text = last["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("☐ #2 b"), "cache delta must still carry the live list");
     }
 
     #[test]

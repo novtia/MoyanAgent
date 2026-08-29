@@ -14,7 +14,8 @@ export function ReaderFilePane({ tab, preview }: { tab: ReaderFileTab; preview: 
   const media = isMediaFileType(tab.fileType);
   const hasPendingDiff = !media && tab.pendingDiffs.length > 0;
   // Keep preview + source mounted together so toggling does not reset scroll.
-  const canPreview = tab.fileType === "markdown" && !hasPendingDiff;
+  // Pending diffs must not kick the user out of preview — they are reading.
+  const canPreview = tab.fileType === "markdown";
   const showPreview = preview && canPreview;
 
   // Reset only when switching files — not after each confirm (that used to
@@ -52,7 +53,7 @@ export function ReaderFilePane({ tab, preview }: { tab: ReaderFileTab; preview: 
 
   return (
     <div className="document-reader reader-file-pane">
-      {hasPendingDiff && (
+      {hasPendingDiff && !showPreview && (
         <div className="reader-diff-strip">
           <ReaderDiffHeaderBar
             tab={tab}
@@ -69,7 +70,7 @@ export function ReaderFilePane({ tab, preview }: { tab: ReaderFileTab; preview: 
             className={`reader-pane-layer${showPreview ? " is-visible" : ""}`}
             aria-hidden={!showPreview}
           >
-            <ReaderMarkdownPreview text={tab.text} />
+            <ReaderMarkdownPreview text={tab.text} path={tab.path} />
           </div>
         )}
         <div

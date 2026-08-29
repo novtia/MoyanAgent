@@ -78,6 +78,13 @@ pub struct QueryResult {
     /// Latest Responses API `response.id` from the final provider call
     /// (Volcengine Session cache chain tip).
     pub response_id: Option<String>,
+    /// Context window an upstream stated while rejecting a request for length.
+    ///
+    /// A model missing from the local catalog has no window of its own, which
+    /// disables budget enforcement entirely. The rejection is the only place the
+    /// real figure is ever published, so the host persists it onto the session
+    /// and the next turn starts out enforcing the right limit.
+    pub observed_context_window: Option<i64>,
 }
 
 /// Async return type used by [`QueryEngine`].
@@ -90,7 +97,8 @@ pub type QueryFuture<'a> = Pin<Box<dyn Future<Output = AppResult<QueryResult>> +
 /// 3. For each `tool_use`, call [`ToolPool::execute`] and re-feed the result.
 /// 4. At turn boundaries, drain attachments from the notification queue.
 /// 5. Stop when the model emits a turn without `tool_use`, the run is
-///    aborted, or TodoList nudges are exhausted. There is no fixed turn cap.
+///    aborted, or unfinished TodoList items have exhausted their continue
+///    budget. There is no fixed turn cap.
 pub trait QueryEngine: Send + Sync {
     fn query<'a>(
         &'a self,

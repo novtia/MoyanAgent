@@ -212,6 +212,8 @@ pub(crate) fn append_thinking_delta_block(blocks: &mut Vec<serde_json::Value>, d
         .map(|i| i + 1)
         .unwrap_or(0);
 
+    let now = db::now_ms();
+
     if let Some(rel) = blocks[segment_start..]
         .iter()
         .position(|b| b.get("type").and_then(|v| v.as_str()) == Some("thinking"))
@@ -219,8 +221,16 @@ pub(crate) fn append_thinking_delta_block(blocks: &mut Vec<serde_json::Value>, d
         let idx = segment_start + rel;
         if let Some(content) = blocks[idx].get("content").and_then(|c| c.as_str()) {
             let merged = format!("{content}{delta}");
+            let started_at = blocks[idx].get("started_at").and_then(|v| v.as_i64());
             if let Some(obj) = blocks[idx].as_object_mut() {
                 obj.insert("content".into(), serde_json::Value::String(merged));
+                // Refreshed on every delta rather than on an explicit "reasoning
+                // finished" signal, which no provider sends. The last delta to
+                // land leaves the correct span behind, so the value settles by
+                // itself the moment reasoning stops.
+                if let Some(started_at) = started_at {
+                    obj.insert("duration_ms".into(), (now - started_at).max(0).into());
+                }
             }
             return;
         }
@@ -228,7 +238,12 @@ pub(crate) fn append_thinking_delta_block(blocks: &mut Vec<serde_json::Value>, d
 
     blocks.insert(
         segment_start,
-        serde_json::json!({ "type": "thinking", "content": delta }),
+        serde_json::json!({
+            "type": "thinking",
+            "content": delta,
+            "started_at": now,
+            "duration_ms": 0,
+        }),
     );
 }
 
@@ -430,5 +445,70 @@ mod tests {
         let before = blocks.clone();
         normalize_interrupted_blocks(&mut blocks);
         assert_eq!(blocks, before);
+    }
+
+    /// The elapsed span has to be stamped onto the block itself: it is persisted
+    /// with the message, and a reloaded session has no other way to know how
+    /// long the model thought.
+    #[test]
+    fn thinking_blocks_carry_a_start_and_a_span() {
+        let mut blocks = Vec::new();
+        append_thinking_delta_block(&mut blocks, "let me ");
+
+        assert_eq!(blocks.len(), 1);
+        let started_at = blocks[0]["started_at"]
+            .as_i64()
+            .expect("start stamped on creation");
+        assert!(started_at > 0);
+        assert_eq!(blocks[0]["duration_ms"], 0);
+
+        std::thread::sleep(std::time::Duration::from_millis(12));
+        append_thinking_delta_block(&mut blocks, "think");
+
+        assert_eq!(blocks.len(), 1, "deltas merge into one block");
+        assert_eq!(blocks[0]["content"], "let me think");
+        assert_eq!(
+            blocks[0]["started_at"].as_i64(),
+            Some(started_at),
+            "the start must not move"
+        );
+        assert!(
+            blocks[0]["duration_ms"].as_i64().unwrap() >= 10,
+            "the span grows with each delta"
+        );
+    }
+
+    /// Each agent round gets its own block, so each gets its own clock — one
+    /// stopwatch per message would report the whole run instead of the thought.
+    #[test]
+    fn a_new_segment_starts_a_new_clock() {
+        let mut blocks = Vec::new();
+        append_thinking_delta_block(&mut blocks, "first");
+        append_text_delta_block(&mut blocks, "answer");
+        record_tool_use_block(&mut blocks, "1", "Read", &json!({}));
+        append_thinking_delta_block(&mut blocks, "second");
+
+        let thinking: Vec<&serde_json::Value> = blocks
+            .iter()
+            .filter(|b| b["type"] == "thinking")
+            .collect();
+        assert_eq!(thinking.len(), 2);
+        assert_eq!(thinking[0]["content"], "first");
+        assert_eq!(thinking[1]["content"], "second");
+        assert!(thinking[1]["started_at"].as_i64().unwrap() > 0);
+    }
+
+    /// Late-arriving reasoning is inserted above the answer, and must still be
+    /// stamped — this is the path where the UI has no live `streaming` flag to
+    /// fall back on.
+    #[test]
+    fn late_reasoning_inserted_above_text_is_still_stamped() {
+        let mut blocks = Vec::new();
+        append_text_delta_block(&mut blocks, "the answer");
+        append_thinking_delta_block(&mut blocks, "reasoning that arrived last");
+
+        assert_eq!(blocks[0]["type"], "thinking");
+        assert_eq!(blocks[1]["type"], "text");
+        assert!(blocks[0]["started_at"].as_i64().unwrap() > 0);
     }
 }

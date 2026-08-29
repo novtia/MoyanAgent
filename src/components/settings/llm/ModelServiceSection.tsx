@@ -1279,7 +1279,7 @@ function ModelMetaFields({
               placeholder="如 128000"
               onChange={(e) => onContextWindow(e.target.value)}
             />
-            <div className="hint">tokens · 用于上下文占用环</div>
+            <div className="hint">tokens · 上下文占用环与压缩预算的依据，留空按 128000 保守估算</div>
           </div>
           <div className="row">
             <label className="field-label">最大输出</label>
@@ -1291,7 +1291,7 @@ function ModelMetaFields({
               placeholder="可选"
               onChange={(e) => onMaxOutput(e.target.value)}
             />
-            <div className="hint">tokens · 仅记录，不强制写入请求</div>
+            <div className="hint">tokens · 用于限制采样参数里的 Max Tokens，留空按 65536 兜底</div>
           </div>
         </div>
       </div>

@@ -134,12 +134,17 @@ impl ChatRequestFactory for SettingsChatFactory {
             ),
         )?;
         // The model may differ from the parent session's (definition override,
-        // chain override), so the window comes from the catalog for whichever
-        // model this sub-agent actually ended up on.
-        chat.context_window =
-            crate::data::llm_catalog::lookup_context_window(&conn, &provider.id, &provider.sdk, &model)
-                .ok()
-                .flatten();
+        // chain override), so the window is resolved for whichever model this
+        // sub-agent actually ended up on. Resolution always lands on a concrete
+        // value: a sub-agent running without a window enforces no budget at
+        // all, which is exactly how one Read of a long manuscript used to walk
+        // straight into a context-length rejection.
+        chat.context_window = Some(crate::data::llm_catalog::resolve_context_window(
+            &conn,
+            &provider.id,
+            &provider.sdk,
+            &model,
+        ));
 
         // Honour `omit_claude_md`: only inject user-context (CLAUDE.md +
         // rules) when the agent definition opts in. Rendered as a
