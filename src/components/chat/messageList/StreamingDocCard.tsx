@@ -65,21 +65,9 @@ export function StreamingDocCard({
           ? typeof output.new_string === "string"
             ? output.new_string
             : (input.new_string ?? "")
-          : isWrite
-            ? (typeof writeOut?.text === "string" && status === "success"
-                ? writeOut.text
-                : (input.content ?? ""))
-            : (input.content ?? ""),
+          : (input.content ?? ""),
       ),
-    [
-      isEdit,
-      isWrite,
-      output.new_string,
-      input.new_string,
-      input.content,
-      writeOut?.text,
-      status,
-    ],
+    [isEdit, output.new_string, input.new_string, input.content],
   );
 
   const path = resolveToolFilePath(block.input, block.output);

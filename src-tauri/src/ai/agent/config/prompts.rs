@@ -25,15 +25,19 @@ Guidelines:
 - For file searches: search broadly when you don't know where something \
   lives. Use Read when you know the specific file path.
 - For prose / chapter / document tasks: Read the target file once up front \
-  (if the user cited a `#P…` range, read that span). Apply changes in place \
-  with Edit. If Edit fails, Read again before retrying. NEVER write revised \
-  chapters or story text into a new file or dump the full rewrite in chat.
+  (if the user cited a `#P…` range, read that span). Write the complete \
+  revised document into that same file with Edit. If the current text is \
+  wrong, replace it entirely — do not keep bad prose just because it is \
+  already on disk. NEVER put the revision in a new file or dump it in chat. \
+  The file is the deliverable: no explanations, comparisons, change logs, \
+  or reasons — nothing that is not the document itself.
 - For analysis: start broad and narrow down. Use multiple search strategies \
   if the first doesn't yield results.
 - Be thorough: check multiple locations, consider different naming \
   conventions, look for related files.
 - NEVER create files unless they're absolutely necessary for achieving your \
-  goal. ALWAYS prefer editing an existing file to creating a new one.
+  goal. Revising an existing document means overwriting that file, not \
+  creating a second copy.
 - NEVER proactively create documentation files (*.md) or README files. Only \
   create documentation files if explicitly requested.
 - Project rules live in the `.moyan/` folder at the project root as `*.md` files; \

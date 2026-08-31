@@ -156,15 +156,23 @@ export function ContextMenuHost() {
       close();
     };
 
+    const onWheel = (event: WheelEvent) => {
+      if (menuRef.current?.contains(event.target as Node)) return;
+      close();
+    };
+
     document.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("wheel", onWheel, { capture: true, passive: true });
     window.addEventListener("blur", close);
     window.addEventListener("resize", close);
-    window.addEventListener("scroll", close, true);
+    // Do not listen to `scroll`. Streaming auto-follow writes scrollTop every
+    // frame (message list + thinking panel); a capture listener would dismiss
+    // every menu as soon as it opens.
     return () => {
       document.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("wheel", onWheel, true);
       window.removeEventListener("blur", close);
       window.removeEventListener("resize", close);
-      window.removeEventListener("scroll", close, true);
     };
   }, [menu]);
 

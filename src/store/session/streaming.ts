@@ -281,10 +281,46 @@ async function handleReaderToolComplete(
   const path = resolveToolFilePath(input, output);
 
   if (tool === "CreateDoc") {
-    const doc = readerDocFromToolOutput(output);
+    const reader = useReader.getState();
     // Cache the new file in the reader store but do not steal the visible tab
     // or bump openSeq — the user may be mid-read in another document.
-    if (doc) useReader.getState().openDoc(doc, { activate: false });
+    const activeSession = useSession.getState().activeId;
+    if (path && activeSession) {
+      try {
+        const disk = await api.readProjectFile(activeSession, path);
+        reader.openDoc(
+          {
+            path,
+            text: disk.text,
+            fileType: inferFileType(path),
+            encoding: disk.encoding,
+            hadBom: disk.hadBom,
+          },
+          { activate: false },
+        );
+        return;
+      } catch (e) {
+        console.warn("CreateDoc: failed to cache reader doc from disk", e);
+      }
+    }
+    const inp =
+      input && typeof input === "object"
+        ? (input as Record<string, unknown>)
+        : {};
+    if (path && typeof inp.content === "string") {
+      reader.openDoc(
+        {
+          path,
+          text: stripParagraphLabels(inp.content),
+          fileType: inferFileType(path),
+        },
+        { activate: false },
+      );
+      return;
+    }
+    // Legacy CreateDoc results still carried `text`.
+    const doc = readerDocFromToolOutput(output);
+    if (doc) reader.openDoc(doc, { activate: false });
     return;
   }
 
@@ -302,8 +338,10 @@ async function handleReaderToolComplete(
     const out = (output && typeof output === "object" ? output : {}) as Record<string, unknown>;
 
     // Backend returns the exact strings it matched/replaced (already
-    // normalized), plus the match offset and full pre/post-edit text.
-    // A `pending_diff_id` means the backend recorded a reviewable hunk.
+    // normalized) and the match offset. Pre/post document text is read
+    // from disk (or reconstructed) so the tool result does not echo the
+    // whole file. A `pending_diff_id` means the backend recorded a
+    // reviewable hunk.
     const pendingDiffId =
       typeof out.pending_diff_id === "string" ? out.pending_diff_id : null;
     if (!pendingDiffId) {
@@ -405,11 +443,25 @@ async function handleReaderToolComplete(
 
   if (tool === "Write") {
     if (!existing) return;
+    const activeSession = useSession.getState().activeId;
+    if (activeSession) {
+      try {
+        const disk = await api.readProjectFile(activeSession, path);
+        reader.updateTabText(path, disk.text, { dirty: false });
+        return;
+      } catch (e) {
+        console.warn("Write: failed to refresh reader from disk", e);
+      }
+    }
+    const inp =
+      input && typeof input === "object"
+        ? (input as Record<string, unknown>)
+        : {};
     const text =
       typeof o.text === "string"
         ? stripParagraphLabels(o.text)
-        : typeof (input as Record<string, unknown>)?.content === "string"
-          ? stripParagraphLabels((input as Record<string, unknown>).content as string)
+        : typeof inp.content === "string"
+          ? stripParagraphLabels(inp.content)
           : null;
     if (text != null) reader.updateTabText(path, text, { dirty: false });
   }

@@ -21,6 +21,7 @@ import {
 import type { FormSection, FormState } from "./types";
 import { ModelOverrideSelect } from "./components/ModelOverrideSelect";
 import { AgentToolsList } from "./components/AgentToolsList";
+import { PromptTokenMeta } from "../../../layout/PromptTokenMeta";
 import type {
   AgentSummary,
   ChainEntry,
@@ -453,7 +454,10 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
                 {formSection === "prompt" && (
                   <>
                     <div className="config-modal-section-head">
-                      <h4 className="config-modal-section-title">{t("agentFlow.formNavPrompt")}</h4>
+                      <div className="config-modal-section-title-row">
+                        <h4 className="config-modal-section-title">{t("agentFlow.formNavPrompt")}</h4>
+                        <PromptTokenMeta text={form.systemPrompt} />
+                      </div>
                       <p className="config-modal-section-desc">{t("agentFlow.formNavPromptDesc")}</p>
                     </div>
                     <textarea

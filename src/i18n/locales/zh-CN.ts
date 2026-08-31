@@ -16,6 +16,8 @@ const zhCN = {
     more: "更多",
     copied: "已复制",
     auto: "自动",
+    promptTokens: "{{count}} tokens",
+    promptTokensHint: "估算：中文约一字一 token，英文约四字符一 token",
   },
   titlebar: {
     appName: "Lumen",
@@ -474,7 +476,7 @@ const zhCN = {
       CreateDoc: "按标题/内容/类型创建文档（md 或 txt）",
       Delete: "删除文件（可随消息回滚还原）",
       Edit:
-        "替换段落（from 支持单段 5、范围 1-9、枚举 1,2,3；content 为空时删除，续写则以末段原文开头再接新内容）",
+        "把完整修订后的文档写入原文件（new_string 仅为正文，不含说明、对比或修改理由）",
       Read: "读取本地文本，每行标注段落编号 [P001]…（含空行）",
       ListFiles: "列出目录下的文件与子目录",
       RoleState: "维护角色属性与状态面板",

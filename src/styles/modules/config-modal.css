@@ -140,6 +140,27 @@
   padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
 }
+.config-modal-section-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.config-modal-section-title-row .config-modal-section-title {
+  margin: 0;
+  min-width: 0;
+}
+.prompt-token-meta {
+  flex-shrink: 0;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--ink-soft);
+  letter-spacing: 0;
+  user-select: none;
+}
 .config-modal-section-title {
   margin: 0 0 4px;
   font-family: var(--app-font-family, inherit);

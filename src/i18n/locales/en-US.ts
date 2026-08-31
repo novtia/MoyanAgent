@@ -19,6 +19,8 @@ const enUS: Resource = {
     more: "More",
     copied: "Copied",
     auto: "Auto",
+    promptTokens: "{{count}} tokens",
+    promptTokensHint: "Estimate: ~1 token per CJK character, ~4 characters per Latin token",
   },
   titlebar: {
     appName: "Lumen",
@@ -482,7 +484,7 @@ const enUS: Resource = {
       CreateDoc: "Create a doc from title/content/type (md or txt)",
       Delete: "Delete a file (rolls back with its message)",
       Edit:
-        "Replace paragraphs (from = 5, 1-9, or 1,2,3; empty content deletes; to continue, start content with the last paragraph's text)",
+        "Write the complete revised document into the original file (new_string is document body only — no explanations)",
       Read: "Read a local text file; each line is one numbered paragraph ([P001], …; empty lines included)",
       ListFiles: "List files and subdirectories under a path",
       RoleState: "Maintain character attribute and state cards",

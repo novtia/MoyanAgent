@@ -2,6 +2,8 @@
 .messages {
   flex: 1;
   overflow-y: auto;
+  /* JS pins this scroller; browser anchoring fights nested thinking overflow. */
+  overflow-anchor: none;
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
   display: block;
@@ -738,7 +740,9 @@ mark.chat-find-mark,
 }
 
 .msg-thinking.is-open .msg-thinking-panel {
-  grid-template-rows: 1fr;
+  /* minmax(0, 1fr): plain 1fr is minmax(auto, 1fr), whose auto minimum is the
+     unconstrained text height and fights max-height + overflow on the child. */
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .msg-thinking-panel-inner {
@@ -758,6 +762,9 @@ mark.chat-find-mark,
   word-break: break-word;
   max-height: min(50vh, 420px);
   overflow-y: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
   opacity: 0;

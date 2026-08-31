@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::ai::agent::tools::pe_docs;
 use crate::data::paths;
 use crate::error::{AppError, AppResult};
 
@@ -74,8 +75,9 @@ pub fn parse_breadcrumb_segments(raw: &str, tool: &str) -> AppResult<Vec<String>
 ///
 /// When the breadcrumb is a bare file name that does not exist at the project
 /// root, the whole project tree is searched for a unique file with that
-/// basename. That convenience is only sound for tools that *read* an existing
-/// file — see [`resolve_project_file_strict`] for the write/delete path.
+/// basename (or, if the name has no suffix, a unique `.md` / `.txt` document
+/// with that title). That convenience is only sound for tools that *read* an
+/// existing file — see [`resolve_project_file_strict`] for the write/delete path.
 pub fn resolve_project_file(cwd: &Path, raw: &str, tool: &str) -> AppResult<PathBuf> {
     resolve_file_ref(cwd, raw, tool, BasenameSearch::Enabled)
 }
@@ -132,9 +134,24 @@ fn resolve_file_ref(
         return canonicalize_existing(&target, tool);
     }
 
-    if search == BasenameSearch::Enabled && segments.len() == 1 {
-        if let Some(found) = find_unique_file_by_basename(&root_canon, &segments[0], tool)? {
-            return Ok(found);
+    // Read-side convenience only: `深喉验毒` → unique `深喉验毒.md` / `.txt`
+    // next to the breadcrumb (or later, anywhere in the tree). Writes must keep
+    // the exact name so they do not silently overwrite a suffixed document.
+    if search == BasenameSearch::Enabled {
+        let last = segments.last().expect("segments non-empty");
+        if is_extensionless(last) {
+            if let Some(parent) = target.parent() {
+                if let Some(found) =
+                    resolve_unique_doc_by_stem(parent, last, &root_canon, tool)?
+                {
+                    return Ok(found);
+                }
+            }
+        }
+        if segments.len() == 1 {
+            if let Some(found) = find_unique_file_by_basename(&root_canon, last, tool)? {
+                return Ok(found);
+            }
         }
     }
 
@@ -238,6 +255,74 @@ fn ensure_within_project_root(project_root: &Path, target: &Path, tool: &str) ->
     )))
 }
 
+fn is_extensionless(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map_or(true, |e| e.is_empty())
+}
+
+/// True when `file_name` is the query, or (for an extensionless query) a
+/// Markdown / plain-text document whose stem is the query.
+fn file_name_matches_query(file_name: &str, query: &str) -> bool {
+    if file_name == query {
+        return true;
+    }
+    if !is_extensionless(query) {
+        return false;
+    }
+    let path = Path::new(file_name);
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(pe_docs::is_doc_extension)
+        && path.file_stem().and_then(|s| s.to_str()) == Some(query)
+}
+
+fn ambiguous_file_error(tool: &str, name: &str, root: &Path, matches: &[PathBuf]) -> AppError {
+    let n = matches.len();
+    let rel: Vec<String> = matches
+        .iter()
+        .take(5)
+        .filter_map(|p| p.strip_prefix(root).ok())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let hint = if n > 5 {
+        format!("{} … (+{} more)", rel.join(", "), n - 5)
+    } else {
+        rel.join(", ")
+    };
+    AppError::Invalid(format!(
+        "{tool}: `{name}` matches {n} files — disambiguate with folder\\{name} or add the suffix: {hint}"
+    ))
+}
+
+/// If `stem.md` / `stem.txt` / `stem.markdown` exists uniquely under `dir`,
+/// return that file. Used when the model passes a document title without a
+/// suffix (`深喉验毒` → `深喉验毒.md`).
+fn resolve_unique_doc_by_stem(
+    dir: &Path,
+    stem: &str,
+    root: &Path,
+    tool: &str,
+) -> AppResult<Option<PathBuf>> {
+    let mut matches = Vec::new();
+    for ext in pe_docs::DOC_EXTENSIONS {
+        let candidate = dir.join(format!("{stem}.{ext}"));
+        if !candidate.is_file() {
+            continue;
+        }
+        let resolved = std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
+        if is_within(root, &resolved) && !matches.iter().any(|p| p == &resolved) {
+            matches.push(resolved);
+        }
+    }
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(Some(matches.remove(0))),
+        _ => Err(ambiguous_file_error(tool, stem, root, &matches)),
+    }
+}
+
 fn find_unique_file_by_basename(
     root: &Path,
     name: &str,
@@ -249,22 +334,7 @@ fn find_unique_file_by_basename(
     match matches.len() {
         0 => Ok(None),
         1 => Ok(Some(matches.remove(0))),
-        n => {
-            let rel: Vec<String> = matches
-                .iter()
-                .take(5)
-                .filter_map(|p| p.strip_prefix(root).ok())
-                .map(|p| p.to_string_lossy().into_owned())
-                .collect();
-            let hint = if n > 5 {
-                format!("{} … (+{} more)", rel.join(", "), n - 5)
-            } else {
-                rel.join(", ")
-            };
-            Err(AppError::Invalid(format!(
-                "{tool}: `{name}` matches {n} files — disambiguate with folder\\{name}: {hint}"
-            )))
-        }
+        _ => Err(ambiguous_file_error(tool, name, root, &matches)),
     }
 }
 
@@ -304,7 +374,7 @@ fn collect_files_named(
             if path
                 .file_name()
                 .and_then(|s| s.to_str())
-                .is_some_and(|n| n == name)
+                .is_some_and(|n| file_name_matches_query(n, name))
             {
                 let resolved = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
                 if is_within(root, &resolved) {
@@ -472,6 +542,113 @@ mod tests {
         assert!(
             !strict.ends_with(Path::new("chapters").join("notes.md")),
             "writes must stay at the root, got {strict:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn unique_temp(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "moyan_{label}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp");
+        dir
+    }
+
+    /// `深喉验毒` must resolve to the unique `深喉验毒.md` at the project root.
+    #[test]
+    fn extensionless_title_resolves_to_unique_doc_suffix() {
+        let root = unique_temp("extless_root");
+        std::fs::write(root.join("深喉验毒.md"), "body").expect("seed");
+
+        let found = resolve_project_file(&root, "深喉验毒", "Read").expect("resolve");
+        assert_eq!(
+            found.file_name().and_then(|s| s.to_str()),
+            Some("深喉验毒.md")
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Nested breadcrumb without a suffix: `drafts\深喉验毒` → `drafts\深喉验毒.txt`.
+    #[test]
+    fn extensionless_nested_breadcrumb_resolves_beside_the_folder() {
+        let root = unique_temp("extless_nested");
+        std::fs::create_dir_all(root.join("drafts")).expect("mkdir");
+        std::fs::write(root.join("drafts").join("深喉验毒.txt"), "body").expect("seed");
+
+        let found = resolve_project_file(&root, r"drafts\深喉验毒", "Read").expect("resolve");
+        assert!(
+            found.ends_with(Path::new("drafts").join("深喉验毒.txt")),
+            "got {found:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Bare title with no root copy still finds the unique nested document.
+    #[test]
+    fn extensionless_title_finds_unique_nested_doc() {
+        let root = unique_temp("extless_buried");
+        std::fs::create_dir_all(root.join("chapters")).expect("mkdir");
+        std::fs::write(root.join("chapters").join("深喉验毒.md"), "body").expect("seed");
+
+        let found = resolve_project_file(&root, "深喉验毒", "Read").expect("resolve");
+        assert!(
+            found.ends_with(Path::new("chapters").join("深喉验毒.md")),
+            "got {found:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn extensionless_title_is_ambiguous_when_md_and_txt_both_exist() {
+        let root = unique_temp("extless_ambig");
+        std::fs::write(root.join("notes.md"), "md").expect("seed md");
+        std::fs::write(root.join("notes.txt"), "txt").expect("seed txt");
+
+        let err = resolve_project_file(&root, "notes", "Read").expect_err("ambiguous");
+        let msg = err.to_string();
+        assert!(msg.contains("matches 2 files"), "{msg}");
+        assert!(msg.contains("notes.md") && msg.contains("notes.txt"), "{msg}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn suffixed_query_does_not_match_a_sibling_with_another_extension() {
+        let root = unique_temp("extless_exact");
+        std::fs::write(root.join("notes.txt"), "txt").expect("seed");
+
+        let found = resolve_project_file(&root, "notes.md", "Read").expect("exact path");
+        assert_eq!(
+            found.file_name().and_then(|s| s.to_str()),
+            Some("notes.md"),
+            "a `.md` query must not silently retarget at `.txt`, got {found:?}"
+        );
+        assert!(!found.is_file());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn strict_resolution_does_not_append_a_doc_suffix() {
+        let root = unique_temp("extless_strict");
+        std::fs::write(root.join("notes.md"), "md").expect("seed");
+
+        let strict =
+            resolve_project_file_strict(&root, "notes", "Write").expect("strict resolve");
+        assert_eq!(strict.file_name().and_then(|s| s.to_str()), Some("notes"));
+        assert!(
+            !strict.as_os_str().to_string_lossy().ends_with("notes.md"),
+            "writes must keep the exact name, got {strict:?}"
         );
 
         let _ = std::fs::remove_dir_all(&root);

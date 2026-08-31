@@ -149,7 +149,6 @@ impl Tool for FileWriteTool {
                 "path": display_path(&path),
                 "bytes": content.len(),
                 "created": !exists,
-                "text": content,
                 "chars": chars,
                 "lines": lines,
             })))
@@ -172,33 +171,37 @@ impl FileEditTool {
             pool: None,
             spec: ToolSpec {
                 name: EDIT_TOOL.to_string(),
-                description: "Replace a substring in a file. \
-                    Pass `path`, `old_string`, and `new_string`. `old_string` is text copied from the file \
-                    (including whitespace and line breaks) and must be long enough to match ONE place — \
-                    include surrounding context to disambiguate. ASCII quotes (`\"`) and typographic quotes \
-                    (`“”` `「」`) are treated as equivalent when locating `old_string`; the file keeps its \
-                    existing quote characters. `new_string` is what replaces the match. To DELETE, pass an \
-                    empty `new_string`. To CONTINUE/APPEND after existing prose, set `old_string` to the tail of the \
-                    current text and make `new_string` begin with that same text, then add the new prose (e.g. the \
-                    file ends with `哦哦哦` → old_string `哦哦哦`, new_string `哦哦哦。后续新内容`). If `old_string` \
-                    intentionally appears multiple times and you want to replace every occurrence, set `replace_all` \
-                    to true; otherwise a non-unique match is rejected. If Edit fails (not found or not unique), \
-                    Read the file and retry with the exact current text."
+                description: "Replace an existing file with the complete revised document. \
+                    Pass `path`, `old_string` (current text copied from Read — the whole \
+                    file when rewriting), and `new_string` (the full replacement). \
+                    `new_string` is the delivered document: only document body, no \
+                    explanations, comparisons, change logs, or reasons. If the original \
+                    is wrong, rewrite it fully in `new_string`; do not patch around bad \
+                    prose. `old_string` must match once unless `replace_all` is true. \
+                    ASCII `\"` and typographic `“”`/`「」` match equivalently. Empty \
+                    `new_string` deletes the matched span. If Edit fails, Read and retry \
+                    with the exact current text."
                     .to_string(),
                 schema: json!({
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": FILE_REF_DESC
+                            "description": format!(
+                                "{FILE_REF_DESC} A `.md` / `.txt` suffix may be omitted \
+                                 when the title uniquely identifies the document."
+                            )
                         },
                         "old_string": {
                             "type": "string",
-                            "description": "Text to replace, copied from the file (whitespace and line breaks included). Must match once unless `replace_all` is true. Include enough surrounding context to be unique. ASCII `\"` and typographic `“”`/`「」` are equivalent for matching."
+                            "description": "Current file text to replace (copy from Read). \
+                                Use the whole document when rewriting. Must match once unless `replace_all` is true."
                         },
                         "new_string": {
                             "type": "string",
-                            "description": "Replacement text. Empty string deletes `old_string`. When continuing/appending, begin with `old_string`'s existing text then add the new prose. Fill this in LAST, after path/old_string."
+                            "description": "The complete document that replaces `old_string`. \
+                                Document body only — no explanations, notes, or change logs. \
+                                Fill this in LAST, after path/old_string."
                         },
                         "replace_all": {
                             "type": "boolean",
@@ -350,8 +353,6 @@ impl Tool for FileEditTool {
                 "replace_all": replace_all,
                 "replaced_count": replaced_count,
                 "match_start": match_start,
-                "text_before": text_before,
-                "text": updated,
                 "chars": chars,
             });
             if let Some(id) = pending_diff_id {
@@ -663,8 +664,8 @@ mod edit_tests {
         assert_eq!(res.content["replace_all"], false);
         assert_eq!(res.content["replaced_count"], 1);
         assert_eq!(res.content["match_start"], 2);
-        assert_eq!(res.content["text_before"], "A\nB\nC\nD");
-        assert_eq!(res.content["text"], "A\nX\nY\nZ\nD");
+        assert!(res.content.get("text").is_none());
+        assert!(res.content.get("text_before").is_none());
     }
 
     #[tokio::test]
@@ -803,7 +804,7 @@ const re = /\d+\\s/g;
         let res = run_write(&ctx, json!({ "path": &name, "content": content })).await;
         assert!(!res.is_error, "unexpected error: {:?}", res.content);
         assert_eq!(disk(&ctx, &name), content);
-        assert_eq!(res.content["text"], content);
+        assert!(res.content.get("text").is_none());
         assert_eq!(res.content["created"], true);
     }
 

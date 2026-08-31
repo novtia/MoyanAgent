@@ -230,7 +230,9 @@ impl FileReadTool {
                     instead of the two args. Short ranges are auto-expanded with nearby \
                     context (at least 20 lines when the file is long enough). \
                     For open-ended prose tasks without a range mention, Read the full file \
-                    once up front. After Edit fails, re-Read the relevant span before retrying. \
+                    once up front. A document title without `.md` / `.txt` is enough when it \
+                    uniquely identifies the file. After Edit fails, re-Read the relevant span \
+                    before retrying. \
                     Do not re-read before every Edit. \
                     Long files come back one page at a time: when the result has \
                     `truncated: true`, the text stops at `paragraph_to` and \
@@ -244,7 +246,10 @@ impl FileReadTool {
                         "path": {
                             "type": "string",
                             "description": format!(
-                                "{FILE_REF_DESC} Optional `#P003` / `#P003-P007` suffix \
+                                "{FILE_REF_DESC} A `.md` / `.txt` suffix may be omitted \
+                                 when the title uniquely identifies the document \
+                                 (e.g. `notes` reads `notes.md`). \
+                                 Optional `#P003` / `#P003-P007` suffix \
                                  selects a 1-based paragraph (line) range when \
                                  `paragraph_from` / `paragraph_to` are omitted."
                             )
@@ -493,5 +498,38 @@ mod read_range_tests {
         assert!(slice.chars().count() > READ_MAX_CHARS, "loop cannot split it");
         let head = head_limit(&slice, READ_MAX_CHARS).expect("trimmed");
         assert_eq!(head.chars().count(), READ_MAX_CHARS);
+    }
+
+    #[tokio::test]
+    async fn reads_a_document_by_title_without_the_suffix() {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "moyan-read-extless-{}-{}",
+            std::process::id(),
+            n
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("深喉验毒.md"), "hello from the file").unwrap();
+        let ctx = ToolUseContextBuilder::new(AgentId::new(), dir.clone())
+            .build()
+            .0;
+        let tool = FileReadTool::new();
+        let res = tool
+            .execute(ToolInvocation {
+                id: MessageId("read".into()),
+                input: json!({ "path": "深喉验毒" }),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(res.content["text"], "hello from the file");
+        let path = res.content["path"].as_str().unwrap();
+        assert!(
+            path.ends_with("深喉验毒.md"),
+            "result path should keep the real suffix, got {path}"
+        );
+        let _ = Arc::clone(&ctx);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import type { ModelParamSettings } from "../../types";
 import { EMPTY_MODEL_PARAMS } from "../settings/llm/modelServices";
+import { PromptTokenMeta } from "./PromptTokenMeta";
 
 type ConfigSection = "basics" | "prompt" | "model";
 
@@ -335,7 +336,10 @@ export function ScopeConfigModal({
             {section === "prompt" && (
               <>
                 <div className="config-modal-section-head">
-                  <h4 className="config-modal-section-title">系统提示词</h4>
+                  <div className="config-modal-section-title-row">
+                    <h4 className="config-modal-section-title">系统提示词</h4>
+                    <PromptTokenMeta text={systemPromptDraft} />
+                  </div>
                   <p className="config-modal-section-desc">
                     作为 system 消息发送给模型，用于设定角色、语气与约束。
                   </p>

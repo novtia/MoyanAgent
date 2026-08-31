@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { highlightQuery } from "../../../utils/highlightQuery";
 import { ChunkedText } from "./ChunkedText";
@@ -7,6 +7,9 @@ import { MIN_MEASURABLE_THINKING_MS, splitElapsed } from "./utils";
 
 /** Matches the `.msg-thinking-panel` grid-template-rows transition (0.28s). */
 const COLLAPSE_MS = 320;
+
+/** Stay pinned through sub-pixel layout + parent auto-scroll noise. */
+const STICK_PX = 48;
 
 /** Live counter cadence. Fast enough to look like a stopwatch, slow enough to
  *  stay off the render hot path while deltas are streaming. */
@@ -37,6 +40,8 @@ export function ThinkingBlock({
   const [mounted, setMounted] = useState(streaming);
   const userToggledRef = useRef(false);
   const prevStreamingRef = useRef(streaming);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
 
   useEffect(() => {
     // Auto-collapse when streaming finishes, unless the user manually toggled.
@@ -62,6 +67,22 @@ export function ThinkingBlock({
     const timer = window.setTimeout(() => setMounted(false), COLLAPSE_MS);
     return () => window.clearTimeout(timer);
   }, [open, mounted]);
+
+  useEffect(() => {
+    if (streaming) stickToBottomRef.current = true;
+  }, [streaming]);
+
+  // Pin this scroller ourselves. The message list also sticks to the bottom,
+  // and Chrome overflow-anchor will otherwise yank *this* scrollbar up and
+  // down on every thinking delta (the "thinking bar flicker").
+  useLayoutEffect(() => {
+    if (!streaming || !open || !stickToBottomRef.current) return;
+    const el = contentRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distance < 1) return;
+    el.scrollTop = el.scrollHeight;
+  }, [content, streaming, open, mounted]);
 
   const handleToggle = () => {
     userToggledRef.current = true;
@@ -138,7 +159,16 @@ export function ThinkingBlock({
         aria-hidden={!open}
       >
         <div className="msg-thinking-panel-inner">
-          <div className="msg-thinking-content">
+          <div
+            ref={contentRef}
+            className="msg-thinking-content"
+            onScroll={() => {
+              const el = contentRef.current;
+              if (!el) return;
+              stickToBottomRef.current =
+                el.scrollHeight - el.scrollTop - el.clientHeight < STICK_PX;
+            }}
+          >
             {!mounted ? null : query ? (
               highlightQuery(content, query)
             ) : (

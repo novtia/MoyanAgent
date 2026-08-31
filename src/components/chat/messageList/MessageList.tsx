@@ -15,6 +15,10 @@ import { MessageTimeline } from "./MessageTimeline";
 import { useVirtualMessages } from "./useVirtualMessages";
 import { useMobileShell } from "../../../hooks/useMobileShell";
 
+/** Auto-follow only while flush against the bottom. A 150px "near" zone
+ *  swallows a wheel notch and yanks the user back on the next stream frame. */
+const PINNED_PX = 4;
+
 function VirtualRow({
   index,
   onHeight,
@@ -82,6 +86,7 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
   const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null);
   const [scrollActiveId, setScrollActiveId] = useState<string | null>(null);
   const messages = active?.messages || [];
+  const lastMessageId = messages[messages.length - 1]?.id ?? "";
   const lastMessageTextLength =
     messages.length > 0 ? messages[messages.length - 1].text?.length ?? 0 : 0;
   const lastMessageThinkingLength =
@@ -98,7 +103,6 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
 
   const isNearBottomRef = useRef(true);
   const suppressAutoScrollRef = useRef(false);
-  const prevMessagesLengthRef = useRef(messages.length);
   const prefetchLock = useRef(false);
   const focusTokenRef = useRef(0);
   const jumpingRef = useRef(false);
@@ -139,10 +143,17 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
       if (activeId) setScrollActiveId(activeId);
     };
 
+    const onWheel = (e: WheelEvent) => {
+      // Wheel fires before `scroll`. Release immediately so a layout-effect
+      // pin in the same frame cannot win the fight.
+      if (suppressAutoScrollRef.current) return;
+      if (e.deltaY < 0) isNearBottomRef.current = false;
+    };
+
     const onScroll = () => {
       if (!suppressAutoScrollRef.current) {
         isNearBottomRef.current =
-          el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+          el.scrollHeight - el.scrollTop - el.clientHeight <= PINNED_PX;
       }
 
       // Prefetch older history near the top of the loaded window.
@@ -170,12 +181,14 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
 
       if (!scanHandle) scanHandle = requestAnimationFrame(scanReadingPosition);
     };
+    el.addEventListener("wheel", onWheel, { passive: true });
     el.addEventListener("scroll", onScroll, { passive: true });
     // Seed the reading position without waiting for the first scroll event.
     const seed = requestAnimationFrame(onScroll);
     return () => {
       cancelAnimationFrame(seed);
       if (scanHandle) cancelAnimationFrame(scanHandle);
+      el.removeEventListener("wheel", onWheel);
       el.removeEventListener("scroll", onScroll);
     };
   }, [
@@ -190,30 +203,24 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
     ref.current.scrollTop = ref.current.scrollHeight;
     isNearBottomRef.current = true;
     suppressAutoScrollRef.current = false;
-    prevMessagesLengthRef.current = messages.length;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.session.id]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    if (suppressAutoScrollRef.current) {
-      prevMessagesLengthRef.current = messages.length;
-      return;
-    }
-    const messagesGrew = messages.length > prevMessagesLengthRef.current;
-    prevMessagesLengthRef.current = messages.length;
-    if (!messagesGrew && !isNearBottomRef.current) return;
-    // This effect runs on every streamed frame. Writing scrollTop when we're
-    // already pinned to the bottom buys nothing and costs a forced layout plus
-    // a scroll event that re-enters the handler above.
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 1) return;
+    if (suppressAutoScrollRef.current) return;
+    if (!isNearBottomRef.current) return;
+    // Already flush — do not write scrollTop (disturbs nested thinking).
+    if (el.scrollHeight - el.scrollTop - el.clientHeight <= PINNED_PX) return;
     el.scrollTop = el.scrollHeight;
   }, [
     messages.length,
+    lastMessageId,
     lastMessageTextLength,
     lastMessageThinkingLength,
     lastMessageBlocksLength,
+    range.totalHeight,
     busy,
   ]);
 

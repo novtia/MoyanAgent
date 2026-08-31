@@ -7,9 +7,10 @@
 //! project working directory (`ToolUseContext::cwd`), falling back to
 //! `Documents/MoYanAgent` (or the Android/iOS app-library equivalent) when the
 //! session has no project path. Writes are always confined to that project
-//! root — `folder` cannot escape it. The successful result echoes the full text,
+//! root — `folder` cannot escape it. The successful result reports the path,
 //! file metadata, and a non-whitespace character count (`chars`) so the model
-//! and UI can report document length after create/overwrite.
+//! and UI can report document length after create/overwrite. The body is not
+//! echoed: it is already in the tool-call arguments.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -212,7 +213,6 @@ impl Tool for CreateDocTool {
                 "doc_type": ext,
                 "folder": folder.map(str::trim).filter(|s| !s.is_empty()),
                 "created": created,
-                "text": content,
                 "chars": count_words(&content),
             })))
         })
@@ -391,7 +391,12 @@ mod overwrite_tests {
     #[tokio::test]
     async fn refuses_to_replace_an_existing_document() {
         let ctx = ctx_in_temp_dir();
-        assert!(!run(&ctx, doc("第一章", "原稿")).await.is_error);
+        let first = run(&ctx, doc("第一章", "原稿")).await;
+        assert!(!first.is_error);
+        assert!(
+            first.content.get("text").is_none(),
+            "CreateDoc must not echo the body back into context"
+        );
 
         let second = run(&ctx, doc("第一章", "新稿")).await;
         assert!(second.is_error, "same title must not silently overwrite");
