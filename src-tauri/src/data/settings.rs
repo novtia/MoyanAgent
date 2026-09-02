@@ -146,7 +146,11 @@ pub struct ModelServiceModel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_modalities: Option<Vec<String>>,
     /// OpenRouter `provider.only` slugs. Empty / omitted ⇒ automatic routing.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        alias = "routeProviders"
+    )]
     pub route_providers: Vec<String>,
 }
 
@@ -188,7 +192,7 @@ impl ModelProvider {
     }
 }
 
-fn normalize_route_provider_slugs(raw: &[String]) -> Vec<String> {
+pub(crate) fn normalize_route_provider_slugs(raw: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for s in raw {
@@ -507,6 +511,7 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
         conn,
         parsed_services.unwrap_or_default(),
     )?);
+    crate::data::llm_catalog::apply_route_provider_overlay(conn, &mut s.model_services)?;
     if s.active_provider_id.trim().is_empty()
         || !s
             .model_services
@@ -697,6 +702,7 @@ fn normalize_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {
             if model.capabilities.is_empty() {
                 model.capabilities = infer_capabilities(&model.id);
             }
+            model.route_providers = normalize_route_provider_slugs(&model.route_providers);
         }
     }
     services
@@ -803,9 +809,11 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
     }
     if let Some(v) = patch.model_services {
         validate_services(&v)?;
-        let json = serde_json::to_string(&normalize_services(v))
+        let normalized = normalize_services(v);
+        let json = serde_json::to_string(&normalized)
             .map_err(|e| AppError::Invalid(e.to_string()))?;
         write_kv(conn, KEY_MODEL_SERVICES, &json)?;
+        crate::data::llm_catalog::sync_route_providers(conn, &normalized)?;
     }
     if let Some(v) = patch.quick_model_provider_id {
         write_kv(conn, KEY_QUICK_MODEL_PROVIDER_ID, &v)?;

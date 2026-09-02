@@ -12,8 +12,9 @@ pub type DbPool = Pool<SqliteConnectionManager>;
 pub type DbConn = r2d2::PooledConnection<SqliteConnectionManager>;
 
 /// Squashed baseline is 28; 29 adds message/session FTS search indexes;
-/// 30 makes file snapshots persist at write time.
-const SCHEMA_VERSION: i64 = 30;
+/// 30 makes file snapshots persist at write time; 31 stores OpenRouter
+/// per-model route provider pins.
+const SCHEMA_VERSION: i64 = 31;
 
 const MIGRATION_001: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -138,6 +139,35 @@ fn ensure_file_snapshot_binding_schema(conn: &rusqlite::Connection) -> AppResult
     Ok(())
 }
 
+/// Idempotent: catalog columns + user overlay table for OpenRouter routing slugs.
+fn ensure_model_route_schema(conn: &rusqlite::Connection) -> AppResult<()> {
+    if table_exists(conn, "llm_sdk_model")
+        && !column_exists(conn, "llm_sdk_model", "route_providers_json")
+    {
+        conn.execute(
+            "ALTER TABLE llm_sdk_model ADD COLUMN route_providers_json TEXT NOT NULL DEFAULT '[]'",
+            params![],
+        )?;
+    }
+    if table_exists(conn, "llm_supplier_model")
+        && !column_exists(conn, "llm_supplier_model", "route_providers_json")
+    {
+        conn.execute(
+            "ALTER TABLE llm_supplier_model ADD COLUMN route_providers_json TEXT NOT NULL DEFAULT '[]'",
+            params![],
+        )?;
+    }
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS llm_model_route (
+           provider_id TEXT NOT NULL,
+           model_id TEXT NOT NULL,
+           route_providers_json TEXT NOT NULL DEFAULT '[]',
+           PRIMARY KEY (provider_id, model_id)
+         );",
+    )?;
+    Ok(())
+}
+
 fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)",
@@ -184,6 +214,12 @@ fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
 
     ensure_file_snapshot_binding_schema(conn)?;
     if cur < 30 {
+        conn.execute("INSERT INTO schema_version(version) VALUES (?1)", params![30])?;
+    }
+
+    ensure_model_route_schema(conn)?;
+    if cur < 31 {
+        crate::data::llm_catalog::backfill_route_overlay_from_settings(conn)?;
         conn.execute(
             "INSERT INTO schema_version(version) VALUES (?1)",
             params![SCHEMA_VERSION],
@@ -260,6 +296,19 @@ mod tests {
         drop(conn);
         drop(pool);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fresh_database_has_model_route_schema() {
+        let db = test_support::TempDb::new("route-schema");
+        let conn = db.conn();
+        assert!(column_exists(&conn, "llm_sdk_model", "route_providers_json"));
+        assert!(column_exists(
+            &conn,
+            "llm_supplier_model",
+            "route_providers_json"
+        ));
+        assert!(table_exists(&conn, "llm_model_route"));
     }
 }
 

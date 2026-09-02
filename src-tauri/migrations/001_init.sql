@@ -218,14 +218,15 @@ CREATE TABLE IF NOT EXISTS llm_sdk_option (
 );
 
 CREATE TABLE IF NOT EXISTS llm_sdk_model (
-  id                INTEGER PRIMARY KEY AUTOINCREMENT,
-  sdk_id            TEXT NOT NULL REFERENCES llm_sdk_option(sdk_id) ON DELETE CASCADE,
-  model_id          TEXT NOT NULL,
-  name              TEXT NOT NULL,
-  model_group       TEXT NOT NULL,
-  capabilities_json TEXT NOT NULL,
-  sort_order        INTEGER NOT NULL DEFAULT 0,
-  context_window    INTEGER
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  sdk_id               TEXT NOT NULL REFERENCES llm_sdk_option(sdk_id) ON DELETE CASCADE,
+  model_id             TEXT NOT NULL,
+  name                 TEXT NOT NULL,
+  model_group          TEXT NOT NULL,
+  capabilities_json    TEXT NOT NULL,
+  sort_order           INTEGER NOT NULL DEFAULT 0,
+  context_window       INTEGER,
+  route_providers_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_llm_sdk_model_sdk ON llm_sdk_model(sdk_id, sort_order);
 
@@ -240,16 +241,26 @@ CREATE TABLE IF NOT EXISTS llm_supplier_preset (
 );
 
 CREATE TABLE IF NOT EXISTS llm_supplier_model (
-  id                INTEGER PRIMARY KEY AUTOINCREMENT,
-  supplier_id       TEXT NOT NULL REFERENCES llm_supplier_preset(supplier_id) ON DELETE CASCADE,
-  model_id          TEXT NOT NULL,
-  name              TEXT NOT NULL,
-  model_group       TEXT NOT NULL,
-  capabilities_json TEXT NOT NULL,
-  sort_order        INTEGER NOT NULL DEFAULT 0,
-  context_window    INTEGER
+  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+  supplier_id          TEXT NOT NULL REFERENCES llm_supplier_preset(supplier_id) ON DELETE CASCADE,
+  model_id             TEXT NOT NULL,
+  name                 TEXT NOT NULL,
+  model_group          TEXT NOT NULL,
+  capabilities_json    TEXT NOT NULL,
+  sort_order           INTEGER NOT NULL DEFAULT 0,
+  context_window       INTEGER,
+  route_providers_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_llm_supplier_model_sup ON llm_supplier_model(supplier_id, sort_order);
+
+-- User-edited OpenRouter upstream pins, keyed by the live provider + model id
+-- (covers models that are not in the builtin catalog).
+CREATE TABLE IF NOT EXISTS llm_model_route (
+  provider_id          TEXT NOT NULL,
+  model_id             TEXT NOT NULL,
+  route_providers_json TEXT NOT NULL DEFAULT '[]',
+  PRIMARY KEY (provider_id, model_id)
+);
 
 -- Seed: SDK options (006 + 021)
 INSERT OR IGNORE INTO llm_sdk_option (

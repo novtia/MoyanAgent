@@ -285,6 +285,13 @@ export const CAPABILITY_OPTIONS = [
   { id: "text", label: "文本" },
 ] as const;
 
+export function capabilityLabel(capability: string) {
+  return (
+    CAPABILITY_OPTIONS.find((option) => option.id === capability)?.label ??
+    capability
+  );
+}
+
 export function makeLocalId(prefix: string) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random()
     .toString(36)
@@ -521,7 +528,7 @@ export function makeModel(
     ...(pricing ? { pricing } : {}),
     ...(input_modalities ? { input_modalities } : {}),
     ...(output_modalities ? { output_modalities } : {}),
-    ...(route_providers.length ? { route_providers } : {}),
+    route_providers,
   };
 }
 

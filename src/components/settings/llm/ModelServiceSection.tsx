@@ -26,6 +26,7 @@ import {
   type ManageModelsFilter,
   type ProviderSdkConfig,
   type ProviderValidationErrors,
+  capabilityLabel,
   getProviderSdkConfig,
   groupFromModelId,
   isBuiltinProvider,
@@ -2320,10 +2321,6 @@ function ProviderEnableSwitch({
       <span className="settings-toggle-thumb" />
     </button>
   );
-}
-
-function capabilityLabel(capability: string) {
-  return CAPABILITY_OPTIONS.find((option) => option.id === capability)?.label ?? capability;
 }
 
 function PlusIcon() {
