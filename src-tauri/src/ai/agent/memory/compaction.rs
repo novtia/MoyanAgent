@@ -655,6 +655,7 @@ mod budget_tests {
             context_cache_enabled: false,
             context_window: Some(1_048_576),
             todo_snapshot: None,
+            route_providers: Vec::new(),
         }
     }
 

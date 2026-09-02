@@ -1,28 +1,18 @@
 //! Filesystem-scoped tool implementations.
 //!
-//! Today we ship one: [`FileReadTool`]. It mirrors the TS `FileReadTool`
-//! in two important ways:
-//!
-//! - On a successful read, it records the absolute path in
-//!   [`ToolUseContext::nested_memory_attachment_triggers`], so the
-//!   runner's [`crate::ai::agent::memory::nested::collect_nested_memory`] pass
-//!   can fire path-scoped `.claude/rules/*.md` injection on the next
-//!   turn.
-//! - On a successful read, it also records the path in
-//!   [`ToolUseContext::read_file_state`] so subsequent reads of the same
-//!   path can be de-duplicated by upstream callers.
+//! Today we ship one: [`FileReadTool`]. After CreateDoc / Write / Edit it
+//! records a write receipt so a follow-up Read of the same bytes returns a
+//! stub instead of echoing the body back into the model context.
 //!
 //! The tool handles common on-disk encodings (UTF-8/UTF-16/GBK) via
-//! [`super::text_decode`]. Real callers usually prefer the host's native
-//! file reader; this implementation exists primarily so the agent loop
-//! has a working nested-memory trigger.
+//! [`super::text_decode`].
 
 use serde_json::Value;
 
 use crate::ai::agent::tools::paragraph::paragraph_count;
 use crate::ai::agent::tools::project_path::{self, display_path, FILE_REF_DESC};
 use crate::ai::agent::tools::read_receipt::{
-    content_hash, expand_read_range, MIN_READ_CONTEXT_LINES,
+    expand_read_range, is_fresh_write, record_receipt, DO_NOT_REREAD_NOTE, MIN_READ_CONTEXT_LINES,
 };
 use crate::ai::agent::tools::text_decode::detect_and_decode;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
@@ -221,7 +211,8 @@ impl FileReadTool {
                 name: TOOL_NAME.to_string(),
                 description: "Read a text file from the local filesystem. \
                     Returns the file's plain text (no line labels), so you can copy exact \
-                    snippets into Edit's `old_string`. \
+                    snippets into Edit's `old_string` when you have not just written \
+                    the file. \
                     When the user message cites a ranged file mention like \
                     `@\"chapter.md\"#P003-P007` (or the chip label shows `· P003–P007`), \
                     call ranged Read for that span: set `path` to the file and pass \
@@ -230,9 +221,12 @@ impl FileReadTool {
                     instead of the two args. Short ranges are auto-expanded with nearby \
                     context (at least 20 lines when the file is long enough). \
                     For open-ended prose tasks without a range mention, Read the full file \
-                    once up front. A document title without `.md` / `.txt` is enough when it \
-                    uniquely identifies the file. After Edit fails, re-Read the relevant span \
-                    before retrying. \
+                    once up front only if you did not just create or overwrite it. A document \
+                    title without `.md` / `.txt` is enough when it \
+                    uniquely identifies the file. After CreateDoc / Write / a successful \
+                    Edit, do NOT Read that file — you already have the text you submitted, \
+                    and a re-read of an unchanged write returns no body. \
+                    After Edit fails, re-Read the relevant span before retrying. \
                     Do not re-read before every Edit. \
                     Long files come back one page at a time: when the result has \
                     `truncated: true`, the text stops at `paragraph_to` and \
@@ -318,6 +312,20 @@ impl Tool for FileReadTool {
             let text = decoded.text;
             let paragraphs_total = paragraph_count(&text);
 
+            if is_fresh_write(&invocation.context.read_file_state, &canonical, &text) {
+                let chars = text.chars().filter(|c| !c.is_whitespace()).count();
+                return Ok(ToolResult::ok(serde_json::json!({
+                    "path": display_path(&canonical),
+                    "bytes": bytes.len(),
+                    "encoding": decoded.encoding.label(),
+                    "had_bom": decoded.had_bom,
+                    "chars": chars,
+                    "paragraphs_total": paragraphs_total,
+                    "unchanged": true,
+                    "note": DO_NOT_REREAD_NOTE,
+                })));
+            }
+
             let (requested_from, requested_to, paragraph_from, paragraph_to, context_expanded) =
                 match range {
                     None => (1, paragraphs_total, 1, paragraphs_total, false),
@@ -359,17 +367,12 @@ impl Tool for FileReadTool {
             let paragraphs_returned = paragraph_to - paragraph_from + 1;
             let ranged = range.is_some();
 
-            // Record both for nested-memory injection and for the read
-            // de-dup set on the active context.
-            if let Ok(mut s) = invocation.context.nested_memory_attachment_triggers.lock() {
-                s.insert(canonical.clone());
-            }
-            // Record the receipt against the *full* file content hash so
-            // unchanged re-reads can be short-circuited, even when this Read
-            // only returned a ranged window.
-            if let Ok(mut s) = invocation.context.read_file_state.lock() {
-                s.insert(canonical.clone(), content_hash(&text));
-            }
+            record_receipt(
+                &invocation.context.read_file_state,
+                &canonical,
+                &text,
+                false,
+            );
 
             Ok(ToolResult::ok(serde_json::json!({
                 "path": display_path(&canonical),
@@ -529,6 +532,81 @@ mod read_range_tests {
             path.ends_with("深喉验毒.md"),
             "result path should keep the real suffix, got {path}"
         );
+        let _ = Arc::clone(&ctx);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_read_after_write_returns_no_body() {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "moyan-read-fresh-write-{}-{}",
+            std::process::id(),
+            n
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = "chapter.txt";
+        let body = "第一段\n第二段\n第三段";
+        std::fs::write(dir.join(name), body).unwrap();
+        let ctx = ToolUseContextBuilder::new(AgentId::new(), dir.clone())
+            .build()
+            .0;
+        record_receipt(&ctx.read_file_state, &dir.join(name), body, true);
+        let tool = FileReadTool::new();
+        let res = tool
+            .execute(ToolInvocation {
+                id: MessageId("read".into()),
+                input: json!({ "path": name, "paragraph_from": 1, "paragraph_to": 3 }),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(res.content["unchanged"], true);
+        assert!(
+            res.content.get("text").is_none(),
+            "must not echo a body the model just wrote"
+        );
+        assert!(res.content["note"].as_str().unwrap().contains("Do not Read"));
+
+        let again = tool
+            .execute(ToolInvocation {
+                id: MessageId("read2".into()),
+                input: json!({ "path": name }),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(again.content["unchanged"], true);
+        assert!(again.content.get("text").is_none());
+        let _ = Arc::clone(&ctx);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_read_without_a_write_receipt_still_returns_text() {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "moyan-read-no-receipt-{}-{}",
+            std::process::id(),
+            n
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("notes.txt"), "hello").unwrap();
+        let ctx = ToolUseContextBuilder::new(AgentId::new(), dir.clone())
+            .build()
+            .0;
+        let tool = FileReadTool::new();
+        let res = tool
+            .execute(ToolInvocation {
+                id: MessageId("read".into()),
+                input: json!({ "path": "notes.txt" }),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(res.content["text"], "hello");
+        assert!(res.content.get("unchanged").is_none());
         let _ = Arc::clone(&ctx);
         let _ = std::fs::remove_dir_all(&dir);
     }

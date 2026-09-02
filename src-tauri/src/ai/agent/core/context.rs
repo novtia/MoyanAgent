@@ -6,15 +6,14 @@
 //! leak file caches, memory deltas or abort signals back to the parent.
 //!
 //! Cheap to share via `Arc`; mutate via inner `Mutex` only where the TS
-//! side does so (file caches, nested memory paths).
+//! side does so (file caches).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::watch;
 
-use crate::ai::agent::memory::UserContext;
 use crate::ai::agent::core::permission::PermissionMode;
 use crate::ai::agent::types::{AgentId, MessageRole, QuerySource};
 use crate::ai::session_log::SessionLogger;
@@ -54,19 +53,10 @@ pub struct ToolUseContext {
     /// tasks keep an isolated controller.
     pub abort: AbortSignal,
 
-    /// Files the model has already Read this session, mapped to the content
-    /// hash observed at that read/write. Used by FileReadTool to short-circuit
-    /// unchanged reads.
-    pub read_file_state: Arc<Mutex<HashMap<PathBuf, u64>>>,
-
-    /// Paths that triggered a nested-memory attachment on this turn.
-    pub nested_memory_attachment_triggers: Arc<Mutex<HashSet<PathBuf>>>,
-
-    /// `loadedNestedMemoryPaths` — long-lived dedup set, cleared on compact.
-    pub loaded_nested_memory_paths: Arc<Mutex<HashSet<PathBuf>>>,
-
-    /// User context cache pointer. `None` ⇒ context disabled (bare/simple mode).
-    pub user_context: Option<Arc<UserContext>>,
+    /// Files the model has already Read or written this session, mapped to a
+    /// content hash and whether the last observation was a write. Read uses
+    /// this to skip echoing a body the model just submitted.
+    pub read_file_state: Arc<Mutex<HashMap<PathBuf, FileReceipt>>>,
 
     /// The *parent agent's* fully-rendered `system_prompt`. Populated
     /// when the engine enters a query loop so that any `Agent(...)`
@@ -80,6 +70,14 @@ pub struct ToolUseContext {
     pub current_turn_role: MessageRole,
 }
 
+/// Last Read/Write observation for a path: content hash plus whether the
+/// model already holds the body from a CreateDoc / Write / Edit call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileReceipt {
+    pub hash: u64,
+    pub from_write: bool,
+}
+
 impl ToolUseContext {
     pub fn builder(agent_id: AgentId, cwd: PathBuf) -> ToolUseContextBuilder {
         ToolUseContextBuilder::new(agent_id, cwd)
@@ -88,17 +86,10 @@ impl ToolUseContext {
     /// Fork a sub-agent context. Mirrors `createSubagentContext()`:
     ///
     /// - file caches are cloned (not shared);
-    /// - memory dedup sets become *nested* (child changes don't affect parent);
     /// - abort signal becomes a child of the parent's signal.
     pub fn fork_subagent(self: &Arc<Self>, agent_id: AgentId) -> Arc<ToolUseContext> {
         let read_clone = self
             .read_file_state
-            .lock()
-            .ok()
-            .map(|s| s.clone())
-            .unwrap_or_default();
-        let loaded_clone = self
-            .loaded_nested_memory_paths
             .lock()
             .ok()
             .map(|s| s.clone())
@@ -116,9 +107,6 @@ impl ToolUseContext {
             session_logger: self.session_logger.clone(),
             abort: self.abort.child(),
             read_file_state: Arc::new(Mutex::new(read_clone)),
-            nested_memory_attachment_triggers: Arc::new(Mutex::new(HashSet::new())),
-            loaded_nested_memory_paths: Arc::new(Mutex::new(loaded_clone)),
-            user_context: self.user_context.clone(),
             parent_system_prompt: self.parent_system_prompt.clone(),
             current_turn_role: MessageRole::User,
         })
@@ -282,7 +270,6 @@ pub struct ToolUseContextBuilder {
     cwd: PathBuf,
     query_source: QuerySource,
     permission_mode: PermissionMode,
-    user_context: Option<Arc<UserContext>>,
     parent_system_prompt: Option<String>,
     session_id: Option<String>,
     role_state_scope_id: Option<String>,
@@ -302,7 +289,6 @@ impl ToolUseContextBuilder {
             cwd,
             query_source: QuerySource::ReplMainThread,
             permission_mode: PermissionMode::Default,
-            user_context: None,
             parent_system_prompt: None,
             session_id: None,
             role_state_scope_id: None,
@@ -359,11 +345,6 @@ impl ToolUseContextBuilder {
         self
     }
 
-    pub fn user_context(mut self, ctx: Arc<UserContext>) -> Self {
-        self.user_context = Some(ctx);
-        self
-    }
-
     pub fn parent_system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.parent_system_prompt = Some(prompt.into());
         self
@@ -390,9 +371,6 @@ impl ToolUseContextBuilder {
             session_logger: self.session_logger,
             abort: signal,
             read_file_state: Arc::new(Mutex::new(HashMap::new())),
-            nested_memory_attachment_triggers: Arc::new(Mutex::new(HashSet::new())),
-            loaded_nested_memory_paths: Arc::new(Mutex::new(HashSet::new())),
-            user_context: self.user_context,
             parent_system_prompt: self.parent_system_prompt,
             current_turn_role: MessageRole::User,
         };

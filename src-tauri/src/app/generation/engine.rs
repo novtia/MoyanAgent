@@ -5,7 +5,6 @@ use tauri::{AppHandle, Emitter};
 
 use crate::ai::agent::core::context::{AbortHandle, AbortSignal};
 use crate::ai::agent::exec::query::ToolEventCallback;
-use crate::ai::agent::memory::UserContextLoader;
 use crate::ai::agent::{self, RunAgentParams, TaskState, ToolPool};
 use crate::ai::{chat, parameters, router};
 use crate::data::{paths, session, settings};
@@ -316,28 +315,9 @@ pub(crate) async fn run_cancellable_generation(
         }
     }
 
-    // Aim the memory walk at this session's project before reading it. The
-    // loader has no other way to learn the path: it is per-session state that
-    // only the database knows.
-    state.user_context.set_project_cwd(project_cwd.as_deref());
-
-    // Prepend user-context when the agent opts in (Plan/Explore omit it).
-    if let Ok(ctx) = state.user_context.load() {
-        if !definition.omit_claude_md {
-            let rendered = ctx.rendered.trim();
-            if !rendered.is_empty() {
-                let mut head = vec![chat::HistoryTurn {
-                    role: "user".into(),
-                    text: Some(ctx.rendered.clone()),
-                    thinking_content: None,
-                    images: Vec::new(),
-                    timeline: Vec::new(),
-                }];
-                head.append(&mut request.history);
-                request.history = head;
-            }
-        }
-    }
+    // Enabled `.moyan/*.md` files land as the first hidden user turn:
+    // every file is concatenated into that message's single `text`.
+    project_rules::prepend_project_rules(&mut request.history, project_cwd.as_deref());
 
     // Append the structured role board after the transcript. The dedicated
     // `role-state` sub-agent reads prose + calls `RoleState` get instead.
@@ -356,19 +336,6 @@ pub(crate) async fn run_cancellable_generation(
         } else {
             format!("{base}\n\n---\n\n{session_sys}")
         };
-    }
-
-    // Inject enabled project rules (`<projectRoot>/.moyan/*.md`) so they read as
-    // part of the system prompt on every generation.
-    if let Some(cwd) = project_cwd.as_deref() {
-        if let Some(rules) = project_rules::collect_project_rules(cwd) {
-            let base = definition.system_prompt.trim();
-            definition.system_prompt = if base.is_empty() {
-                rules
-            } else {
-                format!("{base}\n\n---\n\n{rules}")
-            };
-        }
     }
 
     let worker = ToolPool::new();

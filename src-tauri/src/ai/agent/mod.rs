@@ -23,10 +23,8 @@
 //!       mcp          MCP-server availability registry
 //!
 //!     memory/        ── L2..L5 context-memory layers
-//!       (mod.rs)     traits: MemoryFile, UserContext, SessionMemory, ...
-//!       user_context CLAUDE.md / rules loader (Fs-backed)
+//!       (mod.rs)     traits: SessionMemory, AutoMemory, AgentMemory, ...
 //!       session      per-session summary.md extractor (Fs-backed)
-//!       nested       path-scoped rule injection driven by tool reads
 //!
 //!     tools/         ── tool trait + built-in tools
 //!       (mod.rs)     Tool trait, ToolPool, ToolInvocation, ...
@@ -116,11 +114,9 @@ mod re_exports {
     pub use super::config::mcp::{McpRegistry, StaticMcpRegistry};
     pub use super::config::registry::AgentRegistry;
     // memory
-    pub use super::memory::nested::{collect_nested_memory, glob_match};
     pub use super::memory::session::{
         DEFAULT_TEMPLATE as SESSION_MEMORY_TEMPLATE, FsSessionMemoryExtractor, SessionMemoryConfig,
     };
-    pub use super::memory::user_context::{FsUserContextLoader, UserContextConfig};
     // exec
     pub use super::exec::engine::{
         AgentChatOutcome, EngineTurn, ProviderEngine, ProviderQueryEngine, ToolUseRequest,

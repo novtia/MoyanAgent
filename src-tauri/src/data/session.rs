@@ -616,7 +616,7 @@ pub fn clear_response_cache(conn: &DbConn, id: &str) -> AppResult<()> {
 /// Uses the **most recent assistant message's** prompt size as the context
 /// window usage indicator. The prompt sent to the API already includes
 /// everything in that request: system prompt, tool definitions, injected
-/// context (CLAUDE.md / env block), full conversation history, and the current
+/// context (`.moyan` project rules / env block), full conversation history, and the current
 /// user message. It therefore accurately represents how much of the context
 /// window is filled and how much remains for future turns.
 ///

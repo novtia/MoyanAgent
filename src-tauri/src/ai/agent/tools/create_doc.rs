@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
 use crate::ai::agent::tools::project_path::display_path;
-use crate::ai::agent::tools::read_receipt::content_hash;
+use crate::ai::agent::tools::read_receipt::{record_receipt, DO_NOT_REREAD_NOTE};
 use crate::ai::agent::tools::text_decode::{
     detect_and_decode, normalize_tool_string, write_text_file, TextEncoding,
 };
@@ -51,7 +51,10 @@ impl CreateDocTool {
                     different title, use Edit to change part of it, or pass \
                     `overwrite: true` to replace the whole file on purpose. \
                     Prefer this over Write for authoring new documents — you only \
-                    supply the title, the content, the type, and optionally a folder."
+                    supply the title, the content, the type, and optionally a folder. \
+                    After success, do NOT Read the new file: you already hold \
+                    `content`. To expand it, Edit using `old_string` copied from \
+                    that `content` (or its tail)."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -201,11 +204,12 @@ impl Tool for CreateDocTool {
             // joined path if canonicalization fails for any reason.
             let canonical = std::fs::canonicalize(&path).unwrap_or(path);
 
-            // Stamp a read receipt (keyed by the content just written) so
-            // unchanged re-reads of this new file can be short-circuited.
-            if let Ok(mut s) = invocation.context.read_file_state.lock() {
-                s.insert(canonical.clone(), content_hash(&content));
-            }
+            record_receipt(
+                &invocation.context.read_file_state,
+                &canonical,
+                &content,
+                true,
+            );
 
             Ok(ToolResult::ok(json!({
                 "path": display_path(&canonical),
@@ -214,6 +218,7 @@ impl Tool for CreateDocTool {
                 "folder": folder.map(str::trim).filter(|s| !s.is_empty()),
                 "created": created,
                 "chars": count_words(&content),
+                "note": DO_NOT_REREAD_NOTE,
             })))
         })
     }
@@ -396,6 +401,10 @@ mod overwrite_tests {
         assert!(
             first.content.get("text").is_none(),
             "CreateDoc must not echo the body back into context"
+        );
+        assert!(
+            first.content["note"].as_str().unwrap().contains("Do not Read"),
+            "success should tell the model not to re-read"
         );
 
         let second = run(&ctx, doc("第一章", "新稿")).await;

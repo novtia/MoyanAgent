@@ -107,7 +107,6 @@ fn chat() -> AgentDefinition {
         "WebSearch".into(),
         "WebFetch".into(),
     ];
-    d.omit_claude_md = true;
     d
 }
 
@@ -116,10 +115,6 @@ fn explore() -> AgentDefinition {
     d.when_to_use = prompts::EXPLORE_WHEN_TO_USE.into();
     d.tools = vec!["*".into()];
     d.disallowed_tools = read_only_deny();
-    // Explore is a fast read-only search agent — it doesn't need
-    // commit/PR/lint rules from CLAUDE.md. The parent agent has the full
-    // context and interprets the report.
-    d.omit_claude_md = true;
     d
 }
 
@@ -136,10 +131,6 @@ fn plan() -> AgentDefinition {
     //      tool the deny-list didn't anticipate, or a write-shaped Bash
     //      command).
     d.permission_mode = Some(PermissionMode::Plan);
-    // Plan is read-only and can FileRead CLAUDE.md directly if it needs
-    // conventions. Dropping it from the auto-injected context saves
-    // tokens without blocking access.
-    d.omit_claude_md = true;
     d
 }
 
@@ -179,7 +170,6 @@ fn role_state() -> AgentDefinition {
     let mut d = AgentDefinition::builtin(AGENT_ROLE_STATE, prompts::ROLE_STATE_PROMPT);
     d.when_to_use = prompts::ROLE_STATE_WHEN_TO_USE.into();
     d.tools = vec!["RoleState".into()];
-    d.omit_claude_md = true;
     d.passthrough_output = true;
     d
 }
@@ -193,7 +183,6 @@ fn rpg() -> AgentDefinition {
     let mut d = AgentDefinition::builtin(AGENT_RPG, prompts::RPG_PROMPT);
     d.when_to_use = prompts::RPG_WHEN_TO_USE.into();
     d.tools = vec!["AskUser".into()];
-    d.omit_claude_md = true;
     d.passthrough_output = true;
     d
 }
@@ -219,7 +208,6 @@ fn trpg_director() -> AgentDefinition {
         "AskUser".into(),
         "RoleState".into(),
     ];
-    d.omit_claude_md = true;
     d
 }
 
@@ -233,6 +221,5 @@ fn trpg_character() -> AgentDefinition {
         "Write".into(),
         "Edit".into(),
     ];
-    d.omit_claude_md = true;
     d
 }

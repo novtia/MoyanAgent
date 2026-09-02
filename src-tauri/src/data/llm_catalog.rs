@@ -65,6 +65,7 @@ fn load_sdk_models(conn: &DbConn, sdk_id: &str) -> AppResult<Vec<ModelServiceMod
             pricing: None,
             input_modalities: None,
             output_modalities: None,
+            route_providers: Vec::new(),
         });
     }
     Ok(out)
@@ -99,6 +100,7 @@ fn load_supplier_models(conn: &DbConn, supplier_id: &str) -> AppResult<Vec<Model
             pricing: None,
             input_modalities: None,
             output_modalities: None,
+            route_providers: Vec::new(),
         });
     }
     Ok(out)

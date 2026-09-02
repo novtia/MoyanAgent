@@ -1,8 +1,9 @@
 //! Project rule files stored under `<projectRoot>/.moyan/*.md`.
 //!
-//! Enabled rules are concatenated into the agent system prompt on every
-//! generation. A small `.moyan/rules.json` manifest tracks which rule files are
-//! disabled; any `*.md` not listed there is considered enabled.
+//! Enabled rules are concatenated into a single hidden user message and
+//! prepended to chat history on every generation. A small `.moyan/rules.json`
+//! manifest tracks which rule files are disabled; any `*.md` not listed there
+//! is considered enabled.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -11,6 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::ai::chat::HistoryTurn;
 use crate::error::{AppError, AppResult};
 
 use super::reader_paths::{session_project_cwd, validate_reader_write_path};
@@ -85,8 +87,10 @@ fn list_rule_files(rules_dir: &Path) -> Vec<String> {
     names
 }
 
-/// Concatenate all enabled rule files into a single `<project-rules>` block, or
-/// `None` when there is nothing to inject.
+/// Concatenate every enabled `.moyan/*.md` file into one string.
+///
+/// Each file becomes its own `<system-reminder>` section; the sections are
+/// joined with a blank line. `None` when there is nothing to inject.
 pub fn collect_project_rules(project_cwd: &Path) -> Option<String> {
     let rules_dir = project_cwd.join(RULES_DIR);
     if !rules_dir.is_dir() {
@@ -106,15 +110,33 @@ pub fn collect_project_rules(project_cwd: &Path) -> Option<String> {
         if content.is_empty() {
             continue;
         }
-        blocks.push(format!("## {name}\n{content}"));
+        blocks.push(format!(
+            "<system-reminder>\nContents of {RULES_DIR}/{name} (project-rules):\n\n{content}\n</system-reminder>"
+        ));
     }
     if blocks.is_empty() {
         return None;
     }
-    Some(format!(
-        "<project-rules>\n{}\n</project-rules>",
-        blocks.join("\n\n")
-    ))
+    Some(blocks.join("\n\n"))
+}
+
+/// Insert enabled project rules as the first hidden user turn.
+pub fn prepend_project_rules(history: &mut Vec<HistoryTurn>, project_cwd: Option<&Path>) {
+    let Some(cwd) = project_cwd.filter(|p| !p.as_os_str().is_empty()) else {
+        return;
+    };
+    let Some(text) = collect_project_rules(cwd) else {
+        return;
+    };
+    let mut head = vec![HistoryTurn {
+        role: "user".into(),
+        text: Some(text),
+        thinking_content: None,
+        images: Vec::new(),
+        timeline: Vec::new(),
+    }];
+    head.append(history);
+    *history = head;
 }
 
 /// Enumerate rule files with their enabled state for the UI.
@@ -184,4 +206,79 @@ pub fn set_project_rule_enabled(
         ));
     }
     set_rule_enabled_in_dir(rules_dir, &name, enabled)
+}
+
+#[cfg(test)]
+mod collect_tests {
+    use super::{collect_project_rules, prepend_project_rules, RULES_DIR};
+    use crate::ai::chat::HistoryTurn;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_project(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "moyan-rules-{name}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join(RULES_DIR)).unwrap();
+        dir
+    }
+
+    #[test]
+    fn missing_folder_injects_nothing() {
+        let dir = temp_project("missing");
+        let _ = fs::remove_dir_all(dir.join(RULES_DIR));
+        assert!(collect_project_rules(&dir).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn several_files_become_one_concatenated_text() {
+        let dir = temp_project("many");
+        fs::write(dir.join(RULES_DIR).join("a.md"), "alpha rule").unwrap();
+        fs::write(dir.join(RULES_DIR).join("b.md"), "beta rule").unwrap();
+
+        let text = collect_project_rules(&dir).expect("rules present");
+        assert!(text.contains("Contents of .moyan/a.md (project-rules):"));
+        assert!(text.contains("alpha rule"));
+        assert!(text.contains("Contents of .moyan/b.md (project-rules):"));
+        assert!(text.contains("beta rule"));
+        assert!(
+            text.find("alpha rule").unwrap() < text.find("beta rule").unwrap(),
+            "files are concatenated in name order into a single string"
+        );
+
+        let mut history = vec![HistoryTurn {
+            role: "user".into(),
+            text: Some("你好".into()),
+            thinking_content: None,
+            images: Vec::new(),
+            timeline: Vec::new(),
+        }];
+        prepend_project_rules(&mut history, Some(&dir));
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].text.as_deref(), Some(text.as_str()));
+        assert_eq!(history[1].text.as_deref(), Some("你好"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn disabled_files_are_skipped() {
+        let dir = temp_project("disabled");
+        fs::write(dir.join(RULES_DIR).join("keep.md"), "keep me").unwrap();
+        fs::write(dir.join(RULES_DIR).join("skip.md"), "drop me").unwrap();
+        fs::write(
+            dir.join(RULES_DIR).join("rules.json"),
+            r#"{"disabled":["skip.md"]}"#,
+        )
+        .unwrap();
+
+        let text = collect_project_rules(&dir).expect("keep.md still enabled");
+        assert!(text.contains("keep me"));
+        assert!(!text.contains("drop me"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

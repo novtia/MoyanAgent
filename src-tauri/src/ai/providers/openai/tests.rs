@@ -87,6 +87,7 @@ use super::responses::stream::{
             context_cache_enabled: true,
             context_window: None,
             todo_snapshot: None,
+            route_providers: Vec::new(),
         };
         let body = build_responses_body(&request);
         assert_eq!(body["previous_response_id"], "resp_prev");
@@ -143,6 +144,7 @@ use super::responses::stream::{
             todo_snapshot: Some(
                 "<todolist>\n✔ #1 a [done]\n☐ #2 b [pending]\n</todolist>".into(),
             ),
+            route_providers: Vec::new(),
         };
         let chat = build_chat_body(&request, false);
         let messages = chat["messages"].as_array().expect("messages");
@@ -166,6 +168,111 @@ use super::responses::stream::{
         assert_eq!(last["role"], "user");
         let text = last["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("☐ #2 b"), "cache delta must still carry the live list");
+    }
+
+    #[test]
+    fn openrouter_route_providers_become_provider_only() {
+        let request = ChatRequest {
+            provider: crate::ai::chat::ProviderConfig {
+                id: "openrouter".into(),
+                name: "OpenRouter".into(),
+                sdk: "openai".into(),
+                endpoint: "https://openrouter.ai/api/v1/chat/completions".into(),
+                api_key: "k".into(),
+                context_cache_enabled: false,
+            },
+            model: "qwen/qwen3.7-max".into(),
+            prompt: "hi".into(),
+            attachments: Vec::new(),
+            system_prompt: String::new(),
+            history: Vec::new(),
+            parameters: crate::ai::parameters::factory().build(
+                "auto".into(),
+                "auto".into(),
+                crate::data::settings::ModelParamSettings::default(),
+            ),
+            tools: Vec::new(),
+            tool_chain: Vec::new(),
+            tool_results: Vec::new(),
+            pending_assistant_turn: None,
+            previous_response_id: None,
+            context_cache_enabled: false,
+            context_window: None,
+            todo_snapshot: None,
+            route_providers: vec!["alibaba".into(), "together".into()],
+        };
+        let body = build_chat_body(&request, false);
+        assert_eq!(body["provider"]["only"], json!(["alibaba", "together"]));
+    }
+
+    #[test]
+    fn empty_route_providers_omit_openrouter_provider_field() {
+        let request = ChatRequest {
+            provider: crate::ai::chat::ProviderConfig {
+                id: "openrouter".into(),
+                name: "OpenRouter".into(),
+                sdk: "openai".into(),
+                endpoint: "https://openrouter.ai/api/v1/chat/completions".into(),
+                api_key: "k".into(),
+                context_cache_enabled: false,
+            },
+            model: "qwen/qwen3.7-max".into(),
+            prompt: "hi".into(),
+            attachments: Vec::new(),
+            system_prompt: String::new(),
+            history: Vec::new(),
+            parameters: crate::ai::parameters::factory().build(
+                "auto".into(),
+                "auto".into(),
+                crate::data::settings::ModelParamSettings::default(),
+            ),
+            tools: Vec::new(),
+            tool_chain: Vec::new(),
+            tool_results: Vec::new(),
+            pending_assistant_turn: None,
+            previous_response_id: None,
+            context_cache_enabled: false,
+            context_window: None,
+            todo_snapshot: None,
+            route_providers: Vec::new(),
+        };
+        let body = build_chat_body(&request, false);
+        assert!(body.get("provider").is_none());
+    }
+
+    #[test]
+    fn route_providers_ignored_off_openrouter() {
+        let request = ChatRequest {
+            provider: crate::ai::chat::ProviderConfig {
+                id: "openai".into(),
+                name: "OpenAI".into(),
+                sdk: "openai".into(),
+                endpoint: "https://api.openai.com/v1/chat/completions".into(),
+                api_key: "k".into(),
+                context_cache_enabled: false,
+            },
+            model: "gpt-4o".into(),
+            prompt: "hi".into(),
+            attachments: Vec::new(),
+            system_prompt: String::new(),
+            history: Vec::new(),
+            parameters: crate::ai::parameters::factory().build(
+                "auto".into(),
+                "auto".into(),
+                crate::data::settings::ModelParamSettings::default(),
+            ),
+            tools: Vec::new(),
+            tool_chain: Vec::new(),
+            tool_results: Vec::new(),
+            pending_assistant_turn: None,
+            previous_response_id: None,
+            context_cache_enabled: false,
+            context_window: None,
+            todo_snapshot: None,
+            route_providers: vec!["openai".into()],
+        };
+        let body = build_chat_body(&request, false);
+        assert!(body.get("provider").is_none());
     }
 
     #[test]

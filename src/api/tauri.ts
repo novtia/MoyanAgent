@@ -24,6 +24,7 @@ import type {
   ProjectTextFile,
   PendingDiffRow,
   PendingDiffRevert,
+  RemoteModelEndpoint,
   RemoteModelInfo,
   RestoreResult,
   SessionSearchResult,
@@ -64,6 +65,10 @@ export const api = {
   fetchProviderModels: (sdk: string, endpoint: string, apiKey: string) =>
     invoke<RemoteModelInfo[]>("fetch_provider_models", {
       args: { sdk, endpoint, apiKey },
+    }),
+  fetchModelEndpoints: (endpoint: string, apiKey: string, modelId: string) =>
+    invoke<RemoteModelEndpoint[]>("fetch_model_endpoints", {
+      args: { endpoint, apiKey, modelId },
     }),
   webSearch: (query: string, maxResults?: number) =>
     invoke<WebSearchOutcome>("web_search", {

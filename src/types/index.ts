@@ -33,6 +33,19 @@ export interface ModelServiceModel {
   input_modalities?: string[] | null;
   /** Output modalities from upstream catalogs (text|image|video|…). */
   output_modalities?: string[] | null;
+  /**
+   * OpenRouter `provider.only` slugs. Empty / omitted means automatic routing
+   * across that model's available upstreams.
+   */
+  route_providers?: string[] | null;
+}
+
+/** One OpenRouter upstream for a model (`GET /models/{id}/endpoints`). */
+export interface RemoteModelEndpoint {
+  /** Routing slug used in `provider.only` / `provider.order`. */
+  slug: string;
+  /** Human-readable provider name. */
+  name: string;
 }
 
 /** Rich model entry returned by `fetch_provider_models`. */

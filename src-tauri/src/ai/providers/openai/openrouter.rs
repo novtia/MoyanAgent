@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use reqwest::StatusCode;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::ai::chat::{ChatRequest, GenerateResponse, TextDeltaCallback};
 use crate::error::{AppError, AppResult};
@@ -220,6 +220,27 @@ pub(crate) fn is_openrouter_endpoint(endpoint: &str) -> bool {
         .trim()
         .to_ascii_lowercase()
         .contains("openrouter.ai")
+}
+
+/// Pin the request to specific OpenRouter upstreams via `provider.only`.
+pub(crate) fn apply_openrouter_provider_routing(
+    map: &mut Map<String, Value>,
+    request: &ChatRequest,
+) {
+    if !is_openrouter_endpoint(&request.provider.endpoint) {
+        return;
+    }
+    let only: Vec<Value> = request
+        .route_providers
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| json!(s))
+        .collect();
+    if only.is_empty() {
+        return;
+    }
+    map.insert("provider".into(), json!({ "only": only }));
 }
 
 /// Agent tool-calling requests must not ask OpenRouter for image output.

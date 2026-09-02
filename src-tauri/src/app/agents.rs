@@ -86,44 +86,6 @@ pub(crate) struct AgentSummary {
     pub(crate) disallowed_tools: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct UserContextSummary {
-    pub(crate) file_count: usize,
-    pub(crate) rendered_chars: usize,
-    pub(crate) files: Vec<UserContextFile>,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct UserContextFile {
-    pub(crate) ty: String,
-    pub(crate) path: String,
-    pub(crate) conditional: bool,
-    pub(crate) path_globs: Option<Vec<String>>,
-}
-
-#[tauri::command]
-pub fn refresh_user_context(
-    state: tauri::State<Arc<AppState>>,
-) -> Result<UserContextSummary, AppError> {
-    use crate::ai::agent::memory::UserContextLoader;
-    state.user_context.invalidate();
-    let ctx = state.user_context.load()?;
-    Ok(UserContextSummary {
-        file_count: ctx.memory_files.len(),
-        rendered_chars: ctx.rendered.chars().count(),
-        files: ctx
-            .memory_files
-            .iter()
-            .map(|mf| UserContextFile {
-                ty: format!("{:?}", mf.ty).to_lowercase(),
-                path: mf.path.to_string_lossy().into_owned(),
-                conditional: mf.conditional,
-                path_globs: mf.path_globs.clone(),
-            })
-            .collect(),
-    })
-}
-
 #[tauri::command]
 pub fn set_mcp_servers(
     state: tauri::State<Arc<AppState>>,

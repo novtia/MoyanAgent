@@ -37,11 +37,11 @@ pub const AGENT_TOOL_NAME: &str = "Agent";
 /// invoked through the [`Tool`] trait (i.e. the model called
 /// `Agent(...)`).
 ///
-/// Hosts implement this once over their settings/db/user-context layer;
+/// Hosts implement this once over their settings/db layer;
 /// AgentTool remains decoupled from any specific configuration source.
 /// Returning the second tuple member is how the host injects
 /// runtime-only context that doesn't fit on the `AgentDefinition`
-/// (CLAUDE.md, drained task notifications, plan-mode banners, ...).
+/// (drained task notifications, plan-mode banners, ...).
 pub trait ChatRequestFactory: Send + Sync {
     /// Build a chat request for a spawned agent.
     ///
@@ -278,7 +278,7 @@ impl AgentTool {
     /// `ChatRequest` in hand. The `Tool` impl below uses
     /// [`AgentTool::dispatch`] directly because the factory needs to see
     /// the resolved [`AgentDefinition`] *before* building the request
-    /// (to honour `omit_claude_md`, MCP filters, etc.).
+    /// (model / MCP filters, etc.).
     pub async fn call(
         &self,
         invocation: AgentInvocation,
@@ -546,8 +546,7 @@ impl Tool for AgentTool {
             };
 
             // Factory sees the resolved definition so it can honour
-            // `omit_claude_md`, `requiredMcpServers`, etc., and emit
-            // initial attachments (user-context, plan-mode banner, …).
+            // model overrides, MCP filters, etc.
             let (chat_request, initial_attachments) =
                 match factory.build(
                     &invocation_args.prompt,

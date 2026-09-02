@@ -221,9 +221,10 @@ fn apply_role_model(chat: &mut ChatRequest, settings: &settings::Settings, role:
     if provider.api_key.trim().is_empty() || provider.endpoint.trim().is_empty() {
         return;
     }
-    chat.model = model_id;
+    chat.model = model_id.clone();
     chat.provider = provider_config_from(provider);
     chat.context_cache_enabled = chat.provider.context_cache_enabled;
+    chat.route_providers = provider.route_providers_for(&model_id);
     // Model switch invalidates any previous Responses session cache.
     chat.previous_response_id = None;
 }

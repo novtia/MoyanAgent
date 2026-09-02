@@ -382,6 +382,8 @@ pub struct ChatRequest {
     /// message so a long transcript cannot bury unfinished items. `None`
     /// when this run has no list.
     pub todo_snapshot: Option<String>,
+    /// OpenRouter `provider.only` slugs. Empty means automatic load balancing.
+    pub route_providers: Vec<String>,
 }
 
 impl ChatRequest {

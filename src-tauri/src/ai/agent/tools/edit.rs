@@ -21,7 +21,9 @@ use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileChangeRecord, FileOp, FileSnapshotStore};
 use crate::ai::agent::tools::project_path::{self, display_path, FILE_REF_DESC};
-use crate::ai::agent::tools::read_receipt::record_receipt;
+use crate::ai::agent::tools::read_receipt::{
+    clear_receipt, record_receipt, DO_NOT_REREAD_NOTE,
+};
 use crate::ai::agent::tools::text_decode::{
     detect_and_decode, find_quote_folded_ranges, normalize_tool_string, read_text_file,
     remap_quotes_to_sample, write_text_file, TextEncoding,
@@ -47,7 +49,8 @@ impl FileWriteTool {
             spec: ToolSpec {
                 name: WRITE_TOOL.to_string(),
                 description: "Write a UTF-8 file to disk, creating parent directories as needed. \
-                    Overwrites the file if it already exists."
+                    Overwrites the file if it already exists. After success, do NOT Read \
+                    the file back — copy Edit `old_string` from the `content` you just submitted."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -136,7 +139,7 @@ impl Tool for FileWriteTool {
             write_text_file(&path, &content, encoding, had_bom)
                 .map_err(|e| AppError::Other(format!("Write: write {:?}: {e}", path)))?;
 
-            record_receipt(&invocation.context.read_file_state, &path, &content);
+            record_receipt(&invocation.context.read_file_state, &path, &content, true);
 
             let chars = content.chars().filter(|c| !c.is_whitespace()).count();
             let lines = if content.is_empty() {
@@ -151,6 +154,7 @@ impl Tool for FileWriteTool {
                 "created": !exists,
                 "chars": chars,
                 "lines": lines,
+                "note": DO_NOT_REREAD_NOTE,
             })))
         })
     }
@@ -172,15 +176,17 @@ impl FileEditTool {
             spec: ToolSpec {
                 name: EDIT_TOOL.to_string(),
                 description: "Replace an existing file with the complete revised document. \
-                    Pass `path`, `old_string` (current text copied from Read — the whole \
-                    file when rewriting), and `new_string` (the full replacement). \
+                    Pass `path`, `old_string` (the current span to replace), and \
+                    `new_string` (the full replacement). \
                     `new_string` is the delivered document: only document body, no \
                     explanations, comparisons, change logs, or reasons. If the original \
                     is wrong, rewrite it fully in `new_string`; do not patch around bad \
-                    prose. `old_string` must match once unless `replace_all` is true. \
+                    prose. Copy `old_string` from the CreateDoc/Write `content` you just \
+                    submitted in this turn — do not Read the file first. Read only if \
+                    Edit fails, or the file was not written in this turn. \
+                    `old_string` must match once unless `replace_all` is true. \
                     ASCII `\"` and typographic `“”`/`「」` match equivalently. Empty \
-                    `new_string` deletes the matched span. If Edit fails, Read and retry \
-                    with the exact current text."
+                    `new_string` deletes the matched span."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -194,8 +200,10 @@ impl FileEditTool {
                         },
                         "old_string": {
                             "type": "string",
-                            "description": "Current file text to replace (copy from Read). \
-                                Use the whole document when rewriting. Must match once unless `replace_all` is true."
+                            "description": "Current file text to replace. Copy from the \
+                                CreateDoc/Write `content` you just wrote, or from Read if \
+                                you have not written this file in this turn. Use the whole \
+                                document when rewriting. Must match once unless `replace_all` is true."
                         },
                         "new_string": {
                             "type": "string",
@@ -273,13 +281,17 @@ impl Tool for FileEditTool {
 
             let plan = match plan_edit(&decoded.text, &raw_old, &raw_new) {
                 Ok(plan) => plan,
-                Err(MatchError::NotFound) => return Ok(not_found_error(&path)),
+                Err(MatchError::NotFound) => {
+                    clear_receipt(&invocation.context.read_file_state, &path);
+                    return Ok(not_found_error(&path));
+                }
                 Err(MatchError::Identical) => {
                     return Ok(ToolResult::error(identical_error()));
                 }
             };
             let occurrences = plan.occurrences();
             if occurrences > 1 && !replace_all {
+                clear_receipt(&invocation.context.read_file_state, &path);
                 return Ok(not_unique_error(occurrences));
             }
 
@@ -314,7 +326,7 @@ impl Tool for FileEditTool {
             write_text_file(&path, &updated, decoded.encoding, decoded.had_bom)
                 .map_err(|e| AppError::Other(format!("Edit: write {:?}: {e}", path)))?;
 
-            record_receipt(&invocation.context.read_file_state, &path, &updated);
+            record_receipt(&invocation.context.read_file_state, &path, &updated, true);
 
             // Same key the snapshot row uses, so review rows and rollbacks
             // resolve to one identity per file.

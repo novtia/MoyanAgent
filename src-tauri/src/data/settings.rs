@@ -145,6 +145,9 @@ pub struct ModelServiceModel {
     /// Output modalities from upstream catalogs (text|image|video|…).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_modalities: Option<Vec<String>>,
+    /// OpenRouter `provider.only` slugs. Empty / omitted ⇒ automatic routing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub route_providers: Vec<String>,
 }
 
 fn default_enabled() -> bool {
@@ -172,6 +175,32 @@ pub struct ModelProvider {
     #[serde(default)]
     pub context_cache_enabled: bool,
     pub models: Vec<ModelServiceModel>,
+}
+
+impl ModelProvider {
+    /// OpenRouter routing slugs configured for `model_id`. Empty ⇒ auto.
+    pub fn route_providers_for(&self, model_id: &str) -> Vec<String> {
+        self.models
+            .iter()
+            .find(|m| m.id.trim() == model_id.trim())
+            .map(|m| normalize_route_provider_slugs(&m.route_providers))
+            .unwrap_or_default()
+    }
+}
+
+fn normalize_route_provider_slugs(raw: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for s in raw {
+        let t = s.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if seen.insert(t.to_ascii_lowercase()) {
+            out.push(t.to_string());
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

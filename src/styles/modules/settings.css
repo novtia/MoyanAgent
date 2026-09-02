@@ -2148,6 +2148,27 @@
   border-color: color-mix(in srgb, var(--blue-500) 45%, var(--line));
   background: var(--blue-50);
 }
+.model-route-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.model-route-chip-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.model-route-chip-icon svg,
+.model-route-chip-icon img {
+  width: 14px;
+  height: 14px;
+}
+.model-route-custom {
+  margin-top: 8px;
+}
 
 .model-meta-grid {
   display: grid;

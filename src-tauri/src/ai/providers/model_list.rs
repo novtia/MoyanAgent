@@ -32,6 +32,13 @@ pub struct RemoteModelInfo {
     pub output_modalities: Option<Vec<String>>,
 }
 
+/// One OpenRouter (or compatible) upstream for a model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteModelEndpoint {
+    pub slug: String,
+    pub name: String,
+}
+
 /// Fetch the upstream model catalog. Returns a de-duplicated, order-preserving
 /// list with as much metadata as the provider exposes.
 pub async fn fetch_models(
@@ -83,6 +90,56 @@ pub async fn fetch_models(
     Ok(models)
 }
 
+/// List the OpenRouter-style upstreams that can serve `model_id`.
+///
+/// Hits `{api_base}/models/{author}/{slug}/endpoints`. Used by the model
+/// settings picker so a user can pin `provider.only` to a specific slug.
+pub async fn fetch_model_endpoints(
+    endpoint: &str,
+    api_key: &str,
+    model_id: &str,
+) -> AppResult<Vec<RemoteModelEndpoint>> {
+    let endpoint = endpoint.trim();
+    let model_id = model_id.trim();
+    if endpoint.is_empty() {
+        return Err(AppError::Invalid("API 地址不能为空。".into()));
+    }
+    if model_id.is_empty() {
+        return Err(AppError::Invalid("模型 ID 不能为空。".into()));
+    }
+    let url = endpoints_url(endpoint, model_id);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(LIST_TIMEOUT_SECS))
+        .build()?;
+
+    let resp = client
+        .get(&url)
+        .header("Content-Type", "application/json")
+        .bearer_auth(api_key)
+        .send()
+        .await?;
+    let status = resp.status();
+    let txt = resp.text().await?;
+    if !status.is_success() {
+        return Err(AppError::Upstream(format!(
+            "拉取模型上游失败 HTTP {}: {}",
+            status,
+            upstream_error_message(&txt)
+        )));
+    }
+
+    let v: Value = serde_json::from_str(&txt)
+        .map_err(|err| AppError::Upstream(format!("无法解析模型上游响应: {err}")))?;
+    let list = parse_model_endpoints(&v);
+    if list.is_empty() {
+        return Err(AppError::Upstream(
+            "该模型未返回任何上游供应商。".into(),
+        ));
+    }
+    Ok(list)
+}
+
 /// Derive the `/models` listing URL from a provider's configured request
 /// endpoint (which usually points at chat/messages/images paths).
 fn models_url(sdk: &str, endpoint: &str) -> String {
@@ -113,6 +170,32 @@ fn models_url(sdk: &str, endpoint: &str) -> String {
         return e.to_string();
     }
     format!("{}/models", e)
+}
+
+/// `{api_base}/models/{author}/{slug}/endpoints` for OpenRouter provider routing.
+fn endpoints_url(endpoint: &str, model_id: &str) -> String {
+    let base = models_url("openai", endpoint);
+    let encoded = model_id
+        .trim()
+        .trim_start_matches('/')
+        .split('/')
+        .map(encode_path_segment)
+        .collect::<Vec<_>>()
+        .join("/");
+    format!("{base}/{encoded}/endpoints")
+}
+
+fn encode_path_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// Extract rich model entries from OpenRouter / OpenAI / Claude / Gemini shapes.
@@ -411,6 +494,58 @@ fn derive_capabilities(
     caps.into_iter().collect()
 }
 
+fn parse_model_endpoints(v: &Value) -> Vec<RemoteModelEndpoint> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    let sources = [
+        v.pointer("/data/endpoints").and_then(Value::as_array),
+        v.get("endpoints").and_then(Value::as_array),
+        v.get("data").and_then(Value::as_array),
+    ];
+    for arr in sources.into_iter().flatten() {
+        for item in arr {
+            if let Some(ep) = parse_one_endpoint(item) {
+                if seen.insert(ep.slug.to_ascii_lowercase()) {
+                    out.push(ep);
+                }
+            }
+        }
+        if !out.is_empty() {
+            break;
+        }
+    }
+    out
+}
+
+fn parse_one_endpoint(item: &Value) -> Option<RemoteModelEndpoint> {
+    if !item.is_object() {
+        return None;
+    }
+    let slug = ["tag", "provider_tag", "provider_slug"]
+        .iter()
+        .find_map(|key| {
+            item.get(*key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })?;
+    let name = ["provider_name", "name"]
+        .iter()
+        .find_map(|key| {
+            item.get(*key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && *s != slug)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| slug.to_string());
+    Some(RemoteModelEndpoint {
+        slug: slug.to_string(),
+        name,
+    })
+}
+
 /// Best-effort extraction of an error message from an upstream JSON error body.
 fn upstream_error_message(txt: &str) -> String {
     match serde_json::from_str::<Value>(txt) {
@@ -523,5 +658,53 @@ mod tests {
             ),
             "https://ark.cn-beijing.volces.com/api/v3/models"
         );
+    }
+
+    #[test]
+    fn endpoints_url_keeps_author_slash_slug() {
+        assert_eq!(
+            endpoints_url(
+                "https://openrouter.ai/api/v1/chat/completions",
+                "qwen/qwen3.7-max"
+            ),
+            "https://openrouter.ai/api/v1/models/qwen/qwen3.7-max/endpoints"
+        );
+        assert_eq!(
+            endpoints_url(
+                "https://openrouter.ai/api/v1/chat/completions",
+                "meta-llama/llama-3.3-70b-instruct:free"
+            ),
+            "https://openrouter.ai/api/v1/models/meta-llama/llama-3.3-70b-instruct%3Afree/endpoints"
+        );
+    }
+
+    #[test]
+    fn parses_openrouter_endpoints() {
+        let body = json!({
+            "data": {
+                "id": "qwen/qwen3.7-max",
+                "endpoints": [
+                    {
+                        "tag": "alibaba",
+                        "provider_name": "Alibaba",
+                        "name": "Alibaba | qwen/qwen3.7-max"
+                    },
+                    {
+                        "provider_tag": "together",
+                        "provider_name": "Together"
+                    },
+                    {
+                        "tag": "alibaba",
+                        "provider_name": "Alibaba duplicate"
+                    }
+                ]
+            }
+        });
+        let list = parse_model_endpoints(&body);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].slug, "alibaba");
+        assert_eq!(list[0].name, "Alibaba");
+        assert_eq!(list[1].slug, "together");
+        assert_eq!(list[1].name, "Together");
     }
 }

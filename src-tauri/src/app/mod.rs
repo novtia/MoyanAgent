@@ -5,8 +5,8 @@ use crate::ai::agent::exec::engine::ProviderQueryEngine;
 use crate::ai::agent::tools::agent_tool::{AgentTool, ChatRequestFactory, SubagentSessionHost};
 use crate::ai::agent::{
     self, AgentRegistry, ConsultRolesTool, FileReadTool, FileSnapshotStore,
-    FsSessionMemoryExtractor, FsUserContextLoader, NotificationQueue, ProviderEngine,
-    RoleStateStore, RoleStateTool, StaticMcpRegistry, TaskStore, ToolPool, UserContextConfig,
+    FsSessionMemoryExtractor, NotificationQueue, ProviderEngine, RoleStateStore, RoleStateTool,
+    StaticMcpRegistry, TaskStore, ToolPool,
 };
 use crate::ai::{session_log, token_log};
 use tauri::Manager;
@@ -55,7 +55,6 @@ pub fn run() {
             let task_store = Arc::new(TaskStore::new());
             let mcp = Arc::new(StaticMcpRegistry::new());
             let provider_engine = Arc::new(ProviderEngine::new());
-            let user_context = Arc::new(FsUserContextLoader::new(UserContextConfig::from_env()));
 
             // Pool starts with the built-in filesystem tools. Wrap in
             // `Arc` immediately so we can register `AgentTool` self-
@@ -97,12 +96,10 @@ pub fn run() {
             tools.register(crate::ai::agent::tools::web_fetch::WebFetchTool::new());
 
             // Build the agent-callable `Agent` tool. The chat factory
-            // lets it materialise a sub-agent `ChatRequest` from the
-            // current settings on demand and (when
-            // `definition.omit_claude_md == false`) attaches CLAUDE.md
-            // as a system-reminder.
+            // materialises a sub-agent `ChatRequest` from the current
+            // settings and prepends `.moyan` project rules when present.
             let chat_factory: Arc<dyn ChatRequestFactory> =
-                Arc::new(subagent::SettingsChatFactory::new(pool.clone(), user_context.clone()));
+                Arc::new(subagent::SettingsChatFactory::new(pool.clone()));
             // TRPG ConsultRoles needs the same factory + provider engine
             // (ProviderEngine is not on ToolUseContext).
             tools.register(ConsultRolesTool::new(
@@ -158,7 +155,6 @@ pub fn run() {
                 notifications: Arc::new(NotificationQueue::new()),
                 engine: provider_engine,
                 query_engine,
-                user_context,
                 mcp,
                 tools,
                 session_memory: Arc::new(FsSessionMemoryExtractor::new()),
@@ -177,6 +173,7 @@ pub fn run() {
             settings::update_settings,
             settings::get_llm_model_catalog,
             settings::fetch_provider_models,
+            settings::fetch_model_endpoints,
             settings::web_search,
             shell::get_app_info,
             shell::open_path,
@@ -226,7 +223,6 @@ pub fn run() {
             agents::create_custom_agent,
             agents::update_custom_agent,
             agents::delete_custom_agent,
-            agents::refresh_user_context,
             agents::set_mcp_servers,
             agents::list_agent_tools,
             role_state::get_role_states,

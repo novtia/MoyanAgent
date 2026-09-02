@@ -460,6 +460,28 @@ function normalizeModalities(v: unknown): string[] | null {
   return out.length > 0 ? out : null;
 }
 
+export function isOpenRouterEndpoint(endpoint?: string | null): boolean {
+  return (endpoint ?? "").trim().toLowerCase().includes("openrouter.ai");
+}
+
+export function normalizeRouteProviders(
+  raw?: Array<string | null | undefined> | null,
+): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const t = item.trim();
+    if (!t) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
+}
+
 export function makeModel(
   id: string,
   patch: Partial<ModelServiceModel> = {},
@@ -487,6 +509,7 @@ export function makeModel(
   const pricing = normalizePricing(patch.pricing);
   const input_modalities = normalizeModalities(patch.input_modalities);
   const output_modalities = normalizeModalities(patch.output_modalities);
+  const route_providers = normalizeRouteProviders(patch.route_providers);
 
   return {
     id,
@@ -498,6 +521,7 @@ export function makeModel(
     ...(pricing ? { pricing } : {}),
     ...(input_modalities ? { input_modalities } : {}),
     ...(output_modalities ? { output_modalities } : {}),
+    ...(route_providers.length ? { route_providers } : {}),
   };
 }
 

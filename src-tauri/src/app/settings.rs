@@ -49,6 +49,29 @@ pub async fn fetch_provider_models(
     crate::ai::providers::model_list::fetch_models(&args.sdk, &args.endpoint, &args.api_key).await
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FetchModelEndpointsArgs {
+    pub(crate) endpoint: String,
+    #[serde(default)]
+    pub(crate) api_key: String,
+    pub(crate) model_id: String,
+}
+
+/// Pull OpenRouter `/models/{id}/endpoints` so the model editor can offer
+/// per-model upstream (`provider.only`) choices.
+#[tauri::command]
+pub async fn fetch_model_endpoints(
+    args: FetchModelEndpointsArgs,
+) -> Result<Vec<crate::ai::providers::model_list::RemoteModelEndpoint>, AppError> {
+    crate::ai::providers::model_list::fetch_model_endpoints(
+        &args.endpoint,
+        &args.api_key,
+        &args.model_id,
+    )
+    .await
+}
+
 /// Run a web search through the configured backend. Used by the manual search
 /// UI; the agent uses the `WebSearch` tool which shares the same engine.
 #[tauri::command]

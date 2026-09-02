@@ -5,7 +5,9 @@ use crate::ai::chat::{
 };
 
 use super::super::common::data_url;
-use super::super::openrouter::{is_openrouter_endpoint, openrouter_wants_image_output};
+use super::super::openrouter::{
+    apply_openrouter_provider_routing, is_openrouter_endpoint, openrouter_wants_image_output,
+};
 
 pub(crate) fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) -> Value {
     let user_content = chat_content(
@@ -81,6 +83,7 @@ pub(crate) fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) ->
             map.insert("image_config".into(), image_config);
         }
     }
+    apply_openrouter_provider_routing(map, request);
 
     // Surface available tools to the model. Image-generation flows
     // leave `tools` empty so the field is omitted.

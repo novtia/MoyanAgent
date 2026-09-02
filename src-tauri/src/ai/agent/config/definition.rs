@@ -116,10 +116,6 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub isolation: Isolation,
 
-    /// Skip CLAUDE.md / user-context injection for this agent.
-    #[serde(default, rename = "omitClaudeMd")]
-    pub omit_claude_md: bool,
-
     /// Experimental: extra system reminder appended every turn.
     #[serde(default, rename = "criticalSystemReminder_EXPERIMENTAL")]
     pub critical_system_reminder: Option<String>,
@@ -163,7 +159,6 @@ impl AgentDefinition {
             initial_prompt: None,
             memory: AgentMemorySettings::default(),
             isolation: Isolation::None,
-            omit_claude_md: false,
             critical_system_reminder: None,
             passthrough_output: false,
             source: AgentSource::BuiltIn,

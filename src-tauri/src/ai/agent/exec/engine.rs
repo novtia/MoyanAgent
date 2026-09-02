@@ -196,9 +196,7 @@ impl QueryEngine for ProviderQueryEngine {
             } = request;
 
             // Push initial attachments (e.g. drained task-notifications)
-            // into the chat history as hidden user-meta turns. This
-            // mirrors `prependUserContext` / `getAttachmentMessages` in
-            // the TS query loop.
+            // into the chat history as hidden user-meta turns.
             inject_attachments_into_history(&mut chat, &initial_attachments);
 
             // Populate the tool schema. The engine is the source of truth
@@ -613,17 +611,6 @@ impl QueryEngine for ProviderQueryEngine {
                     chat.tools = full;
                     chat.previous_response_id = None;
                 }
-
-                // Drain any nested-memory triggers that the tool calls
-                // recorded (e.g. via `FileReadTool`). Matching memory
-                // files are converted to hidden user-meta history turns
-                // for the next provider call. Honors the
-                // `loaded_nested_memory_paths` dedup set on the context.
-                if let Some(uc) = context.user_context.as_ref() {
-                    let attachments =
-                        crate::ai::agent::memory::nested::collect_nested_memory(&context, uc);
-                    inject_attachments_into_history(&mut chat, &attachments);
-                }
             }
         })
     }
@@ -849,8 +836,7 @@ pub fn inject_attachments_into_history(chat: &mut ChatRequest, attachments: &[At
         // Bookkeeping: mark notification-shaped attachments rendered so
         // they don't get re-drained next time.
         if let AttachmentKind::TaskNotification(_) = &att.kind {
-            // No-op today; placeholder for richer dedupe (e.g. write into
-            // ToolUseContext::loaded_nested_memory_paths analogue).
+            // No-op today; placeholder for richer dedupe.
         }
     }
     // Place attachments at the *end* of history, immediately before the user

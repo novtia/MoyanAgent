@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::ai::agent::core::context::AbortHandle;
 use crate::ai::agent::{
-    AgentRegistry, FsSessionMemoryExtractor, FsUserContextLoader, NotificationQueue,
-    ProviderEngine, QueryEngine, RoleStateStore, StaticMcpRegistry, TaskStore, ToolPool,
+    AgentRegistry, FsSessionMemoryExtractor, NotificationQueue, ProviderEngine, QueryEngine,
+    RoleStateStore, StaticMcpRegistry, TaskStore, ToolPool,
 };
 use crate::ai::{session_log, token_log};
 use crate::data::db::{self, DbPool};
@@ -25,8 +25,6 @@ pub struct AppState {
     pub engine: Arc<ProviderEngine>,
     /// Full agent query loop (tool turns). Shared with [`AgentTool`].
     pub query_engine: Arc<dyn QueryEngine>,
-    /// CLAUDE.md / user-context loader; cached, invalidate on compact.
-    pub user_context: Arc<FsUserContextLoader>,
     /// MCP registry snapshot used by `AgentTool` to gate sub-agents.
     pub mcp: Arc<StaticMcpRegistry>,
     /// Shared tool pool. Currently holds [`FileReadTool`]; further

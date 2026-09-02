@@ -5,15 +5,24 @@
 //! the Read tool silently expands the range to include surrounding context.
 //!
 //! A *receipt* records the content hash observed the last time the agent read
-//! or wrote a file. Used by Read to short-circuit unchanged re-reads.
+//! or wrote a file. A write-origin receipt lets Read return a stub instead of
+//! echoing back a body the model already submitted in CreateDoc / Write / Edit.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::ai::agent::core::context::FileReceipt;
+
 /// Minimum paragraphs returned by a ranged Read (system auto-expands).
 pub const MIN_READ_CONTEXT_LINES: usize = 20;
+
+/// Shown on CreateDoc / Write success and on a short-circuited Read of a
+/// file the model just wrote. Tells the model not to pull the body back in.
+pub const DO_NOT_REREAD_NOTE: &str = "Do not Read this file back — the body is already \
+in this turn's CreateDoc/Write/Edit arguments. Copy Edit `old_string` from that text. \
+Read again only after Edit fails.";
 
 /// Stable content hash used for read-receipt equality checks.
 ///
@@ -26,13 +35,53 @@ pub fn content_hash(text: &str) -> u64 {
     h.finish()
 }
 
+fn receipt_key(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 /// Record (or refresh) a receipt: canonical path → hash of the text the model
 /// now has in hand. Falls back to the raw path when canonicalization fails.
-pub fn record_receipt(state: &Mutex<HashMap<PathBuf, u64>>, path: &Path, text: &str) {
-    let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+///
+/// `from_write` is true after CreateDoc / Write / a successful Edit, so a later
+/// Read of the same bytes can skip echoing the body.
+pub fn record_receipt(
+    state: &Mutex<HashMap<PathBuf, FileReceipt>>,
+    path: &Path,
+    text: &str,
+    from_write: bool,
+) {
+    let key = receipt_key(path);
     if let Ok(mut s) = state.lock() {
-        s.insert(key, content_hash(text));
+        s.insert(
+            key,
+            FileReceipt {
+                hash: content_hash(text),
+                from_write,
+            },
+        );
     }
+}
+
+/// Drop the receipt so the next Read returns the on-disk body (Edit missed).
+pub fn clear_receipt(state: &Mutex<HashMap<PathBuf, FileReceipt>>, path: &Path) {
+    let key = receipt_key(path);
+    if let Ok(mut s) = state.lock() {
+        s.remove(&key);
+    }
+}
+
+/// True when this path was last written by the agent and `text` still matches.
+pub fn is_fresh_write(
+    state: &Mutex<HashMap<PathBuf, FileReceipt>>,
+    path: &Path,
+    text: &str,
+) -> bool {
+    let key = receipt_key(path);
+    let Ok(s) = state.lock() else {
+        return false;
+    };
+    s.get(&key)
+        .is_some_and(|r| r.from_write && r.hash == content_hash(text))
 }
 
 /// Expand a requested inclusive 1-based range to at least
@@ -63,6 +112,8 @@ pub fn expand_read_range(from: usize, to: usize, file_total: usize) -> (usize, u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
 
     #[test]
     fn single_paragraph_expands_to_twenty() {
@@ -100,5 +151,24 @@ mod tests {
         let (from, to) = expand_read_range(98, 100, 100);
         assert_eq!(to, 100);
         assert_eq!(to - from + 1, MIN_READ_CONTEXT_LINES);
+    }
+
+    #[test]
+    fn write_receipt_matches_until_cleared() {
+        let dir = std::env::temp_dir().join(format!(
+            "moyan-receipt-{}-{}",
+            std::process::id(),
+            1
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ch.txt");
+        std::fs::write(&path, "hello").unwrap();
+        let state = Mutex::new(HashMap::new());
+        record_receipt(&state, &path, "hello", true);
+        assert!(is_fresh_write(&state, &path, "hello"));
+        assert!(!is_fresh_write(&state, &path, "other"));
+        clear_receipt(&state, &path);
+        assert!(!is_fresh_write(&state, &path, "hello"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

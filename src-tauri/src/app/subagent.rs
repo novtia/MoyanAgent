@@ -6,10 +6,11 @@ use tauri::{AppHandle, Emitter};
 use crate::ai::agent::tools::agent_tool::{
     ChatRequestFactory, ChildStreamHooks, SpawnedTempSession, SubagentSessionHost,
 };
-use crate::ai::agent::memory::UserContextLoader;
-use crate::ai::agent::{self, FsUserContextLoader, RoleStateStore, RunAgentResult};
+use crate::ai::agent::{self, RoleStateStore, RunAgentResult};
 use crate::ai::{chat, parameters, session_log, token_log};
 use crate::app::generation::params::{effective_agent_chain, resolve_session_generation};
+use crate::app::project_rules;
+use crate::app::reader_paths::session_project_cwd;
 use crate::data::db::DbPool;
 use crate::data::{session, settings};
 use crate::error::{AppError, AppResult};
@@ -22,12 +23,11 @@ use super::generation::streaming::{
 
 pub(crate) struct SettingsChatFactory {
     pub(crate) pool: DbPool,
-    pub(crate) user_context: Arc<FsUserContextLoader>,
 }
 
 impl SettingsChatFactory {
-    pub(crate) fn new(pool: DbPool, user_context: Arc<FsUserContextLoader>) -> Self {
-        Self { pool, user_context }
+    pub(crate) fn new(pool: DbPool) -> Self {
+        Self { pool }
     }
 }
 
@@ -146,31 +146,10 @@ impl ChatRequestFactory for SettingsChatFactory {
             &model,
         ));
 
-        // Honour `omit_claude_md`: only inject user-context (CLAUDE.md +
-        // rules) when the agent definition opts in. Rendered as a
-        // `Delta { topic = "user_context" }` attachment so the engine
-        // turns it into a `<system-reminder>` block on entry.
-        let attachments = if definition.omit_claude_md {
-            Vec::new()
-        } else {
-            self.user_context
-                .load()
-                .ok()
-                .map(|uc| {
-                    let rendered = uc.rendered.trim();
-                    if rendered.is_empty() {
-                        Vec::new()
-                    } else {
-                        vec![agent::Attachment::for_main(agent::AttachmentKind::Delta {
-                            topic: "user_context".into(),
-                            body: rendered.to_string(),
-                        })]
-                    }
-                })
-                .unwrap_or_default()
-        };
+        let cwd = session_id.and_then(|sid| session_project_cwd(&conn, sid));
+        project_rules::prepend_project_rules(&mut chat.history, cwd.as_deref());
 
-        Ok((chat, attachments))
+        Ok((chat, Vec::new()))
     }
 }
 
