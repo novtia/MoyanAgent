@@ -183,6 +183,11 @@ impl GenerationParameters {
 
     /// OpenRouter normalizes reasoning via the top-level `reasoning` object.
     /// Do not combine this with `reasoning_effort` or DeepSeek's `thinking` field.
+    ///
+    /// `exclude: false` asks the gateway to stream thought tokens. Gemini 3
+    /// (and other reasoning models) otherwise think silently until OpenRouter's
+    /// ~150s idle timeout kills the socket — typical on the post-tool writing
+    /// turn of a long generation.
     pub fn apply_openrouter_reasoning(&self, body: &mut Map<String, Value>) {
         if let Some(effort) = self.model.resolved_thinking_effort() {
             body.insert(
@@ -190,6 +195,7 @@ impl GenerationParameters {
                 json!({
                     "effort": effort,
                     "enabled": true,
+                    "exclude": false,
                 }),
             );
         }
@@ -530,5 +536,25 @@ mod tests {
             .get("thinking")
             .and_then(|v| v.get("keep"))
             .is_none());
+    }
+
+    #[test]
+    fn openrouter_thinking_streams_reasoning_tokens() {
+        let p = params(true);
+        let mut body = Map::new();
+        p.apply_thinking_params(&mut body, "https://openrouter.ai/api/v1/chat/completions");
+        assert_eq!(
+            body.get("reasoning")
+                .and_then(|v| v.get("effort"))
+                .and_then(Value::as_str),
+            Some("high")
+        );
+        assert_eq!(
+            body.get("reasoning")
+                .and_then(|v| v.get("exclude"))
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert!(body.get("reasoning_effort").is_none());
     }
 }

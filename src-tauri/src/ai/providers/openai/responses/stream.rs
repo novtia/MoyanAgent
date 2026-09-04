@@ -15,8 +15,8 @@ use super::super::common::{
     collect_inline_data_urls, collect_response_images, debug_log_sse_event,
     debug_log_upstream_request, debug_log_upstream_response_text, emit_final_text_if_needed,
     emit_tool_arg_deltas, finalize_pending_tool_calls, find_sse_event_end,
-    is_empty_stream_upstream_error, is_json_response, is_retryable_status,
-    is_retryable_stream_interruption, merge_usage, post_with_retries, should_retry_transport,
+    is_empty_stream_upstream_error, is_json_response, merge_usage, post_with_retries,
+    should_retry_failed_stream_attempt, should_retry_http_error, should_retry_transport,
     sleep_for_attempt, sse_event_name_and_data, stream_read_error, top_level_error_message,
     upstream_debug, upstream_error_message, upstream_rejects_streaming, without_streaming,
     PendingStreamToolCall, MAX_ATTEMPTS,
@@ -82,9 +82,11 @@ pub(crate) async fn post_responses_stream_with_retries(
                     .await
                 }
                 Err(e)
-                    if attempt < MAX_ATTEMPTS
-                        && !emitted.load(Ordering::Relaxed)
-                        && is_retryable_stream_interruption(&e) =>
+                    if should_retry_failed_stream_attempt(
+                        &e,
+                        attempt,
+                        emitted.load(Ordering::Relaxed),
+                    ) =>
                 {
                     sleep_for_attempt(attempt).await;
                     continue;
@@ -104,7 +106,7 @@ pub(crate) async fn post_responses_stream_with_retries(
             }
         };
         let msg = upstream_error_message(&txt);
-        if attempt < MAX_ATTEMPTS && is_retryable_status(status) {
+        if attempt < MAX_ATTEMPTS && should_retry_http_error(status, &msg) {
             sleep_for_attempt(attempt).await;
             continue;
         }

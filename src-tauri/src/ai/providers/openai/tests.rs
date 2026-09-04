@@ -4,11 +4,19 @@ use serde_json::{json, Value};
 use crate::ai::chat::{ChatRequest, TextDeltaCallback};
 use crate::ai::providers::OPENAI_RESPONSES_SDK;
 use crate::ai::{tokens, tokens::TokenUsage};
+use crate::error::AppError;
 
 use super::chat::body::{append_openai_assistant_text_turn, build_chat_body};
 use super::common::{
-    finalize_pending_tool_calls, merge_usage, parse_tool_call_arguments, set_streaming,
-    sse_event_name_and_data, upstream_rejects_streaming, without_streaming,
+    finalize_pending_tool_calls, is_retryable_upstream_message, merge_usage,
+    parse_tool_call_arguments, retryable_error_in_json_body, set_streaming,
+    should_retry_failed_stream_attempt, sse_event_name_and_data, top_level_error_message,
+    upstream_rejects_streaming, without_streaming,
+};
+use super::openrouter::{
+    apply_openrouter_gemini_arg_streaming, is_gemini_model, prepare_openrouter_retry,
+    relax_openrouter_provider_routing, step_down_openrouter_reasoning,
+    strip_gemini_stream_function_call_config, upstream_rejects_tools,
 };
 use super::responses::body::build_responses_body;
 use super::responses::cache::responses_object_url;
@@ -238,6 +246,117 @@ use super::responses::stream::{
         };
         let body = build_chat_body(&request, false);
         assert!(body.get("provider").is_none());
+    }
+
+    #[test]
+    fn top_level_error_formats_openrouter_idle_timeout() {
+        let v = json!({
+            "error": {
+                "code": 504,
+                "message": "Upstream idle timeout exceeded"
+            }
+        });
+        assert_eq!(
+            top_level_error_message(&v).as_deref(),
+            Some("upstream error 504: Upstream idle timeout exceeded")
+        );
+        assert!(is_retryable_upstream_message(
+            "upstream error 504: Upstream idle timeout exceeded"
+        ));
+        assert!(retryable_error_in_json_body(&v.to_string()));
+    }
+
+    #[test]
+    fn choice_error_idle_timeout_is_retryable() {
+        let v = json!({
+            "choices": [{
+                "error": {
+                    "code": 504,
+                    "message": "Upstream idle timeout exceeded"
+                }
+            }]
+        });
+        assert_eq!(
+            top_level_error_message(&v).as_deref(),
+            Some("upstream error 504: Upstream idle timeout exceeded")
+        );
+        assert!(retryable_error_in_json_body(&v.to_string()));
+    }
+
+    #[test]
+    fn client_errors_are_not_retryable_upstream_messages() {
+        let v = json!({ "error": { "code": 400, "message": "bad request" } });
+        assert!(!is_retryable_upstream_message(
+            "upstream error 400: bad request"
+        ));
+        assert!(!retryable_error_in_json_body(&v.to_string()));
+    }
+
+    #[test]
+    fn relax_openrouter_routing_drops_provider_only() {
+        let mut body = json!({
+            "model": "qwen/qwen3.7-max",
+            "provider": { "only": ["alibaba"] }
+        });
+        relax_openrouter_provider_routing(&mut body);
+        assert!(body.get("provider").is_none());
+        assert_eq!(body["model"], "qwen/qwen3.7-max");
+    }
+
+    #[test]
+    fn idle_timeout_retry_steps_high_reasoning_down_to_low() {
+        let mut body = json!({
+            "model": "google/gemini-3.8-flash",
+            "provider": { "only": ["google"] },
+            "reasoning": { "effort": "high", "enabled": true }
+        });
+        prepare_openrouter_retry(
+            &mut body,
+            "upstream error 504: Upstream idle timeout exceeded",
+        );
+        assert!(body.get("provider").is_none());
+        assert_eq!(body["reasoning"]["effort"], "low");
+        assert_eq!(body["reasoning"]["exclude"], false);
+    }
+
+    #[test]
+    fn idle_timeout_retry_disables_reasoning_when_already_low() {
+        let mut body = json!({
+            "model": "google/gemini-3.8-flash",
+            "reasoning": { "effort": "low", "enabled": true, "exclude": false }
+        });
+        step_down_openrouter_reasoning(&mut body);
+        assert_eq!(body["reasoning"]["effort"], "none");
+        assert_eq!(body["reasoning"]["enabled"], false);
+    }
+
+    #[test]
+    fn idle_timeout_retry_disables_silent_default_thinking() {
+        let mut body = json!({ "model": "google/gemini-3.8-flash" });
+        prepare_openrouter_retry(&mut body, "Upstream idle timeout exceeded");
+        assert_eq!(body["reasoning"]["effort"], "none");
+        assert_eq!(body["reasoning"]["enabled"], false);
+    }
+
+    #[test]
+    fn non_idle_retry_keeps_reasoning_effort() {
+        let mut body = json!({
+            "reasoning": { "effort": "high", "enabled": true },
+            "provider": { "only": ["google"] }
+        });
+        prepare_openrouter_retry(&mut body, "upstream error 429: too many requests");
+        assert!(body.get("provider").is_none());
+        assert_eq!(body["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn idle_timeout_stream_error_retries_before_any_delta() {
+        let err = AppError::Upstream(
+            "upstream error 504: Upstream idle timeout exceeded".into(),
+        );
+        assert!(should_retry_failed_stream_attempt(&err, 1, false));
+        assert!(!should_retry_failed_stream_attempt(&err, 1, true));
+        assert!(!should_retry_failed_stream_attempt(&err, 3, false));
     }
 
     #[test]
@@ -657,4 +776,90 @@ use super::responses::stream::{
         assert_eq!(usage.prompt_tokens, Some(12));
         assert_eq!(usage.completion_tokens, Some(34));
         assert_eq!(usage.total_tokens, Some(46));
+    }
+
+    fn openrouter_chat_request(model: &str, with_tools: bool) -> ChatRequest {
+        ChatRequest {
+            provider: crate::ai::chat::ProviderConfig {
+                id: "openrouter".into(),
+                name: "OpenRouter".into(),
+                sdk: "openai".into(),
+                endpoint: "https://openrouter.ai/api/v1/chat/completions".into(),
+                api_key: "k".into(),
+                context_cache_enabled: false,
+            },
+            model: model.into(),
+            prompt: "hi".into(),
+            attachments: Vec::new(),
+            system_prompt: String::new(),
+            history: Vec::new(),
+            parameters: crate::ai::parameters::factory().build(
+                "auto".into(),
+                "auto".into(),
+                crate::data::settings::ModelParamSettings::default(),
+            ),
+            tools: if with_tools {
+                vec![crate::ai::chat::ToolDefinition {
+                    name: "CreateDoc".into(),
+                    description: "create".into(),
+                    schema: json!({ "type": "object" }),
+                }]
+            } else {
+                Vec::new()
+            },
+            tool_chain: Vec::new(),
+            tool_results: Vec::new(),
+            pending_assistant_turn: None,
+            previous_response_id: None,
+            context_cache_enabled: false,
+            context_window: None,
+            todo_snapshot: None,
+            route_providers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn gemini_model_slug_detection() {
+        assert!(is_gemini_model("google/gemini-3.8-flash"));
+        assert!(is_gemini_model("Gemini-2.5-pro"));
+        assert!(!is_gemini_model("anthropic/claude-sonnet-4.6"));
+    }
+
+    #[test]
+    fn openrouter_gemini_tools_request_stream_function_call_arguments() {
+        let request = openrouter_chat_request("google/gemini-3.8-flash", true);
+        let mut body = build_chat_body(&request, false);
+        set_streaming(&mut body, true);
+        apply_openrouter_gemini_arg_streaming(&mut body, &request);
+        assert_eq!(
+            body["toolConfig"]["functionCallingConfig"]["streamFunctionCallArguments"],
+            true
+        );
+        strip_gemini_stream_function_call_config(&mut body);
+        assert!(body.get("toolConfig").is_none());
+        assert!(body.get("tools").is_some());
+    }
+
+    #[test]
+    fn openrouter_non_gemini_or_no_tools_skip_arg_streaming_flag() {
+        let gemini_no_tools = openrouter_chat_request("google/gemini-3.8-flash", false);
+        let mut body = build_chat_body(&gemini_no_tools, false);
+        apply_openrouter_gemini_arg_streaming(&mut body, &gemini_no_tools);
+        assert!(body.get("toolConfig").is_none());
+
+        let claude = openrouter_chat_request("anthropic/claude-sonnet-4.6", true);
+        let mut body = build_chat_body(&claude, false);
+        apply_openrouter_gemini_arg_streaming(&mut body, &claude);
+        assert!(body.get("toolConfig").is_none());
+    }
+
+    #[test]
+    fn stream_function_call_arguments_reject_does_not_strip_tools() {
+        let msg = "Unknown name toolConfig.functionCallingConfig.streamFunctionCallArguments";
+        assert!(!upstream_rejects_tools(StatusCode::BAD_REQUEST, msg));
+        assert!(super::common::message_rejects_gemini_arg_streaming(msg));
+        assert!(super::common::upstream_rejects_gemini_arg_streaming(
+            StatusCode::BAD_REQUEST,
+            msg
+        ));
     }

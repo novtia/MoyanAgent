@@ -7,7 +7,8 @@ use crate::error::{AppError, AppResult};
 
 use super::common::{post_with_retries, provider_label, set_streaming};
 use super::openrouter::{
-    is_openrouter_endpoint, post_openrouter_chat, post_openrouter_chat_stream,
+    apply_openrouter_gemini_arg_streaming, is_openrouter_endpoint, post_openrouter_chat,
+    post_openrouter_chat_stream,
 };
 use body::build_chat_body;
 use parse::parse_openai_like_response;
@@ -51,6 +52,7 @@ pub(crate) async fn generate_chat_stream(
 
     let mut body = build_chat_body(&request, allow_image_parts);
     set_streaming(&mut body, true);
+    apply_openrouter_gemini_arg_streaming(&mut body, &request);
     let provider_label = provider_label(&request);
     let openrouter_compat = is_openrouter_endpoint(&request.provider.endpoint);
 

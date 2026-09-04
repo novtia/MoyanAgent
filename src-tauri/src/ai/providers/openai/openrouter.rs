@@ -11,9 +11,11 @@ use super::chat::parse::parse_openai_like_response;
 use super::chat::stream::parse_openai_chat_success;
 use super::common::{
     debug_log_upstream_request, debug_log_upstream_response_text, emit_final_text_if_needed,
-    is_empty_stream_upstream_error, is_retryable_status, is_retryable_stream_interruption,
-    should_retry_transport, sleep_for_attempt, upstream_error_message, upstream_rejects_streaming,
-    without_streaming, MAX_ATTEMPTS,
+    is_empty_stream_upstream_error, is_idle_timeout_message, retryable_error_in_json_body,
+    message_rejects_gemini_arg_streaming, should_retry_failed_stream_attempt,
+    should_retry_http_error, should_retry_transport, sleep_for_attempt, upstream_error_message,
+    upstream_rejects_gemini_arg_streaming, upstream_rejects_streaming, without_streaming,
+    MAX_ATTEMPTS,
 };
 
 pub(crate) async fn post_openrouter_chat(
@@ -62,12 +64,18 @@ pub(crate) async fn post_openrouter_chat(
                 }
             };
             if status.is_success() {
+                if attempt < MAX_ATTEMPTS && retryable_error_in_json_body(&txt) {
+                    prepare_openrouter_retry(body, &upstream_error_message(&txt));
+                    sleep_for_attempt(attempt).await;
+                    continue;
+                }
                 debug_log_upstream_response_text(provider_label, &txt);
                 return Ok(txt);
             }
 
             let msg = upstream_error_message(&txt);
-            if attempt < MAX_ATTEMPTS && is_retryable_status(status) {
+            if attempt < MAX_ATTEMPTS && should_retry_http_error(status, &msg) {
+                prepare_openrouter_retry(body, &msg);
                 sleep_for_attempt(attempt).await;
                 continue;
             }
@@ -98,6 +106,7 @@ pub(crate) async fn post_openrouter_chat_stream(
 ) -> AppResult<GenerateResponse> {
     let mut modality_stage = openrouter_initial_modality_stage(request);
     let mut tools_stripped = false;
+    let mut gemini_arg_stream_stripped = false;
     'modalities: loop {
         apply_openrouter_modalities_stage(body, &request.model, modality_stage);
 
@@ -149,10 +158,13 @@ pub(crate) async fn post_openrouter_chat_stream(
                         .await
                     }
                     Err(e)
-                        if attempt < MAX_ATTEMPTS
-                            && !emitted.load(Ordering::Relaxed)
-                            && is_retryable_stream_interruption(&e) =>
+                        if should_retry_failed_stream_attempt(
+                            &e,
+                            attempt,
+                            emitted.load(Ordering::Relaxed),
+                        ) =>
                     {
+                        prepare_openrouter_retry(body, app_error_message(&e));
                         sleep_for_attempt(attempt).await;
                         continue;
                     }
@@ -171,7 +183,8 @@ pub(crate) async fn post_openrouter_chat_stream(
                 }
             };
             let msg = upstream_error_message(&txt);
-            if attempt < MAX_ATTEMPTS && is_retryable_status(status) {
+            if attempt < MAX_ATTEMPTS && should_retry_http_error(status, &msg) {
+                prepare_openrouter_retry(body, &msg);
                 sleep_for_attempt(attempt).await;
                 continue;
             }
@@ -184,6 +197,11 @@ pub(crate) async fn post_openrouter_chat_stream(
                     on_text_delta.clone(),
                 )
                 .await;
+            }
+            if upstream_rejects_gemini_arg_streaming(status, &msg) && !gemini_arg_stream_stripped {
+                gemini_arg_stream_stripped = true;
+                strip_gemini_stream_function_call_config(body);
+                continue 'modalities;
             }
             if upstream_rejects_tools(status, &msg) && !tools_stripped {
                 tools_stripped = true;
@@ -241,6 +259,59 @@ pub(crate) fn apply_openrouter_provider_routing(
         return;
     }
     map.insert("provider".into(), json!({ "only": only }));
+}
+
+fn app_error_message(err: &AppError) -> &str {
+    match err {
+        AppError::Http(s) | AppError::Upstream(s) | AppError::Other(s) => s,
+        _ => "",
+    }
+}
+
+/// After a transient OpenRouter failure: drop `provider.only` so the next
+/// attempt can land on a different host. On idle timeout, also step down
+/// reasoning effort — silent Gemini-3 thinking is what trips the ~150s
+/// gateway idle cap on long post-tool writing turns.
+pub(crate) fn prepare_openrouter_retry(body: &mut Value, msg: &str) {
+    relax_openrouter_provider_routing(body);
+    if is_idle_timeout_message(msg) {
+        step_down_openrouter_reasoning(body);
+    }
+}
+
+/// Drop `provider.only` after a 502/503/504 (especially OpenRouter idle
+/// timeout). Retrying the same pin usually lands on the upstream that already
+/// hung; without the pin OpenRouter can pick a different one.
+pub(crate) fn relax_openrouter_provider_routing(body: &mut Value) {
+    if let Some(map) = body.as_object_mut() {
+        map.remove("provider");
+    }
+}
+
+pub(crate) fn step_down_openrouter_reasoning(body: &mut Value) {
+    let Some(map) = body.as_object_mut() else {
+        return;
+    };
+    let current = map
+        .get("reasoning")
+        .and_then(|v| v.get("effort"))
+        .and_then(Value::as_str)
+        .map(str::to_ascii_lowercase);
+    let next = match current.as_deref() {
+        Some("max") | Some("xhigh") | Some("high") | Some("medium") => "low",
+        _ => "none",
+    };
+    if next == "none" {
+        map.insert(
+            "reasoning".into(),
+            json!({ "enabled": false, "effort": "none", "exclude": false }),
+        );
+    } else {
+        map.insert(
+            "reasoning".into(),
+            json!({ "enabled": true, "effort": next, "exclude": false }),
+        );
+    }
 }
 
 /// Agent tool-calling requests must not ask OpenRouter for image output.
@@ -301,6 +372,11 @@ pub(crate) fn upstream_rejects_modalities(status: StatusCode, msg: &str) -> bool
 /// detect this and retry without `tools` so the agent can still
 /// produce a plain-text response rather than surfacing a hard error.
 pub(crate) fn upstream_rejects_tools(status: StatusCode, msg: &str) -> bool {
+    // A 400 about `streamFunctionCallArguments` / `toolConfig` is not "this
+    // model has no tools" — stripping `tools` would silently disable CreateDoc.
+    if message_rejects_gemini_arg_streaming(msg) {
+        return false;
+    }
     let m = msg.to_ascii_lowercase();
     matches!(status, StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST)
         && (m.contains("tool use")
@@ -313,6 +389,40 @@ pub(crate) fn strip_tools_from_body(body: &mut Value) {
     if let Some(map) = body.as_object_mut() {
         map.remove("tools");
         map.remove("tool_choice");
+    }
+}
+
+pub(crate) fn is_gemini_model(model: &str) -> bool {
+    model.trim().to_ascii_lowercase().contains("gemini")
+}
+
+/// Ask Gemini (via OpenRouter) to stream function-call argument fragments
+/// instead of buffering the whole JSON. Harmless on non-Gemini models; some
+/// upstreams 400 and the stream loop strips this and retries.
+pub(crate) fn apply_openrouter_gemini_arg_streaming(body: &mut Value, request: &ChatRequest) {
+    if !is_openrouter_endpoint(&request.provider.endpoint) {
+        return;
+    }
+    if request.tools.is_empty() || !is_gemini_model(&request.model) {
+        return;
+    }
+    let Some(map) = body.as_object_mut() else {
+        return;
+    };
+    map.insert(
+        "toolConfig".into(),
+        json!({
+            "functionCallingConfig": {
+                "streamFunctionCallArguments": true
+            }
+        }),
+    );
+}
+
+pub(crate) fn strip_gemini_stream_function_call_config(body: &mut Value) {
+    if let Some(map) = body.as_object_mut() {
+        map.remove("toolConfig");
+        map.remove("tool_config");
     }
 }
 pub(crate) fn is_image_only_model(model: &str) -> bool {

@@ -1,5 +1,5 @@
 mod chat;
-mod common;
+pub(crate) mod common;
 mod openrouter;
 mod provider;
 mod responses;

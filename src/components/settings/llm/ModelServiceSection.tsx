@@ -1452,7 +1452,7 @@ function RouteProvidersField({
     <div className="model-modal-section">
       <div className="model-modal-section-title">路由供应商</div>
       <div className="hint model-pricing-hint">
-        OpenRouter 的 provider 参数。留空则自动在可用上游间负载均衡；选中后请求只会发给这些供应商。
+        OpenRouter 的 provider 参数。留空则自动在可用上游间负载均衡；选中后请求只会发给这些供应商。若该上游长时间不吐 token（思考模型常见），会自动放开限制换路上游重试。
       </div>
       <div className="model-capability-row">
         <button

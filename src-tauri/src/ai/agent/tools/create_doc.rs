@@ -53,8 +53,9 @@ impl CreateDocTool {
                     Prefer this over Write for authoring new documents — you only \
                     supply the title, the content, the type, and optionally a folder. \
                     After success, do NOT Read the new file: you already hold \
-                    `content`. To expand it, Edit using `old_string` copied from \
-                    that `content` (or its tail)."
+                    `content`. To expand it, Edit using a short unique `old_string` \
+                    from the tail of that `content` (the insertion point), never \
+                    the whole body."
                     .to_string(),
                 schema: json!({
                     "type": "object",

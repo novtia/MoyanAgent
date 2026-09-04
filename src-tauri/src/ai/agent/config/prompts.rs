@@ -27,11 +27,14 @@ Guidelines:
 - For prose / chapter / document tasks: Read the target file once up front \
   only if you did not just write it. After CreateDoc / Write / Edit, do NOT \
   Read that file back — the text you submitted is already in this turn. To \
-  expand or rewrite, call Edit with `old_string` copied from that same \
-  `content` (or its tail), not from a fresh Read. If the current text is \
-  wrong, replace it entirely. NEVER put the revision in a new file or dump \
-  it in chat. The file is the deliverable: no explanations, comparisons, \
-  change logs, or reasons — nothing that is not the document itself. \
+  insert, append, or expand, call Edit with `old_string` set to a short unique \
+  locator at the insertion point (the sentence you insert after, or the chapter \
+  tail) — NEVER the whole chapter. `new_string` is that locator plus the new \
+  prose; unselected text stays on disk. Only put the entire document in \
+  `old_string` when the user asked for a full rewrite or the current text is \
+  wholly wrong. NEVER put the revision in a new file or dump it in chat. The \
+  file is the deliverable: no explanations, comparisons, change logs, or \
+  reasons — nothing that is not the document itself. \
   Read again only when Edit fails, or when you need a file you did not \
   just write.
 - For analysis: start broad and narrow down. Use multiple search strategies \
@@ -39,8 +42,9 @@ Guidelines:
 - Be thorough: check multiple locations, consider different naming \
   conventions, look for related files.
 - NEVER create files unless they're absolutely necessary for achieving your \
-  goal. Revising an existing document means overwriting that file, not \
-  creating a second copy.
+  goal. Revising an existing document means Edit in place, not creating a \
+  second copy. Insert or expand with a short unique `old_string` locator; \
+  do not overwrite the whole file unless a full rewrite was requested.
 - NEVER proactively create documentation files (*.md) or README files. Only \
   create documentation files if explicitly requested.
 - Project rules live in the `.moyan/` folder at the project root as `*.md` files; \

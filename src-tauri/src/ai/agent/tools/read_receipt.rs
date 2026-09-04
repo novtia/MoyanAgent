@@ -21,7 +21,8 @@ pub const MIN_READ_CONTEXT_LINES: usize = 20;
 /// Shown on CreateDoc / Write success and on a short-circuited Read of a
 /// file the model just wrote. Tells the model not to pull the body back in.
 pub const DO_NOT_REREAD_NOTE: &str = "Do not Read this file back — the body is already \
-in this turn's CreateDoc/Write/Edit arguments. Copy Edit `old_string` from that text. \
+in this turn's CreateDoc/Write/Edit arguments. Copy a short unique Edit `old_string` \
+from the insertion point or tail of that text, never the whole chapter. \
 Read again only after Edit fails.";
 
 /// Stable content hash used for read-receipt equality checks.

@@ -484,7 +484,7 @@ const enUS: Resource = {
       CreateDoc: "Create a doc from title/content/type (md or txt)",
       Delete: "Delete a file (rolls back with its message)",
       Edit:
-        "Write the complete revised document into the original file (new_string is document body only — no explanations)",
+        "Replace a short unique locator in the file (insert/append: the sentence at the insertion point, never the whole chapter). new_string is that locator plus new prose only.",
       Read: "Read a local text file; each line is one numbered paragraph ([P001], …; empty lines included)",
       ListFiles: "List files and subdirectories under a path",
       RoleState: "Maintain character attribute and state cards",

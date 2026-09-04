@@ -473,6 +473,8 @@ pub async fn generate_image(
                 "agent_chain": serde_json::to_value(&agent_chain).unwrap_or(serde_json::Value::Null),
                 "generation_params": serde_json::from_str::<serde_json::Value>(&params_json)
                     .unwrap_or(serde_json::Value::Null),
+                "thinking_enabled": params.model.thinking_enabled,
+                "thinking_effort": params.model.resolved_thinking_effort(),
             }),
         );
         let attachments = attachment_image_ids
@@ -932,6 +934,8 @@ pub async fn regenerate_image(
                 "agent_chain": serde_json::to_value(&agent_chain).unwrap_or(serde_json::Value::Null),
                 "generation_params": serde_json::from_str::<serde_json::Value>(&params_json)
                     .unwrap_or(serde_json::Value::Null),
+                "thinking_enabled": params.model.thinking_enabled,
+                "thinking_effort": params.model.resolved_thinking_effort(),
                 "regenerate": true,
             }),
         );

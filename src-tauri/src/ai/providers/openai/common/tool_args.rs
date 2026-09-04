@@ -66,21 +66,30 @@ pub(crate) fn merge_tool_call_deltas(
                 }
             }
             let mut fragment = String::new();
-            if let Some(args) = tc.pointer("/function/arguments").and_then(Value::as_str) {
-                if !args.is_empty() {
-                    slot.arguments.push_str(args);
-                    fragment.push_str(args);
+            if let Some(args) = tc.pointer("/function/arguments") {
+                match args {
+                    Value::String(s) if !s.is_empty() => {
+                        slot.arguments.push_str(s);
+                        fragment.push_str(s);
+                    }
+                    Value::Object(_) | Value::Array(_) if slot.arguments.is_empty() => {
+                        // Gemini / OpenRouter sometimes hand over the whole
+                        // args object in one delta instead of a JSON string.
+                        if let Ok(s) = serde_json::to_string(args) {
+                            slot.arguments.push_str(&s);
+                            fragment.push_str(&s);
+                        }
+                    }
+                    _ => {}
                 }
             }
             // Forward the live fragment once we know the call id. An empty
             // `fragment` with a fresh id/name still emits, so the UI can
             // create the pending card before any argument bytes arrive.
+            // Typewriter-split large dumps (Gemini/OpenRouter often buffer
+            // CreateDoc `content` into one SSE event).
             if !slot.id.is_empty() && (identity_changed || !fragment.is_empty()) {
-                (on_text_delta)(StreamDelta::tool_call(
-                    slot.id.clone(),
-                    slot.name.clone(),
-                    fragment,
-                ));
+                emit_tool_arg_deltas(on_text_delta, &slot.id, &slot.name, &fragment);
             }
         }
     }

@@ -212,7 +212,8 @@ impl FileReadTool {
                 description: "Read a text file from the local filesystem. \
                     Returns the file's plain text (no line labels), so you can copy exact \
                     snippets into Edit's `old_string` when you have not just written \
-                    the file. \
+                    the file. For insert/append, that snippet is only the insertion \
+                    point (a sentence or paragraph ending), never the whole chapter. \
                     When the user message cites a ranged file mention like \
                     `@\"chapter.md\"#P003-P007` (or the chip label shows `· P003–P007`), \
                     call ranged Read for that span: set `path` to the file and pass \

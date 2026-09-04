@@ -145,6 +145,27 @@ pub(crate) fn is_retryable_stream_interruption(err: &AppError) -> bool {
     };
     crate::error::msg_indicates_abrupt_close(msg)
 }
+
+pub(crate) fn is_retryable_upstream_error(err: &AppError) -> bool {
+    let msg = match err {
+        AppError::Http(s) | AppError::Upstream(s) | AppError::Other(s) => s,
+        _ => return false,
+    };
+    super::error::is_retryable_upstream_message(msg)
+}
+
+/// Retry a failed stream attempt only while nothing has reached the UI yet.
+/// Covers abrupt TCP closes and JSON/SSE 502/503/504 (idle timeout) payloads
+/// that arrive on an otherwise successful HTTP response.
+pub(crate) fn should_retry_failed_stream_attempt(
+    err: &AppError,
+    attempt: usize,
+    emitted: bool,
+) -> bool {
+    attempt < super::http::MAX_ATTEMPTS
+        && !emitted
+        && (is_retryable_stream_interruption(err) || is_retryable_upstream_error(err))
+}
 pub(crate) fn is_empty_stream_upstream_error(err: &AppError) -> bool {
     matches!(
         err,

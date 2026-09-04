@@ -5,6 +5,10 @@
 //! occurs multiple times the edit is rejected unless `replace_all` is set. An
 //! empty `new_string` deletes the matched text.
 //!
+//! For insert/append the model is instructed to pass only a short unique
+//! locator (the insertion point), not the whole chapter. The unmatched
+//! remainder of the file is left untouched.
+//!
 //! Matching prefers a verbatim substring. If that misses, Edit retries with
 //! unescaped JSON leftovers (`\"`) and with quote-folded text so ASCII `"`,
 //! typographic `“”`, and CJK `「」` are treated as the same glyph. A folded
@@ -50,7 +54,8 @@ impl FileWriteTool {
                 name: WRITE_TOOL.to_string(),
                 description: "Write a UTF-8 file to disk, creating parent directories as needed. \
                     Overwrites the file if it already exists. After success, do NOT Read \
-                    the file back — copy Edit `old_string` from the `content` you just submitted."
+                    the file back — copy a short unique Edit `old_string` from the \
+                    tail of `content` you just submitted, never the whole file."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -175,18 +180,23 @@ impl FileEditTool {
             pool: None,
             spec: ToolSpec {
                 name: EDIT_TOOL.to_string(),
-                description: "Replace an existing file with the complete revised document. \
-                    Pass `path`, `old_string` (the current span to replace), and \
-                    `new_string` (the full replacement). \
-                    `new_string` is the delivered document: only document body, no \
-                    explanations, comparisons, change logs, or reasons. If the original \
-                    is wrong, rewrite it fully in `new_string`; do not patch around bad \
-                    prose. Copy `old_string` from the CreateDoc/Write `content` you just \
+                description: "Surgically replace one unique span in a file. This is not a \
+                    full-file rewrite. \
+                    Insert / append / expand: `old_string` is ONLY a short unique locator \
+                    at the insertion point (the sentence or paragraph ending you insert \
+                    after). NEVER paste the whole chapter, the rest of the file, or all \
+                    existing prose into `old_string`. `new_string` = that same locator \
+                    followed by the new prose (or the locator with the insert spliced in). \
+                    Unselected text before and after the locator is kept as-is — do not \
+                    retype it. \
+                    Rewrite a passage: `old_string` is that passage only. Delete: empty \
+                    `new_string`. Full-document rewrite is the exception — only then may \
+                    `old_string` be the entire file. \
+                    Copy `old_string` from the CreateDoc/Write `content` you just \
                     submitted in this turn — do not Read the file first. Read only if \
                     Edit fails, or the file was not written in this turn. \
                     `old_string` must match once unless `replace_all` is true. \
-                    ASCII `\"` and typographic `“”`/`「」` match equivalently. Empty \
-                    `new_string` deletes the matched span."
+                    ASCII `\"` and typographic `“”`/`「」` match equivalently."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -200,16 +210,21 @@ impl FileEditTool {
                         },
                         "old_string": {
                             "type": "string",
-                            "description": "Current file text to replace. Copy from the \
-                                CreateDoc/Write `content` you just wrote, or from Read if \
-                                you have not written this file in this turn. Use the whole \
-                                document when rewriting. Must match once unless `replace_all` is true."
+                            "description": "Short unique locator copied from the file. \
+                                For insert/append/expand, copy only the sentence or \
+                                paragraph ending at the insertion point — never the \
+                                whole chapter or the rest of the document. \
+                                Copy from the CreateDoc/Write `content` you just wrote, \
+                                or from Read if you have not written this file in this \
+                                turn. Must match once unless `replace_all` is true."
                         },
                         "new_string": {
                             "type": "string",
-                            "description": "The complete document that replaces `old_string`. \
-                                Document body only — no explanations, notes, or change logs. \
-                                Fill this in LAST, after path/old_string."
+                            "description": "Replacement for that locator only; the rest \
+                                of the file is left untouched. For insert/append, start \
+                                with the same locator then continue with the new prose. \
+                                Document body only — no explanations, notes, or change \
+                                logs. Fill this in LAST, after path/old_string."
                         },
                         "replace_all": {
                             "type": "boolean",
