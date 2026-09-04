@@ -6,6 +6,7 @@ import {
   EyeIcon,
   FilesIcon,
   ForwardIcon,
+  IndentIcon,
   MoreIcon,
   SearchIcon,
   SourceIcon,
@@ -27,8 +28,11 @@ export interface ReaderToolbarProps {
   findOpen: boolean;
   showTree: boolean;
   rightViewIsTree: boolean;
+  canIndent: boolean;
+  indentTitle: string;
   onPreview: () => void;
   onSource: () => void;
+  onIndent: (e: ReactMouseEvent) => void;
   onMore: (e: ReactMouseEvent) => void;
   onToggleSearch: () => void;
   onToggleFileTree: () => void;
@@ -49,8 +53,11 @@ export function ReaderToolbar({
   findOpen,
   showTree,
   rightViewIsTree,
+  canIndent,
+  indentTitle,
   onPreview,
   onSource,
+  onIndent,
   onMore,
   onToggleSearch,
   onToggleFileTree,
@@ -111,6 +118,18 @@ export function ReaderToolbar({
               <SourceIcon />
             </button>
           </>
+        )}
+        {!isMedia && (
+          <button
+            type="button"
+            className="reader-toolbar-btn"
+            title={indentTitle}
+            aria-label={t("reader.indentFirstLine")}
+            disabled={!canIndent}
+            onClick={onIndent}
+          >
+            <IndentIcon />
+          </button>
         )}
         <button
           type="button"

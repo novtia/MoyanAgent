@@ -116,7 +116,7 @@
   width: 100%;
 }
 
-/* Shared toolbar spanning both panes (nav · filename · preview/source · more · search · files) */
+/* Shared toolbar spanning both panes (nav · filename · preview/source · indent · more · search · files) */
 .reader-toolbar {
   flex: 0 0 auto;
   display: flex;

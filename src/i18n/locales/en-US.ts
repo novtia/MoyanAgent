@@ -224,6 +224,11 @@ const enUS: Resource = {
     preview: "Preview",
     source: "Source",
     more: "More",
+    indentFirstLine: "First-line indent",
+    outdentFirstLine: "Remove first-line indent",
+    indentFirstLineHint:
+      "Add a two-em-space indent to every paragraph. Shift-click to remove.",
+    indentDiffBlocked: "First-line indent is unavailable while edits are pending review",
     search: "Search",
     showFiles: "Show file tree",
     hideFiles: "Hide file tree",

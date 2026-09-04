@@ -19,7 +19,10 @@ import {
 } from "../../../../utils/readerSelection";
 import { diffSignGutterExtension } from "./readerCodeMirror/diffSignGutter";
 import { applyFindHighlights, findHighlightField } from "./readerCodeMirror/findHighlights";
-import { readerIndentKeymap } from "./readerCodeMirror/indentKeymap";
+import {
+  readerIndentKeymap,
+  registerReaderDocumentView,
+} from "./readerCodeMirror/indentKeymap";
 import {
   createReaderCodeMirrorTheme,
   type ReaderCodeMirrorLayout,
@@ -182,6 +185,14 @@ export function ReaderCodeMirror({
 
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
+    const unregisterDocument =
+      layout === "document" && editable ? registerReaderDocumentView(view) : null;
+
+    const destroy = () => {
+      unregisterDocument?.();
+      view.destroy();
+      viewRef.current = null;
+    };
 
     const scrollEl = view.scrollDOM;
     if (layout === "document" && filePath) {
@@ -194,15 +205,11 @@ export function ReaderCodeMirror({
       return () => {
         onScroll();
         scrollEl.removeEventListener("scroll", onScroll);
-        view.destroy();
-        viewRef.current = null;
+        destroy();
       };
     }
 
-    return () => {
-      view.destroy();
-      viewRef.current = null;
-    };
+    return destroy;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- remount on structural props only
   }, [
     ariaLabel,

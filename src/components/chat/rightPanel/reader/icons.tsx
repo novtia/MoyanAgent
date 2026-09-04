@@ -58,3 +58,12 @@ export function FilesIcon() {
     </svg>
   );
 }
+
+export function IndentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 6h10M4 12h16M4 18h16" />
+      <path d="M4 4v4h4" />
+    </svg>
+  );
+}

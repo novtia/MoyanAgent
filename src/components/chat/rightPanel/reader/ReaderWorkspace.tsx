@@ -25,6 +25,7 @@ import { ReaderFindBar, useReaderFindShortcuts } from "./find/ReaderFindBar";
 import { useLazyLoadFile } from "./hooks/useLazyLoadFile";
 import { useReaderNavHistory } from "./hooks/useReaderNavHistory";
 import { useReaderSplit } from "./hooks/useReaderSplit";
+import { indentRegisteredReaderDocument } from "./readerCodeMirror/indentKeymap";
 import type { ReaderWorkspaceProps } from "./types";
 
 export type { ReaderWorkspaceProps } from "./types";
@@ -84,11 +85,38 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
   }, [loadError, t]);
 
   const fileName = path ? readerFileName(path) : "";
+  const hasFile = !!path;
+  const canIndent = !!tab && !isMedia && !hasPendingDiff;
+
+  const onIndent = useCallback(
+    (e: ReactMouseEvent) => {
+      if (!canIndent) return;
+      indentRegisteredReaderDocument(e.shiftKey, !!isMarkdown);
+    },
+    [canIndent, isMarkdown],
+  );
 
   const onMore = useCallback(
     (e: ReactMouseEvent) => {
       if (!path) return;
       openContextMenu(e, [
+        {
+          id: "indent-first",
+          label: t("reader.indentFirstLine"),
+          disabled: !canIndent,
+          onSelect: () => {
+            indentRegisteredReaderDocument(false, !!isMarkdown);
+          },
+        },
+        {
+          id: "outdent-first",
+          label: t("reader.outdentFirstLine"),
+          disabled: !canIndent,
+          onSelect: () => {
+            indentRegisteredReaderDocument(true, !!isMarkdown);
+          },
+        },
+        { type: "separator", id: "indent-sep" },
         {
           id: "copy-path",
           label: t("reader.copyPath"),
@@ -101,10 +129,9 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
         },
       ]);
     },
-    [path, t],
+    [path, t, canIndent, isMarkdown],
   );
 
-  const hasFile = !!path;
   const bothPanes = hasFile && showTree;
 
   const editorNode = (
@@ -156,8 +183,13 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
         findOpen={findOpen}
         showTree={showTree}
         rightViewIsTree={rightView === "tree"}
+        canIndent={canIndent}
+        indentTitle={
+          hasPendingDiff ? t("reader.indentDiffBlocked") : t("reader.indentFirstLineHint")
+        }
         onPreview={() => setPreview(true)}
         onSource={() => setPreview(false)}
+        onIndent={onIndent}
         onMore={onMore}
         onToggleSearch={toggleSearch}
         onToggleFileTree={toggleFileTree}
