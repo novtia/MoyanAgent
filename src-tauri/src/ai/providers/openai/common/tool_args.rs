@@ -132,11 +132,7 @@ pub(crate) fn finalize_pending_tool_calls(
         .filter(|p| !p.name.is_empty())
         .map(|p| {
             let arguments = parse_tool_call_arguments(&p.name, &p.arguments);
-            crate::ai::chat::ProviderToolCall {
-                id: p.id,
-                name: p.name,
-                arguments,
-            }
+            crate::ai::chat::ProviderToolCall::new(p.id, p.name, arguments)
         })
         .collect()
 }

@@ -11,6 +11,10 @@ import {
   groupFromModelId,
   manageGroupMark,
   normalizeProviderSdk,
+  composeVertexEndpoint,
+  isVertexSdk,
+  parseVertexEndpoint,
+  VERTEX_SAFETY_LEVELS,
   providerSdkLabel,
   resolveModelBrandIconId,
   shortModelName,
@@ -146,9 +150,80 @@ export function ProviderDetail({
                   selectedProviderValidation.api_key ? "is-error" : ""
                 }`}
               >
-                {selectedProviderValidation.api_key ?? selectedSdkConfig.apiKeyHint}
+                {selectedProviderValidation.api_key ??
+                  (isVertexSdk(selectedProvider.sdk)
+                    ? t("settings.llm.vertexKeyHint")
+                    : selectedSdkConfig.apiKeyHint)}
               </div>
             </div>
+            {isVertexSdk(selectedProvider.sdk) && (
+              <>
+                <div className="row">
+                  <label className="field-label">
+                    {t("settings.llm.vertexProjectLabel")}
+                  </label>
+                  <input
+                    type="text"
+                    value={parseVertexEndpoint(providerDraft.endpoint).project}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={t("settings.llm.vertexProjectPlaceholder")}
+                    onChange={(e) =>
+                      onDraftChange({
+                        endpoint: composeVertexEndpoint(
+                          e.target.value,
+                          parseVertexEndpoint(providerDraft.endpoint).location,
+                        ),
+                      })
+                    }
+                  />
+                  <div className="hint">{t("settings.llm.vertexProjectHint")}</div>
+                </div>
+                <div className="row">
+                  <label className="field-label">
+                    {t("settings.llm.vertexLocationLabel")}
+                  </label>
+                  <input
+                    type="text"
+                    value={parseVertexEndpoint(providerDraft.endpoint).location}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={t("settings.llm.vertexLocationPlaceholder")}
+                    onChange={(e) =>
+                      onDraftChange({
+                        endpoint: composeVertexEndpoint(
+                          parseVertexEndpoint(providerDraft.endpoint).project,
+                          e.target.value,
+                        ),
+                      })
+                    }
+                  />
+                  <div className="hint">{t("settings.llm.vertexLocationHint")}</div>
+                </div>
+                <div className="row">
+                  <label className="field-label">
+                    {t("settings.llm.vertexSafetyLabel")}
+                  </label>
+                  <select
+                    value={
+                      selectedProvider.safety_threshold?.trim() || ""
+                    }
+                    onChange={(e) =>
+                      onPatchProvider(selectedProvider.id, {
+                        safety_threshold: e.target.value || null,
+                      })
+                    }
+                  >
+                    {VERTEX_SAFETY_LEVELS.map((opt) => (
+                      <option key={opt.value || "default"} value={opt.value}>
+                        {t(opt.labelKey)}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="hint">{t("settings.llm.vertexSafetyHint")}</div>
+                </div>
+              </>
+            )}
             <div className="row">
               <label className="field-label">API 地址</label>
               <input

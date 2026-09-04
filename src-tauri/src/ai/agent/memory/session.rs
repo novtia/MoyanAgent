@@ -27,8 +27,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::ai::agent::memory::{SessionMemory, SessionMemoryExtractor};
 use crate::ai::agent::core::task::Task;
+use crate::ai::agent::memory::{SessionMemory, SessionMemoryExtractor};
 use crate::ai::tokens::TokenUsage;
 use crate::error::AppResult;
 
@@ -121,11 +121,7 @@ impl FsSessionMemoryExtractor {
 
     /// Decide whether an extraction should run given the current usage
     /// and tool-call activity.
-    pub fn should_update(
-        &self,
-        usage: &TokenUsage,
-        tool_calls_since_last: u32,
-    ) -> bool {
+    pub fn should_update(&self, usage: &TokenUsage, tool_calls_since_last: u32) -> bool {
         let guard = match self.state.lock() {
             Ok(g) => g,
             Err(_) => return false,

@@ -88,12 +88,12 @@ mod re_exports {
     // tools
     pub use super::tools::agent_tool::{AgentInvocation, AgentTool, AgentToolResult};
     pub use super::tools::bash::BashTool;
+    pub use super::tools::consult_roles::ConsultRolesTool;
     pub use super::tools::create_doc::CreateDocTool;
     pub use super::tools::delete::DeleteTool;
     pub use super::tools::edit::{FileEditTool, FileWriteTool};
     pub use super::tools::fs::FileReadTool;
     pub use super::tools::grep::GrepTool;
-    pub use super::tools::consult_roles::ConsultRolesTool;
     pub use super::tools::role_state::{RoleStateStore, RoleStateTool};
     pub use super::tools::todo::TodoListTool;
     pub use super::tools::{Tool, ToolInvocation, ToolPool, ToolResult, ToolSpec};
@@ -104,9 +104,9 @@ mod re_exports {
     pub use super::core::context::{ToolUseContext, ToolUseContextBuilder};
     pub use super::core::file_snapshot::{FileChangeRecord, FileOp, FileSnapshotStore};
     pub use super::core::permission::{
-        AllowAllResolver, BASH_WRITE_PREFIXES, DefaultModeResolver, PermissionDecision,
-        PermissionMode, PermissionResolver, PlanModeResolver, WRITE_TOOLS,
         command_is_catastrophic, is_shell_tool, is_write_tool, split_command_segments,
+        AllowAllResolver, DefaultModeResolver, PermissionDecision, PermissionMode,
+        PermissionResolver, PlanModeResolver, BASH_WRITE_PREFIXES, WRITE_TOOLS,
     };
     pub use super::core::task::{Task, TaskId, TaskKind, TaskState, TaskStore};
     // config
@@ -115,15 +115,15 @@ mod re_exports {
     pub use super::config::registry::AgentRegistry;
     // memory
     pub use super::memory::session::{
-        DEFAULT_TEMPLATE as SESSION_MEMORY_TEMPLATE, FsSessionMemoryExtractor, SessionMemoryConfig,
+        FsSessionMemoryExtractor, SessionMemoryConfig, DEFAULT_TEMPLATE as SESSION_MEMORY_TEMPLATE,
     };
     // exec
     pub use super::exec::engine::{
-        AgentChatOutcome, EngineTurn, ProviderEngine, ProviderQueryEngine, ToolUseRequest,
-        inject_attachments_into_history, run_chat_request,
+        inject_attachments_into_history, run_chat_request, AgentChatOutcome, EngineTurn,
+        ProviderEngine, ProviderQueryEngine, ToolUseRequest,
     };
     pub use super::exec::query::{QueryEngine, QueryRequest, QueryResult};
-    pub use super::exec::runner::{RunAgentParams, RunAgentResult, run_agent};
+    pub use super::exec::runner::{run_agent, RunAgentParams, RunAgentResult};
     // shared
     pub use super::types::{
         AgentId, AgentRunMode, MessageEvent, MessageId, MessageRole, QuerySource,

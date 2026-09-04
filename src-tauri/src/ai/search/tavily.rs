@@ -50,9 +50,10 @@ impl SearchBackend for TavilyBackend {
                 .send()
                 .await?;
             let status = resp.status();
-            let payload: Value = resp.json().await.map_err(|e| {
-                AppError::Http(format!("tavily: failed to decode response: {e}"))
-            })?;
+            let payload: Value = resp
+                .json()
+                .await
+                .map_err(|e| AppError::Http(format!("tavily: failed to decode response: {e}")))?;
             if !status.is_success() {
                 let msg = payload
                     .get("error")

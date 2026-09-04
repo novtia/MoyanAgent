@@ -123,9 +123,8 @@ fn load_supplier_models(conn: &DbConn, supplier_id: &str) -> AppResult<Vec<Model
 
 /// User-edited OpenRouter pins, keyed by live provider id + model id.
 fn load_route_overlay(conn: &DbConn) -> AppResult<HashMap<(String, String), Vec<String>>> {
-    let mut stmt = conn.prepare(
-        "SELECT provider_id, model_id, route_providers_json FROM llm_model_route",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT provider_id, model_id, route_providers_json FROM llm_model_route")?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -160,8 +159,8 @@ pub fn sync_route_providers(conn: &Connection, services: &[ModelProvider]) -> Ap
     conn.execute("DELETE FROM llm_model_route", [])?;
     for provider in services {
         for model in &provider.models {
-            let json = serde_json::to_string(&model.route_providers)
-                .unwrap_or_else(|_| "[]".into());
+            let json =
+                serde_json::to_string(&model.route_providers).unwrap_or_else(|_| "[]".into());
             if !model.route_providers.is_empty() {
                 conn.execute(
                     "INSERT INTO llm_model_route (provider_id, model_id, route_providers_json)
@@ -385,6 +384,7 @@ pub fn supplier_presets_as_providers(conn: &DbConn) -> AppResult<Vec<ModelProvid
             api_key: String::new(),
             enabled,
             context_cache_enabled: false,
+            safety_threshold: None,
             models,
         });
     }
@@ -470,6 +470,7 @@ mod overlay_tests {
             api_key: "k".into(),
             enabled: true,
             context_cache_enabled: false,
+            safety_threshold: None,
             models: vec![ModelServiceModel {
                 id: "qwen/qwen3.7-max".into(),
                 name: "qwen3.7-max".into(),
@@ -547,12 +548,8 @@ mod overlay_tests {
         let db = TempDb::new("route-backfill");
         let conn = db.conn();
         let json = serde_json::to_string(&sample_services(&["google-ai-studio"])).unwrap();
-        crate::data::settings::write_kv(
-            &conn,
-            crate::data::settings::KEY_MODEL_SERVICES,
-            &json,
-        )
-        .unwrap();
+        crate::data::settings::write_kv(&conn, crate::data::settings::KEY_MODEL_SERVICES, &json)
+            .unwrap();
         backfill_route_overlay_from_settings(&conn).unwrap();
 
         let stored: String = conn

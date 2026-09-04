@@ -66,11 +66,7 @@ pub(crate) fn extract_openai_chat_tool_calls(v: &Value) -> Vec<crate::ai::chat::
                 .and_then(Value::as_str)
                 .unwrap_or("{}");
             let arguments = parse_tool_call_arguments(&name, raw_args);
-            Some(crate::ai::chat::ProviderToolCall {
-                id,
-                name,
-                arguments,
-            })
+            Some(crate::ai::chat::ProviderToolCall::new(id, name, arguments))
         })
         .collect()
 }

@@ -14,7 +14,9 @@ pub(crate) struct CreateProjectArgs {
 }
 
 #[tauri::command]
-pub fn list_projects(state: tauri::State<Arc<AppState>>) -> Result<Vec<project::Project>, AppError> {
+pub fn list_projects(
+    state: tauri::State<Arc<AppState>>,
+) -> Result<Vec<project::Project>, AppError> {
     let conn = state.conn()?;
     project::list(&conn)
 }
@@ -30,7 +32,11 @@ pub fn create_project(
     if name.is_empty() {
         return Err(AppError::Invalid("project name is required".into()));
     }
-    let supplied = args.path.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let supplied = args
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let path = if paths::pe_platform() {
         None
     } else {

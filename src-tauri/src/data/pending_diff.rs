@@ -234,11 +234,7 @@ pub fn accept(conn: &DbConn, session_id: &str, id: &str) -> AppResult<bool> {
 
 /// Reject a hunk: return revert text and delete this row plus every later
 /// hunk on the same path (seq >= this row).
-pub fn reject(
-    conn: &DbConn,
-    session_id: &str,
-    id: &str,
-) -> AppResult<Option<PendingDiffRevert>> {
+pub fn reject(conn: &DbConn, session_id: &str, id: &str) -> AppResult<Option<PendingDiffRevert>> {
     let Some(row) = get(conn, session_id, id)? else {
         return Ok(None);
     };
@@ -328,17 +324,27 @@ mod tests {
     const SID: &str = "session-1";
 
     fn workspace(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("atelier-diff-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("atelier-diff-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::canonicalize(&dir).unwrap()
     }
 
     fn seed(conn: &DbConn, path: &str) {
-        insert(conn, SID, path, "a", "b", "a", "b", Some("utf-8"), false, Some("u1"))
-            .unwrap()
-            .expect("row stored");
+        insert(
+            conn,
+            SID,
+            path,
+            "a",
+            "b",
+            "a",
+            "b",
+            Some("utf-8"),
+            false,
+            Some("u1"),
+        )
+        .unwrap()
+        .expect("row stored");
     }
 
     #[test]

@@ -178,6 +178,10 @@ pub struct ModelProvider {
     /// use explicit Session caching (`caching` + `previous_response_id`).
     #[serde(default)]
     pub context_cache_enabled: bool,
+    /// Vertex `safetySettings` harm-block level: `off` / `none` / `high` /
+    /// `medium` / `low`. `None` omits the field so Vertex uses its default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub safety_threshold: Option<String>,
     pub models: Vec<ModelServiceModel>,
 }
 
@@ -190,6 +194,32 @@ impl ModelProvider {
             .map(|m| normalize_route_provider_slugs(&m.route_providers))
             .unwrap_or_default()
     }
+
+    /// Canonical Vertex safety level to send on `generateContent`.
+    pub fn vertex_safety_threshold(&self) -> Option<String> {
+        if crate::ai::providers::normalize_sdk(&self.sdk) != crate::ai::providers::VERTEX_SDK {
+            return None;
+        }
+        normalize_vertex_safety_threshold(self.safety_threshold.as_deref())
+    }
+}
+
+pub(crate) fn normalize_vertex_safety_threshold(raw: Option<&str>) -> Option<String> {
+    let t = raw?.trim().to_ascii_lowercase();
+    if t.is_empty() || t == "default" {
+        return None;
+    }
+    Some(
+        match t.as_str() {
+            "off" => "off",
+            "none" | "block_none" => "none",
+            "high" | "block_only_high" => "high",
+            "medium" | "block_medium_and_above" => "medium",
+            "low" | "block_low_and_above" => "low",
+            _ => return None,
+        }
+        .to_string(),
+    )
 }
 
 pub(crate) fn normalize_route_provider_slugs(raw: &[String]) -> Vec<String> {
@@ -467,8 +497,7 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             }
             KEY_WEB_SEARCH_MAX_RESULTS => {
                 if let Some(n) = parse_optional_i64(&v) {
-                    s.web_search_max_results =
-                        n.clamp(1, crate::ai::search::MAX_RESULTS_CAP);
+                    s.web_search_max_results = n.clamp(1, crate::ai::search::MAX_RESULTS_CAP);
                 }
             }
             KEY_WEB_SEARCH_PROVIDERS => {
@@ -586,10 +615,7 @@ pub fn active_provider(s: &Settings) -> Option<&ModelProvider> {
 }
 
 /// Find an enabled provider that offers `model_id` (first match wins).
-pub fn find_provider_for_model<'a>(
-    s: &'a Settings,
-    model_id: &str,
-) -> Option<&'a ModelProvider> {
+pub fn find_provider_for_model<'a>(s: &'a Settings, model_id: &str) -> Option<&'a ModelProvider> {
     let mid = model_id.trim();
     if mid.is_empty() {
         return None;
@@ -704,6 +730,8 @@ fn normalize_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {
             }
             model.route_providers = normalize_route_provider_slugs(&model.route_providers);
         }
+        provider.safety_threshold =
+            normalize_vertex_safety_threshold(provider.safety_threshold.as_deref());
     }
     services
 }
@@ -810,8 +838,8 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
     if let Some(v) = patch.model_services {
         validate_services(&v)?;
         let normalized = normalize_services(v);
-        let json = serde_json::to_string(&normalized)
-            .map_err(|e| AppError::Invalid(e.to_string()))?;
+        let json =
+            serde_json::to_string(&normalized).map_err(|e| AppError::Invalid(e.to_string()))?;
         write_kv(conn, KEY_MODEL_SERVICES, &json)?;
         crate::data::llm_catalog::sync_route_providers(conn, &normalized)?;
     }
@@ -910,8 +938,7 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        let json =
-            serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
+        let json = serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
         write_kv(conn, KEY_ENABLED_SKILL_IDS, &json)?;
     }
     read(conn)

@@ -10,6 +10,7 @@ mod gemini;
 mod grok;
 pub mod model_list;
 pub mod openai;
+mod vertex;
 
 use crate::ai::chat::{ChatRequest, GenerateResponse, TextDeltaCallback};
 use crate::error::{AppError, AppResult};
@@ -44,6 +45,7 @@ pub(crate) fn build_chat_client() -> reqwest::Result<reqwest::Client> {
 pub const OPENAI_SDK: &str = "openai";
 pub const OPENAI_RESPONSES_SDK: &str = "openai-responses";
 pub const GEMINI_SDK: &str = "gemini";
+pub const VERTEX_SDK: &str = "vertex";
 pub const CLAUDE_SDK: &str = "claude";
 pub const GROK_SDK: &str = "grok";
 pub const ARK_IMAGES_SDK: &str = "ark-images";
@@ -52,6 +54,7 @@ pub const SUPPORTED_SDKS: &[&str] = &[
     OPENAI_SDK,
     OPENAI_RESPONSES_SDK,
     GEMINI_SDK,
+    VERTEX_SDK,
     CLAUDE_SDK,
     GROK_SDK,
     ARK_IMAGES_SDK,
@@ -127,6 +130,7 @@ impl Default for ProviderFactory {
             .register(openai::OpenAiProvider::new())
             .register(openai::OpenAiResponsesProvider::new())
             .register(gemini::GeminiProvider::new())
+            .register(vertex::VertexProvider::new())
             .register(claude::ClaudeProvider::new())
             .register(grok::GrokProvider::new())
             .register(ark_images::ArkImagesProvider::new())
@@ -140,6 +144,8 @@ pub fn normalize_sdk(sdk: &str) -> String {
         OPENAI_SDK.to_string()
     } else if sdk == "openrouter" || sdk == "deepseek" {
         OPENAI_SDK.to_string()
+    } else if sdk == "vertex-ai" || sdk == "vertexai" || sdk == "google-vertex" {
+        VERTEX_SDK.to_string()
     } else {
         sdk
     }
@@ -148,4 +154,20 @@ pub fn normalize_sdk(sdk: &str) -> String {
 pub fn is_supported_sdk(sdk: &str) -> bool {
     let sdk = normalize_sdk(sdk);
     SUPPORTED_SDKS.contains(&sdk.as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_sdk_maps_vertex_aliases() {
+        assert_eq!(normalize_sdk("vertex"), VERTEX_SDK);
+        assert_eq!(normalize_sdk("vertex-ai"), VERTEX_SDK);
+        assert_eq!(normalize_sdk("VertexAI"), VERTEX_SDK);
+        assert_eq!(normalize_sdk("google-vertex"), VERTEX_SDK);
+        assert!(is_supported_sdk("vertex"));
+        assert!(is_supported_sdk("vertex-ai"));
+        assert!(SUPPORTED_SDKS.contains(&VERTEX_SDK));
+    }
 }

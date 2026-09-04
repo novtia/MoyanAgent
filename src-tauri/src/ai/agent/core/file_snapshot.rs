@@ -294,8 +294,8 @@ mod tests {
 
         // A directory stands in for any path that exists but yields no file
         // bytes; `read` fails on it exactly like a locked file does.
-        let err = capture_before(&dir, FileOp::Update)
-            .expect_err("a non-file must not be snapshot-able");
+        let err =
+            capture_before(&dir, FileOp::Update).expect_err("a non-file must not be snapshot-able");
         assert!(
             err.to_string().contains("not a regular file"),
             "unexpected error: {err}"

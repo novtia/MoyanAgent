@@ -96,10 +96,7 @@ impl TodoStore {
                 if t.detail.is_empty() {
                     format!("{mark} #{} {} [{}]", t.id, t.title, t.status)
                 } else {
-                    format!(
-                        "{mark} #{} {} [{}] — {}",
-                        t.id, t.title, t.status, t.detail
-                    )
+                    format!("{mark} #{} {} [{}] — {}", t.id, t.title, t.status, t.detail)
                 }
             })
             .collect::<Vec<_>>()
@@ -125,7 +122,11 @@ fn status_mark(status: &str) -> &'static str {
 
 /// Scope key isolating one agent run from every other session / sub-agent.
 pub fn scope_key(ctx: &ToolUseContext) -> String {
-    format!("{}#{}", ctx.session_id.as_deref().unwrap_or("-"), ctx.agent_id)
+    format!(
+        "{}#{}",
+        ctx.session_id.as_deref().unwrap_or("-"),
+        ctx.agent_id
+    )
 }
 
 /// The TodoList tool. One process-wide instance holds a map of per-run
@@ -410,7 +411,11 @@ impl Tool for TodoListTool {
                 .unwrap_or("")
                 .to_string();
 
-            let tasks = invocation.input.get("tasks").cloned().unwrap_or(Value::Null);
+            let tasks = invocation
+                .input
+                .get("tasks")
+                .cloned()
+                .unwrap_or(Value::Null);
 
             let mut stores = stores
                 .lock()
@@ -547,7 +552,9 @@ mod tests {
             store.create(vec![("task".into(), String::new())]);
             store.get_mut(1).unwrap().status = "done".into();
         }
-        let snap = tool.prompt_snapshot_for_key("s#a", false).expect("snapshot");
+        let snap = tool
+            .prompt_snapshot_for_key("s#a", false)
+            .expect("snapshot");
         assert!(snap.contains("✔ #1 task [done]"));
         assert!(!snap.contains("You tried to stop"));
         assert!(tool.prompt_snapshot_for_key("missing", false).is_none());
@@ -570,9 +577,10 @@ mod tests {
         let tool = TodoListTool::new();
         {
             let mut stores = tool.stores.lock().unwrap();
-            stores.entry("sess#agent".into()).or_default().create(vec![
-                ("task".into(), String::new()),
-            ]);
+            stores
+                .entry("sess#agent".into())
+                .or_default()
+                .create(vec![("task".into(), String::new())]);
         }
         assert!(tool.incomplete_nudge_for_key("sess#agent").is_some());
         if let Ok(mut stores) = tool.stores.lock() {

@@ -56,7 +56,8 @@ information that only the user can provide.\n\n\
 ━━━ DESIGNING QUESTIONS ━━━\n\
 - Prefer concrete, mutually distinct options. Keep `label` short.\n\
 - Use multiple questions only when they are independent clarifications needed \
-  in one round (e.g. style + scope). Cap at 5.".to_string(),
+  in one round (e.g. style + scope). Cap at 5."
+                    .to_string(),
                 schema: json!({
                     "type": "object",
                     "properties": {
@@ -141,14 +142,9 @@ impl Tool for AskUserTool {
                     "AskUser: question {qi} is missing a non-empty `prompt`"
                 )));
             }
-            let options = q
-                .get("options")
-                .and_then(Value::as_array)
-                .ok_or_else(|| {
-                    AppError::Invalid(format!(
-                        "AskUser: question {qi} `options` must be an array"
-                    ))
-                })?;
+            let options = q.get("options").and_then(Value::as_array).ok_or_else(|| {
+                AppError::Invalid(format!("AskUser: question {qi} `options` must be an array"))
+            })?;
             if options.is_empty() {
                 return Err(AppError::Invalid(format!(
                     "AskUser: question {qi} needs at least 1 option"

@@ -52,9 +52,7 @@ impl Default for GrepTool {
 
 impl GrepTool {
     pub fn new() -> Self {
-        let path_desc = format!(
-            "{FILE_REF_DESC} For a directory, pass a folder breadcrumb only."
-        );
+        let path_desc = format!("{FILE_REF_DESC} For a directory, pass a folder breadcrumb only.");
         Self {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
@@ -138,11 +136,8 @@ impl Tool for GrepTool {
                 .get("path")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let path = project_path::resolve_project_file_or_dir(
-                &invocation.context.cwd,
-                raw,
-                TOOL_NAME,
-            )?;
+            let path =
+                project_path::resolve_project_file_or_dir(&invocation.context.cwd, raw, TOOL_NAME)?;
 
             let query = invocation
                 .input
@@ -199,9 +194,7 @@ impl Tool for GrepTool {
             .map_err(|e| AppError::Other(format!("{TOOL_NAME}: scan task failed: {e}")))?;
 
             if scan.cancelled {
-                return Ok(ToolResult::error(format!(
-                    "{TOOL_NAME}: search cancelled"
-                )));
+                return Ok(ToolResult::error(format!("{TOOL_NAME}: search cancelled")));
             }
 
             // For the single-file case, flatten the matches to the top level
@@ -350,9 +343,7 @@ fn read_prefix(path: &Path) -> Option<(Vec<u8>, bool)> {
     let file = std::fs::File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
     let mut buf = Vec::with_capacity(len.min(MAX_FILE_SCAN_BYTES) as usize);
-    file.take(MAX_FILE_SCAN_BYTES)
-        .read_to_end(&mut buf)
-        .ok()?;
+    file.take(MAX_FILE_SCAN_BYTES).read_to_end(&mut buf).ok()?;
     Some((buf, len > MAX_FILE_SCAN_BYTES))
 }
 
@@ -484,8 +475,7 @@ mod tests {
     /// A deep tree must stop the walk instead of the stack.
     #[test]
     fn collection_stops_at_the_depth_limit() {
-        let root =
-            std::env::temp_dir().join(format!("moyan-grep-depth-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("moyan-grep-depth-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let mut deep = root.clone();
         for level in 0..(MAX_SCAN_DEPTH + 5) {

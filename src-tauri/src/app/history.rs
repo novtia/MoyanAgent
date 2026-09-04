@@ -154,7 +154,10 @@ fn stable_window_start(len: usize, max_messages: usize) -> usize {
 
 /// Load the current character state board for prompt injection: prefer the
 /// in-memory store, fall back to the latest persisted snapshot.
-pub(crate) fn load_roles_for_prompt(state: &AppState, session_id: &str) -> AppResult<Vec<serde_json::Value>> {
+pub(crate) fn load_roles_for_prompt(
+    state: &AppState,
+    session_id: &str,
+) -> AppResult<Vec<serde_json::Value>> {
     let conn = state.conn()?;
     let scope = crate::data::role_state::resolve_role_state_scope(&conn, session_id)?;
     let live = state.role_states.snapshot(&scope);
@@ -420,9 +423,10 @@ mod budget_tests {
         trim_history_to_budget(&mut turns, 5_000);
         assert_eq!(turns.len(), 10, "prose turns should survive");
         assert!(total(&turns) <= 5_000);
-        assert!(turns
+        assert!(turns.iter().all(|t| t
+            .timeline
             .iter()
-            .all(|t| t.timeline.iter().all(|s| matches!(s, TimelineSegment::Text { .. }))));
+            .all(|s| matches!(s, TimelineSegment::Text { .. }))));
     }
 
     #[test]
@@ -439,7 +443,13 @@ mod budget_tests {
         trim_history_to_budget(&mut turns, 10_000);
         assert!(total(&turns) <= 10_000);
         assert!(turns.len() < 10);
-        assert!(turns.last().unwrap().text.as_ref().unwrap().contains("turn9"));
+        assert!(turns
+            .last()
+            .unwrap()
+            .text
+            .as_ref()
+            .unwrap()
+            .contains("turn9"));
     }
 
     /// Whatever the budget, the turn the user is replying to must stay.

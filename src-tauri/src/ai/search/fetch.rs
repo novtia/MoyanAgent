@@ -13,9 +13,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
-use html_to_markdown_rs::{
-    convert, ConversionOptions, PreprocessingOptions, PreprocessingPreset,
-};
+use html_to_markdown_rs::{convert, ConversionOptions, PreprocessingOptions, PreprocessingPreset};
 use reqwest::Url;
 
 use crate::ai::search::USER_AGENT;
@@ -72,7 +70,10 @@ pub async fn fetch_page(url: &str) -> AppResult<FetchedPage> {
                 .get(reqwest::header::LOCATION)
                 .and_then(|v| v.to_str().ok())
                 .ok_or_else(|| {
-                    AppError::Http(format!("fetch got HTTP {} with no Location", status.as_u16()))
+                    AppError::Http(format!(
+                        "fetch got HTTP {} with no Location",
+                        status.as_u16()
+                    ))
                 })?;
             // Relative redirects are legal, hence `join` rather than a re-parse.
             let next = target.join(location).map_err(|e| {
@@ -212,7 +213,7 @@ fn check_content_type(declared: Option<&str>) -> AppResult<()> {
             "application/json" | "application/xml" | "application/xhtml+xml" | ""
         );
     if textual {
-        return Ok(())
+        return Ok(());
     }
     Err(AppError::Invalid(format!(
         "fetch: `{mime}` is not a readable page — WebFetch only returns text content"
@@ -258,11 +259,11 @@ fn ipv4_is_public(ip: Ipv4Addr) -> bool {
         return false;
     }
     match (a, b) {
-        (0, _) => false,                        // 0.0.0.0/8 "this network"
-        (100, 64..=127) => false,               // carrier-grade NAT
-        (192, 0) if c == 0 => false,            // IETF protocol assignments
-        (198, 18 | 19) => false,                // benchmarking
-        (240..=255, _) => false,                // reserved / limited broadcast
+        (0, _) => false,             // 0.0.0.0/8 "this network"
+        (100, 64..=127) => false,    // carrier-grade NAT
+        (192, 0) if c == 0 => false, // IETF protocol assignments
+        (198, 18 | 19) => false,     // benchmarking
+        (240..=255, _) => false,     // reserved / limited broadcast
         _ => true,
     }
 }
@@ -309,15 +310,10 @@ fn extract(html: &str) -> AppResult<(String, String)> {
     options.skip_images = true;
     options.extract_metadata = true;
 
-    let result = convert(html, options).map_err(|e| {
-        AppError::Other(format!("html to markdown conversion failed: {e}"))
-    })?;
+    let result = convert(html, options)
+        .map_err(|e| AppError::Other(format!("html to markdown conversion failed: {e}")))?;
 
-    let title = result
-        .metadata
-        .document
-        .title
-        .unwrap_or_default();
+    let title = result.metadata.document.title.unwrap_or_default();
     let text = result.content.unwrap_or_default();
     Ok((title, text))
 }
@@ -339,10 +335,7 @@ mod tests {
             "javascript:alert(1)",
             "example.com",
         ] {
-            assert!(
-                parse_fetchable_url(raw).is_err(),
-                "`{raw}` must be refused"
-            );
+            assert!(parse_fetchable_url(raw).is_err(), "`{raw}` must be refused");
         }
     }
 
@@ -356,16 +349,16 @@ mod tests {
     #[test]
     fn loopback_and_private_ranges_are_not_public() {
         for raw in [
-            "127.0.0.1",      // loopback — local model servers, dev APIs
+            "127.0.0.1", // loopback — local model servers, dev APIs
             "0.0.0.0",
-            "10.1.2.3",       // private
+            "10.1.2.3", // private
             "172.16.5.4",
-            "192.168.1.1",    // home routers
+            "192.168.1.1",     // home routers
             "169.254.169.254", // cloud instance metadata
-            "100.64.0.1",     // carrier-grade NAT
+            "100.64.0.1",      // carrier-grade NAT
             "198.18.0.1",
             "192.0.0.1",
-            "224.0.0.1",      // multicast
+            "224.0.0.1", // multicast
             "255.255.255.255",
         ] {
             let ip: IpAddr = raw.parse().unwrap();
@@ -387,7 +380,7 @@ mod tests {
             "fd00::1",
             "::ffff:127.0.0.1", // v4 loopback wearing a v6 costume
             "::ffff:10.0.0.1",
-            "64:ff9b::7f00:1",  // NAT64 to 127.0.0.1
+            "64:ff9b::7f00:1", // NAT64 to 127.0.0.1
             "2001:db8::1",
         ] {
             let ip: IpAddr = raw.parse().unwrap();

@@ -106,7 +106,9 @@ fn resolve_file_ref(
 ) -> AppResult<PathBuf> {
     let raw = raw.trim();
     if raw.is_empty() {
-        return Err(AppError::Invalid(format!("{tool}: `path` must be non-empty")));
+        return Err(AppError::Invalid(format!(
+            "{tool}: `path` must be non-empty"
+        )));
     }
 
     let as_path = PathBuf::from(raw);
@@ -141,9 +143,7 @@ fn resolve_file_ref(
         let last = segments.last().expect("segments non-empty");
         if is_extensionless(last) {
             if let Some(parent) = target.parent() {
-                if let Some(found) =
-                    resolve_unique_doc_by_stem(parent, last, &root_canon, tool)?
-                {
+                if let Some(found) = resolve_unique_doc_by_stem(parent, last, &root_canon, tool)? {
                     return Ok(found);
                 }
             }
@@ -171,9 +171,8 @@ pub fn resolve_project_dir(cwd: &Path, raw: Option<&str>, tool: &str) -> AppResu
     let as_path = PathBuf::from(raw);
     if as_path.is_absolute() {
         if as_path.is_dir() {
-            let canon = std::fs::canonicalize(&as_path).map_err(|e| {
-                AppError::Other(format!("{tool}: canonicalize {:?}: {e}", as_path))
-            })?;
+            let canon = std::fs::canonicalize(&as_path)
+                .map_err(|e| AppError::Other(format!("{tool}: canonicalize {:?}: {e}", as_path)))?;
             ensure_within_project_root(&root_canon, &canon, tool)?;
             return Ok(canon);
         }
@@ -218,12 +217,10 @@ pub fn resolve_project_file_or_dir(cwd: &Path, raw: &str, tool: &str) -> AppResu
 
 fn resolve_absolute_compat(cwd: &Path, path: &Path, tool: &str) -> AppResult<PathBuf> {
     if path.exists() {
-        let canon = std::fs::canonicalize(path).map_err(|e| {
-            AppError::Other(format!("{tool}: canonicalize {:?}: {e}", path))
-        })?;
+        let canon = std::fs::canonicalize(path)
+            .map_err(|e| AppError::Other(format!("{tool}: canonicalize {:?}: {e}", path)))?;
         if let Ok(root) = resolve_project_root(cwd) {
-            let root_canon =
-                paths::canonicalize_with_missing_tail(&root).unwrap_or(root);
+            let root_canon = paths::canonicalize_with_missing_tail(&root).unwrap_or(root);
             if !is_within(&root_canon, &canon) {
                 return Err(AppError::Invalid(format!(
                     "{tool}: path is outside the project root — use a file name or folder\\file breadcrumb instead"
@@ -239,9 +236,8 @@ fn resolve_absolute_compat(cwd: &Path, path: &Path, tool: &str) -> AppResult<Pat
 }
 
 fn canonicalize_existing(path: &Path, tool: &str) -> AppResult<PathBuf> {
-    std::fs::canonicalize(path).map_err(|e| {
-        AppError::Other(format!("{tool}: canonicalize {:?}: {e}", path))
-    })
+    std::fs::canonicalize(path)
+        .map_err(|e| AppError::Other(format!("{tool}: canonicalize {:?}: {e}", path)))
 }
 
 pub use crate::data::paths::is_within;
@@ -323,11 +319,7 @@ fn resolve_unique_doc_by_stem(
     }
 }
 
-fn find_unique_file_by_basename(
-    root: &Path,
-    name: &str,
-    tool: &str,
-) -> AppResult<Option<PathBuf>> {
+fn find_unique_file_by_basename(root: &Path, name: &str, tool: &str) -> AppResult<Option<PathBuf>> {
     let mut matches = Vec::new();
     let mut budget = MAX_SEARCH_DIRS;
     collect_files_named(root, name, root, 0, &mut budget, &mut matches)?;
@@ -414,8 +406,8 @@ fn is_reparse_point(_path: &Path) -> bool {
 /// (even via `exists()`) can block forever — `CON` waits on console input — so
 /// they must never survive as a path segment.
 const WINDOWS_DEVICE_NAMES: &[&str] = &[
-    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7",
-    "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
 ];
 
 fn sanitize_segment(name: &str) -> String {
@@ -481,10 +473,7 @@ mod tests {
     fn windows_device_names_never_survive_as_a_segment() {
         for raw in ["CON", "con", "nul", "com1", "LPT1", "con.txt", "aux.md"] {
             let out = sanitize_segment(raw);
-            assert!(
-                out.starts_with('_'),
-                "`{raw}` must be defused, got `{out}`"
-            );
+            assert!(out.starts_with('_'), "`{raw}` must be defused, got `{out}`");
         }
         for raw in ["console.md", "context.txt", "communication.md", "notes.md"] {
             assert_eq!(sanitize_segment(raw), raw, "`{raw}` is an ordinary name");
@@ -494,8 +483,7 @@ mod tests {
     #[test]
     fn containment_compares_on_a_separator_boundary() {
         let root = std::env::temp_dir().join(format!("moyan_within_{}", std::process::id()));
-        let sibling = std::env::temp_dir()
-            .join(format!("moyan_within_{}-old", std::process::id()));
+        let sibling = std::env::temp_dir().join(format!("moyan_within_{}-old", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&sibling);
         std::fs::create_dir_all(&root).expect("create root");
@@ -617,7 +605,10 @@ mod tests {
         let err = resolve_project_file(&root, "notes", "Read").expect_err("ambiguous");
         let msg = err.to_string();
         assert!(msg.contains("matches 2 files"), "{msg}");
-        assert!(msg.contains("notes.md") && msg.contains("notes.txt"), "{msg}");
+        assert!(
+            msg.contains("notes.md") && msg.contains("notes.txt"),
+            "{msg}"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -643,8 +634,7 @@ mod tests {
         let root = unique_temp("extless_strict");
         std::fs::write(root.join("notes.md"), "md").expect("seed");
 
-        let strict =
-            resolve_project_file_strict(&root, "notes", "Write").expect("strict resolve");
+        let strict = resolve_project_file_strict(&root, "notes", "Write").expect("strict resolve");
         assert_eq!(strict.file_name().and_then(|s| s.to_str()), Some("notes"));
         assert!(
             !strict.as_os_str().to_string_lossy().ends_with("notes.md"),

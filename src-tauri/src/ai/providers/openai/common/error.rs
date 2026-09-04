@@ -128,7 +128,12 @@ pub(crate) fn push_response_detail(details: &mut Vec<String>, label: &str, value
     details.push(format!("{}={}", label, short));
 }
 
-pub(crate) fn push_response_detail_at(details: &mut Vec<String>, v: &Value, path: &str, label: &str) {
+pub(crate) fn push_response_detail_at(
+    details: &mut Vec<String>,
+    v: &Value,
+    path: &str,
+    label: &str,
+) {
     if let Some(value) = v.pointer(path) {
         push_response_detail(details, label, value);
     }

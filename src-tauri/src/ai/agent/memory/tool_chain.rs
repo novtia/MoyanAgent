@@ -158,11 +158,11 @@ mod tests {
             assistant: PendingAssistantTurn {
                 text: None,
                 thinking_content: None,
-                tool_calls: vec![crate::ai::chat::ProviderToolCall {
-                    id: id.into(),
-                    name: name.into(),
-                    arguments: serde_json::json!({}),
-                }],
+                tool_calls: vec![crate::ai::chat::ProviderToolCall::new(
+                    id,
+                    name,
+                    serde_json::json!({}),
+                )],
             },
             results: vec![ToolResultMessage {
                 tool_call_id: id.into(),
@@ -189,18 +189,14 @@ mod tests {
 
     #[test]
     fn keeps_all_when_under_cap() {
-        let mut chain: Vec<ToolChainRound> = (0..8)
-            .map(|_| round_with_tool("Edit"))
-            .collect();
+        let mut chain: Vec<ToolChainRound> = (0..8).map(|_| round_with_tool("Edit")).collect();
         trim_tool_chain(&mut chain, DEFAULT_MAX_NON_TODO_TOOL_ROUNDS, None);
         assert_eq!(chain.len(), 8);
     }
 
     #[test]
     fn drops_to_low_water_mark_beyond_cap() {
-        let mut chain: Vec<ToolChainRound> = (0..15)
-            .map(|_| round_with_tool("Edit"))
-            .collect();
+        let mut chain: Vec<ToolChainRound> = (0..15).map(|_| round_with_tool("Edit")).collect();
         trim_tool_chain(&mut chain, 10, None);
         assert_eq!(chain.len(), 5);
         for r in &chain {
@@ -281,10 +277,7 @@ mod tests {
         }
         trim_tool_chain(&mut chain, 10, None);
         assert!(is_todo_round(&chain[0]));
-        assert_eq!(
-            chain[0].assistant.tool_calls[0].name,
-            TOOL_NAME
-        );
+        assert_eq!(chain[0].assistant.tool_calls[0].name, TOOL_NAME);
     }
 
     #[test]
@@ -300,7 +293,10 @@ mod tests {
     #[test]
     fn fat_rounds_inside_the_round_cap_are_still_trimmed() {
         let mut chain: Vec<ToolChainRound> = (0..5).map(|_| fat_round(200_000)).collect();
-        assert!(chain_tokens(&chain) > 900_000, "precondition: over a window");
+        assert!(
+            chain_tokens(&chain) > 900_000,
+            "precondition: over a window"
+        );
         trim_tool_chain(&mut chain, DEFAULT_MAX_NON_TODO_TOOL_ROUNDS, Some(350_000));
         assert!(chain_tokens(&chain) <= 350_000);
         assert!(!chain.is_empty(), "the pending round must survive");

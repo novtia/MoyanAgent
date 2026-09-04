@@ -41,10 +41,12 @@ pub fn answer_ask_user(
         items: args
             .items
             .into_iter()
-            .map(|i| crate::ai::agent::tools::prompt_registry::PromptAnswerItem {
-                prompt: i.prompt,
-                answer: i.answer,
-            })
+            .map(
+                |i| crate::ai::agent::tools::prompt_registry::PromptAnswerItem {
+                    prompt: i.prompt,
+                    answer: i.answer,
+                },
+            )
             .collect(),
     };
     Ok(state
@@ -60,7 +62,10 @@ pub fn list_agent_tasks(state: tauri::State<Arc<AppState>>) -> Result<Vec<Task>,
 }
 
 #[tauri::command]
-pub fn cancel_agent_task(state: tauri::State<Arc<AppState>>, task_id: String) -> Result<(), AppError> {
+pub fn cancel_agent_task(
+    state: tauri::State<Arc<AppState>>,
+    task_id: String,
+) -> Result<(), AppError> {
     let id = agent::TaskId(task_id);
     state.task_store.set_state(&id, TaskState::Killed);
     // After state transitions, surface the kill to the main loop as a

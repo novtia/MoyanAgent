@@ -210,6 +210,9 @@ export function applyStreamingToolCallDelta(
   for (let i = blocks.length - 1; i >= 0; i--) {
     const b = blocks[i];
     if (b.type === "tool_use" && b.id === id) {
+      // Gemini synthesises `gemini-1`, `gemini-2`, … per model round.
+      // A later round must not mutate a call that already finished.
+      if (b.status === "success" || b.status === "error") continue;
       blocks[i] = { ...b, input, streaming: true };
       return;
     }
@@ -505,6 +508,9 @@ export function applyToolEvent(
     for (let i = blocks.length - 1; i >= 0; i--) {
       const b = blocks[i];
       if (b.type === "tool_use" && b.id === event.id) {
+        // Skip settled cards: Gemini reuses `gemini-N` each agent loop
+        // round, so a new Read must append instead of replacing ListFiles.
+        if (b.status === "success" || b.status === "error") continue;
         const prevInput =
           b.input && typeof b.input === "object"
             ? (b.input as Record<string, unknown>)

@@ -752,14 +752,6 @@ mod tests {
         assert!(validate_mode("reference", "", 1, 0, 0, "ep-20260710-example").is_ok());
         assert!(validate_duration("ep-20260710-example", -1).is_ok());
         assert!(validate_duration("ep-20260710-example", 15).is_ok());
-        assert!(validate_mode(
-            "reference",
-            "",
-            1,
-            0,
-            0,
-            "doubao-seedance-1-5-pro-251215"
-        )
-        .is_err());
+        assert!(validate_mode("reference", "", 1, 0, 0, "doubao-seedance-1-5-pro-251215").is_err());
     }
 }

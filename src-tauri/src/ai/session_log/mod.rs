@@ -25,8 +25,8 @@ use ulid::Ulid;
 
 use crate::ai::agent::tools::ToolResult;
 use crate::ai::chat::GenerateResponse;
-use crate::ai::tokens::TokenUsage;
 use crate::ai::token_log::LogContext;
+use crate::ai::tokens::TokenUsage;
 use crate::data::db::now_ms;
 use crate::data::token_log::{rollback_scope_for_message, TokenLogRollbackScope};
 
@@ -296,7 +296,10 @@ fn rewrite_session_json(
     if !path.exists() {
         return Ok(());
     }
-    let kept: Vec<SessionLogEntry> = read_entries(&path).into_iter().filter(|e| keep(e)).collect();
+    let kept: Vec<SessionLogEntry> = read_entries(&path)
+        .into_iter()
+        .filter(|e| keep(e))
+        .collect();
     if kept.is_empty() {
         let _ = fs::remove_file(&path);
         return Ok(());

@@ -51,6 +51,10 @@ impl StaticMcpRegistry {
 
 impl McpRegistry for StaticMcpRegistry {
     fn available_servers(&self) -> Vec<String> {
-        self.servers.lock().ok().map(|g| g.clone()).unwrap_or_default()
+        self.servers
+            .lock()
+            .ok()
+            .map(|g| g.clone())
+            .unwrap_or_default()
     }
 }

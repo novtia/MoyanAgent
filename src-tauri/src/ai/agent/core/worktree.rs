@@ -48,9 +48,8 @@ impl WorktreeHandle {
             .join(format!("wt-{stamp}-{id}"));
 
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                AppError::Other(format!("worktree: mkdir {:?}: {e}", parent))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| AppError::Other(format!("worktree: mkdir {:?}: {e}", parent)))?;
         }
 
         let out = Command::new("git")

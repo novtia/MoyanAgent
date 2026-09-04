@@ -100,10 +100,7 @@ impl TaskNotification {
                 TaskNotificationStatus::Updated => "updated",
             },
         );
-        let result = task
-            .result
-            .clone()
-            .or_else(|| task.error.clone());
+        let result = task.result.clone().or_else(|| task.error.clone());
         Some(Self {
             task_id: task.id.clone(),
             status,

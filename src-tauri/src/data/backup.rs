@@ -332,7 +332,9 @@ fn assert_safe_table(table: &str) -> AppResult<()> {
         .copied()
         .collect();
     if !allowed.contains(table) {
-        return Err(AppError::Invalid(format!("table not allowed in backup: {table}")));
+        return Err(AppError::Invalid(format!(
+            "table not allowed in backup: {table}"
+        )));
     }
     Ok(())
 }
@@ -588,8 +590,7 @@ fn restore_table_streaming(
     conn.execute(&format!("DELETE FROM \"{table}\""), [])?;
 
     let file = File::open(archive_path)?;
-    let mut zip =
-        ZipArchive::new(file).map_err(|e| AppError::Other(format!("zip open: {e}")))?;
+    let mut zip = ZipArchive::new(file).map_err(|e| AppError::Other(format!("zip open: {e}")))?;
     let entry = zip
         .by_name(&entry_name)
         .map_err(|e| AppError::Other(format!("missing {entry_name}: {e}")))?;
@@ -632,7 +633,10 @@ fn restore_chat_delta(
     for sid in session_ids {
         conn.execute("DELETE FROM pending_diffs WHERE session_id=?1", [sid])?;
         conn.execute("DELETE FROM file_snapshots WHERE session_id=?1", [sid])?;
-        conn.execute("DELETE FROM role_state_snapshots WHERE session_id=?1", [sid])?;
+        conn.execute(
+            "DELETE FROM role_state_snapshots WHERE session_id=?1",
+            [sid],
+        )?;
         conn.execute("DELETE FROM message_images WHERE session_id=?1", [sid])?;
         conn.execute("DELETE FROM messages WHERE session_id=?1", [sid])?;
         conn.execute("DELETE FROM sessions WHERE id=?1", [sid])?;
@@ -666,14 +670,7 @@ fn restore_chat_delta(
                 &format!("{table} · {rows}"),
             );
         })?;
-        progress.span(
-            "table",
-            t_start,
-            t_end,
-            1,
-            1,
-            &format!("{table} ({count})"),
-        );
+        progress.span("table", t_start, t_end, 1, 1, &format!("{table} ({count})"));
     }
     Ok(())
 }
@@ -707,8 +704,7 @@ fn add_sessions_subset_to_zip<W: Write + std::io::Seek>(
     if !sessions_root.exists() {
         return Ok(());
     }
-    let allow: Option<HashSet<&str>> =
-        only_ids.map(|ids| ids.iter().map(|s| s.as_str()).collect());
+    let allow: Option<HashSet<&str>> = only_ids.map(|ids| ids.iter().map(|s| s.as_str()).collect());
 
     fn walk<W: Write + std::io::Seek>(
         zip: &mut zip::ZipWriter<W>,
@@ -723,10 +719,7 @@ fn add_sessions_subset_to_zip<W: Write + std::io::Seek>(
             if path.is_dir() {
                 if path.parent() == Some(sessions_root) {
                     if let Some(set) = allow {
-                        let name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("");
+                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                         if !set.contains(name) {
                             continue;
                         }
@@ -741,10 +734,7 @@ fn add_sessions_subset_to_zip<W: Write + std::io::Seek>(
             let rel = path
                 .strip_prefix(sessions_root)
                 .map_err(|_| AppError::Other("sessions path strip failed".into()))?;
-            let zip_path = format!(
-                "sessions/{}",
-                rel.to_string_lossy().replace('\\', "/")
-            );
+            let zip_path = format!("sessions/{}", rel.to_string_lossy().replace('\\', "/"));
             zip_write_bytes(zip, opts, &zip_path, &fs::read(&path)?)?;
         }
         Ok(())
@@ -1019,12 +1009,12 @@ fn create_backup_inner(
     let has_media = module.includes_sessions_media()
         && !(scope == BackupScope::Delta && module == BackupModule::Chat && session_ids.is_empty());
     // Tables: 2–88% (or 2–98% without media). Media: 88–98%. Done: 100%.
-    let tables_end: u8 = if has_media || (scope == BackupScope::Delta && module == BackupModule::Chat)
-    {
-        88
-    } else {
-        98
-    };
+    let tables_end: u8 =
+        if has_media || (scope == BackupScope::Delta && module == BackupModule::Chat) {
+            88
+        } else {
+            98
+        };
 
     let row_counts: Vec<u64> = tables
         .iter()
@@ -1045,8 +1035,8 @@ fn create_backup_inner(
         for (i, table) in tables.iter().enumerate() {
             let weight = row_counts[i];
             let start = 2u8.saturating_add(((tables_span * completed_weight) / total_weight) as u8);
-            let end =
-                2u8.saturating_add(((tables_span * (completed_weight + weight)) / total_weight) as u8);
+            let end = 2u8
+                .saturating_add(((tables_span * (completed_weight + weight)) / total_weight) as u8);
             progress.span("table", start, end, 0, 1, table);
             let expected = weight.max(1);
             let n = zip_write_chat_table_for_sessions(
@@ -1067,14 +1057,7 @@ fn create_backup_inner(
                 },
             )?;
             completed_weight += weight;
-            progress.span(
-                "table",
-                start,
-                end,
-                1,
-                1,
-                &format!("{table} ({n})"),
-            );
+            progress.span("table", start, end, 1, 1, &format!("{table} ({n})"));
         }
         progress.span("media", 88, 98, 0, 1, "sessions");
         let sessions_root = paths::sessions_dir(app)?;
@@ -1084,8 +1067,8 @@ fn create_backup_inner(
         for (i, table) in tables.iter().enumerate() {
             let weight = row_counts[i];
             let start = 2u8.saturating_add(((tables_span * completed_weight) / total_weight) as u8);
-            let end =
-                2u8.saturating_add(((tables_span * (completed_weight + weight)) / total_weight) as u8);
+            let end = 2u8
+                .saturating_add(((tables_span * (completed_weight + weight)) / total_weight) as u8);
             progress.span("table", start, end, 0, 1, table);
             let expected = weight.max(1);
             let n = zip_write_full_table(&mut zip, opts, &conn, table, |rows, _| {
@@ -1099,14 +1082,7 @@ fn create_backup_inner(
                 );
             })?;
             completed_weight += weight;
-            progress.span(
-                "table",
-                start,
-                end,
-                1,
-                1,
-                &format!("{table} ({n})"),
-            );
+            progress.span("table", start, end, 1, 1, &format!("{table} ({n})"));
         }
         if module.includes_sessions_media() {
             progress.span("media", 88, 98, 0, 1, "sessions");
@@ -1184,7 +1160,9 @@ fn restore_backup_inner(
 ) -> AppResult<RestoreResult> {
     let path = PathBuf::from(archive_path);
     if !path.is_file() {
-        return Err(AppError::NotFound(format!("backup not found: {archive_path}")));
+        return Err(AppError::NotFound(format!(
+            "backup not found: {archive_path}"
+        )));
     }
     let progress = ProgressClock::new(app, "restore");
     progress.emit("preparing", 1, 0, 1, "manifest");
@@ -1467,7 +1445,10 @@ pub fn next_config_slot_after(now: chrono::DateTime<Local>) -> String {
             }
         }
     }
-    format!("{}T06:00", (today + chrono::Duration::days(1)).format("%Y-%m-%d"))
+    format!(
+        "{}T06:00",
+        (today + chrono::Duration::days(1)).format("%Y-%m-%d")
+    )
 }
 
 pub fn get_status(app: &AppHandle, pool: &DbPool) -> AppResult<BackupStatus> {

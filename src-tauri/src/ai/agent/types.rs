@@ -125,6 +125,12 @@ pub enum MessageEvent {
         id: MessageId,
         tool: String,
         input: serde_json::Value,
+        #[serde(
+            rename = "thoughtSignature",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        thought_signature: Option<String>,
     },
     ToolResult {
         id: MessageId,

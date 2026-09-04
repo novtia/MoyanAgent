@@ -137,9 +137,20 @@ pub const WRITE_TOOLS: &[&str] = &[
 /// Windows (`del`, `rd`, `copy`, `move`, `md`). Plan-mode now refuses `Bash`
 /// outright; this list is kept only as a human-readable hint for diagnostics.
 pub const BASH_WRITE_PREFIXES: &[&str] = &[
-    "mkdir ", "touch ", "rm ", "cp ", "mv ", "git add", "git commit",
-    "git push", "git reset", "npm install", "pip install", "cargo add",
-    "cargo install", "echo ",
+    "mkdir ",
+    "touch ",
+    "rm ",
+    "cp ",
+    "mv ",
+    "git add",
+    "git commit",
+    "git push",
+    "git reset",
+    "npm install",
+    "pip install",
+    "cargo add",
+    "cargo install",
+    "echo ",
 ];
 
 /// True when `name` is one of the workspace-mutating [`WRITE_TOOLS`].
@@ -244,8 +255,8 @@ pub fn command_is_catastrophic(command: &str) -> bool {
 /// Shell wrappers that execute another command, so the verb worth inspecting is
 /// a later token rather than the head.
 const COMMAND_WRAPPERS: &[&str] = &[
-    "sudo", "doas", "runas", "nohup", "command", "nice", "ionice", "time",
-    "timeout", "env", "setsid", "stdbuf", "xargs",
+    "sudo", "doas", "runas", "nohup", "command", "nice", "ionice", "time", "timeout", "env",
+    "setsid", "stdbuf", "xargs",
 ];
 
 /// True when `tokens[0]` is a destructive verb applied to a target that makes
@@ -255,10 +266,7 @@ fn verb_is_catastrophic(tokens: &[&str]) -> bool {
         return false;
     };
     let head = command_head(raw_head);
-    let args: Vec<String> = tokens[1..]
-        .iter()
-        .map(|a| a.to_ascii_lowercase())
-        .collect();
+    let args: Vec<String> = tokens[1..].iter().map(|a| a.to_ascii_lowercase()).collect();
     let any = |pred: &dyn Fn(&str) -> bool| args.iter().any(|a| pred(a.as_str()));
 
     match head.as_str() {

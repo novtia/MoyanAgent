@@ -149,13 +149,11 @@ fn parse_optional_paragraph(v: Option<&Value>, field: &str) -> AppResult<Option<
     if val.is_null() {
         return Ok(None);
     }
-    let n = val.as_i64().ok_or_else(|| {
-        AppError::Invalid(format!("Read: `{field}` must be a positive integer"))
-    })?;
+    let n = val
+        .as_i64()
+        .ok_or_else(|| AppError::Invalid(format!("Read: `{field}` must be a positive integer")))?;
     if n < 1 {
-        return Err(AppError::Invalid(format!(
-            "Read: `{field}` must be >= 1"
-        )));
+        return Err(AppError::Invalid(format!("Read: `{field}` must be >= 1")));
     }
     Ok(Some(n as usize))
 }
@@ -294,17 +292,17 @@ impl Tool for FileReadTool {
                 .get("path")
                 .and_then(Value::as_str)
                 .ok_or_else(|| AppError::Invalid("Read: missing path".into()))?;
-            let from = parse_optional_paragraph(invocation.input.get("paragraph_from"), "paragraph_from")?;
-            let to = parse_optional_paragraph(invocation.input.get("paragraph_to"), "paragraph_to")?;
+            let from =
+                parse_optional_paragraph(invocation.input.get("paragraph_from"), "paragraph_from")?;
+            let to =
+                parse_optional_paragraph(invocation.input.get("paragraph_to"), "paragraph_to")?;
             let (path, range) = resolve_read_target(raw_path, from, to)?;
             let canonical =
                 project_path::resolve_project_file(&invocation.context.cwd, &path, TOOL_NAME)?;
             crate::ai::agent::tools::pe_docs::refuse_nondoc(TOOL_NAME, &canonical)?;
 
             if !canonical.is_file() {
-                return Ok(ToolResult::error(format!(
-                    "Read: file not found: `{path}`"
-                )));
+                return Ok(ToolResult::error(format!("Read: file not found: `{path}`")));
             }
 
             let bytes = std::fs::read(&canonical)
@@ -427,8 +425,7 @@ mod read_range_tests {
 
     #[test]
     fn explicit_args_win_over_path_suffix() {
-        let (path, range) =
-            resolve_read_target("notes.md#P003-P007", Some(10), Some(12)).unwrap();
+        let (path, range) = resolve_read_target("notes.md#P003-P007", Some(10), Some(12)).unwrap();
         assert_eq!(path, "notes.md");
         assert_eq!(range, Some((10, 12)));
     }
@@ -436,15 +433,15 @@ mod read_range_tests {
     #[tokio::test]
     async fn reads_range_from_path_suffix() {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!(
-            "moyan-read-range-{}-{}",
-            std::process::id(),
-            n
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("moyan-read-range-{}-{}", std::process::id(), n));
         std::fs::create_dir_all(&dir).unwrap();
         let name = "chapter.txt";
         // 25 lines so a short request expands but still includes the span.
-        let body: String = (1..=25).map(|i| format!("L{i}")).collect::<Vec<_>>().join("\n");
+        let body: String = (1..=25)
+            .map(|i| format!("L{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         std::fs::write(dir.join(name), &body).unwrap();
         let ctx = ToolUseContextBuilder::new(AgentId::new(), dir).build().0;
         let tool = FileReadTool::new();
@@ -499,7 +496,10 @@ mod read_range_tests {
     fn a_single_enormous_paragraph_is_head_limited() {
         let body = "z".repeat(READ_MAX_CHARS * 3);
         let (slice, _, _) = collect_paragraphs(&body, 1, 1, READ_MAX_CHARS);
-        assert!(slice.chars().count() > READ_MAX_CHARS, "loop cannot split it");
+        assert!(
+            slice.chars().count() > READ_MAX_CHARS,
+            "loop cannot split it"
+        );
         let head = head_limit(&slice, READ_MAX_CHARS).expect("trimmed");
         assert_eq!(head.chars().count(), READ_MAX_CHARS);
     }
@@ -507,11 +507,8 @@ mod read_range_tests {
     #[tokio::test]
     async fn reads_a_document_by_title_without_the_suffix() {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!(
-            "moyan-read-extless-{}-{}",
-            std::process::id(),
-            n
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("moyan-read-extless-{}-{}", std::process::id(), n));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("深喉验毒.md"), "hello from the file").unwrap();
         let ctx = ToolUseContextBuilder::new(AgentId::new(), dir.clone())
@@ -568,7 +565,10 @@ mod read_range_tests {
             res.content.get("text").is_none(),
             "must not echo a body the model just wrote"
         );
-        assert!(res.content["note"].as_str().unwrap().contains("Do not Read"));
+        assert!(res.content["note"]
+            .as_str()
+            .unwrap()
+            .contains("Do not Read"));
 
         let again = tool
             .execute(ToolInvocation {

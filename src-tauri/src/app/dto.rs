@@ -85,7 +85,10 @@ pub(crate) fn decorate_message(app: &AppHandle, m: session::Message) -> MessageA
     }
 }
 
-pub(crate) fn decorate_session(app: &AppHandle, s: session::SessionWithMessages) -> SessionWithMessagesAbs {
+pub(crate) fn decorate_session(
+    app: &AppHandle,
+    s: session::SessionWithMessages,
+) -> SessionWithMessagesAbs {
     SessionWithMessagesAbs {
         session: s.session,
         messages: s

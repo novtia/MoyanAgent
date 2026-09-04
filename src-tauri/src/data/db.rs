@@ -13,8 +13,8 @@ pub type DbConn = r2d2::PooledConnection<SqliteConnectionManager>;
 
 /// Squashed baseline is 28; 29 adds message/session FTS search indexes;
 /// 30 makes file snapshots persist at write time; 31 stores OpenRouter
-/// per-model route provider pins.
-const SCHEMA_VERSION: i64 = 31;
+/// per-model route provider pins; 32 seeds Vertex AI Gemini catalog.
+const SCHEMA_VERSION: i64 = 32;
 
 const MIGRATION_001: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -24,6 +24,11 @@ const MIGRATION_001: &str = include_str!(concat!(
 const MIGRATION_030: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/migrations/030_file_snapshot_request_binding.sql"
+));
+
+const MIGRATION_032: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/032_vertex_catalog.sql"
 ));
 
 pub fn open_pool(db_path: &Path) -> AppResult<DbPool> {
@@ -168,6 +173,11 @@ fn ensure_model_route_schema(conn: &rusqlite::Connection) -> AppResult<()> {
     Ok(())
 }
 
+fn ensure_vertex_catalog(conn: &rusqlite::Connection) -> AppResult<()> {
+    conn.execute_batch(MIGRATION_032)?;
+    Ok(())
+}
+
 fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)",
@@ -209,17 +219,31 @@ fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
         message_search::backfill_search_index(conn)?;
     }
     if cur < 29 {
-        conn.execute("INSERT INTO schema_version(version) VALUES (?1)", params![29])?;
+        conn.execute(
+            "INSERT INTO schema_version(version) VALUES (?1)",
+            params![29],
+        )?;
     }
 
     ensure_file_snapshot_binding_schema(conn)?;
     if cur < 30 {
-        conn.execute("INSERT INTO schema_version(version) VALUES (?1)", params![30])?;
+        conn.execute(
+            "INSERT INTO schema_version(version) VALUES (?1)",
+            params![30],
+        )?;
     }
 
     ensure_model_route_schema(conn)?;
     if cur < 31 {
         crate::data::llm_catalog::backfill_route_overlay_from_settings(conn)?;
+        conn.execute(
+            "INSERT INTO schema_version(version) VALUES (?1)",
+            params![31],
+        )?;
+    }
+
+    ensure_vertex_catalog(conn)?;
+    if cur < 32 {
         conn.execute(
             "INSERT INTO schema_version(version) VALUES (?1)",
             params![SCHEMA_VERSION],
@@ -264,7 +288,11 @@ mod tests {
             let pool = open_pool(&db_path).unwrap();
             let conn = pool.get().unwrap();
             conn.execute_batch(LEGACY_FILE_SNAPSHOTS).unwrap();
-            assert!(!column_exists(&conn, "file_snapshots", "request_message_id"));
+            assert!(!column_exists(
+                &conn,
+                "file_snapshots",
+                "request_message_id"
+            ));
         }
 
         let pool = open_pool(&db_path).unwrap();
@@ -289,7 +317,9 @@ mod tests {
         let pool = open_pool(&db_path).unwrap();
         let conn = pool.get().unwrap();
         let rows: i64 = conn
-            .query_row("SELECT COUNT(*) FROM file_snapshots", params![], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM file_snapshots", params![], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(rows, 1);
 
@@ -302,13 +332,55 @@ mod tests {
     fn fresh_database_has_model_route_schema() {
         let db = test_support::TempDb::new("route-schema");
         let conn = db.conn();
-        assert!(column_exists(&conn, "llm_sdk_model", "route_providers_json"));
+        assert!(column_exists(
+            &conn,
+            "llm_sdk_model",
+            "route_providers_json"
+        ));
         assert!(column_exists(
             &conn,
             "llm_supplier_model",
             "route_providers_json"
         ));
         assert!(table_exists(&conn, "llm_model_route"));
+    }
+
+    #[test]
+    fn fresh_database_has_vertex_catalog() {
+        let db = test_support::TempDb::new("vertex-catalog");
+        let conn = db.conn();
+        let sdk: String = conn
+            .query_row(
+                "SELECT label FROM llm_sdk_option WHERE sdk_id = 'vertex'",
+                params![],
+                |r| r.get(0),
+            )
+            .expect("vertex sdk option");
+        assert_eq!(sdk, "Vertex AI");
+        let models: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM llm_sdk_model WHERE sdk_id = 'vertex'",
+                params![],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(models, 3);
+        let preset: String = conn
+            .query_row(
+                "SELECT sdk_id FROM llm_supplier_preset WHERE supplier_id = 'vertex'",
+                params![],
+                |r| r.get(0),
+            )
+            .expect("vertex supplier preset");
+        assert_eq!(preset, "vertex");
+        let version: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+                params![],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
     }
 }
 
@@ -332,8 +404,8 @@ pub(crate) mod test_support {
     impl TempDb {
         pub(crate) fn new(tag: &str) -> Self {
             let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir()
-                .join(format!("atelier-db-{tag}-{}-{n}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("atelier-db-{tag}-{}-{n}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).expect("create temp db dir");
             let pool = open_pool(&dir.join("test.db")).expect("open temp db");

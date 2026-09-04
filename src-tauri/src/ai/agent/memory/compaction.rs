@@ -169,10 +169,7 @@ pub fn should_summarise_history(
     if chat.history.len() <= policy.keep_recent + 1 {
         return false;
     }
-    let reported = usage
-        .last_prompt_tokens
-        .or(usage.total_tokens)
-        .unwrap_or(0);
+    let reported = usage.last_prompt_tokens.or(usage.total_tokens).unwrap_or(0);
     let occupancy = reported.max(estimate_chat_tokens(chat));
     occupancy >= policy.effective_threshold() || exceeds_budget(chat, policy)
 }
@@ -351,7 +348,9 @@ pub async fn compact(
 
     let meta = HistoryTurn {
         role: "user".to_string(),
-        text: Some(format!("<compacted_summary>\n{summary}\n</compacted_summary>")),
+        text: Some(format!(
+            "<compacted_summary>\n{summary}\n</compacted_summary>"
+        )),
         images: Vec::new(),
         thinking_content: None,
         timeline: Vec::new(),
@@ -472,7 +471,12 @@ fn user_aligned_split(history: &[HistoryTurn], split: usize) -> usize {
 fn render_for_summary(turns: &[HistoryTurn]) -> String {
     let mut entries: Vec<String> = Vec::new();
     for turn in turns {
-        if let Some(text) = turn.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(text) = turn
+            .text
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             entries.push(format!("[{}] {}", turn.role, truncate(text)));
         }
         for seg in &turn.timeline {
@@ -578,7 +582,9 @@ mod threshold_tests {
     #[test]
     fn small_window_lowers_the_threshold() {
         assert_eq!(
-            policy().with_context_window(Some(32_000)).effective_threshold(),
+            policy()
+                .with_context_window(Some(32_000))
+                .effective_threshold(),
             22_400
         );
     }
@@ -596,15 +602,23 @@ mod threshold_tests {
     #[test]
     fn tiny_window_never_drops_below_the_floor() {
         assert_eq!(
-            policy().with_context_window(Some(4_000)).effective_threshold(),
+            policy()
+                .with_context_window(Some(4_000))
+                .effective_threshold(),
             MIN_DYNAMIC_THRESHOLD
         );
     }
 
     #[test]
     fn unknown_window_keeps_the_fixed_default() {
-        assert_eq!(policy().with_context_window(None).effective_threshold(), 120_000);
-        assert_eq!(policy().with_context_window(Some(0)).effective_threshold(), 120_000);
+        assert_eq!(
+            policy().with_context_window(None).effective_threshold(),
+            120_000
+        );
+        assert_eq!(
+            policy().with_context_window(Some(0)).effective_threshold(),
+            120_000
+        );
     }
 }
 
@@ -625,6 +639,7 @@ mod budget_tests {
                 endpoint: "https://api.deepseek.com/v1/chat/completions".into(),
                 api_key: "k".into(),
                 context_cache_enabled: false,
+                safety_threshold: None,
             },
             model: "deepseek-v4-pro".into(),
             prompt: "continue".into(),
@@ -675,11 +690,11 @@ mod budget_tests {
                 assistant: PendingAssistantTurn {
                     text: None,
                     thinking_content: None,
-                    tool_calls: vec![ProviderToolCall {
-                        id: format!("call{i}"),
-                        name: "Read".into(),
-                        arguments: serde_json::json!({ "path": "manuscript.txt" }),
-                    }],
+                    tool_calls: vec![ProviderToolCall::new(
+                        format!("call{i}"),
+                        "Read",
+                        serde_json::json!({ "path": "manuscript.txt" }),
+                    )],
                 },
                 results: vec![ToolResultMessage {
                     tool_call_id: format!("call{i}"),

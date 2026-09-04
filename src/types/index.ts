@@ -64,6 +64,7 @@ export type ModelProviderSdk =
   | "openai"
   | "openai-responses"
   | "gemini"
+  | "vertex"
   | "claude"
   | "grok"
   | "ark-images"
@@ -84,6 +85,11 @@ export interface ModelProvider {
    * enable explicit Session caching (`caching` + `previous_response_id`).
    */
   context_cache_enabled?: boolean;
+  /**
+   * Vertex `safetySettings` harm-block level: `off` / `none` / `high` /
+   * `medium` / `low`. Empty / omitted uses Vertex's own default.
+   */
+  safety_threshold?: string | null;
   models: ModelServiceModel[];
 }
 

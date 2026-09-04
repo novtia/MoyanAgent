@@ -60,12 +60,7 @@ pub(crate) fn apply_pending_diff_revert(
         revert.encoding.as_deref(),
         Some(revert.had_bom),
     )
-    .map_err(|e| {
-        AppError::Other(format!(
-            "confirm_pending_diff: write {:?}: {e}",
-            resolved
-        ))
-    })?;
+    .map_err(|e| AppError::Other(format!("confirm_pending_diff: write {:?}: {e}", resolved)))?;
     Ok(())
 }
 
@@ -77,7 +72,9 @@ pub fn list_pending_diffs(
 ) -> Result<Vec<crate::data::pending_diff::PendingDiffRow>, AppError> {
     let conn = state.conn()?;
     match path {
-        Some(p) if !p.is_empty() => crate::data::pending_diff::list_for_path(&conn, &session_id, &p),
+        Some(p) if !p.is_empty() => {
+            crate::data::pending_diff::list_for_path(&conn, &session_id, &p)
+        }
         _ => crate::data::pending_diff::list_for_session(&conn, &session_id),
     }
 }

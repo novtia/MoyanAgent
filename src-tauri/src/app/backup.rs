@@ -106,8 +106,8 @@ pub fn spawn_scheduler(app: AppHandle, state: Arc<AppState>) {
         loop {
             let app2 = app.clone();
             let pool = state.pool.clone();
-            let result = tokio::task::spawn_blocking(move || backup::run_scheduler_tick(&app2, &pool))
-                .await;
+            let result =
+                tokio::task::spawn_blocking(move || backup::run_scheduler_tick(&app2, &pool)).await;
             match result {
                 Ok(Ok(n)) if n > 0 => {
                     eprintln!("[backup] auto-backup completed ({n} module(s))");

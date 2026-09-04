@@ -38,7 +38,10 @@ pub(crate) fn build_responses_body(request: &ChatRequest) -> Value {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            map.insert("previous_response_id".into(), Value::String(prev.to_string()));
+            map.insert(
+                "previous_response_id".into(),
+                Value::String(prev.to_string()),
+            );
         }
     } else if !cache {
         // Non-cache mode keeps system prompt in `instructions`.
@@ -165,13 +168,24 @@ pub(crate) fn append_responses_history_turn(input: &mut Vec<Value>, turn: &Histo
     }
 }
 
-pub(crate) fn append_responses_tool_round(input: &mut Vec<Value>, round: &crate::ai::chat::ToolChainRound) {
+pub(crate) fn append_responses_tool_round(
+    input: &mut Vec<Value>,
+    round: &crate::ai::chat::ToolChainRound,
+) {
     append_responses_pending_assistant(input, &round.assistant);
     append_responses_tool_results(input, &round.results);
 }
 
-pub(crate) fn append_responses_pending_assistant(input: &mut Vec<Value>, pending: &PendingAssistantTurn) {
-    if let Some(text) = pending.text.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+pub(crate) fn append_responses_pending_assistant(
+    input: &mut Vec<Value>,
+    pending: &PendingAssistantTurn,
+) {
+    if let Some(text) = pending
+        .text
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         input.push(responses_message("assistant", Some(text), &[]));
     }
     for call in &pending.tool_calls {
@@ -220,7 +234,11 @@ pub(crate) fn history_turn_to_responses_message(turn: &HistoryTurn) -> Option<Va
     Some(responses_message(role, text, &turn.images))
 }
 
-pub(crate) fn responses_message(role: &str, text: Option<&str>, attachments: &[AttachmentBytes]) -> Value {
+pub(crate) fn responses_message(
+    role: &str,
+    text: Option<&str>,
+    attachments: &[AttachmentBytes],
+) -> Value {
     let mut content: Vec<Value> = Vec::new();
     if let Some(text) = text {
         if !text.trim().is_empty() {

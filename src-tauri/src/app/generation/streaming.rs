@@ -119,12 +119,9 @@ pub(crate) fn persist_streamed_assistant_snapshot(
     // known request message (cancel save) everything still unbound in the
     // session belongs to the turn that was just interrupted.
     let bound = match request_message_id {
-        Some(req_id) => crate::data::file_snapshot::bind_message(
-            conn,
-            session_id,
-            req_id,
-            &assistant.id,
-        ),
+        Some(req_id) => {
+            crate::data::file_snapshot::bind_message(conn, session_id, req_id, &assistant.id)
+        }
         None => crate::data::file_snapshot::bind_unbound(conn, session_id, &assistant.id),
     };
     if let Err(e) = bound {
@@ -136,8 +133,7 @@ pub(crate) fn persist_streamed_assistant_snapshot(
         {
             eprintln!("persist_streamed: bind_message failed for session {session_id}: {e}");
         }
-    } else if let Err(e) =
-        crate::data::pending_diff::bind_unbound(conn, session_id, &assistant.id)
+    } else if let Err(e) = crate::data::pending_diff::bind_unbound(conn, session_id, &assistant.id)
     {
         eprintln!("persist_streamed: bind_unbound failed for session {session_id}: {e}");
     }
@@ -253,14 +249,24 @@ pub(crate) fn record_tool_use_block(
     id: &str,
     tool: &str,
     input: &serde_json::Value,
+    thought_signature: Option<&str>,
 ) {
-    blocks.push(serde_json::json!({
+    let mut block = serde_json::json!({
         "type": "tool_use",
         "id": id,
         "tool": tool,
         "input": input.clone(),
         "status": "pending",
-    }));
+    });
+    if let Some(sig) = thought_signature.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(obj) = block.as_object_mut() {
+            obj.insert(
+                "thoughtSignature".into(),
+                serde_json::Value::String(sig.to_string()),
+            );
+        }
+    }
+    blocks.push(block);
 }
 
 /// Mutate the matching `tool_use` block in place with the tool result.
@@ -366,9 +372,20 @@ pub(crate) fn tool_event_callback(
     blocks: StreamBlocks,
 ) -> ToolEventCallback {
     Arc::new(move |event| match event {
-        MessageEvent::ToolUse { id, tool, input } => {
+        MessageEvent::ToolUse {
+            id,
+            tool,
+            input,
+            thought_signature,
+        } => {
             if let Ok(mut g) = blocks.lock() {
-                record_tool_use_block(&mut g, id.as_str(), tool, input);
+                record_tool_use_block(
+                    &mut g,
+                    id.as_str(),
+                    tool,
+                    input,
+                    thought_signature.as_deref(),
+                );
             }
             let _ = app.emit(
                 "gen://tool",
@@ -485,13 +502,11 @@ mod tests {
         let mut blocks = Vec::new();
         append_thinking_delta_block(&mut blocks, "first");
         append_text_delta_block(&mut blocks, "answer");
-        record_tool_use_block(&mut blocks, "1", "Read", &json!({}));
+        record_tool_use_block(&mut blocks, "1", "Read", &json!({}), None);
         append_thinking_delta_block(&mut blocks, "second");
 
-        let thinking: Vec<&serde_json::Value> = blocks
-            .iter()
-            .filter(|b| b["type"] == "thinking")
-            .collect();
+        let thinking: Vec<&serde_json::Value> =
+            blocks.iter().filter(|b| b["type"] == "thinking").collect();
         assert_eq!(thinking.len(), 2);
         assert_eq!(thinking[0]["content"], "first");
         assert_eq!(thinking[1]["content"], "second");

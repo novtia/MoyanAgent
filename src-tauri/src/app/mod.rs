@@ -117,11 +117,10 @@ pub fn run() {
             // allowed (that is the app's purpose, and every mutation is
             // snapshotted for rollback), while shell commands that the
             // snapshot system provably cannot undo are refused.
-            let permission_resolver: Arc<dyn agent::PermissionResolver> = Arc::new(
-                crate::ai::agent::core::permission::PlanModeResolver::new(
+            let permission_resolver: Arc<dyn agent::PermissionResolver> =
+                Arc::new(crate::ai::agent::core::permission::PlanModeResolver::new(
                     crate::ai::agent::core::permission::DefaultModeResolver,
-                ),
-            );
+                ));
             let query_engine: Arc<dyn agent::QueryEngine> = Arc::new(ProviderQueryEngine::new(
                 provider_engine.clone(),
                 permission_resolver,
@@ -129,13 +128,14 @@ pub fn run() {
             let logs_dir = paths::token_logs_dir(handle)?;
             let token_stats = Arc::new(token_log::TokenStatsRecorder::new(pool.clone()));
             let session_logger = Arc::new(session_log::SessionLogger::new(logs_dir));
-            let session_host: Arc<dyn SubagentSessionHost> = Arc::new(subagent::TauriSubagentHost::new(
-                app.handle().clone(),
-                pool.clone(),
-                role_states.clone(),
-                token_stats.clone(),
-                session_logger.clone(),
-            ));
+            let session_host: Arc<dyn SubagentSessionHost> =
+                Arc::new(subagent::TauriSubagentHost::new(
+                    app.handle().clone(),
+                    pool.clone(),
+                    role_states.clone(),
+                    token_stats.clone(),
+                    session_logger.clone(),
+                ));
             let agent_tool = AgentTool::new(
                 registry.clone(),
                 tools.clone(),

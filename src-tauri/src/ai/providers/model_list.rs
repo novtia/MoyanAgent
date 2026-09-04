@@ -2,10 +2,11 @@
 //! Used by the settings "管理" dialog so users can browse and import models
 //! with context window, pricing, and capability metadata when available.
 
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::ai::providers::{normalize_sdk, CLAUDE_SDK, GEMINI_SDK};
+use crate::ai::providers::{normalize_sdk, CLAUDE_SDK, GEMINI_SDK, VERTEX_SDK};
 use crate::data::settings::ModelPricing;
 use crate::error::{AppError, AppResult};
 
@@ -58,8 +59,19 @@ pub async fn fetch_models(
         .build()?;
 
     let mut req = client.get(&url).header("Content-Type", "application/json");
-    if sdk == GEMINI_SDK {
-        req = req.header("x-goog-api-key", api_key);
+    if sdk == VERTEX_SDK {
+        super::vertex::ensure_vertex_endpoint_ready(endpoint)?;
+        req = super::gemini::apply_google_auth(
+            req,
+            api_key,
+            super::gemini::GoogleAuthStyle::AlwaysBearer,
+        );
+    } else if sdk == GEMINI_SDK {
+        req = super::gemini::apply_google_auth(
+            req,
+            api_key,
+            super::gemini::GoogleAuthStyle::StudioApiKey,
+        );
     } else if sdk == CLAUDE_SDK {
         req = req
             .header("x-api-key", api_key)
@@ -72,16 +84,24 @@ pub async fn fetch_models(
     let status = resp.status();
     let txt = resp.text().await?;
     if !status.is_success() {
+        let msg = upstream_error_message(&txt);
+        if sdk == VERTEX_SDK {
+            return Err(vertex_list_auth_error(status, &msg));
+        }
         return Err(AppError::Upstream(format!(
             "拉取模型列表失败 HTTP {}: {}",
-            status,
-            upstream_error_message(&txt)
+            status, msg
         )));
     }
 
     let v: Value = serde_json::from_str(&txt)
         .map_err(|err| AppError::Upstream(format!("无法解析模型列表响应: {err}")))?;
     let models = parse_remote_models(&v);
+    let models = if sdk == VERTEX_SDK {
+        prefer_gemini_publisher_models(models)
+    } else {
+        models
+    };
     if models.is_empty() {
         return Err(AppError::Upstream(
             "该供应商未返回任何模型，请检查 API 地址与密钥。".into(),
@@ -133,9 +153,7 @@ pub async fn fetch_model_endpoints(
         .map_err(|err| AppError::Upstream(format!("无法解析模型上游响应: {err}")))?;
     let list = parse_model_endpoints(&v);
     if list.is_empty() {
-        return Err(AppError::Upstream(
-            "该模型未返回任何上游供应商。".into(),
-        ));
+        return Err(AppError::Upstream("该模型未返回任何上游供应商。".into()));
     }
     Ok(list)
 }
@@ -144,6 +162,9 @@ pub async fn fetch_model_endpoints(
 /// endpoint (which usually points at chat/messages/images paths).
 fn models_url(sdk: &str, endpoint: &str) -> String {
     let e = endpoint.trim().trim_end_matches('/');
+    if sdk == VERTEX_SDK {
+        return vertex_models_list_url(e);
+    }
     if sdk == GEMINI_SDK {
         if let Some(idx) = e.find("/models") {
             return format!("{}/models", &e[..idx]);
@@ -170,6 +191,44 @@ fn models_url(sdk: &str, endpoint: &str) -> String {
         return e.to_string();
     }
     format!("{}/models", e)
+}
+
+/// Vertex generateContent lives at
+/// `{host}/v1/projects/.../locations/.../publishers/google/models/{model}:generateContent`.
+/// Listing publisher models is a different resource:
+/// `{host}/v1beta1/publishers/google/models` (no project/location in the path).
+///
+/// The global frontend `aiplatform.googleapis.com` returns an HTML 404 for the
+/// project-scoped path; Model Garden list is served on regional hosts, so
+/// `global` inference URLs list from `us-central1`.
+fn vertex_models_list_url(endpoint: &str) -> String {
+    let origin = http_origin(endpoint)
+        .unwrap_or_else(|| "https://us-central1-aiplatform.googleapis.com".into());
+    let host = origin
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let list_origin = if host.eq_ignore_ascii_case("aiplatform.googleapis.com") {
+        "https://us-central1-aiplatform.googleapis.com".to_string()
+    } else {
+        origin
+    };
+    format!("{list_origin}/v1beta1/publishers/google/models?pageSize=200")
+}
+
+fn http_origin(endpoint: &str) -> Option<String> {
+    let e = endpoint.trim();
+    let (scheme, rest) = if let Some(rest) = e.strip_prefix("https://") {
+        ("https", rest)
+    } else if let Some(rest) = e.strip_prefix("http://") {
+        ("http", rest)
+    } else {
+        return None;
+    };
+    let host = rest.split('/').next()?.trim();
+    if host.is_empty() {
+        return None;
+    }
+    Some(format!("{scheme}://{host}"))
 }
 
 /// `{api_base}/models/{author}/{slug}/endpoints` for OpenRouter provider routing.
@@ -203,7 +262,7 @@ fn parse_remote_models(v: &Value) -> Vec<RemoteModelInfo> {
     let mut out: Vec<RemoteModelInfo> = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    for key in ["data", "models"] {
+    for key in ["data", "models", "publisherModels", "publisher_models"] {
         if let Some(arr) = v.get(key).and_then(Value::as_array) {
             collect_models(arr, &mut out, &mut seen);
         }
@@ -308,13 +367,11 @@ fn parse_one_model(item: &Value) -> Option<RemoteModelInfo> {
     let pricing = parse_pricing(item.get("pricing"));
 
     let input_modalities = parse_string_list(
-        item
-            .pointer("/architecture/input_modalities")
+        item.pointer("/architecture/input_modalities")
             .or_else(|| item.get("input_modalities")),
     );
     let output_modalities = parse_string_list(
-        item
-            .pointer("/architecture/output_modalities")
+        item.pointer("/architecture/output_modalities")
             .or_else(|| item.get("output_modalities")),
     );
 
@@ -333,7 +390,12 @@ fn parse_one_model(item: &Value) -> Option<RemoteModelInfo> {
 }
 
 fn normalize_model_id(raw: &str) -> String {
-    raw.strip_prefix("models/").unwrap_or(raw).trim().to_string()
+    let trimmed = raw.trim();
+    let stripped = trimmed
+        .strip_prefix("publishers/google/models/")
+        .or_else(|| trimmed.strip_prefix("models/"))
+        .unwrap_or(trimmed);
+    stripped.trim().to_string()
 }
 
 fn first_i64(item: &Value, keys: &[&str]) -> Option<i64> {
@@ -351,7 +413,11 @@ fn value_as_i64(v: &Value) -> Option<i64> {
     v.as_i64()
         .or_else(|| v.as_u64().map(|n| n as i64))
         .or_else(|| v.as_f64().map(|n| n as i64))
-        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f64>().ok()).map(|n| n as i64))
+        .or_else(|| {
+            v.as_str()
+                .and_then(|s| s.trim().parse::<f64>().ok())
+                .map(|n| n as i64)
+        })
 }
 
 fn parse_string_list(v: Option<&Value>) -> Option<Vec<String>> {
@@ -447,10 +513,7 @@ fn derive_capabilities(
         }
     }
 
-    if let Some(params) = item
-        .get("supported_parameters")
-        .and_then(Value::as_array)
-    {
+    if let Some(params) = item.get("supported_parameters").and_then(Value::as_array) {
         let joined: Vec<String> = params
             .iter()
             .filter_map(|p| p.as_str())
@@ -459,9 +522,10 @@ fn derive_capabilities(
         if joined.iter().any(|p| p == "tools" || p == "tool_choice") {
             caps.insert("tools".into());
         }
-        if joined.iter().any(|p| {
-            p.contains("reasoning") || p == "include_reasoning" || p == "thinking"
-        }) {
+        if joined
+            .iter()
+            .any(|p| p.contains("reasoning") || p == "include_reasoning" || p == "thinking")
+        {
             caps.insert("reasoning".into());
         }
     }
@@ -546,8 +610,31 @@ fn parse_one_endpoint(item: &Value) -> Option<RemoteModelEndpoint> {
     })
 }
 
+/// Model Garden lists every publisher model. Keep Gemini ids when present so
+/// the settings picker is usable for chat.
+fn prefer_gemini_publisher_models(models: Vec<RemoteModelInfo>) -> Vec<RemoteModelInfo> {
+    let gemini: Vec<RemoteModelInfo> = models
+        .iter()
+        .filter(|m| m.id.to_ascii_lowercase().contains("gemini"))
+        .cloned()
+        .collect();
+    if gemini.is_empty() {
+        models
+    } else {
+        gemini
+    }
+}
+
 /// Best-effort extraction of an error message from an upstream JSON error body.
 fn upstream_error_message(txt: &str) -> String {
+    let trimmed = txt.trim();
+    if trimmed.len() > 80
+        && (trimmed.starts_with("<!DOCTYPE")
+            || trimmed.starts_with("<html")
+            || trimmed.starts_with("<HTML"))
+    {
+        return "上游返回了 HTML 错误页（常见于 Vertex 列表地址不正确）。".into();
+    }
     match serde_json::from_str::<Value>(txt) {
         Ok(v) => v
             .pointer("/error/message")
@@ -558,6 +645,21 @@ fn upstream_error_message(txt: &str) -> String {
             .unwrap_or_else(|| txt.to_string()),
         Err(_) => txt.to_string(),
     }
+}
+
+/// Model Garden `publishers.models.list` requires a user/service principal.
+fn vertex_list_auth_error(status: StatusCode, msg: &str) -> AppError {
+    let m = msg.to_ascii_lowercase();
+    if status == StatusCode::UNAUTHORIZED
+        || m.contains("api keys are not supported")
+        || m.contains("expected oauth")
+        || m.contains("unauthenticated")
+    {
+        return AppError::Upstream(
+            "Vertex 拉取模型列表需要 OAuth access token（终端运行 gcloud auth print-access-token），不支持 API Key。对话仍可用 API Key；拉列表请把密钥换成 token，或点「添加模型」手动填写 gemini-2.5-flash 等 ID。".into(),
+        );
+    }
+    AppError::Upstream(format!("拉取模型列表失败 HTTP {status}: {msg}"))
 }
 
 #[cfg(test)]
@@ -643,6 +745,90 @@ mod tests {
         assert_eq!(models[0].id, "gemini-2.0-flash");
         assert_eq!(models[0].context_window, Some(1_048_576));
         assert_eq!(models[0].max_output_tokens, Some(8192));
+    }
+
+    #[test]
+    fn parses_vertex_publisher_models() {
+        let body = json!({
+            "publisherModels": [{
+                "name": "publishers/google/models/gemini-2.5-flash",
+                "displayName": "Gemini 2.5 Flash",
+                "inputTokenLimit": 1048576,
+                "outputTokenLimit": 65536
+            }]
+        });
+        let models = parse_remote_models(&body);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "gemini-2.5-flash");
+        assert_eq!(models[0].name.as_deref(), Some("Gemini 2.5 Flash"));
+        assert_eq!(models[0].context_window, Some(1_048_576));
+        assert_eq!(models[0].max_output_tokens, Some(65536));
+        let mixed = json!({
+            "publisherModels": [
+                { "name": "publishers/google/models/imagen-3.0-generate-001" },
+                { "name": "publishers/google/models/gemini-2.5-pro" }
+            ]
+        });
+        let filtered = prefer_gemini_publisher_models(parse_remote_models(&mixed));
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "gemini-2.5-pro");
+    }
+
+    #[test]
+    fn models_url_strips_vertex_generate_content() {
+        assert_eq!(
+            models_url(
+                "vertex",
+                "https://us-central1-aiplatform.googleapis.com/v1/projects/my-proj/locations/us-central1/publishers/google/models/{model}:generateContent"
+            ),
+            "https://us-central1-aiplatform.googleapis.com/v1beta1/publishers/google/models?pageSize=200"
+        );
+        assert_eq!(
+            models_url(
+                "vertex",
+                "https://aiplatform.googleapis.com/v1/projects/my-proj/locations/global/publishers/google/models/{model}:generateContent"
+            ),
+            "https://us-central1-aiplatform.googleapis.com/v1beta1/publishers/google/models?pageSize=200"
+        );
+        assert_eq!(
+            models_url(
+                "vertex",
+                "https://europe-west1-aiplatform.googleapis.com/v1/projects/my-proj/locations/europe-west1/publishers/google/models/{model}:generateContent"
+            ),
+            "https://europe-west1-aiplatform.googleapis.com/v1beta1/publishers/google/models?pageSize=200"
+        );
+    }
+
+    #[tokio::test]
+    async fn vertex_list_rejects_unfilled_placeholders() {
+        let err = fetch_models(
+            "vertex",
+            "https://aiplatform.googleapis.com/v1/projects/{project}/locations/global/publishers/google/models/{model}:generateContent",
+            "AIzaSyKey",
+        )
+        .await
+        .unwrap_err();
+        match err {
+            AppError::Config(msg) => {
+                assert!(msg.contains("{project}") || msg.contains("{location}"));
+            }
+            other => panic!("expected Config, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn vertex_list_auth_error_explains_oauth() {
+        let err = vertex_list_auth_error(
+            StatusCode::UNAUTHORIZED,
+            "API keys are not supported by this API. Expected OAuth2 access token",
+        );
+        match err {
+            AppError::Upstream(msg) => {
+                assert!(msg.contains("gcloud auth print-access-token"));
+                assert!(msg.contains("不支持 API Key"));
+            }
+            other => panic!("expected Upstream, got {other:?}"),
+        }
     }
 
     #[test]

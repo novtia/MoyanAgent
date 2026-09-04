@@ -11,7 +11,9 @@
 
 use scraper::{Html, Selector};
 
-use crate::ai::search::{clean_text, percent_decode, SearchBackend, SearchFuture, SearchHit, SearchQuery};
+use crate::ai::search::{
+    clean_text, percent_decode, SearchBackend, SearchFuture, SearchHit, SearchQuery,
+};
 use crate::error::{AppError, AppResult};
 
 const DDG_ENDPOINT: &str = "https://html.duckduckgo.com/html/";

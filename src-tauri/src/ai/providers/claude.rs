@@ -323,11 +323,11 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
                         continue;
                     }
                     let input = item.get("input").cloned().unwrap_or(Value::Null);
-                    tool_calls.push(crate::ai::chat::ProviderToolCall {
-                        id: id.to_string(),
-                        name: name.to_string(),
-                        arguments: input,
-                    });
+                    tool_calls.push(crate::ai::chat::ProviderToolCall::new(
+                        id.to_string(),
+                        name.to_string(),
+                        input,
+                    ));
                 }
                 Some(t) => other_content_types.push(t.to_string()),
                 None => other_content_types.push("(no type)".to_string()),

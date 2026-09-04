@@ -191,9 +191,9 @@ pub fn set_project_rule_enabled(
     let file_path = PathBuf::from(&path);
     let cwd = session_project_cwd(&conn, &session_id);
     let resolved = validate_reader_write_path(&file_path, cwd.as_deref())?;
-    let rules_dir = resolved
-        .parent()
-        .ok_or_else(|| AppError::Invalid("set_project_rule_enabled: rule path has no parent".into()))?;
+    let rules_dir = resolved.parent().ok_or_else(|| {
+        AppError::Invalid("set_project_rule_enabled: rule path has no parent".into())
+    })?;
     let name = resolved
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -216,10 +216,7 @@ mod collect_tests {
     use std::path::PathBuf;
 
     fn temp_project(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "moyan-rules-{name}-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("moyan-rules-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join(RULES_DIR)).unwrap();
         dir

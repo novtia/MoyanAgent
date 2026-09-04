@@ -422,7 +422,10 @@ pub fn rollback_scope_for_message(
     }))
 }
 
-pub fn list_events(conn: &DbConn, filter: &TokenUsageListFilter) -> AppResult<Vec<TokenUsageEvent>> {
+pub fn list_events(
+    conn: &DbConn,
+    filter: &TokenUsageListFilter,
+) -> AppResult<Vec<TokenUsageEvent>> {
     let limit = filter.limit.clamp(1, 500);
     let offset = filter.offset.max(0);
     let mut sql = String::from(

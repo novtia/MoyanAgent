@@ -22,13 +22,13 @@ use crate::ai::agent::config::definition::AgentDefinition;
 use crate::ai::agent::config::mcp::McpRegistry;
 use crate::ai::agent::config::registry::AgentRegistry;
 use crate::ai::agent::core::attachment::Attachment;
-use crate::ai::agent::exec::query::QueryEngine;
-use crate::ai::agent::exec::runner::{RunAgentParams, RunAgentResult, run_agent};
 use crate::ai::agent::core::task::TaskStore;
+use crate::ai::agent::exec::query::QueryEngine;
+use crate::ai::agent::exec::query::ToolEventCallback;
+use crate::ai::agent::exec::runner::{run_agent, RunAgentParams, RunAgentResult};
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolPool, ToolResult, ToolSpec};
 use crate::ai::agent::types::AgentRunMode;
 use crate::ai::chat::{ChatRequest, TextDeltaCallback};
-use crate::ai::agent::exec::query::ToolEventCallback;
 use crate::error::{AppError, AppResult};
 
 pub const AGENT_TOOL_NAME: &str = "Agent";
@@ -169,9 +169,7 @@ pub enum AgentToolResult {
     },
     /// Mid-run draft written into the pending tool block so the UI can
     /// open the child session before completion.
-    Running {
-        child_session_id: String,
-    },
+    Running { child_session_id: String },
 }
 
 /// The Agent tool itself. Wraps the policy from `AgentTool.call()`.
@@ -432,7 +430,8 @@ impl AgentTool {
 
         match result {
             Ok(run) => {
-                if let (Some(host), Some(child)) = (self.session_host.as_ref(), child_session.as_ref())
+                if let (Some(host), Some(child)) =
+                    (self.session_host.as_ref(), child_session.as_ref())
                 {
                     if let Err(e) = host.finalize_temp_session(child, &run, &model, &provider) {
                         eprintln!(
@@ -467,9 +466,7 @@ impl AgentTool {
     fn resolve_agent_type(&self, invocation: &AgentInvocation) -> AppResult<String> {
         if let Some(t) = invocation.subagent_type.as_ref().filter(|s| !s.is_empty()) {
             if t == AGENT_FORK && self.is_forked_worker {
-                return Err(AppError::Invalid(
-                    "recursive fork is not allowed".into(),
-                ));
+                return Err(AppError::Invalid("recursive fork is not allowed".into()));
             }
             return Ok(t.clone());
         }
@@ -516,7 +513,9 @@ impl Tool for AgentTool {
             .map(str::trim)
             .unwrap_or("");
         if prompt.is_empty() {
-            return Err(AppError::Invalid("Agent: `prompt` must be non-empty".into()));
+            return Err(AppError::Invalid(
+                "Agent: `prompt` must be non-empty".into(),
+            ));
         }
         Ok(())
     }
@@ -533,12 +532,13 @@ impl Tool for AgentTool {
                 }
             };
 
-            let invocation_args: AgentInvocation = match serde_json::from_value(invocation.input.clone()) {
-                Ok(a) => a,
-                Err(e) => {
-                    return Ok(ToolResult::error(format!("Agent input invalid: {e}")));
-                }
-            };
+            let invocation_args: AgentInvocation =
+                match serde_json::from_value(invocation.input.clone()) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        return Ok(ToolResult::error(format!("Agent input invalid: {e}")));
+                    }
+                };
 
             let (agent_type, definition) = match self.resolve_definition(&invocation_args) {
                 Ok(pair) => pair,
@@ -547,20 +547,19 @@ impl Tool for AgentTool {
 
             // Factory sees the resolved definition so it can honour
             // model overrides, MCP filters, etc.
-            let (chat_request, initial_attachments) =
-                match factory.build(
-                    &invocation_args.prompt,
-                    &agent_type,
-                    &definition,
-                    invocation.context.session_id.as_deref(),
-                ) {
-                    Ok(pair) => pair,
-                    Err(e) => {
-                        return Ok(ToolResult::error(format!(
-                            "Agent could not build chat request: {e}"
-                        )));
-                    }
-                };
+            let (chat_request, initial_attachments) = match factory.build(
+                &invocation_args.prompt,
+                &agent_type,
+                &definition,
+                invocation.context.session_id.as_deref(),
+            ) {
+                Ok(pair) => pair,
+                Err(e) => {
+                    return Ok(ToolResult::error(format!(
+                        "Agent could not build chat request: {e}"
+                    )));
+                }
+            };
 
             // Model-driven path: parent system prompt was stashed on
             // the parent's ToolUseContext at the start of its query
@@ -592,9 +591,9 @@ impl Tool for AgentTool {
                 .await
             {
                 Ok(result) => {
-                    let v = serde_json::to_value(&result).unwrap_or_else(|e| {
-                        serde_json::json!({ "error": format!("serialise: {e}") })
-                    });
+                    let v = serde_json::to_value(&result).unwrap_or_else(
+                        |e| serde_json::json!({ "error": format!("serialise: {e}") }),
+                    );
                     Ok(ToolResult::ok(v))
                 }
                 Err(e) => Ok(ToolResult::error(e.to_string())),

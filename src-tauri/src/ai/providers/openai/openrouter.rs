@@ -11,9 +11,9 @@ use super::chat::parse::parse_openai_like_response;
 use super::chat::stream::parse_openai_chat_success;
 use super::common::{
     debug_log_upstream_request, debug_log_upstream_response_text, emit_final_text_if_needed,
-    is_empty_stream_upstream_error, is_idle_timeout_message, retryable_error_in_json_body,
-    message_rejects_gemini_arg_streaming, should_retry_failed_stream_attempt,
-    should_retry_http_error, should_retry_transport, sleep_for_attempt, upstream_error_message,
+    is_empty_stream_upstream_error, is_idle_timeout_message, message_rejects_gemini_arg_streaming,
+    retryable_error_in_json_body, should_retry_failed_stream_attempt, should_retry_http_error,
+    should_retry_transport, sleep_for_attempt, upstream_error_message,
     upstream_rejects_gemini_arg_streaming, upstream_rejects_streaming, without_streaming,
     MAX_ATTEMPTS,
 };

@@ -890,6 +890,23 @@ const zhCN = {
       contextCacheLabel: "上下文缓存（Session）",
       contextCacheHint:
         "仅火山方舟 Responses API 生效：多轮对话用 previous_response_id 接力，命中缓存可降费。生产环境可能需单独开通。",
+      vertexProjectLabel: "GCP 项目 ID",
+      vertexProjectPlaceholder: "my-gcp-project",
+      vertexProjectHint: "Google Cloud 控制台中的项目 ID，会写入 Vertex 请求地址。",
+      vertexLocationLabel: "区域",
+      vertexLocationPlaceholder: "global",
+      vertexLocationHint: "global 走全球端点；也可用 us-central1、europe-west1 等区域。",
+      vertexKeyHint:
+        "对话可用 API Key。拉取模型列表必须用 OAuth：终端运行 gcloud auth print-access-token，把输出贴进密钥栏。",
+      vertexSafetyLabel: "内容审核",
+      vertexSafetyHint:
+        "写入 Vertex generateContent 的 safetySettings。不拦截适合长篇创作；选默认则沿用 Google 云端策略。",
+      vertexSafetyDefault: "默认（跟随 Vertex）",
+      vertexSafetyOff: "关闭过滤器",
+      vertexSafetyNone: "不拦截",
+      vertexSafetyHigh: "宽松（仅拦高风险）",
+      vertexSafetyMedium: "标准",
+      vertexSafetyLow: "严格",
     },
     system: {
       notifySoundTitle: "提示音",

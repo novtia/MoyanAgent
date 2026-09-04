@@ -25,9 +25,7 @@ use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileChangeRecord, FileOp, FileSnapshotStore};
 use crate::ai::agent::tools::project_path::{self, display_path, FILE_REF_DESC};
-use crate::ai::agent::tools::read_receipt::{
-    clear_receipt, record_receipt, DO_NOT_REREAD_NOTE,
-};
+use crate::ai::agent::tools::read_receipt::{clear_receipt, record_receipt, DO_NOT_REREAD_NOTE};
 use crate::ai::agent::tools::text_decode::{
     detect_and_decode, find_quote_folded_ranges, normalize_tool_string, read_text_file,
     remap_quotes_to_sample, write_text_file, TextEncoding,
@@ -116,9 +114,8 @@ impl Tool for FileWriteTool {
 
             if let Some(parent) = path.parent() {
                 if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent).map_err(|e| {
-                        AppError::Other(format!("Write: mkdir {:?}: {e}", parent))
-                    })?;
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| AppError::Other(format!("Write: mkdir {:?}: {e}", parent)))?;
                 }
             }
 
@@ -555,7 +552,9 @@ fn require_nonempty_string(input: &Value, key: &str, tool: &str) -> AppResult<()
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::Invalid(format!("{tool}: `{key}` must be a string")))?;
     if v.is_empty() {
-        return Err(AppError::Invalid(format!("{tool}: `{key}` must be non-empty")));
+        return Err(AppError::Invalid(format!(
+            "{tool}: `{key}` must be non-empty"
+        )));
     }
     Ok(())
 }
@@ -911,7 +910,10 @@ const re = /\d+\\s/g;
             "precious",
             "the nested namesake must be untouched"
         );
-        assert_eq!(std::fs::read_to_string(dir.join("outline.md")).unwrap(), "new");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("outline.md")).unwrap(),
+            "new"
+        );
         assert_eq!(res.content["created"], true);
 
         let _ = std::fs::remove_dir_all(&dir);

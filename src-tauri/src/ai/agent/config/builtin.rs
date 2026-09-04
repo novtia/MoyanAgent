@@ -102,11 +102,7 @@ fn chat() -> AgentDefinition {
     // Main-session normal conversation: no local file / shell / agent tools.
     let mut d = AgentDefinition::builtin(AGENT_CHAT, prompts::CHAT_PROMPT);
     d.when_to_use = prompts::CHAT_WHEN_TO_USE.into();
-    d.tools = vec![
-        "AskUser".into(),
-        "WebSearch".into(),
-        "WebFetch".into(),
-    ];
+    d.tools = vec!["AskUser".into(), "WebSearch".into(), "WebFetch".into()];
     d
 }
 
@@ -203,11 +199,7 @@ fn trpg_director() -> AgentDefinition {
     // Narrow director: narrate + ConsultRoles + AskUser + limited RoleState.
     let mut d = AgentDefinition::builtin(AGENT_TRPG_DIRECTOR, prompts::TRPG_DIRECTOR_PROMPT);
     d.when_to_use = prompts::TRPG_DIRECTOR_WHEN_TO_USE.into();
-    d.tools = vec![
-        "ConsultRoles".into(),
-        "AskUser".into(),
-        "RoleState".into(),
-    ];
+    d.tools = vec!["ConsultRoles".into(), "AskUser".into(), "RoleState".into()];
     d
 }
 
@@ -216,10 +208,6 @@ fn trpg_character() -> AgentDefinition {
     // Memory path is locked by the ConsultRoles host; tools are narrow.
     let mut d = AgentDefinition::builtin(AGENT_TRPG_CHARACTER, prompts::TRPG_CHARACTER_PROMPT);
     d.when_to_use = prompts::TRPG_CHARACTER_WHEN_TO_USE.into();
-    d.tools = vec![
-        "FileRead".into(),
-        "Write".into(),
-        "Edit".into(),
-    ];
+    d.tools = vec!["FileRead".into(), "Write".into(), "Edit".into()];
     d
 }

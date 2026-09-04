@@ -50,6 +50,7 @@ pub fn build_chat_request(
             endpoint: provider.endpoint.clone(),
             api_key: provider.api_key.clone(),
             context_cache_enabled,
+            safety_threshold: provider.vertex_safety_threshold(),
         },
         model: model.to_string(),
         prompt,

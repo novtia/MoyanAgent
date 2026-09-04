@@ -54,6 +54,7 @@ pub struct ToolUseRequest {
     pub id: MessageId,
     pub tool_name: String,
     pub input: serde_json::Value,
+    pub thought_signature: Option<String>,
 }
 
 /// Single-turn provider engine. Cheap to clone (shared `Arc<ProviderFactory>`).
@@ -111,6 +112,7 @@ impl ProviderEngine {
                 id: MessageId(tc.id.clone()),
                 tool_name: tc.name.clone(),
                 input: tc.arguments.clone(),
+                thought_signature: tc.thought_signature.clone(),
             })
             .collect();
         Ok(EngineTurn {
@@ -363,8 +365,7 @@ impl QueryEngine for ProviderQueryEngine {
                         // informed one — and teaches a model the catalog does
                         // not describe how big it actually is.
                         let report = crate::error::error_context_overflow_report(&e);
-                        if let (Some(report), Some(policy)) =
-                            (report.as_ref(), compaction.as_mut())
+                        if let (Some(report), Some(policy)) = (report.as_ref(), compaction.as_mut())
                         {
                             compaction_mod::apply_overflow_report(&mut chat, policy, report);
                             if let Some(window) = report.context_window {
@@ -522,6 +523,7 @@ impl QueryEngine for ProviderQueryEngine {
                         id: req.id.clone(),
                         tool: req.tool_name.clone(),
                         input: req.input.clone(),
+                        thought_signature: req.thought_signature.clone(),
                     };
                     fire_tool_event(&on_tool_event, &use_event);
                     events.push(use_event);
@@ -572,12 +574,7 @@ impl QueryEngine for ProviderQueryEngine {
                             });
                         }
                         if let Some(logger) = context.session_logger.as_ref() {
-                            logger.log_tool_call(
-                                &ctx,
-                                &req.tool_name,
-                                &req.input,
-                                &result,
-                            );
+                            logger.log_tool_call(&ctx, &req.tool_name, &req.input, &result);
                         }
                     }
 
@@ -738,8 +735,7 @@ impl ToolAnchor {
     /// staging either would only cost a cache miss for no change in what the
     /// model sees.
     fn new(full: Vec<crate::ai::chat::ToolDefinition>, anchor: &[String]) -> Self {
-        let wanted: std::collections::HashSet<&str> =
-            anchor.iter().map(String::as_str).collect();
+        let wanted: std::collections::HashSet<&str> = anchor.iter().map(String::as_str).collect();
         let staged: Vec<_> = full
             .iter()
             .filter(|d| wanted.contains(d.name.as_str()))
@@ -864,9 +860,7 @@ pub fn inject_skill_cites_from_prompt(
     }
     let attachments: Vec<Attachment> = resolved
         .into_iter()
-        .map(|(name, body)| {
-            Attachment::for_main(AttachmentKind::InvokedSkill { name, body })
-        })
+        .map(|(name, body)| Attachment::for_main(AttachmentKind::InvokedSkill { name, body }))
         .collect();
     inject_attachments_into_history(chat, &attachments);
 }
@@ -916,8 +910,21 @@ mod tool_anchor_tests {
     /// The `general-purpose` catalog as `collect_tool_definitions` produces
     /// it: every registered tool, sorted by name.
     const STANDARD: &[&str] = &[
-        "Agent", "AskUser", "Bash", "ConsultRoles", "CreateDoc", "Delete", "Edit", "Grep",
-        "ListFiles", "Read", "RoleState", "TodoList", "WebFetch", "WebSearch", "Write",
+        "Agent",
+        "AskUser",
+        "Bash",
+        "ConsultRoles",
+        "CreateDoc",
+        "Delete",
+        "Edit",
+        "Grep",
+        "ListFiles",
+        "Read",
+        "RoleState",
+        "TodoList",
+        "WebFetch",
+        "WebSearch",
+        "Write",
     ];
 
     fn catalog(names: &[&str]) -> Vec<ToolDefinition> {
@@ -1073,6 +1080,9 @@ mod turn_limit_tests {
 
     #[test]
     fn blank_prose_does_not_leave_leading_whitespace() {
-        assert_eq!(turn_limit_notice(5, Some("   \n")), turn_limit_notice(5, None));
+        assert_eq!(
+            turn_limit_notice(5, Some("   \n")),
+            turn_limit_notice(5, None)
+        );
     }
 }

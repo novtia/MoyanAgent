@@ -20,7 +20,10 @@ pub(crate) struct EffectiveSessionParams {
     pub context_window: Option<i64>,
 }
 
-pub(crate) fn effective_session_params(conn: &db::DbConn, sess: &session::Session) -> EffectiveSessionParams {
+pub(crate) fn effective_session_params(
+    conn: &db::DbConn,
+    sess: &session::Session,
+) -> EffectiveSessionParams {
     if let Some(ref pid) = sess.project_id {
         if let Ok(proj) = project::get(conn, pid) {
             // Projects share sampling params across their sessions, but the
@@ -122,8 +125,8 @@ pub(crate) fn resolve_session_generation(
     // sending whatever it built. Resolution never yields `None`: a model that
     // no catalog row and no settings entry describes gets the conservative
     // default rather than unlimited licence.
-    let limits =
-        llm_catalog::lookup_model_limits(conn, &provider.id, &provider.sdk, &model).unwrap_or_default();
+    let limits = llm_catalog::lookup_model_limits(conn, &provider.id, &provider.sdk, &model)
+        .unwrap_or_default();
 
     let context_window = eff
         .context_window
@@ -202,7 +205,10 @@ mod completion_ceiling_tests {
 
     #[test]
     fn reasonable_values_are_left_alone() {
-        assert_eq!(clamp_completion_ceiling(Some(4_096), &limits(None)), Some(4_096));
+        assert_eq!(
+            clamp_completion_ceiling(Some(4_096), &limits(None)),
+            Some(4_096)
+        );
         assert_eq!(
             clamp_completion_ceiling(Some(4_096), &limits(Some(8_192))),
             Some(4_096)

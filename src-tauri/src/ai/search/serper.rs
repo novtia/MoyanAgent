@@ -48,9 +48,10 @@ impl SearchBackend for SerperBackend {
                 .send()
                 .await?;
             let status = resp.status();
-            let payload: Value = resp.json().await.map_err(|e| {
-                AppError::Http(format!("serper: failed to decode response: {e}"))
-            })?;
+            let payload: Value = resp
+                .json()
+                .await
+                .map_err(|e| AppError::Http(format!("serper: failed to decode response: {e}")))?;
             if !status.is_success() {
                 let msg = payload
                     .get("message")

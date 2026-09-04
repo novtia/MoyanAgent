@@ -223,7 +223,12 @@ pub fn make_snippet(body: &str, query: &str) -> String {
     format!("{prefix}{slice}{suffix}")
 }
 
-fn sync_message_fts(conn: &Connection, rowid: i64, old_text: &str, new_text: &str) -> AppResult<()> {
+fn sync_message_fts(
+    conn: &Connection,
+    rowid: i64,
+    old_text: &str,
+    new_text: &str,
+) -> AppResult<()> {
     // External-content FTS: delete old row (ignore if absent), then insert.
     let _ = conn.execute(
         "INSERT INTO messages_fts(messages_fts, rowid, searchable_text) VALUES('delete', ?1, ?2)",
@@ -236,7 +241,12 @@ fn sync_message_fts(conn: &Connection, rowid: i64, old_text: &str, new_text: &st
     Ok(())
 }
 
-fn sync_session_fts(conn: &Connection, rowid: i64, old_title: &str, new_title: &str) -> AppResult<()> {
+fn sync_session_fts(
+    conn: &Connection,
+    rowid: i64,
+    old_title: &str,
+    new_title: &str,
+) -> AppResult<()> {
     let _ = conn.execute(
         "INSERT INTO sessions_fts(sessions_fts, rowid, title) VALUES('delete', ?1, ?2)",
         params![rowid, old_title],
@@ -410,14 +420,7 @@ pub fn search_session_hits(
     Ok(out)
 }
 
-type HitRow = (
-    String,
-    String,
-    i64,
-    String,
-    Option<String>,
-    Option<String>,
-);
+type HitRow = (String, String, i64, String, Option<String>, Option<String>);
 
 fn map_hit_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<HitRow> {
     Ok((

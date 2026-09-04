@@ -113,17 +113,15 @@ pub fn export_media_zip(
         }
     }
 
-    let file = File::create(&args.dest_path).map_err(|e| {
-        AppError::Other(format!("create zip {}: {e}", args.dest_path))
-    })?;
+    let file = File::create(&args.dest_path)
+        .map_err(|e| AppError::Other(format!("create zip {}: {e}", args.dest_path)))?;
     let mut zip = zip::ZipWriter::new(file);
     let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     let mut used_names: HashSet<String> = HashSet::new();
     for (i, (id, abs, mime)) in entries.iter().enumerate() {
-        let bytes = std::fs::read(abs).map_err(|e| {
-            AppError::Other(format!("read media {id}: {e}"))
-        })?;
+        let bytes =
+            std::fs::read(abs).map_err(|e| AppError::Other(format!("read media {id}: {e}")))?;
         let name = unique_zip_name(abs, mime, id, i, &mut used_names);
         zip.start_file(&name, opts)
             .map_err(|e| AppError::Other(format!("zip start_file: {e}")))?;

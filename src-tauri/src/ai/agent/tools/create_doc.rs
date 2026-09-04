@@ -113,9 +113,12 @@ impl Tool for CreateDocTool {
             .get("content")
             .and_then(Value::as_str)
             .ok_or_else(|| AppError::Invalid(format!("{TOOL_NAME}: `content` must be a string")))?;
-        input.get("doc_type").and_then(Value::as_str).ok_or_else(|| {
-            AppError::Invalid(format!("{TOOL_NAME}: `doc_type` must be a string"))
-        })?;
+        input
+            .get("doc_type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                AppError::Invalid(format!("{TOOL_NAME}: `doc_type` must be a string"))
+            })?;
         Ok(())
     }
 
@@ -179,7 +182,11 @@ impl Tool for CreateDocTool {
 
             // Snapshot the pre-image before writing so the document can be
             // rolled back (deleted when created, restored when overwritten).
-            let op = if created { FileOp::Create } else { FileOp::Update };
+            let op = if created {
+                FileOp::Create
+            } else {
+                FileOp::Update
+            };
             self.snapshots.record_before(
                 invocation.context.session_id.as_deref(),
                 invocation.context.correlation_id.as_deref(),
@@ -284,12 +291,8 @@ fn parse_folder_breadcrumb(raw: &str) -> AppResult<Vec<String>> {
 /// Ensure `target` resolves to a path under `project_root` (blocks `..` and symlinks).
 fn ensure_within_project_root(project_root: &Path, target: &Path) -> AppResult<PathBuf> {
     if target.exists() {
-        let canon = std::fs::canonicalize(target).map_err(|e| {
-            AppError::Other(format!(
-                "{TOOL_NAME}: canonicalize {:?}: {e}",
-                target
-            ))
-        })?;
+        let canon = std::fs::canonicalize(target)
+            .map_err(|e| AppError::Other(format!("{TOOL_NAME}: canonicalize {:?}: {e}", target)))?;
         if !canon.starts_with(project_root) {
             return Err(AppError::Invalid(format!(
                 "{TOOL_NAME}: `folder` resolves outside the project root"
@@ -311,12 +314,8 @@ fn ensure_within_project_root(project_root: &Path, target: &Path) -> AppResult<P
         }
     }
     if probe.exists() {
-        let canon = std::fs::canonicalize(&probe).map_err(|e| {
-            AppError::Other(format!(
-                "{TOOL_NAME}: canonicalize {:?}: {e}",
-                probe
-            ))
-        })?;
+        let canon = std::fs::canonicalize(&probe)
+            .map_err(|e| AppError::Other(format!("{TOOL_NAME}: canonicalize {:?}: {e}", probe)))?;
         if !canon.starts_with(project_root) {
             return Err(AppError::Invalid(format!(
                 "{TOOL_NAME}: `folder` resolves outside the project root"
@@ -404,7 +403,10 @@ mod overwrite_tests {
             "CreateDoc must not echo the body back into context"
         );
         assert!(
-            first.content["note"].as_str().unwrap().contains("Do not Read"),
+            first.content["note"]
+                .as_str()
+                .unwrap()
+                .contains("Do not Read"),
             "success should tell the model not to re-read"
         );
 
@@ -479,17 +481,13 @@ mod tests {
 
     #[test]
     fn resolve_output_dir_stays_under_project_root() {
-        let root = std::env::temp_dir().join(format!(
-            "moyan-createdoc-test-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("moyan-createdoc-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
 
         let nested = resolve_output_dir(&root, Some("notes/drafts")).unwrap();
-        assert!(nested.starts_with(
-            std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone())
-        ));
+        assert!(nested.starts_with(std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone())));
 
         assert!(resolve_output_dir(&root, Some("../outside")).is_err());
 

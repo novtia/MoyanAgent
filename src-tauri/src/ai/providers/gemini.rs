@@ -12,13 +12,57 @@ use crate::ai::chat::{
 };
 use crate::ai::providers::openai::common::{
     debug_log_sse_event, debug_log_upstream_request, emit_tool_arg_deltas, find_sse_event_end,
-    is_json_response, message_rejects_gemini_arg_streaming, sse_data_payload,
-    should_retry_failed_stream_attempt, should_retry_http_error, should_retry_transport,
-    sleep_for_attempt, stream_read_error, MAX_ATTEMPTS,
+    is_json_response, message_rejects_gemini_arg_streaming, should_retry_failed_stream_attempt,
+    should_retry_http_error, should_retry_transport, sleep_for_attempt, sse_data_payload,
+    stream_read_error, MAX_ATTEMPTS,
 };
-use crate::ai::providers::{ChatProvider, ProviderFuture, GEMINI_SDK};
+use crate::ai::providers::{ChatProvider, ProviderFuture, GEMINI_SDK, VERTEX_SDK};
 use crate::ai::tokens::TokenUsage;
 use crate::error::{AppError, AppResult};
+
+/// How Google generateContent requests authenticate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GoogleAuthStyle {
+    /// Google AI Studio: always `x-goog-api-key`.
+    StudioApiKey,
+    /// Vertex generateContent: OAuth/JWT → Bearer; API keys → `x-goog-api-key`.
+    VertexAuto,
+    /// Vertex Model Garden list: this API rejects API keys, always Bearer.
+    AlwaysBearer,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GoogleAuthKind {
+    ApiKey,
+    Bearer,
+}
+
+pub(crate) fn google_auth_kind(api_key: &str, style: GoogleAuthStyle) -> GoogleAuthKind {
+    match style {
+        GoogleAuthStyle::StudioApiKey => GoogleAuthKind::ApiKey,
+        GoogleAuthStyle::AlwaysBearer => GoogleAuthKind::Bearer,
+        GoogleAuthStyle::VertexAuto => {
+            let key = api_key.trim();
+            // `ya29.` and `ya29c.` access tokens; JWTs from service accounts.
+            if key.starts_with("ya29") || key.starts_with("eyJ") {
+                GoogleAuthKind::Bearer
+            } else {
+                GoogleAuthKind::ApiKey
+            }
+        }
+    }
+}
+
+pub(crate) fn apply_google_auth(
+    req: reqwest::RequestBuilder,
+    api_key: &str,
+    style: GoogleAuthStyle,
+) -> reqwest::RequestBuilder {
+    match google_auth_kind(api_key, style) {
+        GoogleAuthKind::Bearer => req.bearer_auth(api_key.trim()),
+        GoogleAuthKind::ApiKey => req.header("x-goog-api-key", api_key),
+    }
+}
 
 pub struct GeminiProvider;
 
@@ -34,7 +78,7 @@ impl ChatProvider for GeminiProvider {
     }
 
     fn chat<'a>(&'a self, request: ChatRequest) -> ProviderFuture<'a> {
-        Box::pin(async move { generate(request).await })
+        Box::pin(async move { generate_google(request, GoogleAuthStyle::StudioApiKey).await })
     }
 
     fn chat_stream<'a>(
@@ -42,24 +86,30 @@ impl ChatProvider for GeminiProvider {
         request: ChatRequest,
         on_text_delta: TextDeltaCallback,
     ) -> ProviderFuture<'a> {
-        Box::pin(async move { generate_stream(request, on_text_delta).await })
+        Box::pin(async move {
+            generate_google_stream(request, on_text_delta, GoogleAuthStyle::StudioApiKey).await
+        })
     }
 }
 
-async fn generate(request: ChatRequest) -> AppResult<GenerateResponse> {
+pub(crate) async fn generate_google(
+    request: ChatRequest,
+    auth: GoogleAuthStyle,
+) -> AppResult<GenerateResponse> {
     let url = gemini_url(&request.provider.endpoint, &request.model, false);
     let body = build_body(&request, false);
     let provider_label = provider_label(&request);
 
     let client = crate::ai::providers::build_chat_client()?;
 
-    let resp = client
-        .post(url)
-        .header("Content-Type", "application/json")
-        .header("x-goog-api-key", &request.provider.api_key)
-        .json(&body)
-        .send()
-        .await?;
+    let resp = apply_google_auth(
+        client.post(&url).header("Content-Type", "application/json"),
+        &request.provider.api_key,
+        auth,
+    )
+    .json(&body)
+    .send()
+    .await?;
 
     let status = resp.status();
     let txt = resp.text().await?;
@@ -82,7 +132,7 @@ fn provider_label(request: &ChatRequest) -> String {
     }
 }
 
-fn gemini_url(endpoint: &str, model: &str, stream: bool) -> String {
+pub(crate) fn gemini_url(endpoint: &str, model: &str, stream: bool) -> String {
     let endpoint = endpoint.trim();
     let method = if stream {
         "streamGenerateContent"
@@ -91,8 +141,7 @@ fn gemini_url(endpoint: &str, model: &str, stream: bool) -> String {
     };
     let mut url = if endpoint.contains("{model}") {
         replace_gemini_method(&endpoint.replace("{model}", model.trim()), method)
-    } else if endpoint.contains(":generateContent") || endpoint.contains(":streamGenerateContent")
-    {
+    } else if endpoint.contains(":generateContent") || endpoint.contains(":streamGenerateContent") {
         replace_gemini_method(endpoint, method)
     } else {
         format!(
@@ -238,7 +287,67 @@ fn build_body(request: &ChatRequest, stream_function_args: bool) -> Value {
     if !generation_config.is_empty() {
         map.insert("generationConfig".into(), Value::Object(generation_config));
     }
+    if let Some(safety) = vertex_safety_settings(request) {
+        map.insert("safetySettings".into(), safety);
+    }
     body
+}
+
+const VERTEX_HARM_CATEGORIES: &[&str] = &[
+    "HARM_CATEGORY_HATE_SPEECH",
+    "HARM_CATEGORY_DANGEROUS_CONTENT",
+    "HARM_CATEGORY_HARASSMENT",
+    "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+];
+
+fn harm_block_threshold(level: &str) -> Option<&'static str> {
+    match level.trim().to_ascii_lowercase().as_str() {
+        "off" => Some("OFF"),
+        "none" | "block_none" => Some("BLOCK_NONE"),
+        "high" | "block_only_high" => Some("BLOCK_ONLY_HIGH"),
+        "medium" | "block_medium_and_above" => Some("BLOCK_MEDIUM_AND_ABOVE"),
+        "low" | "block_low_and_above" => Some("BLOCK_LOW_AND_ABOVE"),
+        _ => None,
+    }
+}
+
+fn vertex_safety_settings(request: &ChatRequest) -> Option<Value> {
+    if crate::ai::providers::normalize_sdk(&request.provider.sdk) != VERTEX_SDK {
+        return None;
+    }
+    let threshold = harm_block_threshold(request.provider.safety_threshold.as_deref()?)?;
+    Some(json!(VERTEX_HARM_CATEGORIES
+        .iter()
+        .map(|category| json!({ "category": category, "threshold": threshold }))
+        .collect::<Vec<_>>()))
+}
+
+/// Vertex / Gemini 3 last-resort dummy when a `functionCall` was not
+/// captured with a real thought signature (e.g. history from another
+/// provider). Real signatures must be round-tripped when available.
+/// See https://ai.google.dev/gemini-api/docs/thought-signatures
+const SKIP_THOUGHT_SIGNATURE: &str = "skip_thought_signature_validator";
+
+fn extract_thought_signature(part: &Value, fc: Option<&Value>) -> Option<String> {
+    let from_value = |v: &Value| {
+        v.get("thoughtSignature")
+            .or_else(|| v.get("thought_signature"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    from_value(part).or_else(|| fc.and_then(from_value))
+}
+
+fn gemini_function_call_part(name: &str, args: &Value, thought_signature: Option<&str>) -> Value {
+    let mut part = json!({
+        "functionCall": { "name": name, "args": args }
+    });
+    if let Some(sig) = thought_signature.map(str::trim).filter(|s| !s.is_empty()) {
+        part["thoughtSignature"] = json!(sig);
+    }
+    part
 }
 
 fn append_gemini_assistant_tool_turn(contents: &mut Vec<Value>, pending: &PendingAssistantTurn) {
@@ -251,10 +360,22 @@ fn append_gemini_assistant_tool_turn(contents: &mut Vec<Value>, pending: &Pendin
     {
         parts.push(json!({ "text": text }));
     }
+    // Gemini 3 requires a thought signature on the first functionCall of
+    // each model step. Parallel follow-ups in the same step omit it.
+    let mut first_fc = true;
     for tc in &pending.tool_calls {
-        parts.push(json!({
-            "functionCall": { "name": tc.name, "args": tc.arguments }
-        }));
+        let sig = tc
+            .thought_signature
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let sig = match sig {
+            Some(s) => Some(s),
+            None if first_fc => Some(SKIP_THOUGHT_SIGNATURE),
+            None => None,
+        };
+        parts.push(gemini_function_call_part(&tc.name, &tc.arguments, sig));
+        first_fc = false;
     }
     if !parts.is_empty() {
         contents.push(json!({ "role": "model", "parts": parts }));
@@ -370,9 +491,10 @@ fn strip_stream_function_call_config(body: &mut Value) {
     }
 }
 
-async fn generate_stream(
+pub(crate) async fn generate_google_stream(
     request: ChatRequest,
     on_text_delta: TextDeltaCallback,
+    auth: GoogleAuthStyle,
 ) -> AppResult<GenerateResponse> {
     let url = gemini_url(&request.provider.endpoint, &request.model, true);
     let mut body = build_body(&request, true);
@@ -384,13 +506,14 @@ async fn generate_stream(
         if attempt == 1 {
             debug_log_upstream_request(&provider_label, &url, &body);
         }
-        let resp = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .header("x-goog-api-key", &request.provider.api_key)
-            .json(&body)
-            .send()
-            .await;
+        let resp = apply_google_auth(
+            client.post(&url).header("Content-Type", "application/json"),
+            &request.provider.api_key,
+            auth,
+        )
+        .json(&body)
+        .send()
+        .await;
 
         let resp = match resp {
             Ok(r) => r,
@@ -455,9 +578,11 @@ async fn generate_stream(
             continue;
         }
         if status == StatusCode::NOT_FOUND
-            || msg.to_ascii_lowercase().contains("streaming is not supported")
+            || msg
+                .to_ascii_lowercase()
+                .contains("streaming is not supported")
         {
-            let parsed = generate(request).await?;
+            let parsed = generate_google(request, auth).await?;
             emit_gemini_response(&parsed, &on_text_delta);
             return Ok(parsed);
         }
@@ -611,16 +736,15 @@ fn handle_gemini_sse_event(
         return Ok(());
     };
     for part in parts {
-        if part.get("thought").and_then(Value::as_bool) == Some(true) {
+        let is_thought = part.get("thought").and_then(Value::as_bool) == Some(true);
+        if is_thought {
             if let Some(t) = part.get("text").and_then(Value::as_str) {
                 if !t.is_empty() {
                     thinking.push_str(t);
                     emit_thinking_deltas(on_text_delta, t);
                 }
             }
-            continue;
-        }
-        if let Some(t) = part.get("text").and_then(Value::as_str) {
+        } else if let Some(t) = part.get("text").and_then(Value::as_str) {
             if !t.is_empty() {
                 text.push_str(t);
                 (on_text_delta)(StreamDelta::text(t.to_string()));
@@ -629,15 +753,23 @@ fn handle_gemini_sse_event(
         if let Some(image) = image_from_part(part) {
             images.push(image);
         }
-        if let Some(fc) = part.get("functionCall").or_else(|| part.get("function_call")) {
-            ingest_gemini_function_call(calls, fc, on_text_delta);
+        if let Some(fc) = part
+            .get("functionCall")
+            .or_else(|| part.get("function_call"))
+        {
+            ingest_gemini_function_call(calls, part, fc, on_text_delta);
         }
     }
     Ok(())
 }
 
+fn new_gemini_tool_call_id() -> String {
+    format!("gemini-{}", ulid::Ulid::new())
+}
+
 fn ingest_gemini_function_call(
     calls: &mut Vec<GeminiFunctionCallBuilder>,
+    part: &Value,
     fc: &Value,
     on_text_delta: &TextDeltaCallback,
 ) {
@@ -651,18 +783,25 @@ fn ingest_gemini_function_call(
             .iter()
             .position(|c| c.name == name && !c.finished)
             .unwrap_or_else(|| {
-                let id = format!("gemini-{}", calls.len() + 1);
-                calls.push(GeminiFunctionCallBuilder::new(id, name.clone()));
+                calls.push(GeminiFunctionCallBuilder::new(
+                    new_gemini_tool_call_id(),
+                    name.clone(),
+                ));
                 calls.len() - 1
             })
     } else if let Some(i) = calls.iter().rposition(|c| !c.finished) {
         i
     } else {
-        let id = format!("gemini-{}", calls.len() + 1);
-        calls.push(GeminiFunctionCallBuilder::new(id, String::new()));
+        calls.push(GeminiFunctionCallBuilder::new(
+            new_gemini_tool_call_id(),
+            String::new(),
+        ));
         calls.len() - 1
     };
     calls[idx].apply_chunk(fc, on_text_delta);
+    if let Some(sig) = extract_thought_signature(part, Some(fc)) {
+        calls[idx].thought_signature = Some(sig);
+    }
 }
 
 #[derive(Debug)]
@@ -670,6 +809,7 @@ struct GeminiFunctionCallBuilder {
     id: String,
     name: String,
     args: Value,
+    thought_signature: Option<String>,
     started: bool,
     finished: bool,
     identity_emitted: bool,
@@ -683,6 +823,7 @@ impl GeminiFunctionCallBuilder {
             id,
             name,
             args: json!({}),
+            thought_signature: None,
             started: false,
             finished: false,
             identity_emitted: false,
@@ -775,7 +916,13 @@ impl GeminiFunctionCallBuilder {
         }
     }
 
-    fn emit_string_field(&mut self, cb: &TextDeltaCallback, key: &str, fragment: &str, close: bool) {
+    fn emit_string_field(
+        &mut self,
+        cb: &TextDeltaCallback,
+        key: &str,
+        fragment: &str,
+        close: bool,
+    ) {
         if self.open_string_key.as_deref() != Some(key) {
             self.close_open_string(cb);
             self.emit_comma_if_needed(cb);
@@ -841,7 +988,12 @@ impl GeminiFunctionCallBuilder {
         if self.started {
             self.close_open_string(cb);
             self.emit(cb, "}");
-        } else if self.args.as_object().map(|o| !o.is_empty()).unwrap_or(false) {
+        } else if self
+            .args
+            .as_object()
+            .map(|o| !o.is_empty())
+            .unwrap_or(false)
+        {
             self.ensure_identity(cb);
             let serialized = serde_json::to_string(&self.args).unwrap_or_else(|_| "{}".into());
             emit_tool_arg_deltas(cb, &self.id, &self.name, &serialized);
@@ -856,6 +1008,7 @@ impl GeminiFunctionCallBuilder {
             id: self.id,
             name: self.name,
             arguments: self.args,
+            thought_signature: self.thought_signature,
         }
     }
 }
@@ -967,10 +1120,12 @@ fn apply_path_value(
                         append_string,
                     );
                 }
-                cur = obj.entry(k.clone()).or_insert_with(|| match segs.get(i + 1) {
-                    Some(PathSeg::Index(_)) => json!([]),
-                    _ => json!({}),
-                });
+                cur = obj
+                    .entry(k.clone())
+                    .or_insert_with(|| match segs.get(i + 1) {
+                        Some(PathSeg::Index(_)) => json!([]),
+                        _ => json!({}),
+                    });
             }
             PathSeg::Index(idx) => {
                 if !cur.is_array() {
@@ -1073,22 +1228,20 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
     let mut thoughts = Vec::new();
     let mut images = Vec::new();
     let mut tool_calls: Vec<crate::ai::chat::ProviderToolCall> = Vec::new();
-    let mut counter: u32 = 0;
     if let Some(parts) = v
         .pointer("/candidates/0/content/parts")
         .and_then(Value::as_array)
     {
         for part in parts {
-            if part.get("thought").and_then(Value::as_bool) == Some(true) {
+            let is_thought = part.get("thought").and_then(Value::as_bool) == Some(true);
+            if is_thought {
                 if let Some(text) = part.get("text").and_then(Value::as_str) {
                     let trimmed = text.trim();
                     if !trimmed.is_empty() {
                         thoughts.push(trimmed.to_string());
                     }
                 }
-                continue;
-            }
-            if let Some(text) = part.get("text").and_then(Value::as_str) {
+            } else if let Some(text) = part.get("text").and_then(Value::as_str) {
                 let trimmed = text.trim();
                 if !trimmed.is_empty() {
                     texts.push(trimmed.to_string());
@@ -1097,7 +1250,10 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
             if let Some(image) = image_from_part(part) {
                 images.push(image);
             }
-            if let Some(fc) = part.get("functionCall") {
+            if let Some(fc) = part
+                .get("functionCall")
+                .or_else(|| part.get("function_call"))
+            {
                 let name = fc
                     .get("name")
                     .and_then(Value::as_str)
@@ -1107,13 +1263,14 @@ fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
                     continue;
                 }
                 let args = fc.get("args").cloned().unwrap_or(Value::Null);
-                // Gemini doesn't supply call ids; synthesise stable ones
-                // per-response so tool_result can correlate.
-                counter += 1;
+                // Gemini doesn't supply call ids. Synthesise a globally unique
+                // one so later agent-loop rounds don't collide with `gemini-1`
+                // from a previous round (the live UI keyed cards by that id).
                 tool_calls.push(crate::ai::chat::ProviderToolCall {
-                    id: format!("gemini-{counter}"),
+                    id: new_gemini_tool_call_id(),
                     name,
                     arguments: args,
+                    thought_signature: extract_thought_signature(part, Some(fc)),
                 });
             }
         }
@@ -1235,6 +1392,7 @@ mod tests {
                 endpoint: "https://generativelanguage.googleapis.com/v1beta".into(),
                 api_key: "k".into(),
                 context_cache_enabled: false,
+                safety_threshold: None,
             },
             model: "gemini-3.1-flash".into(),
             prompt: "hi".into(),
@@ -1267,6 +1425,63 @@ mod tests {
     }
 
     #[test]
+    fn studio_auth_always_uses_api_key_header() {
+        assert_eq!(
+            google_auth_kind("ya29.token", GoogleAuthStyle::StudioApiKey),
+            GoogleAuthKind::ApiKey
+        );
+        assert_eq!(
+            google_auth_kind("AIzaSyKey", GoogleAuthStyle::StudioApiKey),
+            GoogleAuthKind::ApiKey
+        );
+    }
+
+    #[test]
+    fn vertex_auth_uses_bearer_for_oauth_and_jwt() {
+        assert_eq!(
+            google_auth_kind("ya29.a0Af...", GoogleAuthStyle::VertexAuto),
+            GoogleAuthKind::Bearer
+        );
+        assert_eq!(
+            google_auth_kind(
+                "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.aaa.sig",
+                GoogleAuthStyle::VertexAuto
+            ),
+            GoogleAuthKind::Bearer
+        );
+        assert_eq!(
+            google_auth_kind("AIzaSyVertexKey", GoogleAuthStyle::VertexAuto),
+            GoogleAuthKind::ApiKey
+        );
+        assert_eq!(
+            google_auth_kind("ya29c.token", GoogleAuthStyle::VertexAuto),
+            GoogleAuthKind::Bearer
+        );
+        assert_eq!(
+            google_auth_kind("AIzaSyVertexKey", GoogleAuthStyle::AlwaysBearer),
+            GoogleAuthKind::Bearer
+        );
+    }
+
+    #[test]
+    fn vertex_templated_url_replaces_model_and_stream_method() {
+        let global = "https://aiplatform.googleapis.com/v1/projects/my-proj/locations/global/publishers/google/models/{model}:generateContent";
+        assert_eq!(
+            gemini_url(global, "gemini-2.5-flash", false),
+            "https://aiplatform.googleapis.com/v1/projects/my-proj/locations/global/publishers/google/models/gemini-2.5-flash:generateContent"
+        );
+        assert_eq!(
+            gemini_url(global, "gemini-2.5-flash", true),
+            "https://aiplatform.googleapis.com/v1/projects/my-proj/locations/global/publishers/google/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+        );
+        let regional = "https://us-central1-aiplatform.googleapis.com/v1/projects/my-proj/locations/us-central1/publishers/google/models/{model}:generateContent";
+        assert_eq!(
+            gemini_url(regional, "gemini-2.5-pro", true),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/my-proj/locations/us-central1/publishers/google/models/gemini-2.5-pro:streamGenerateContent?alt=sse"
+        );
+    }
+
+    #[test]
     fn stream_url_uses_sse_generate_content() {
         let base = "https://generativelanguage.googleapis.com/v1beta";
         assert_eq!(
@@ -1277,7 +1492,8 @@ mod tests {
             gemini_url(base, "gemini-3.1-flash", true),
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash:streamGenerateContent?alt=sse"
         );
-        let templated = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
+        let templated =
+            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent";
         assert!(gemini_url(templated, "gemini-3.1-flash", true)
             .ends_with("models/gemini-3.1-flash:streamGenerateContent?alt=sse"));
         let already = "https://example/models/x:streamGenerateContent?key=k";
@@ -1411,5 +1627,185 @@ mod tests {
         assert_eq!(parsed["title"], "第一章");
         assert_eq!(parsed["content"], "正文");
         assert!(call.finished);
+    }
+
+    #[test]
+    fn parse_response_captures_thought_signature_on_function_call_part() {
+        let txt = r#"{
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {
+                            "functionCall": { "name": "Read", "args": { "path": "a.md" } },
+                            "thoughtSignature": "sig-on-part"
+                        }
+                    ]
+                }
+            }]
+        }"#;
+        let parsed = parse_response(txt).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].name, "Read");
+        assert_eq!(
+            parsed.tool_calls[0].thought_signature.as_deref(),
+            Some("sig-on-part")
+        );
+        assert!(parsed.tool_calls[0].id.starts_with("gemini-"));
+        assert!(parsed.tool_calls[0].id.len() > "gemini-".len());
+    }
+
+    #[test]
+    fn parse_response_assigns_unique_tool_ids_across_rounds() {
+        let txt = r#"{
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        { "functionCall": { "name": "ListFiles", "args": {} } },
+                        { "functionCall": { "name": "Read", "args": { "path": "a.md" } } }
+                    ]
+                }
+            }]
+        }"#;
+        let first = parse_response(txt).unwrap();
+        let second = parse_response(txt).unwrap();
+        assert_eq!(first.tool_calls.len(), 2);
+        assert_ne!(first.tool_calls[0].id, first.tool_calls[1].id);
+        assert_ne!(first.tool_calls[0].id, second.tool_calls[0].id);
+        assert_ne!(first.tool_calls[1].id, second.tool_calls[1].id);
+    }
+
+    #[test]
+    fn parse_response_captures_thought_signature_inside_function_call() {
+        let txt = r#"{
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "name": "Read",
+                            "args": {},
+                            "thoughtSignature": "sig-inside"
+                        }
+                    }]
+                }
+            }]
+        }"#;
+        let parsed = parse_response(txt).unwrap();
+        assert_eq!(
+            parsed.tool_calls[0].thought_signature.as_deref(),
+            Some("sig-inside")
+        );
+    }
+
+    #[test]
+    fn assistant_tool_turn_round_trips_thought_signature() {
+        use crate::ai::chat::{PendingAssistantTurn, ProviderToolCall};
+        let mut contents = Vec::new();
+        let mut first = ProviderToolCall::new("gemini-1", "Read", json!({"path": "a.md"}));
+        first.thought_signature = Some("real-sig".into());
+        append_gemini_assistant_tool_turn(
+            &mut contents,
+            &PendingAssistantTurn {
+                text: None,
+                thinking_content: None,
+                tool_calls: vec![first, ProviderToolCall::new("gemini-2", "Grep", json!({}))],
+            },
+        );
+        assert_eq!(contents[0]["parts"][0]["thoughtSignature"], "real-sig");
+        assert!(contents[0]["parts"][1].get("thoughtSignature").is_none());
+        assert_eq!(contents[0]["parts"][0]["functionCall"]["name"], "Read");
+    }
+
+    #[test]
+    fn assistant_tool_turn_uses_skip_sentinel_when_signature_missing() {
+        use crate::ai::chat::{PendingAssistantTurn, ProviderToolCall};
+        let mut contents = Vec::new();
+        append_gemini_assistant_tool_turn(
+            &mut contents,
+            &PendingAssistantTurn {
+                text: Some("先读".into()),
+                thinking_content: None,
+                tool_calls: vec![ProviderToolCall::new("gemini-1", "Read", json!({}))],
+            },
+        );
+        assert_eq!(contents[0]["parts"][0]["text"], "先读");
+        assert_eq!(
+            contents[0]["parts"][1]["thoughtSignature"],
+            SKIP_THOUGHT_SIGNATURE
+        );
+    }
+
+    #[test]
+    fn stream_event_captures_thought_signature_from_part() {
+        let (cb, _) = collect_cb();
+        let mut text = String::new();
+        let mut thinking = String::new();
+        let mut images = Vec::new();
+        let mut usage_acc = crate::ai::tokens::TokenUsage::default();
+        let mut calls = Vec::new();
+        handle_gemini_sse_event(
+            r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"Read","args":{"path":"a.md"}},"thoughtSignature":"stream-sig"}]}}]}"#,
+            &mut text,
+            &mut thinking,
+            &mut images,
+            &mut usage_acc,
+            &mut calls,
+            &cb,
+        )
+        .unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].thought_signature.as_deref(), Some("stream-sig"));
+        assert!(calls[0].id.starts_with("gemini-"));
+        let first_id = calls[0].id.clone();
+        handle_gemini_sse_event(
+            r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"Grep","args":{"pattern":"x"}}}]}}]}"#,
+            &mut text,
+            &mut thinking,
+            &mut images,
+            &mut usage_acc,
+            &mut calls,
+            &cb,
+        )
+        .unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_ne!(first_id, calls[1].id);
+        let tc = GeminiFunctionCallBuilder::into_tool_call(calls.remove(0));
+        assert_eq!(tc.thought_signature.as_deref(), Some("stream-sig"));
+        assert_eq!(tc.name, "Read");
+    }
+
+    #[test]
+    fn vertex_safety_settings_use_chosen_threshold() {
+        let mut req = sample_request(false);
+        req.provider.sdk = VERTEX_SDK.into();
+        req.provider.safety_threshold = Some("none".into());
+        let body = build_body(&req, false);
+        let arr = body["safetySettings"].as_array().expect("safetySettings");
+        assert_eq!(arr.len(), 4);
+        assert_eq!(arr[0]["category"], "HARM_CATEGORY_HATE_SPEECH");
+        assert_eq!(arr[0]["threshold"], "BLOCK_NONE");
+        assert!(arr.iter().all(|p| p["threshold"] == "BLOCK_NONE"));
+
+        req.provider.safety_threshold = Some("off".into());
+        let off = build_body(&req, false);
+        assert_eq!(off["safetySettings"][0]["threshold"], "OFF");
+
+        req.provider.safety_threshold = Some("low".into());
+        let strict = build_body(&req, false);
+        assert_eq!(
+            strict["safetySettings"][0]["threshold"],
+            "BLOCK_LOW_AND_ABOVE"
+        );
+    }
+
+    #[test]
+    fn vertex_default_and_studio_omit_safety_settings() {
+        let mut req = sample_request(false);
+        req.provider.sdk = VERTEX_SDK.into();
+        req.provider.safety_threshold = None;
+        assert!(build_body(&req, false).get("safetySettings").is_none());
+
+        req.provider.sdk = GEMINI_SDK.into();
+        req.provider.safety_threshold = Some("none".into());
+        assert!(build_body(&req, false).get("safetySettings").is_none());
     }
 }

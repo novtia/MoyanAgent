@@ -157,7 +157,9 @@ impl RoleStateStore {
         let role = list
             .iter_mut()
             .find(|r| role_id(r) == Some(id))
-            .ok_or_else(|| AppError::Invalid(format!("RoleState update: unknown role id {id:?}")))?;
+            .ok_or_else(|| {
+                AppError::Invalid(format!("RoleState update: unknown role id {id:?}"))
+            })?;
 
         if let Some(set) = set {
             for path in set.keys() {
@@ -562,10 +564,10 @@ impl Tool for RoleStateTool {
                 .clone()
                 .or_else(|| invocation.context.session_id.clone())
                 .ok_or_else(|| {
-                AppError::Invalid(
-                    "RoleState: no session id on this run; cannot persist role state".into(),
-                )
-            })?;
+                    AppError::Invalid(
+                        "RoleState: no session id on this run; cannot persist role state".into(),
+                    )
+                })?;
             let input = invocation.input;
             let action = input
                 .get("action")
@@ -582,7 +584,11 @@ impl Tool for RoleStateTool {
                     })))
                 }
                 "create" => {
-                    let id = input.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                    let id = input
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
                     let role = input.get("role").cloned().unwrap_or(Value::Null);
                     let role = store.create(&scope_id, &id, role)?;
                     Ok(ToolResult::ok(json!({
@@ -592,7 +598,11 @@ impl Tool for RoleStateTool {
                     })))
                 }
                 "update" => {
-                    let id = input.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                    let id = input
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
                     let set = input.get("set").and_then(Value::as_object);
                     let unset: Vec<String> = input
                         .get("unset")
@@ -611,7 +621,11 @@ impl Tool for RoleStateTool {
                     })))
                 }
                 "delete" => {
-                    let id = input.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                    let id = input
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
                     let removed = store.delete(&scope_id, &id)?;
                     Ok(ToolResult::ok(json!({
                         "op": "delete",
@@ -680,7 +694,10 @@ mod dot_path_tests {
         set.insert("tags.900000000".into(), json!("boom"));
 
         assert!(store.update("scope", "rin", Some(&set), &[]).is_err());
-        assert_eq!(store.snapshot("scope")[0]["tags"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            store.snapshot("scope")[0]["tags"].as_array().unwrap().len(),
+            1
+        );
     }
 
     #[test]
@@ -703,4 +720,3 @@ mod dot_path_tests {
         assert!(store.snapshot("scope")[0].get("mood").is_none());
     }
 }
-

@@ -47,9 +47,7 @@ impl TextEncoding {
             "big5" | "cp950" | "windows-950" => Self::Big5,
             "shift-jis" | "shift_jis" | "sjis" | "cp932" | "windows-932" => Self::ShiftJis,
             "euc-kr" | "euc_kr" | "cp949" | "windows-949" => Self::EucKr,
-            "windows-1252" | "cp1252" | "latin1" | "iso-8859-1" | "iso8859-1" => {
-                Self::Windows1252
-            }
+            "windows-1252" | "cp1252" | "latin1" | "iso-8859-1" | "iso8859-1" => Self::Windows1252,
             _ => Self::Utf8,
         }
     }
@@ -341,16 +339,12 @@ pub fn remap_quotes_to_sample(text: &str, sample: &str) -> String {
         .map(|c| {
             if is_double_quote(c) {
                 match double {
-                    Some(style) => {
-                        apply_quote_style(style, double_quote_side(c), &mut d_open_next)
-                    }
+                    Some(style) => apply_quote_style(style, double_quote_side(c), &mut d_open_next),
                     None => c,
                 }
             } else if is_single_quote(c) {
                 match single {
-                    Some(style) => {
-                        apply_quote_style(style, single_quote_side(c), &mut s_open_next)
-                    }
+                    Some(style) => apply_quote_style(style, single_quote_side(c), &mut s_open_next),
                     None => c,
                 }
             } else {
@@ -418,10 +412,7 @@ pub fn detect_and_decode(bytes: &[u8]) -> DecodedText {
     }
 
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        let text = encoding_rs::UTF_8
-            .decode(&bytes[3..])
-            .0
-            .into_owned();
+        let text = encoding_rs::UTF_8.decode(&bytes[3..]).0.into_owned();
         return DecodedText {
             text,
             encoding: TextEncoding::Utf8,

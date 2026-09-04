@@ -155,6 +155,25 @@ pub struct ProviderToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+    /// Gemini 3 / Vertex thinking models attach a `thoughtSignature` to
+    /// `functionCall` parts. It must be echoed on the next request or
+    /// Vertex returns HTTP 400. Other providers leave this `None`.
+    pub thought_signature: Option<String>,
+}
+
+impl ProviderToolCall {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: serde_json::Value,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            arguments,
+            thought_signature: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -193,6 +212,8 @@ pub struct ProviderConfig {
     pub api_key: String,
     /// See [`crate::data::settings::ModelProvider::context_cache_enabled`].
     pub context_cache_enabled: bool,
+    /// Vertex `safetySettings` threshold (`off`/`none`/`high`/`medium`/`low`).
+    pub safety_threshold: Option<String>,
 }
 
 /// Tool description exposed to the model. Provider-agnostic — each
@@ -274,7 +295,11 @@ pub enum TimelineSegment {
         thinking_content: Option<String>,
     },
     ToolRound {
-        #[serde(rename = "assistantText", default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            rename = "assistantText",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
         assistant_text: Option<String>,
         #[serde(
             rename = "thinkingContent",
@@ -292,6 +317,12 @@ pub struct TimelineToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+    #[serde(
+        rename = "thoughtSignature",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -327,6 +358,7 @@ impl TimelineSegment {
                         id: c.id.clone(),
                         name: c.name.clone(),
                         arguments: c.arguments.clone(),
+                        thought_signature: c.thought_signature.clone(),
                     })
                     .collect(),
             },

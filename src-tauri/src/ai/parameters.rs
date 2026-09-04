@@ -435,7 +435,9 @@ mod tests {
         assert!(is_volcengine_endpoint(
             "https://ark.ap-southeast.byteplus.com/api/v3/responses"
         ));
-        assert!(!is_volcengine_endpoint("https://api.openai.com/v1/responses"));
+        assert!(!is_volcengine_endpoint(
+            "https://api.openai.com/v1/responses"
+        ));
     }
 
     #[test]
@@ -532,10 +534,7 @@ mod tests {
                 .and_then(Value::as_str),
             Some("disabled")
         );
-        assert!(body
-            .get("thinking")
-            .and_then(|v| v.get("keep"))
-            .is_none());
+        assert!(body.get("thinking").and_then(|v| v.get("keep")).is_none());
     }
 
     #[test]

@@ -36,11 +36,7 @@ pub(crate) fn extract_responses_tool_calls(v: &Value) -> Vec<crate::ai::chat::Pr
                 })
                 .unwrap_or_else(|| "{}".into());
             let arguments = serde_json::from_str(&raw_args).unwrap_or_else(|_| json!({}));
-            Some(crate::ai::chat::ProviderToolCall {
-                id,
-                name,
-                arguments,
-            })
+            Some(crate::ai::chat::ProviderToolCall::new(id, name, arguments))
         })
         .collect()
 }
@@ -168,7 +164,11 @@ pub(crate) fn collect_reasoning_text_parts(v: &Value, out: &mut Vec<String>) {
 }
 
 pub(crate) fn push_trimmed_text(v: Option<&Value>, out: &mut Vec<String>) {
-    if let Some(text) = v.and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(text) = v
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         out.push(text.to_string());
     }
 }

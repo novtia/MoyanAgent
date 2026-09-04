@@ -670,10 +670,7 @@ pub(crate) fn merge_responses_tool_events(
     }
 
     if typ.ends_with("function_call_arguments.done") {
-        let args = v
-            .get("arguments")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        let args = v.get("arguments").and_then(Value::as_str).unwrap_or("");
         if args.is_empty() {
             return;
         }

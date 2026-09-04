@@ -17,10 +17,7 @@ pub(crate) fn set_streaming(body: &mut Value, include_usage: bool) {
         // carries `usage` with an empty `choices` array.
         // Docs: https://console.volcengine.com/ark/region:cn-beijing/docs/82379/1569618
         if include_usage {
-            map.insert(
-                "stream_options".into(),
-                json!({ "include_usage": true }),
-            );
+            map.insert("stream_options".into(), json!({ "include_usage": true }));
         }
     }
 }
@@ -36,7 +33,10 @@ pub(crate) fn is_json_response(resp: &reqwest::Response) -> bool {
         .unwrap_or(false)
 }
 
-pub(crate) fn emit_final_text_if_needed(resp: &GenerateResponse, on_text_delta: &TextDeltaCallback) {
+pub(crate) fn emit_final_text_if_needed(
+    resp: &GenerateResponse,
+    on_text_delta: &TextDeltaCallback,
+) {
     if let Some(text) = resp.text.as_deref() {
         if !text.is_empty() {
             (on_text_delta)(StreamDelta::text(text.to_string()));

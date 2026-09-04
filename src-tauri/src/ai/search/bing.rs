@@ -65,10 +65,7 @@ impl SearchBackend for BingBackend {
                 )));
             }
             let mut hits = Vec::new();
-            if let Some(items) = payload
-                .pointer("/webPages/value")
-                .and_then(Value::as_array)
-            {
+            if let Some(items) = payload.pointer("/webPages/value").and_then(Value::as_array) {
                 for item in items {
                     let url = item
                         .get("url")

@@ -431,6 +431,8 @@ mod estimate_tests {
             ..prose.clone()
         };
         assert!(estimate_history_turn_tokens(&with_tools) > 900);
-        assert!(estimate_history_turn_tokens(&with_tools) > estimate_history_turn_tokens(&prose) * 10);
+        assert!(
+            estimate_history_turn_tokens(&with_tools) > estimate_history_turn_tokens(&prose) * 10
+        );
     }
 }

@@ -911,6 +911,24 @@ const enUS: Resource = {
       contextCacheLabel: "Context cache (Session)",
       contextCacheHint:
         "Volcengine Ark Responses API only: chain turns with previous_response_id for cheaper cached input. Production may require enabling the feature separately.",
+      vertexProjectLabel: "GCP project ID",
+      vertexProjectPlaceholder: "my-gcp-project",
+      vertexProjectHint: "The Google Cloud project ID, written into the Vertex request URL.",
+      vertexLocationLabel: "Location",
+      vertexLocationPlaceholder: "global",
+      vertexLocationHint:
+        "Use global for the worldwide endpoint, or a region such as us-central1 or europe-west1.",
+      vertexKeyHint:
+        "Chat can use an API key. Listing models requires OAuth: run gcloud auth print-access-token and paste the token here.",
+      vertexSafetyLabel: "Safety filter",
+      vertexSafetyHint:
+        "Sent as Vertex generateContent safetySettings. Use Block none for long-form writing; Default keeps Google Cloud’s policy.",
+      vertexSafetyDefault: "Default (Vertex)",
+      vertexSafetyOff: "Off (disable filter)",
+      vertexSafetyNone: "Block none",
+      vertexSafetyHigh: "Block few (high only)",
+      vertexSafetyMedium: "Block some",
+      vertexSafetyLow: "Block most",
     },
     system: {
       notifySoundTitle: "Notification sound",

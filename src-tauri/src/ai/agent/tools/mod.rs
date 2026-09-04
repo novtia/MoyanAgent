@@ -207,7 +207,11 @@ impl ToolPool {
         let Ok(tools_guard) = self.tools.lock() else {
             return BTreeMap::new();
         };
-        let global_deny = self.global_deny.lock().map(|g| g.clone()).unwrap_or_default();
+        let global_deny = self
+            .global_deny
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
         let wildcard = allow.iter().any(|t| t == "*");
         let allow_set: std::collections::HashSet<&String> = allow.iter().collect();
         let deny_set: std::collections::HashSet<&String> =
@@ -240,7 +244,11 @@ impl ToolPool {
     }
 
     /// Compact live ✔/☐ checklist for the current run, or `None` if no list.
-    pub fn todo_prompt_snapshot(&self, ctx: &ToolUseContext, premature_stop: bool) -> Option<String> {
+    pub fn todo_prompt_snapshot(
+        &self,
+        ctx: &ToolUseContext,
+        premature_stop: bool,
+    ) -> Option<String> {
         let guard = self.todo_list.lock().ok()?;
         guard.as_ref()?.prompt_snapshot(ctx, premature_stop)
     }
@@ -302,10 +310,10 @@ impl ToolPool {
 #[cfg(test)]
 mod pool_tests {
     use super::*;
-    use serde_json::json;
     use crate::ai::agent::core::context::ToolUseContextBuilder;
     use crate::ai::agent::core::permission::{AllowAllResolver, PermissionRequest};
     use crate::ai::agent::types::{AgentId, MessageId};
+    use serde_json::json;
     use std::path::PathBuf;
 
     fn test_context() -> Arc<ToolUseContext> {
@@ -510,8 +518,20 @@ mod pool_tests {
     #[test]
     fn tool_definition_order_is_stable_across_pools() {
         let names = [
-            "Read", "Edit", "Write", "Bash", "Grep", "ListFiles", "Delete", "WebFetch",
-            "WebSearch", "TodoList", "AskUser", "CreateDoc", "RoleState", "ConsultRoles",
+            "Read",
+            "Edit",
+            "Write",
+            "Bash",
+            "Grep",
+            "ListFiles",
+            "Delete",
+            "WebFetch",
+            "WebSearch",
+            "TodoList",
+            "AskUser",
+            "CreateDoc",
+            "RoleState",
+            "ConsultRoles",
         ];
 
         let baseline = {

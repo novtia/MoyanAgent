@@ -1,5 +1,3 @@
-
-
 pub(crate) fn find_sse_event_end(buffer: &[u8]) -> Option<(usize, usize)> {
     for i in 0..buffer.len().saturating_sub(3) {
         if &buffer[i..i + 4] == b"\r\n\r\n" {

@@ -274,7 +274,8 @@ INSERT OR IGNORE INTO llm_sdk_option (
 ('claude', 'Claude', 'Anthropic Messages API，支持文本和图片输入。', 'Claude', 'https://api.anthropic.com/v1/messages', 'https://api.anthropic.com/v1/messages', 'Anthropic Messages API 的完整地址。', 'sk-ant-...', '填写 Anthropic API Key。', 'claude-sonnet-4-20250514', '填写 Anthropic 模型 ID。', 3),
 ('grok', 'xAI Grok Image', 'xAI 原生图片 API（/v1/images/generations 与 /v1/images/edits），非 OpenAI Chat 兼容层。', 'xAI Grok', 'https://api.x.ai/v1/images/generations', 'https://api.x.ai/v1/images/generations', '使用 xAI 图片生成完整地址；编辑请求会自动改用同前缀下的 …/images/edits。也可填 https://api.x.ai/v1 作为前缀。', 'xai-...', '填写 xAI（Grok）API Key。', 'grok-imagine-image-quality', '填写 Grok Imagine 图片模型 ID（见 xAI 文档）。', 4),
 ('ark-images', '豆包生图', '豆包 Seedream 等模型的图片生成接口（POST …/api/v3/images/generations）。不能与 chat/completions 混用；若误填对话地址，后端会自动改为生图地址。', '豆包生图', 'https://ark.cn-beijing.volces.com/api/v3/images/generations', 'https://ark.cn-beijing.volces.com/api/v3/images/generations', '在豆包/方舟控制台使用「图片生成」对应的 Endpoint；若只填到 …/api/v3 也会自动补上 /images/generations。误填 …/chat/completions 时也会自动替换为生图路径。', 'API Key', '与豆包（火山引擎方舟）控制台中的 API Key 一致（Bearer）。', 'doubao-seedream-5-0-260128', '填写控制台中该生图模型的接入点 ID（如 doubao-seedream-*）。', 5),
-('ark-video', '豆包生视频', '火山方舟 / BytePlus Seedance 异步视频生成接口，支持文生视频、首尾帧和多模态参考。', '豆包生视频', 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', '国内火山方舟使用 cn-beijing 地址；BytePlus 可改为 https://ark.ap-southeast.bytepluses.com/api/v3/contents/generations/tasks。', 'API Key', '填写火山方舟或 BytePlus ModelArk API Key（Bearer）。', 'doubao-seedance-2-0-260128', '填写 Seedance 模型 ID 或推理接入点 ID。', 6);
+('ark-video', '豆包生视频', '火山方舟 / BytePlus Seedance 异步视频生成接口，支持文生视频、首尾帧和多模态参考。', '豆包生视频', 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', '国内火山方舟使用 cn-beijing 地址；BytePlus 可改为 https://ark.ap-southeast.bytepluses.com/api/v3/contents/generations/tasks。', 'API Key', '填写火山方舟或 BytePlus ModelArk API Key（Bearer）。', 'doubao-seedance-2-0-260128', '填写 Seedance 模型 ID 或推理接入点 ID。', 6),
+('vertex', 'Vertex AI', 'Google Cloud Vertex AI 的 Gemini generateContent 接口。填写 GCP 项目 ID 和区域后会自动拼 URL；密钥支持 API Key 或 gcloud access token。', 'Vertex AI', 'https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent', 'https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent', '用设置里的项目 ID 和区域拼好地址，并保留 {model}；后端会替换为当前模型 ID，流式时改为 streamGenerateContent。', 'AIza... 或 ya29...', '填写 Google Cloud API Key，或 gcloud auth print-access-token 得到的 access token。', 'gemini-2.5-flash', '填写 Vertex 上的 Gemini 模型 ID（不含 google/ 前缀）。', 7);
 
 -- Seed: SDK models (006 + 015 image tags + 021 video)
 INSERT INTO llm_sdk_model (sdk_id, model_id, name, model_group, capabilities_json, sort_order, context_window) VALUES
@@ -293,7 +294,10 @@ INSERT INTO llm_sdk_model (sdk_id, model_id, name, model_group, capabilities_jso
 ('ark-video', 'doubao-seedance-2-0-260128', '豆包 Seedance 2.0', 'doubao', '["video","multimodal-ref"]', 0, NULL),
 ('ark-video', 'doubao-seedance-1-5-pro-251215', '豆包 Seedance 1.5 Pro', 'doubao', '["video"]', 1, NULL),
 ('ark-video', 'seedance-2-0-260128', 'Seedance 2.0 (BytePlus)', 'byteplus', '["video","multimodal-ref"]', 2, NULL),
-('ark-video', 'seedance-1-5-pro-251215', 'Seedance 1.5 Pro (BytePlus)', 'byteplus', '["video"]', 3, NULL);
+('ark-video', 'seedance-1-5-pro-251215', 'Seedance 1.5 Pro (BytePlus)', 'byteplus', '["video"]', 3, NULL),
+('vertex', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text"]', 0, NULL),
+('vertex', 'gemini-2.5-pro', 'Gemini 2.5 Pro', 'gemini', '["vision","text","reasoning"]', 1, NULL),
+('vertex', 'gemini-3-flash-preview', 'Gemini 3 Flash Preview', 'gemini', '["vision","text","reasoning"]', 2, NULL);
 
 -- Seed: supplier presets
 INSERT OR IGNORE INTO llm_supplier_preset (supplier_id, name, sdk_id, avatar, endpoint, enabled, sort_order) VALUES
@@ -304,7 +308,8 @@ INSERT OR IGNORE INTO llm_supplier_preset (supplier_id, name, sdk_id, avatar, en
 ('grok', 'xAI Grok', 'grok', '/provider-icons/grok.svg', 'https://api.x.ai/v1/images/generations', 0, 4),
 ('volcengine-ark', '豆包生图', 'ark-images', '/provider-icons/doubao-color.svg', 'https://ark.cn-beijing.volces.com/api/v3/images/generations', 0, 5),
 ('deepseek', 'DeepSeek', 'openai', '/provider-icons/deepseek.svg', 'https://api.deepseek.com/chat/completions', 0, 6),
-('volcengine-ark-video', '豆包生视频', 'ark-video', '/provider-icons/doubao-color.svg', 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', 0, 7);
+('volcengine-ark-video', '豆包生视频', 'ark-video', '/provider-icons/doubao-color.svg', 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', 0, 7),
+('vertex', 'Vertex AI', 'vertex', '', 'https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent', 0, 8);
 
 -- Seed: supplier models (015 image + 008 deepseek context_window + 021 video)
 INSERT INTO llm_supplier_model (supplier_id, model_id, name, model_group, capabilities_json, sort_order, context_window) VALUES
@@ -323,4 +328,7 @@ INSERT INTO llm_supplier_model (supplier_id, model_id, name, model_group, capabi
 ('deepseek', 'deepseek-v4-flash', 'DeepSeek V4 Flash', 'deepseek', '["text","reasoning"]', 0, 1000000),
 ('deepseek', 'deepseek-v4-pro', 'DeepSeek V4 Pro', 'deepseek', '["text","reasoning"]', 1, 1000000),
 ('volcengine-ark-video', 'doubao-seedance-2-0-260128', '豆包 Seedance 2.0', 'doubao', '["video","multimodal-ref"]', 0, NULL),
-('volcengine-ark-video', 'doubao-seedance-1-5-pro-251215', '豆包 Seedance 1.5 Pro', 'doubao', '["video"]', 1, NULL);
+('volcengine-ark-video', 'doubao-seedance-1-5-pro-251215', '豆包 Seedance 1.5 Pro', 'doubao', '["video"]', 1, NULL),
+('vertex', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text"]', 0, NULL),
+('vertex', 'gemini-2.5-pro', 'Gemini 2.5 Pro', 'gemini', '["vision","text","reasoning"]', 1, NULL),
+('vertex', 'gemini-3-flash-preview', 'Gemini 3 Flash Preview', 'gemini', '["vision","text","reasoning"]', 2, NULL);

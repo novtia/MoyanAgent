@@ -37,8 +37,7 @@ const CONNECT_TIMEOUT_SECS: u64 = 15;
 
 /// Browser-like UA so HTML search engines return the normal results page
 /// instead of a bot/challenge page.
-pub(crate) const USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+pub(crate) const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
      (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 pub const DEFAULT_MAX_RESULTS: i64 = 5;
@@ -205,7 +204,9 @@ pub fn resolve_backend(config: &WebSearchConfig) -> AppResult<Box<dyn SearchBack
 /// clamp the result count.
 pub async fn run_search(config: &WebSearchConfig, query: SearchQuery) -> AppResult<SearchOutcome> {
     if !config.enabled {
-        return Err(AppError::Config("web search is disabled in settings".into()));
+        return Err(AppError::Config(
+            "web search is disabled in settings".into(),
+        ));
     }
     let q = query.query.trim();
     if q.is_empty() {

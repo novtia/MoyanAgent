@@ -174,12 +174,7 @@ pub(crate) fn finalize_generate_assistant_message(
     // provider beat while `blocks` hold the full interleaved transcript. Prefer
     // the longer streamed transcript so chat history keeps earlier prose.
     let prefer_blocks = !block_text.trim().is_empty()
-        && block_text.trim().len()
-            >= resp
-                .text
-                .as_ref()
-                .map(|s| s.trim().len())
-                .unwrap_or(0);
+        && block_text.trim().len() >= resp.text.as_ref().map(|s| s.trim().len()).unwrap_or(0);
     if prefer_blocks
         || resp
             .text
@@ -284,20 +279,14 @@ pub(crate) fn finalize_generate_assistant_message(
 
     // Bind the file mutations this turn already recorded to the message that
     // produced them, so they roll back when it is deleted / regenerated.
-    if let Err(e) = crate::data::file_snapshot::bind_message(
-        conn,
-        session_id,
-        user_message_id,
-        &assistant.id,
-    ) {
+    if let Err(e) =
+        crate::data::file_snapshot::bind_message(conn, session_id, user_message_id, &assistant.id)
+    {
         eprintln!("finalize_generate: file snapshot bind failed for session {session_id}: {e}");
     }
-    if let Err(e) = crate::data::pending_diff::bind_message(
-        conn,
-        session_id,
-        user_message_id,
-        &assistant.id,
-    ) {
+    if let Err(e) =
+        crate::data::pending_diff::bind_message(conn, session_id, user_message_id, &assistant.id)
+    {
         eprintln!("finalize_generate: bind_message failed for session {session_id}: {e}");
     }
 
@@ -501,6 +490,7 @@ pub async fn generate_image(
                         endpoint: provider.endpoint.clone(),
                         api_key: provider.api_key.clone(),
                         context_cache_enabled: false,
+                        safety_threshold: None,
                     };
                     tokio::spawn(generate_title_with_quick_model(
                         app.clone(),
@@ -1213,7 +1203,11 @@ pub(crate) async fn generate_title_with_quick_model(
     }
 }
 
-pub(crate) fn update_session_title_if_default(conn: &db::DbConn, id: &str, prompt: &str) -> AppResult<()> {
+pub(crate) fn update_session_title_if_default(
+    conn: &db::DbConn,
+    id: &str,
+    prompt: &str,
+) -> AppResult<()> {
     let cur: Option<String> = conn
         .query_row(
             "SELECT title FROM sessions WHERE id=?1",

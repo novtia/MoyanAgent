@@ -6,7 +6,6 @@
 //! before unlinking it, so deleting / regenerating the triggering message can
 //! recreate the file.
 
-
 use std::sync::Arc;
 
 use serde_json::{json, Value};

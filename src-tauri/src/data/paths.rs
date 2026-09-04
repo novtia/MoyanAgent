@@ -98,9 +98,8 @@ fn mobile_sandbox_dir() -> AppResult<PathBuf> {
     if let Some(home) = std::env::var_os("HOME").filter(|s| !s.is_empty()) {
         return Ok(PathBuf::from(home));
     }
-    std::env::current_dir().map_err(|e| {
-        AppError::Config(format!("cannot resolve mobile sandbox directory: {e}"))
-    })
+    std::env::current_dir()
+        .map_err(|e| AppError::Config(format!("cannot resolve mobile sandbox directory: {e}")))
 }
 
 fn user_documents_dir() -> AppResult<PathBuf> {

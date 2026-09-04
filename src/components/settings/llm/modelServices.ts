@@ -571,7 +571,89 @@ export function normalizeProviderSdk(sdk?: string | null): string {
   if (!normalized || normalized === "openrouter" || normalized === "deepseek") {
     return DEFAULT_PROVIDER_SDK;
   }
+  if (
+    normalized === "vertex-ai" ||
+    normalized === "vertexai" ||
+    normalized === "google-vertex"
+  ) {
+    return "vertex";
+  }
   return normalized;
+}
+
+export const VERTEX_DEFAULT_LOCATION = "global";
+
+const VERTEX_GENERATE_SUFFIX =
+  "publishers/google/models/{model}:generateContent";
+
+export function isVertexSdk(sdk?: string | null): boolean {
+  return normalizeProviderSdk(sdk) === "vertex";
+}
+
+/** Vertex `safetySettings` harm-block levels persisted on the provider. */
+export const VERTEX_SAFETY_LEVELS = [
+  { value: "", labelKey: "settings.llm.vertexSafetyDefault" },
+  { value: "off", labelKey: "settings.llm.vertexSafetyOff" },
+  { value: "none", labelKey: "settings.llm.vertexSafetyNone" },
+  { value: "high", labelKey: "settings.llm.vertexSafetyHigh" },
+  { value: "medium", labelKey: "settings.llm.vertexSafetyMedium" },
+  { value: "low", labelKey: "settings.llm.vertexSafetyLow" },
+] as const;
+
+export function normalizeVertexSafetyThreshold(
+  raw?: string | null,
+): string | undefined {
+  const t = (raw ?? "").trim().toLowerCase();
+  if (!t || t === "default") return undefined;
+  const aliases: Record<string, string> = {
+    off: "off",
+    none: "none",
+    block_none: "none",
+    high: "high",
+    block_only_high: "high",
+    medium: "medium",
+    block_medium_and_above: "medium",
+    low: "low",
+    block_low_and_above: "low",
+  };
+  return aliases[t];
+}
+
+/** Build a Vertex generateContent URL. Empty project keeps `{project}` so the backend can reject it. */
+export function composeVertexEndpoint(project: string, location: string): string {
+  const loc = (location.trim() || VERTEX_DEFAULT_LOCATION).replace(
+    /^\/+|\/+$/g,
+    "",
+  );
+  const proj = project.trim() || "{project}";
+  const host =
+    loc.toLowerCase() === "global"
+      ? "https://aiplatform.googleapis.com"
+      : `https://${loc}-aiplatform.googleapis.com`;
+  return `${host}/v1/projects/${proj}/locations/${loc}/${VERTEX_GENERATE_SUFFIX}`;
+}
+
+export function parseVertexEndpoint(endpoint?: string | null): {
+  project: string;
+  location: string;
+} {
+  const e = (endpoint ?? "").trim();
+  const path = e.match(/\/projects\/([^/]+)\/locations\/([^/]+)\//i);
+  const locHost = e.match(
+    /^https?:\/\/([a-z0-9-]+)-aiplatform\.googleapis\.com/i,
+  );
+  let project = path?.[1] ?? "";
+  let location = path?.[2] ?? "";
+  if (project === "{project}") project = "";
+  if (location === "{location}") location = "";
+  if (!location && locHost) location = locHost[1];
+  if (!location && /:\/\/aiplatform\.googleapis\.com/i.test(e)) {
+    location = VERTEX_DEFAULT_LOCATION;
+  }
+  return {
+    project,
+    location: location || VERTEX_DEFAULT_LOCATION,
+  };
 }
 
 export function isKnownProviderSdk(
@@ -659,6 +741,7 @@ export function makeProvider(
     api_key: patch.api_key ?? "",
     enabled: patch.enabled !== false,
     context_cache_enabled: patch.context_cache_enabled === true,
+    safety_threshold: normalizeVertexSafetyThreshold(patch.safety_threshold) ?? null,
     models: patch.models ?? [],
   };
 }
@@ -668,6 +751,7 @@ export function normalizeProviders(providers: ModelProvider[]) {
     ...provider,
     enabled: provider.enabled !== false,
     context_cache_enabled: provider.context_cache_enabled === true,
+    safety_threshold: normalizeVertexSafetyThreshold(provider.safety_threshold) ?? null,
     id: provider.id || makeLocalId("provider"),
     name: provider.name || "未命名供应商",
     sdk: normalizeProviderSdk(provider.sdk),

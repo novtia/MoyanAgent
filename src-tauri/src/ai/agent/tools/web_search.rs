@@ -83,10 +83,7 @@ impl Tool for WebSearchTool {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string();
-            let requested = invocation
-                .input
-                .get("max_results")
-                .and_then(Value::as_i64);
+            let requested = invocation.input.get("max_results").and_then(Value::as_i64);
 
             let conn = self.pool.get().map_err(AppError::from)?;
             let config = settings::read_web_search_config(&conn)?;

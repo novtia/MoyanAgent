@@ -91,7 +91,12 @@ and produce the refined result."
 
 /// Record an `agent_stage` marker block into the shared stream buffer so the
 /// persisted assistant message keeps stage boundaries.
-pub(crate) fn push_agent_stage_block(blocks: &StreamBlocks, agent_type: &str, name: &str, index: usize) {
+pub(crate) fn push_agent_stage_block(
+    blocks: &StreamBlocks,
+    agent_type: &str,
+    name: &str,
+    index: usize,
+) {
     if let Ok(mut g) = blocks.lock() {
         g.push(serde_json::json!({
             "type": "agent_stage",
@@ -392,8 +397,9 @@ pub(crate) async fn run_cancellable_generation(
     // ever learns how big it is.
     let observed = match run.as_ref() {
         Ok(r) => r.observed_context_window,
-        Err(e) => crate::error::error_context_overflow_report(e)
-            .and_then(|report| report.context_window),
+        Err(e) => {
+            crate::error::error_context_overflow_report(e).and_then(|report| report.context_window)
+        }
     };
     if let Some(window) = observed.filter(|w| *w > 0) {
         if let Ok(conn) = state.conn() {

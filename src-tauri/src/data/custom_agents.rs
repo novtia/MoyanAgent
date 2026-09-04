@@ -151,8 +151,7 @@ pub fn create(
          VALUES(?1,?2,?3,?4,?5,?6,?7,?7)",
         params![agent_type, name, when_to_use, system_prompt, model, tools_json, now],
     )?;
-    get(conn, &agent_type)?
-        .ok_or_else(|| AppError::NotFound(format!("custom agent {agent_type}")))
+    get(conn, &agent_type)?.ok_or_else(|| AppError::NotFound(format!("custom agent {agent_type}")))
 }
 
 pub fn update(
@@ -179,8 +178,7 @@ pub fn update(
     if n == 0 {
         return Err(AppError::NotFound(format!("custom agent {agent_type}")));
     }
-    get(conn, agent_type)?
-        .ok_or_else(|| AppError::NotFound(format!("custom agent {agent_type}")))
+    get(conn, agent_type)?.ok_or_else(|| AppError::NotFound(format!("custom agent {agent_type}")))
 }
 
 pub fn delete(conn: &DbConn, agent_type: &str) -> AppResult<()> {

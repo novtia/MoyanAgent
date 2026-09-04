@@ -89,8 +89,14 @@ pub fn create_session(
             } else {
                 Some(effort.to_string())
             };
-            if session::update_config(&conn, &sess.id, &sess.system_prompt, sess.history_turns, &llm)
-                .is_ok()
+            if session::update_config(
+                &conn,
+                &sess.id,
+                &sess.system_prompt,
+                sess.history_turns,
+                &llm,
+            )
+            .is_ok()
             {
                 sess.llm_params = llm;
             }
@@ -223,9 +229,7 @@ pub fn delete_session(
                     let provider = s.as_ref().and_then(|settings| {
                         sess.provider_id
                             .as_ref()
-                            .and_then(|pid| {
-                                settings.model_services.iter().find(|p| p.id == *pid)
-                            })
+                            .and_then(|pid| settings.model_services.iter().find(|p| p.id == *pid))
                             .or_else(|| {
                                 settings
                                     .model_services

@@ -49,21 +49,22 @@ pub fn restore_timeline_from_blocks(blocks: &[Value]) -> Vec<TimelineSegment> {
     let mut batch_calls: Vec<TimelineToolCall> = Vec::new();
     let mut batch_results: Vec<TimelineToolResult> = Vec::new();
 
-    let flush_tool_batch = |segments: &mut Vec<TimelineSegment>,
-                            pending_prefix: &mut Option<String>,
-                            pending_thinking: &mut Option<String>,
-                            batch_calls: &mut Vec<TimelineToolCall>,
-                            batch_results: &mut Vec<TimelineToolResult>| {
-        if batch_calls.is_empty() {
-            return;
-        }
-        segments.push(TimelineSegment::ToolRound {
-            assistant_text: pending_prefix.take(),
-            thinking_content: take_thinking(pending_thinking),
-            calls: std::mem::take(batch_calls),
-            results: std::mem::take(batch_results),
-        });
-    };
+    let flush_tool_batch =
+        |segments: &mut Vec<TimelineSegment>,
+         pending_prefix: &mut Option<String>,
+         pending_thinking: &mut Option<String>,
+         batch_calls: &mut Vec<TimelineToolCall>,
+         batch_results: &mut Vec<TimelineToolResult>| {
+            if batch_calls.is_empty() {
+                return;
+            }
+            segments.push(TimelineSegment::ToolRound {
+                assistant_text: pending_prefix.take(),
+                thinking_content: take_thinking(pending_thinking),
+                calls: std::mem::take(batch_calls),
+                results: std::mem::take(batch_results),
+            });
+        };
 
     for block in blocks {
         match block.get("type").and_then(Value::as_str) {
@@ -143,6 +144,13 @@ pub fn restore_timeline_from_blocks(blocks: &[Value]) -> Vec<TimelineSegment> {
                         .unwrap_or("?")
                         .to_string(),
                     arguments: block.get("input").cloned().unwrap_or_else(|| json!({})),
+                    thought_signature: block
+                        .get("thoughtSignature")
+                        .or_else(|| block.get("thought_signature"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string),
                 });
                 // Our schema merges the result back into the tool_use block,
                 // so read `output`/`is_error` directly. A separate
@@ -259,9 +267,8 @@ mod tests {
 
     #[test]
     fn call_without_a_recorded_result_replays_as_a_failure() {
-        let blocks = vec![
-            json!({"type":"tool_use","id":"c1","tool":"Edit","input":{"path":"a.md"}}),
-        ];
+        let blocks =
+            vec![json!({"type":"tool_use","id":"c1","tool":"Edit","input":{"path":"a.md"}})];
         let segs = restore_timeline_from_blocks(&blocks);
         match &segs[0] {
             TimelineSegment::ToolRound { results, .. } => {
@@ -288,6 +295,31 @@ mod tests {
                 assert_eq!(results.len(), 1);
                 assert_eq!(results[0].content, json!("ok"));
                 assert!(!results[0].is_error);
+            }
+            _ => panic!("expected ToolRound"),
+        }
+    }
+
+    #[test]
+    fn thought_signature_round_trips_through_timeline() {
+        let blocks = vec![json!({
+            "type":"tool_use",
+            "id":"c1",
+            "tool":"Read",
+            "input":{"path":"a.md"},
+            "output":"ok",
+            "status":"success",
+            "thoughtSignature":"sig-from-block"
+        })];
+        let segs = restore_timeline_from_blocks(&blocks);
+        match &segs[0] {
+            TimelineSegment::ToolRound { calls, .. } => {
+                assert_eq!(calls[0].thought_signature.as_deref(), Some("sig-from-block"));
+                let round = segs[0].to_tool_round().unwrap();
+                assert_eq!(
+                    round.assistant.tool_calls[0].thought_signature.as_deref(),
+                    Some("sig-from-block")
+                );
             }
             _ => panic!("expected ToolRound"),
         }

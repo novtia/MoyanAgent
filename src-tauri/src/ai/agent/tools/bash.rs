@@ -101,7 +101,9 @@ impl Tool for BashTool {
             .and_then(Value::as_str)
             .ok_or_else(|| AppError::Invalid("Bash: `command` must be a string".into()))?;
         if command.trim().is_empty() {
-            return Err(AppError::Invalid("Bash: `command` must be non-empty".into()));
+            return Err(AppError::Invalid(
+                "Bash: `command` must be non-empty".into(),
+            ));
         }
         Ok(())
     }
@@ -231,10 +233,12 @@ fn resolve_cwd(project_root: &Path, requested: Option<&str>) -> Result<PathBuf, 
     // Refuse to run without a working directory. Falling through to the host
     // process CWD would leak the app's own install directory.
     if project_root.as_os_str().is_empty() {
-        return Err("Bash: no working directory available. Set the project's `path` in the \
+        return Err(
+            "Bash: no working directory available. Set the project's `path` in the \
              database, or pass an explicit absolute `cwd` inside it. To detect the OS, read \
              `<env>Platform</env>` in the system prompt — do not run `uname`."
-            .to_string());
+                .to_string(),
+        );
     }
     if !project_root.is_absolute() {
         return Err(cwd_validation_error(project_root));
@@ -395,8 +399,7 @@ fn decode_oem(bytes: &[u8]) -> String {
 
     let len = bytes.len() as i32;
     unsafe {
-        let needed =
-            MultiByteToWideChar(CP_OEMCP, 0, bytes.as_ptr(), len, std::ptr::null_mut(), 0);
+        let needed = MultiByteToWideChar(CP_OEMCP, 0, bytes.as_ptr(), len, std::ptr::null_mut(), 0);
         if needed <= 0 {
             return String::from_utf8_lossy(bytes).into_owned();
         }
@@ -512,7 +515,10 @@ mod cwd_tests {
     #[test]
     fn refuses_a_relative_or_missing_directory() {
         let root = project();
-        assert!(resolve_cwd(&root, Some("chapters")).is_err(), "must be absolute");
+        assert!(
+            resolve_cwd(&root, Some("chapters")).is_err(),
+            "must be absolute"
+        );
         let ghost = root.join("does-not-exist");
         let err = resolve_cwd(&root, Some(ghost.to_str().unwrap())).expect_err("missing dir");
         assert!(err.contains("not an existing directory"), "got: {err}");

@@ -51,20 +51,21 @@ impl ChatRequestFactory for SettingsChatFactory {
                     Ok(resolved) => {
                         // Per-node agent-flow override for this agent_type wins
                         // over the bare session model when present.
-                        let chain_model = effective_agent_chain(&conn, &sess)
-                            .as_ref()
-                            .and_then(|chain| {
-                                chain.iter().find_map(|node| {
-                                    if node.agent_type != agent_type {
-                                        return None;
-                                    }
-                                    node.effective_overrides()
-                                        .and_then(|ov| ov.model.as_deref())
-                                        .map(str::trim)
-                                        .filter(|m| !m.is_empty())
-                                        .map(|m| m.to_string())
-                                })
-                            });
+                        let chain_model =
+                            effective_agent_chain(&conn, &sess)
+                                .as_ref()
+                                .and_then(|chain| {
+                                    chain.iter().find_map(|node| {
+                                        if node.agent_type != agent_type {
+                                            return None;
+                                        }
+                                        node.effective_overrides()
+                                            .and_then(|ov| ov.model.as_deref())
+                                            .map(str::trim)
+                                            .filter(|m| !m.is_empty())
+                                            .map(|m| m.to_string())
+                                    })
+                                });
                         match chain_model {
                             Some(m) => {
                                 if let Some(p) = settings::find_provider_for_model(&settings, &m) {
@@ -286,11 +287,7 @@ impl SubagentSessionHost for TauriSubagentHost {
     ) -> AppResult<()> {
         let blocks = self.take_blocks(&child.session_id);
         let conn = self.pool.get()?;
-        let params = parameters::factory().build(
-            String::new(),
-            String::new(),
-            Default::default(),
-        );
+        let params = parameters::factory().build(String::new(), String::new(), Default::default());
         let resp = chat::GenerateResponse {
             images: result.images.clone(),
             videos: result.videos.clone(),

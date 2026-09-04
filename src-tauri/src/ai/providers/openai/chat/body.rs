@@ -130,7 +130,10 @@ pub(crate) fn append_openai_assistant_text_turn(
     messages.push(msg);
 }
 
-pub(crate) fn append_openai_assistant_tool_turn(messages: &mut Vec<Value>, pending: &PendingAssistantTurn) {
+pub(crate) fn append_openai_assistant_tool_turn(
+    messages: &mut Vec<Value>,
+    pending: &PendingAssistantTurn,
+) {
     let raw_text = pending.text.as_deref().unwrap_or("");
     // Coerce whitespace-only text to "" so DeepSeek sees content as set;
     // keep non-empty text verbatim (do not trim meaningful content).
@@ -176,7 +179,10 @@ pub(crate) fn append_openai_assistant_tool_turn(messages: &mut Vec<Value>, pendi
     messages.push(msg);
 }
 
-pub(crate) fn append_openai_tool_results(messages: &mut Vec<Value>, tool_results: &[ToolResultMessage]) {
+pub(crate) fn append_openai_tool_results(
+    messages: &mut Vec<Value>,
+    tool_results: &[ToolResultMessage],
+) {
     for tr in tool_results {
         let content = match &tr.content {
             Value::String(s) => Value::String(s.clone()),
@@ -213,7 +219,10 @@ pub(crate) fn chat_content(
     Value::Array(arr)
 }
 
-pub(crate) fn history_turn_to_chat_message(turn: &HistoryTurn, allow_image_parts: bool) -> Option<Value> {
+pub(crate) fn history_turn_to_chat_message(
+    turn: &HistoryTurn,
+    allow_image_parts: bool,
+) -> Option<Value> {
     let role = turn.role.trim();
     if role.is_empty() {
         return None;

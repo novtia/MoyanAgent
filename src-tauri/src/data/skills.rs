@@ -172,9 +172,8 @@ fn load_user_skills(app: &AppHandle) -> AppResult<Vec<SkillInfo>> {
         if !skill_path.is_file() {
             continue;
         }
-        let raw = std::fs::read_to_string(&skill_path).map_err(|e| {
-            AppError::Other(format!("read {}: {e}", skill_path.display()))
-        })?;
+        let raw = std::fs::read_to_string(&skill_path)
+            .map_err(|e| AppError::Other(format!("read {}: {e}", skill_path.display())))?;
         match parse_skill_md(&raw, "user", &skill_path.to_string_lossy()) {
             Ok(info) => {
                 out.push(info);
@@ -201,8 +200,7 @@ fn load_builtin_skills() -> Vec<SkillInfo> {
 /// List all skills, applying `enabled_ids`. Builtin wins on id conflict over user? —
 /// user overrides builtin with same id.
 pub fn list_skills(app: &AppHandle, enabled_ids: &[String]) -> AppResult<Vec<SkillInfo>> {
-    let enabled: std::collections::HashSet<&str> =
-        enabled_ids.iter().map(|s| s.as_str()).collect();
+    let enabled: std::collections::HashSet<&str> = enabled_ids.iter().map(|s| s.as_str()).collect();
 
     let mut by_id: std::collections::HashMap<String, SkillInfo> = std::collections::HashMap::new();
     for mut s in load_builtin_skills() {
@@ -339,9 +337,8 @@ pub fn uninstall_skill(app: &AppHandle, id: &str) -> AppResult<()> {
         let user_dir = skills_dir(app)?.join(id);
         if user_dir.is_dir() {
             // User override of builtin — remove override only.
-            std::fs::remove_dir_all(&user_dir).map_err(|e| {
-                AppError::Other(format!("remove {}: {e}", user_dir.display()))
-            })?;
+            std::fs::remove_dir_all(&user_dir)
+                .map_err(|e| AppError::Other(format!("remove {}: {e}", user_dir.display())))?;
             return Ok(());
         }
         return Err(AppError::Invalid("cannot uninstall builtin skill".into()));

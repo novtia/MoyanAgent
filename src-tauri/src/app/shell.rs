@@ -77,7 +77,9 @@ pub fn open_url(url: String) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
     {
         // `explorer <url>` reliably hands off to the default browser.
-        std::process::Command::new("explorer").arg(trimmed).spawn()?;
+        std::process::Command::new("explorer")
+            .arg(trimmed)
+            .spawn()?;
         Ok(())
     }
     #[cfg(target_os = "macos")]
@@ -87,7 +89,9 @@ pub fn open_url(url: String) -> Result<(), AppError> {
     }
     #[cfg(target_os = "linux")]
     {
-        std::process::Command::new("xdg-open").arg(trimmed).spawn()?;
+        std::process::Command::new("xdg-open")
+            .arg(trimmed)
+            .spawn()?;
         Ok(())
     }
     #[cfg(target_os = "android")]

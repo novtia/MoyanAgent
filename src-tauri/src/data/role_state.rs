@@ -94,11 +94,7 @@ pub fn clear_scope(conn: &DbConn, scope_id: &str) -> AppResult<()> {
 
 /// When a session joins a project, re-tag snapshots that were scoped to the
 /// session id so they become part of the shared project board.
-pub fn reassign_session_scope(
-    conn: &DbConn,
-    session_id: &str,
-    project_id: &str,
-) -> AppResult<()> {
+pub fn reassign_session_scope(conn: &DbConn, session_id: &str, project_id: &str) -> AppResult<()> {
     conn.execute(
         "UPDATE role_state_snapshots SET scope_id = ?1 WHERE scope_id = ?2",
         params![project_id, session_id],

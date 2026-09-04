@@ -62,9 +62,7 @@ pub fn delete_message(
 
     if let Some(ref sid) = session_id {
         let conn = state.conn()?;
-        state
-            .session_logger
-            .rollback_from_message(&conn, sid, &id);
+        state.session_logger.rollback_from_message(&conn, sid, &id);
     }
 
     let paths = {
@@ -183,9 +181,7 @@ pub(crate) fn apply_file_restore(
             Some(encoding.label()),
             Some(restore.had_bom),
         )
-        .map_err(|e| {
-            AppError::Other(format!("apply_file_restore: write {:?}: {e}", resolved))
-        })?;
+        .map_err(|e| AppError::Other(format!("apply_file_restore: write {:?}: {e}", resolved)))?;
     }
     Ok(())
 }
@@ -254,10 +250,8 @@ mod rollback_tests {
     use crate::data::{file_snapshot, pending_diff};
 
     fn workspace(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "atelier-rollback-{tag}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("atelier-rollback-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create workspace");
         std::fs::canonicalize(&dir).expect("canonicalize workspace")
@@ -267,7 +261,8 @@ mod rollback_tests {
         let project =
             crate::data::project::create(conn, "rollback-test", Some(&root.to_string_lossy()))
                 .expect("create project");
-        let sess = session::create(conn, Some("rollback-test".into()), None).expect("create session");
+        let sess =
+            session::create(conn, Some("rollback-test".into()), None).expect("create session");
         conn.execute(
             "UPDATE sessions SET project_id = ?1 WHERE id = ?2",
             rusqlite::params![project.id, sess.id],
@@ -319,7 +314,9 @@ mod rollback_tests {
             );
         }
 
-        assert!(pending_diff::list_for_session(&conn, &sid).unwrap().is_empty());
+        assert!(pending_diff::list_for_session(&conn, &sid)
+            .unwrap()
+            .is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 

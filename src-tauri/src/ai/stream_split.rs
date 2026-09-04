@@ -44,9 +44,7 @@ pub fn strip_leaked_host_tool_log(text: &str) -> String {
 
 fn is_marker_line(line: &str) -> bool {
     let trimmed = line.trim_start();
-    HOST_TOOL_LOG_MARKERS
-        .iter()
-        .any(|m| trimmed.starts_with(m))
+    HOST_TOOL_LOG_MARKERS.iter().any(|m| trimmed.starts_with(m))
 }
 
 /// Would `partial` (a trailing line fragment with no newline yet) still be

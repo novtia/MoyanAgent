@@ -405,9 +405,8 @@ pub fn create_temp(
 
 /// Ids of temporary child sessions spawned from `parent_id`.
 pub fn list_temp_child_ids(conn: &DbConn, parent_id: &str) -> AppResult<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT id FROM sessions WHERE parent_session_id=?1 AND is_temporary=1",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id FROM sessions WHERE parent_session_id=?1 AND is_temporary=1")?;
     let rows = stmt.query_map(params![parent_id], |r| r.get::<_, String>(0))?;
     let mut out = Vec::new();
     for r in rows {
@@ -490,11 +489,9 @@ pub fn set_agent_type(conn: &DbConn, id: &str, agent_type: &str) -> AppResult<()
 
 pub fn rename(conn: &DbConn, id: &str, title: &str) -> AppResult<()> {
     let (old_title,): (String,) = conn
-        .query_row(
-            "SELECT title FROM sessions WHERE id=?1",
-            params![id],
-            |r| Ok((r.get(0)?,)),
-        )
+        .query_row("SELECT title FROM sessions WHERE id=?1", params![id], |r| {
+            Ok((r.get(0)?,))
+        })
         .map_err(|_| AppError::NotFound(format!("session {id}")))?;
     let updated = now_ms();
     let n = conn.execute(
@@ -1260,10 +1257,7 @@ pub fn get_image(conn: &DbConn, id: &str) -> AppResult<ImageRef> {
 
 /// Delete message_images rows by id. Does not delete the parent message.
 /// Returns (rel_path, thumb_path) pairs that should be cleaned from disk.
-pub fn delete_images(
-    conn: &DbConn,
-    ids: &[String],
-) -> AppResult<Vec<(String, Option<String>)>> {
+pub fn delete_images(conn: &DbConn, ids: &[String]) -> AppResult<Vec<(String, Option<String>)>> {
     if ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -1485,11 +1479,7 @@ pub fn load_messages_ordered(
     after_created_at: Option<i64>,
     limit: i64,
 ) -> AppResult<Vec<Message>> {
-    let limit = if limit <= 0 {
-        60
-    } else {
-        limit.min(500)
-    };
+    let limit = if limit <= 0 { 60 } else { limit.min(500) };
 
     // A missing anchor is expected: the caller's anchor may have just been
     // deleted (message delete / resend truncation). Fall back to the tail
@@ -1514,9 +1504,10 @@ pub fn load_messages_ordered(
              WHERE session_id=?1 AND created_at < ?2
              ORDER BY created_at DESC LIMIT ?3",
         )?;
-        let before_rows = before_stmt.query_map(params![session_id, anchor_created, before_n], |r| {
-            map_message_row(session_id, r)
-        })?;
+        let before_rows = before_stmt
+            .query_map(params![session_id, anchor_created, before_n], |r| {
+                map_message_row(session_id, r)
+            })?;
         let mut before = Vec::new();
         for r in before_rows {
             before.push(r?);
@@ -1528,8 +1519,8 @@ pub fn load_messages_ordered(
              WHERE session_id=?1 AND created_at >= ?2
              ORDER BY created_at ASC LIMIT ?3",
         )?;
-        let mid_rows =
-            mid_stmt.query_map(params![session_id, anchor_created, after_n.max(1)], |r| {
+        let mid_rows = mid_stmt
+            .query_map(params![session_id, anchor_created, after_n.max(1)], |r| {
                 map_message_row(session_id, r)
             })?;
         let mut after = Vec::new();
@@ -1582,7 +1573,9 @@ pub fn load_messages_ordered(
          WHERE session_id=?1
          ORDER BY created_at DESC LIMIT ?2",
     )?;
-    let rows = stmt.query_map(params![session_id, limit], |r| map_message_row(session_id, r))?;
+    let rows = stmt.query_map(params![session_id, limit], |r| {
+        map_message_row(session_id, r)
+    })?;
     let mut v = Vec::new();
     for r in rows {
         v.push(r?);
@@ -1600,14 +1593,7 @@ pub fn load_with_message_window(
 ) -> AppResult<SessionWithMessages> {
     let session = get(conn, session_id)?;
     let parent_title = parent_title_of(conn, &session)?;
-    let messages = load_messages_ordered(
-        conn,
-        session_id,
-        around_message_id,
-        None,
-        None,
-        limit,
-    )?;
+    let messages = load_messages_ordered(conn, session_id, around_message_id, None, None, limit)?;
     Ok(SessionWithMessages {
         session,
         messages,
