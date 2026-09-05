@@ -903,18 +903,93 @@
 
 /* ═════════════ llm / search tabs (master–detail) ═════════════ */
 .settings--llm .settings-main,
-.settings--search .settings-main {
+.settings--search .settings-main,
+.settings--tools .settings-main {
   overflow: hidden;
 }
 .settings--llm .settings-panel,
-.settings--search .settings-panel {
+.settings--search .settings-panel,
+.settings--tools .settings-panel {
   max-width: none;
   height: 100%;
   padding: 0;
 }
 .settings--llm .settings-panel > *,
-.settings--search .settings-panel > * {
+.settings--search .settings-panel > *,
+.settings--tools .settings-panel > * {
   animation: none;
+}
+
+.settings-tool-item-body {
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+}
+.settings-tool-name {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.settings-tool-list-desc {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-mute);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+.settings-tool-avatar {
+  color: var(--ink-2);
+}
+.settings-tool-detail-desc {
+  margin: 0 0 22px;
+  color: var(--ink-soft);
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+.settings-tool-params {
+  display: grid;
+  gap: 10px;
+}
+.settings-tool-param {
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) + 2px);
+}
+.settings-tool-param-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.settings-tool-param-name {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.settings-tool-param-type {
+  color: var(--ink-mute);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+}
+.settings-tool-param-req {
+  margin-left: auto;
+  color: var(--ink-mute);
+  font-size: 11px;
+}
+.settings-tool-param-req.is-required {
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+.settings-tool-param-desc {
+  margin: 8px 0 0;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  line-height: 1.55;
 }
 
 .model-service-card {
@@ -1217,6 +1292,14 @@
 }
 .model-provider-switch-head .field-label {
   margin-bottom: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.model-provider-config .hint {
+  color: var(--ink-mute);
+  font-size: 12px;
+  line-height: 1.55;
 }
 .model-provider-switch-row .hint {
   margin-top: 6px;

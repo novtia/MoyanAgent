@@ -47,6 +47,7 @@ const SETTINGS_TABS: SettingsTab[] = [
   "llm",
   "default",
   "search",
+  "tools",
   "system",
 ];
 

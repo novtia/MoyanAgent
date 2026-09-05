@@ -33,6 +33,8 @@ pub const KEY_AUTO_BACKUP_CHAT_INTERVAL_MINUTES: &str = "auto_backup_chat_interv
 pub const KEY_AUTO_BACKUP_CONFIG_KEEP: &str = "auto_backup_config_keep";
 pub const KEY_AUTO_BACKUP_CHAT_KEEP: &str = "auto_backup_chat_keep";
 pub const KEY_ENABLED_SKILL_IDS: &str = "enabled_skill_ids";
+pub const KEY_DISABLED_TOOLS: &str = "disabled_tools";
+pub const KEY_CREATE_DOC_ECHO_CONTENT: &str = "create_doc_echo_content";
 
 pub const DEFAULT_HISTORY_TURNS: i64 = 10;
 pub const DEFAULT_AUTO_BACKUP_CHAT_INTERVAL_MINUTES: i64 = 30;
@@ -222,6 +224,32 @@ pub(crate) fn normalize_vertex_safety_threshold(raw: Option<&str>) -> Option<Str
     )
 }
 
+fn normalize_tool_names(raw: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for s in raw {
+        let t = s.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if seen.insert(t.to_string()) {
+            out.push(t.to_string());
+        }
+    }
+    out
+}
+
+pub fn read_create_doc_echo_content(conn: &DbConn) -> bool {
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        params![KEY_CREATE_DOC_ECHO_CONTENT],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .map(|v| v == "true" || v == "1")
+    .unwrap_or(false)
+}
+
 pub(crate) fn normalize_route_provider_slugs(raw: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -301,6 +329,12 @@ pub struct Settings {
     /// Skill ids the user has enabled for @ mention and optional auto-inject.
     #[serde(default)]
     pub enabled_skill_ids: Vec<String>,
+    /// Tool names denied for every agent. Empty means all registered tools stay available.
+    #[serde(default)]
+    pub disabled_tools: Vec<String>,
+    /// When true, CreateDoc echoes the written body in the tool result.
+    #[serde(default)]
+    pub create_doc_echo_content: bool,
 }
 
 fn default_web_search_enabled() -> bool {
@@ -363,6 +397,8 @@ impl Default for Settings {
             auto_backup_config_keep: default_auto_backup_config_keep(),
             auto_backup_chat_keep: default_auto_backup_chat_keep(),
             enabled_skill_ids: Vec::new(),
+            disabled_tools: Vec::new(),
+            create_doc_echo_content: false,
         }
     }
 }
@@ -444,6 +480,10 @@ pub struct SettingsPatch {
     pub auto_backup_chat_keep: Option<i64>,
     #[serde(default)]
     pub enabled_skill_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub disabled_tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub create_doc_echo_content: Option<bool>,
 }
 
 pub fn read(conn: &DbConn) -> AppResult<Settings> {
@@ -533,6 +573,12 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
                         .collect();
                 }
             }
+            KEY_DISABLED_TOOLS => {
+                if let Ok(list) = serde_json::from_str::<Vec<String>>(&v) {
+                    s.disabled_tools = normalize_tool_names(list);
+                }
+            }
+            KEY_CREATE_DOC_ECHO_CONTENT => s.create_doc_echo_content = v == "true" || v == "1",
             _ => {}
         }
     }
@@ -785,6 +831,13 @@ fn model_group(id: &str) -> String {
     id.split('/').next().unwrap_or("custom").to_string()
 }
 
+fn gemini_id_implies_reasoning(id: &str) -> bool {
+    !id.contains("image")
+        && !id.contains("imagen")
+        && !id.contains("veo")
+        && (id.contains("gemini-2.5") || id.contains("gemini-3"))
+}
+
 fn infer_capabilities(id: &str) -> Vec<String> {
     let id = id.to_ascii_lowercase();
     let mut out = Vec::new();
@@ -799,7 +852,12 @@ fn infer_capabilities(id: &str) -> Vec<String> {
     if id.contains("search") || id.contains("sonar") {
         out.push("web".into());
     }
-    if id.contains("reason") || id.contains("thinking") || id.contains("o1") || id.contains("o3") {
+    if id.contains("reason")
+        || id.contains("thinking")
+        || id.contains("o1")
+        || id.contains("o3")
+        || gemini_id_implies_reasoning(&id)
+    {
         out.push("reasoning".into());
     }
     if id.contains("image")
@@ -940,6 +998,18 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
             .collect();
         let json = serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
         write_kv(conn, KEY_ENABLED_SKILL_IDS, &json)?;
+    }
+    if let Some(v) = patch.disabled_tools {
+        let cleaned = normalize_tool_names(v);
+        let json = serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
+        write_kv(conn, KEY_DISABLED_TOOLS, &json)?;
+    }
+    if let Some(v) = patch.create_doc_echo_content {
+        write_kv(
+            conn,
+            KEY_CREATE_DOC_ECHO_CONTENT,
+            if v { "true" } else { "false" },
+        )?;
     }
     read(conn)
 }

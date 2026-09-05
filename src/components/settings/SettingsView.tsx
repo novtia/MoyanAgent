@@ -6,6 +6,7 @@ import { LlmSection } from "./llm/LlmSection";
 import { WebSearchSection } from "./search/WebSearchSection";
 import { SettingsSide } from "./SettingsSide";
 import { SystemSection } from "./system/SystemSection";
+import { ToolsSection } from "./tools/ToolsSection";
 import type { SettingsViewProps } from "./types";
 
 export function SettingsView({
@@ -26,7 +27,7 @@ export function SettingsView({
       />
       <div className="settings-main">
         <div className="settings-panel" key={activeTab}>
-          {activeTab !== "llm" && activeTab !== "search" && (
+          {activeTab !== "llm" && activeTab !== "search" && activeTab !== "tools" && (
             <header className="settings-page-header">
               <h1 className="settings-page-title">
                 {t(TAB_TITLE_KEYS[activeTab])}
@@ -45,6 +46,7 @@ export function SettingsView({
           {activeTab === "llm" && <LlmSection />}
           {activeTab === "default" && <DefaultModelSection />}
           {activeTab === "search" && <WebSearchSection />}
+          {activeTab === "tools" && <ToolsSection />}
           {activeTab === "system" && <SystemSection />}
         </div>
       </div>

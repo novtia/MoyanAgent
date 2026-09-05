@@ -19,7 +19,9 @@ pub fn update_settings(
     patch: settings::SettingsPatch,
 ) -> Result<settings::Settings, AppError> {
     let conn = state.conn()?;
-    settings::apply_patch(&conn, patch)
+    let updated = settings::apply_patch(&conn, patch)?;
+    state.tools.set_global_deny(updated.disabled_tools.clone());
+    Ok(updated)
 }
 
 #[tauri::command]

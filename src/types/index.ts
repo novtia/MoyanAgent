@@ -159,6 +159,10 @@ export interface Settings {
   auto_backup_chat_keep: number;
   /** Skill ids enabled for @ mention. */
   enabled_skill_ids: string[];
+  /** Globally denied tool names. Empty means every registered tool stays available. */
+  disabled_tools: string[];
+  /** When true, CreateDoc echoes the written body in the tool result. */
+  create_doc_echo_content: boolean;
 }
 
 /** Builtin API search kinds (local scraping is separate). */
@@ -225,6 +229,17 @@ export interface SettingsPatch {
   auto_backup_config_keep?: number;
   auto_backup_chat_keep?: number;
   enabled_skill_ids?: string[];
+  disabled_tools?: string[];
+  create_doc_echo_content?: boolean;
+}
+
+/** Static description of a registered agent tool. */
+export interface AgentToolSpec {
+  name: string;
+  description: string;
+  schema: unknown;
+  read_only: boolean;
+  concurrency_safe: boolean;
 }
 
 export interface Session {

@@ -481,7 +481,69 @@ fn generation_config(request: &ChatRequest) -> Map<String, Value> {
     if let Some(v) = request.parameters.model.max_tokens {
         out.insert("maxOutputTokens".into(), json!(v));
     }
+    apply_gemini_thinking_config(&mut out, request);
     out
+}
+
+/// Vertex (and current Gemini API) only return thought summaries when
+/// `thinkingConfig.includeThoughts` is true. Without it the model still
+/// spends thinking tokens, but parts never carry `thought: true`.
+fn apply_gemini_thinking_config(out: &mut Map<String, Value>, request: &ChatRequest) {
+    let effort = request.parameters.model.resolved_thinking_effort();
+    if effort.is_none() && !gemini_supports_thought_summaries(&request.model) {
+        return;
+    }
+    let mut thinking = Map::new();
+    thinking.insert("includeThoughts".into(), json!(true));
+    if let Some(effort) = effort {
+        if gemini_uses_thinking_level(&request.model) {
+            thinking.insert(
+                "thinkingLevel".into(),
+                json!(gemini_thinking_level(&effort)),
+            );
+        } else {
+            thinking.insert(
+                "thinkingBudget".into(),
+                json!(gemini_thinking_budget(&effort)),
+            );
+        }
+    }
+    out.insert("thinkingConfig".into(), Value::Object(thinking));
+}
+
+fn gemini_supports_thought_summaries(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    if gemini_image_or_video_model(&m) {
+        return false;
+    }
+    m.contains("gemini-2.5") || m.contains("gemini-3") || m.contains("thinking")
+}
+
+fn gemini_uses_thinking_level(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("gemini-3")
+}
+
+fn gemini_image_or_video_model(model: &str) -> bool {
+    model.contains("image") || model.contains("imagen") || model.contains("veo")
+}
+
+fn gemini_thinking_level(effort: &str) -> &'static str {
+    match effort.trim().to_ascii_lowercase().as_str() {
+        "minimal" | "none" => "MINIMAL",
+        "low" => "LOW",
+        "medium" => "MEDIUM",
+        _ => "HIGH",
+    }
+}
+
+fn gemini_thinking_budget(effort: &str) -> i64 {
+    match effort.trim().to_ascii_lowercase().as_str() {
+        "minimal" | "none" => 0,
+        "low" => 2048,
+        "medium" => 8192,
+        "high" => 24576,
+        _ => -1,
+    }
 }
 
 fn strip_stream_function_call_config(body: &mut Value) {
@@ -1771,6 +1833,58 @@ mod tests {
         let tc = GeminiFunctionCallBuilder::into_tool_call(calls.remove(0));
         assert_eq!(tc.thought_signature.as_deref(), Some("stream-sig"));
         assert_eq!(tc.name, "Read");
+    }
+
+    fn enable_thinking(req: &mut ChatRequest, effort: &str) {
+        req.parameters.model.thinking_enabled = Some(true);
+        req.parameters.model.thinking_effort = Some(effort.into());
+    }
+
+    #[test]
+    fn thinking_models_request_thought_summaries_by_default() {
+        let req = sample_request(false);
+        let body = build_body(&req, false);
+        let cfg = &body["generationConfig"]["thinkingConfig"];
+        assert_eq!(cfg["includeThoughts"], true);
+        assert!(cfg.get("thinkingLevel").is_none());
+        assert!(cfg.get("thinkingBudget").is_none());
+    }
+
+    #[test]
+    fn gemini_3_thinking_sends_level_and_include_thoughts() {
+        let mut req = sample_request(false);
+        req.model = "gemini-3-flash-preview".into();
+        enable_thinking(&mut req, "high");
+        let cfg = &build_body(&req, true)["generationConfig"]["thinkingConfig"];
+        assert_eq!(cfg["includeThoughts"], true);
+        assert_eq!(cfg["thinkingLevel"], "HIGH");
+        assert!(cfg.get("thinkingBudget").is_none());
+
+        enable_thinking(&mut req, "low");
+        let cfg = &build_body(&req, false)["generationConfig"]["thinkingConfig"];
+        assert_eq!(cfg["thinkingLevel"], "LOW");
+    }
+
+    #[test]
+    fn gemini_2_5_thinking_sends_budget_and_include_thoughts() {
+        let mut req = sample_request(false);
+        req.provider.sdk = VERTEX_SDK.into();
+        req.model = "gemini-2.5-pro".into();
+        enable_thinking(&mut req, "medium");
+        let cfg = &build_body(&req, true)["generationConfig"]["thinkingConfig"];
+        assert_eq!(cfg["includeThoughts"], true);
+        assert_eq!(cfg["thinkingBudget"], 8192);
+        assert!(cfg.get("thinkingLevel").is_none());
+    }
+
+    #[test]
+    fn image_models_do_not_request_thought_summaries() {
+        let mut req = sample_request(false);
+        req.model = "gemini-2.5-flash-image".into();
+        let body = build_body(&req, false);
+        assert!(body
+            .pointer("/generationConfig/thinkingConfig")
+            .is_none());
     }
 
     #[test]

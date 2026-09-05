@@ -15,12 +15,29 @@ export function modelCapabilities(
   const byProvider = settings.model_services
     ?.find((p) => p.id === providerId)
     ?.models?.find((m) => m.id === modelId);
-  if (byProvider) return byProvider.capabilities ?? [];
+  if (byProvider) return withImpliedReasoning(modelId, byProvider.capabilities ?? []);
   for (const p of settings.model_services ?? []) {
     const m = p.models?.find((mm) => mm.id === modelId);
-    if (m) return m.capabilities ?? [];
+    if (m) return withImpliedReasoning(modelId, m.capabilities ?? []);
   }
   return [];
+}
+
+function withImpliedReasoning(modelId: string, caps: string[]): string[] {
+  if (caps.includes("reasoning") || !geminiIdImpliesReasoning(modelId)) {
+    return caps;
+  }
+  return [...caps, "reasoning"];
+}
+
+function geminiIdImpliesReasoning(modelId: string): boolean {
+  const id = modelId.toLowerCase();
+  return (
+    !id.includes("image") &&
+    !id.includes("imagen") &&
+    !id.includes("veo") &&
+    (id.includes("gemini-2.5") || id.includes("gemini-3"))
+  );
 }
 
 /**

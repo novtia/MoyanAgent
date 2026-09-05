@@ -178,6 +178,13 @@ impl ToolPool {
         }
     }
 
+    /// Replace the process-wide deny list (used for settings `disabled_tools`).
+    pub fn set_global_deny(&self, names: impl IntoIterator<Item = impl Into<String>>) {
+        if let Ok(mut g) = self.global_deny.lock() {
+            *g = names.into_iter().map(Into::into).collect();
+        }
+    }
+
     pub fn get(&self, name: &str) -> Option<Arc<dyn Tool>> {
         self.tools.lock().ok()?.get(name).cloned()
     }
@@ -553,6 +560,20 @@ mod pool_tests {
                 "tool order changed on attempt {attempt}"
             );
         }
+    }
+
+    #[test]
+    fn set_global_deny_removes_tools_from_agent_filter() {
+        let global = ToolPool::new();
+        global.register(dummy("Read"));
+        global.register(dummy("CreateDoc"));
+        global.register(dummy("Bash"));
+        global.set_global_deny(["CreateDoc", "Bash"]);
+        let names = worker_tool_names(&global);
+        assert_eq!(names, vec!["Read".to_string()]);
+        global.set_global_deny(Vec::<String>::new());
+        let names = worker_tool_names(&global);
+        assert_eq!(names, vec!["Bash".to_string(), "CreateDoc".to_string(), "Read".to_string()]);
     }
 
     #[tokio::test]

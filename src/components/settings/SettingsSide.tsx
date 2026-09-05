@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeftIcon, BoltIcon, GlobeIcon, SparkIcon, SunIcon, TerminalIcon } from "./icons";
+import { ArrowLeftIcon, BoltIcon, GlobeIcon, SparkIcon, SunIcon, TerminalIcon, WrenchIcon } from "./icons";
 import type { SettingsTab } from "./types";
 
 interface SettingsSideProps {
@@ -54,6 +54,12 @@ export function SettingsSide({
           label={t("settings.tabSearch")}
           active={activeTab === "search"}
           onClick={() => onTabChange("search")}
+        />
+        <SettingsNavItem
+          icon={<WrenchIcon />}
+          label={t("settings.tabTools")}
+          active={activeTab === "tools"}
+          onClick={() => onTabChange("tools")}
         />
         <SettingsNavItem
           icon={<TerminalIcon />}

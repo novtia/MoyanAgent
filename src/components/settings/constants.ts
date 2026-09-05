@@ -5,5 +5,6 @@ export const TAB_TITLE_KEYS: Record<SettingsTab, string> = {
   llm: "settings.tabLlm",
   default: "settings.tabDefault",
   search: "settings.tabSearch",
+  tools: "settings.tabTools",
   system: "settings.tabSystem",
 };

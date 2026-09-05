@@ -375,7 +375,7 @@ fn parse_one_model(item: &Value) -> Option<RemoteModelInfo> {
             .or_else(|| item.get("output_modalities")),
     );
 
-    let capabilities = derive_capabilities(item, &input_modalities, &output_modalities);
+    let capabilities = derive_capabilities(&id, item, &input_modalities, &output_modalities);
 
     Some(RemoteModelInfo {
         id,
@@ -470,11 +470,15 @@ fn parse_pricing(v: Option<&Value>) -> Option<ModelPricing> {
 }
 
 fn derive_capabilities(
+    model_id: &str,
     item: &Value,
     input_modalities: &Option<Vec<String>>,
     output_modalities: &Option<Vec<String>>,
 ) -> Vec<String> {
     let mut caps = std::collections::BTreeSet::new();
+    if gemini_id_implies_reasoning(model_id) {
+        caps.insert("reasoning".into());
+    }
 
     if let Some(inputs) = input_modalities {
         if inputs.iter().any(|m| m == "image" || m == "vision") {
@@ -556,6 +560,14 @@ fn derive_capabilities(
         caps.insert("text".into());
     }
     caps.into_iter().collect()
+}
+
+fn gemini_id_implies_reasoning(id: &str) -> bool {
+    let id = id.to_ascii_lowercase();
+    !id.contains("image")
+        && !id.contains("imagen")
+        && !id.contains("veo")
+        && (id.contains("gemini-2.5") || id.contains("gemini-3"))
 }
 
 fn parse_model_endpoints(v: &Value) -> Vec<RemoteModelEndpoint> {
@@ -763,6 +775,7 @@ mod tests {
         assert_eq!(models[0].name.as_deref(), Some("Gemini 2.5 Flash"));
         assert_eq!(models[0].context_window, Some(1_048_576));
         assert_eq!(models[0].max_output_tokens, Some(65536));
+        assert!(models[0].capabilities.iter().any(|c| c == "reasoning"));
         let mixed = json!({
             "publisherModels": [
                 { "name": "publishers/google/models/imagen-3.0-generate-001" },

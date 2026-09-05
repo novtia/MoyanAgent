@@ -39,6 +39,7 @@ import type {
   Session,
   Settings,
   SettingsPatch,
+  AgentToolSpec,
   SkillInfo,
   WebSearchOutcome,
 } from "../types";
@@ -344,6 +345,7 @@ export const api = {
   getAgentDefinition: (agentType: string) =>
     invoke<AgentDefinitionInfo>("get_agent_definition", { agentType }),
   listAgentTools: () => invoke<string[]>("list_agent_tools"),
+  listAgentToolSpecs: () => invoke<AgentToolSpec[]>("list_agent_tool_specs"),
   listCustomAgents: () => invoke<CustomAgent[]>("list_custom_agents"),
   createCustomAgent: (args: {
     name: string;

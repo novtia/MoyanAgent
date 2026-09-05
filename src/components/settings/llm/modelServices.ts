@@ -385,6 +385,15 @@ export function resolveManageGroupIconId(group: string): string {
   return resolveBrandIconId(group);
 }
 
+function geminiIdImpliesReasoning(id: string): boolean {
+  return (
+    !id.includes("image") &&
+    !id.includes("imagen") &&
+    !id.includes("veo") &&
+    (id.includes("gemini-2.5") || id.includes("gemini-3"))
+  );
+}
+
 export function inferCapabilities(model: string) {
   const id = model.toLowerCase();
   const caps = new Set<string>();
@@ -408,7 +417,8 @@ export function inferCapabilities(model: string) {
     id.includes("o3") ||
     id.includes("opus") ||
     id.includes("sonnet") ||
-    id.includes("deepseek")
+    id.includes("deepseek") ||
+    geminiIdImpliesReasoning(id)
   ) {
     caps.add("reasoning");
   }

@@ -13,8 +13,9 @@ pub type DbConn = r2d2::PooledConnection<SqliteConnectionManager>;
 
 /// Squashed baseline is 28; 29 adds message/session FTS search indexes;
 /// 30 makes file snapshots persist at write time; 31 stores OpenRouter
-/// per-model route provider pins; 32 seeds Vertex AI Gemini catalog.
-const SCHEMA_VERSION: i64 = 32;
+/// per-model route provider pins; 32 seeds Vertex AI Gemini catalog;
+/// 33 marks Gemini 2.5 Flash as reasoning-capable.
+const SCHEMA_VERSION: i64 = 33;
 
 const MIGRATION_001: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -29,6 +30,11 @@ const MIGRATION_030: &str = include_str!(concat!(
 const MIGRATION_032: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/migrations/032_vertex_catalog.sql"
+));
+
+const MIGRATION_033: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/033_gemini_flash_reasoning.sql"
 ));
 
 pub fn open_pool(db_path: &Path) -> AppResult<DbPool> {
@@ -178,6 +184,11 @@ fn ensure_vertex_catalog(conn: &rusqlite::Connection) -> AppResult<()> {
     Ok(())
 }
 
+fn ensure_gemini_flash_reasoning(conn: &rusqlite::Connection) -> AppResult<()> {
+    conn.execute_batch(MIGRATION_033)?;
+    Ok(())
+}
+
 fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)",
@@ -244,6 +255,14 @@ fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
 
     ensure_vertex_catalog(conn)?;
     if cur < 32 {
+        conn.execute(
+            "INSERT INTO schema_version(version) VALUES (?1)",
+            params![32],
+        )?;
+    }
+
+    ensure_gemini_flash_reasoning(conn)?;
+    if cur < 33 {
         conn.execute(
             "INSERT INTO schema_version(version) VALUES (?1)",
             params![SCHEMA_VERSION],
@@ -365,6 +384,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(models, 3);
+        let flash_caps: String = conn
+            .query_row(
+                "SELECT capabilities_json FROM llm_sdk_model
+                 WHERE sdk_id = 'vertex' AND model_id = 'gemini-2.5-flash'",
+                params![],
+                |r| r.get(0),
+            )
+            .expect("vertex flash caps");
+        assert!(flash_caps.contains("reasoning"));
         let preset: String = conn
             .query_row(
                 "SELECT sdk_id FROM llm_supplier_preset WHERE supplier_id = 'vertex'",

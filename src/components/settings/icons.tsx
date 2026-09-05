@@ -49,6 +49,14 @@ export function BoltIcon() {
   );
 }
 
+export function WrenchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14.7 6.3a4.5 4.5 0 0 0-6.4 6.2L3 17.8 6.2 21l5.3-5.3a4.5 4.5 0 0 0 6.2-6.4l-3.2 3.2-2.8-2.8Z" />
+    </svg>
+  );
+}
+
 export function TerminalIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">

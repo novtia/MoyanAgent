@@ -73,9 +73,10 @@ pub fn run() {
                 crate::ai::agent::tools::edit::FileEditTool::new(file_snapshots.clone())
                     .with_pool(Arc::new(pool.clone())),
             );
-            tools.register(crate::ai::agent::tools::create_doc::CreateDocTool::new(
-                file_snapshots.clone(),
-            ));
+            tools.register(
+                crate::ai::agent::tools::create_doc::CreateDocTool::new(file_snapshots.clone())
+                    .with_pool(Arc::new(pool.clone())),
+            );
             tools.register(crate::ai::agent::tools::delete::DeleteTool::new(
                 file_snapshots.clone(),
             ));
@@ -146,6 +147,13 @@ pub fn run() {
             .with_chat_factory(chat_factory)
             .with_session_host(session_host);
             tools.register(agent_tool);
+
+            {
+                let conn = pool.get()?;
+                if let Ok(s) = crate::data::settings::read(&conn) {
+                    tools.set_global_deny(s.disabled_tools);
+                }
+            }
 
             app.manage(Arc::new(AppState {
                 pool,
@@ -225,6 +233,7 @@ pub fn run() {
             agents::delete_custom_agent,
             agents::set_mcp_servers,
             agents::list_agent_tools,
+            agents::list_agent_tool_specs,
             role_state::get_role_states,
             role_state::update_role_state,
             role_state::reorder_role_states,

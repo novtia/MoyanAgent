@@ -285,7 +285,7 @@ INSERT INTO llm_sdk_model (sdk_id, model_id, name, model_group, capabilities_jso
 ('openai-responses', 'gpt-4.1', 'GPT 4.1', 'openai', '["vision","text"]', 1, NULL),
 ('openai-responses', 'gpt-4o', 'GPT 4o', 'openai', '["vision","text"]', 2, NULL),
 ('gemini', 'gemini-2.5-flash-image', 'Gemini 2.5 Flash Image', 'gemini', '["vision","text","image"]', 0, NULL),
-('gemini', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text"]', 1, NULL),
+('gemini', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text","reasoning"]', 1, NULL),
 ('gemini', 'gemini-3-flash-preview', 'Gemini 3 Flash Preview', 'gemini', '["vision","text","reasoning"]', 2, NULL),
 ('claude', 'claude-sonnet-4-20250514', 'Claude Sonnet 4', 'claude', '["vision","text","reasoning"]', 0, NULL),
 ('claude', 'claude-opus-4-1-20250805', 'Claude Opus 4.1', 'claude', '["vision","text","reasoning"]', 1, NULL),
@@ -295,7 +295,7 @@ INSERT INTO llm_sdk_model (sdk_id, model_id, name, model_group, capabilities_jso
 ('ark-video', 'doubao-seedance-1-5-pro-251215', '豆包 Seedance 1.5 Pro', 'doubao', '["video"]', 1, NULL),
 ('ark-video', 'seedance-2-0-260128', 'Seedance 2.0 (BytePlus)', 'byteplus', '["video","multimodal-ref"]', 2, NULL),
 ('ark-video', 'seedance-1-5-pro-251215', 'Seedance 1.5 Pro (BytePlus)', 'byteplus', '["video"]', 3, NULL),
-('vertex', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text"]', 0, NULL),
+('vertex', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text","reasoning"]', 0, NULL),
 ('vertex', 'gemini-2.5-pro', 'Gemini 2.5 Pro', 'gemini', '["vision","text","reasoning"]', 1, NULL),
 ('vertex', 'gemini-3-flash-preview', 'Gemini 3 Flash Preview', 'gemini', '["vision","text","reasoning"]', 2, NULL);
 
@@ -319,7 +319,7 @@ INSERT INTO llm_supplier_model (supplier_id, model_id, name, model_group, capabi
 ('openai', 'gpt-4.1', 'GPT 4.1', 'openai', '["vision","text"]', 1, NULL),
 ('openai', 'gpt-4o', 'GPT 4o', 'openai', '["vision","text"]', 2, NULL),
 ('gemini', 'gemini-2.5-flash-image', 'Gemini 2.5 Flash Image', 'gemini', '["vision","text","image"]', 0, NULL),
-('gemini', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text"]', 1, NULL),
+('gemini', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text","reasoning"]', 1, NULL),
 ('gemini', 'gemini-3-flash-preview', 'Gemini 3 Flash Preview', 'gemini', '["vision","text","reasoning"]', 2, NULL),
 ('claude', 'claude-sonnet-4-20250514', 'Claude Sonnet 4', 'claude', '["vision","text","reasoning"]', 0, NULL),
 ('claude', 'claude-opus-4-1-20250805', 'Claude Opus 4.1', 'claude', '["vision","text","reasoning"]', 1, NULL),
@@ -329,6 +329,6 @@ INSERT INTO llm_supplier_model (supplier_id, model_id, name, model_group, capabi
 ('deepseek', 'deepseek-v4-pro', 'DeepSeek V4 Pro', 'deepseek', '["text","reasoning"]', 1, 1000000),
 ('volcengine-ark-video', 'doubao-seedance-2-0-260128', '豆包 Seedance 2.0', 'doubao', '["video","multimodal-ref"]', 0, NULL),
 ('volcengine-ark-video', 'doubao-seedance-1-5-pro-251215', '豆包 Seedance 1.5 Pro', 'doubao', '["video"]', 1, NULL),
-('vertex', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text"]', 0, NULL),
+('vertex', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text","reasoning"]', 0, NULL),
 ('vertex', 'gemini-2.5-pro', 'Gemini 2.5 Pro', 'gemini', '["vision","text","reasoning"]', 1, NULL),
 ('vertex', 'gemini-3-flash-preview', 'Gemini 3 Flash Preview', 'gemini', '["vision","text","reasoning"]', 2, NULL);

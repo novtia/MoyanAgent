@@ -25,7 +25,7 @@ INSERT OR IGNORE INTO llm_supplier_preset (supplier_id, name, sdk_id, avatar, en
 ('vertex', 'Vertex AI', 'vertex', '', 'https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent', 0, 8);
 
 INSERT INTO llm_sdk_model (sdk_id, model_id, name, model_group, capabilities_json, sort_order, context_window)
-SELECT 'vertex', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text"]', 0, NULL
+SELECT 'vertex', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text","reasoning"]', 0, NULL
 WHERE NOT EXISTS (SELECT 1 FROM llm_sdk_model WHERE sdk_id = 'vertex' AND model_id = 'gemini-2.5-flash');
 
 INSERT INTO llm_sdk_model (sdk_id, model_id, name, model_group, capabilities_json, sort_order, context_window)
@@ -37,7 +37,7 @@ SELECT 'vertex', 'gemini-3-flash-preview', 'Gemini 3 Flash Preview', 'gemini', '
 WHERE NOT EXISTS (SELECT 1 FROM llm_sdk_model WHERE sdk_id = 'vertex' AND model_id = 'gemini-3-flash-preview');
 
 INSERT INTO llm_supplier_model (supplier_id, model_id, name, model_group, capabilities_json, sort_order, context_window)
-SELECT 'vertex', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text"]', 0, NULL
+SELECT 'vertex', 'gemini-2.5-flash', 'Gemini 2.5 Flash', 'gemini', '["vision","text","reasoning"]', 0, NULL
 WHERE NOT EXISTS (SELECT 1 FROM llm_supplier_model WHERE supplier_id = 'vertex' AND model_id = 'gemini-2.5-flash');
 
 INSERT INTO llm_supplier_model (supplier_id, model_id, name, model_group, capabilities_json, sort_order, context_window)

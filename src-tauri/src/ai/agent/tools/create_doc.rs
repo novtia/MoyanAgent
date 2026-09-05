@@ -9,8 +9,10 @@
 //! session has no project path. Writes are always confined to that project
 //! root — `folder` cannot escape it. The successful result reports the path,
 //! file metadata, and a non-whitespace character count (`chars`) so the model
-//! and UI can report document length after create/overwrite. The body is not
-//! echoed: it is already in the tool-call arguments.
+//! and UI can report document length after create/overwrite. By default the
+//! body is not echoed (it is already in the tool-call arguments). When
+//! settings `create_doc_echo_content` is on, the written body is returned in
+//! `content` so the model can reread what it just authored.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,20 +26,28 @@ use crate::ai::agent::tools::text_decode::{
     detect_and_decode, normalize_tool_string, write_text_file, TextEncoding,
 };
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
+use crate::data::db::DbPool;
+use crate::data::settings;
 use crate::error::{AppError, AppResult};
 
 const TOOL_NAME: &str = "CreateDoc";
+
+const ECHO_CONTENT_NOTE: &str = "The document body is echoed in `content`. Do not Read \
+this file back. Copy a short unique Edit `old_string` from the insertion point or tail \
+of that text, never the whole chapter.";
 
 #[derive(Clone)]
 pub struct CreateDocTool {
     spec: ToolSpec,
     snapshots: Arc<FileSnapshotStore>,
+    pool: Option<Arc<DbPool>>,
 }
 
 impl CreateDocTool {
     pub fn new(snapshots: Arc<FileSnapshotStore>) -> Self {
         Self {
             snapshots,
+            pool: None,
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
                 description: "Create a text document from a title, its content, and a type. \
@@ -91,6 +101,21 @@ impl CreateDocTool {
                 concurrency_safe: false,
             },
         }
+    }
+
+    pub fn with_pool(mut self, pool: Arc<DbPool>) -> Self {
+        self.pool = Some(pool);
+        self
+    }
+
+    fn echo_content(&self) -> bool {
+        let Some(pool) = &self.pool else {
+            return false;
+        };
+        let Ok(conn) = pool.get() else {
+            return false;
+        };
+        settings::read_create_doc_echo_content(&conn)
     }
 }
 
@@ -219,15 +244,20 @@ impl Tool for CreateDocTool {
                 true,
             );
 
-            Ok(ToolResult::ok(json!({
+            let echo = self.echo_content();
+            let mut payload = json!({
                 "path": display_path(&canonical),
                 "title": title,
                 "doc_type": ext,
                 "folder": folder.map(str::trim).filter(|s| !s.is_empty()),
                 "created": created,
                 "chars": count_words(&content),
-                "note": DO_NOT_REREAD_NOTE,
-            })))
+                "note": if echo { ECHO_CONTENT_NOTE } else { DO_NOT_REREAD_NOTE },
+            });
+            if echo {
+                payload["content"] = json!(content);
+            }
+            Ok(ToolResult::ok(payload))
         })
     }
 }
@@ -399,7 +429,7 @@ mod overwrite_tests {
         let first = run(&ctx, doc("第一章", "原稿")).await;
         assert!(!first.is_error);
         assert!(
-            first.content.get("text").is_none(),
+            first.content.get("text").is_none() && first.content.get("content").is_none(),
             "CreateDoc must not echo the body back into context"
         );
         assert!(
@@ -415,6 +445,41 @@ mod overwrite_tests {
         assert_eq!(
             std::fs::read_to_string(ctx.cwd.join("第一章.txt")).unwrap(),
             "原稿"
+        );
+    }
+
+    #[tokio::test]
+    async fn echo_setting_returns_written_body() {
+        let db = crate::data::db::test_support::TempDb::new("createdoc-echo");
+        crate::data::settings::apply_patch(
+            &db.conn(),
+            crate::data::settings::SettingsPatch {
+                create_doc_echo_content: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let ctx = ctx_in_temp_dir();
+        let first = CreateDocTool::new(Arc::new(FileSnapshotStore::new()))
+            .with_pool(Arc::new(db.pool()))
+            .execute(ToolInvocation {
+                id: MessageId("createdoc".into()),
+                input: doc("回显章", "模型刚写的正文"),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert!(!first.is_error);
+        assert_eq!(
+            first.content.get("content").and_then(Value::as_str),
+            Some("模型刚写的正文")
+        );
+        assert!(
+            first.content["note"]
+                .as_str()
+                .unwrap()
+                .contains("echoed in `content`"),
+            "echo mode should tell the model the body is in the result"
         );
     }
 

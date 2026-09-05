@@ -120,6 +120,20 @@ pub fn list_agent_tools(state: tauri::State<Arc<AppState>>) -> Result<Vec<String
 }
 
 #[tauri::command]
+pub fn list_agent_tool_specs(
+    state: tauri::State<Arc<AppState>>,
+) -> Result<Vec<agent::ToolSpec>, AppError> {
+    let mut specs: Vec<agent::ToolSpec> = state
+        .tools
+        .all()
+        .into_iter()
+        .map(|t| t.spec().clone())
+        .collect();
+    specs.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(specs)
+}
+
+#[tauri::command]
 pub fn extract_session_memory(
     state: tauri::State<Arc<AppState>>,
     app: AppHandle,
