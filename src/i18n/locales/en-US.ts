@@ -206,6 +206,7 @@ const enUS: Resource = {
   reader: {
     fileTabs: "Open files",
     unsaved: "Unsaved",
+    saveHint: "Unsaved. Ctrl+S to save now.",
     saveFailed: "Save failed",
     diffParagraph: "Paragraph [P{{n}}]",
     diffBlockIndex: "Edit {{current}} / {{total}}",
@@ -772,7 +773,10 @@ const enUS: Resource = {
       disableTool: "Disable tool",
       echoTitle: "Echo the body back to the model",
       echoDesc:
-        "When on, a successful CreateDoc result includes the full document body so the model does not forget what it just wrote.",
+        "When on, a successful CreateDoc result includes the full document body and a later Read is not blocked. Before Edit, Read the target paragraphs and copy old_string verbatim.",
+      replaceAllDefaultTitle: "Default replace all",
+      replaceAllDefaultDesc:
+        "Used when the model omits replace_all. When on, every occurrence of old_string is replaced.",
       paramsTitle: "Input parameters",
       paramsDesc: "Fields the model fills in when it calls this tool.",
       required: "Required",

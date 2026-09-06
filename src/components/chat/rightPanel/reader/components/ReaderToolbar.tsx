@@ -93,7 +93,7 @@ export function ReaderToolbar({
             · {t("rightPanel.readerChars", { count: tab.chars ?? 0 })}
           </span>
         )}
-        {tab?.dirty && <span className="reader-tab-dirty" title={t("reader.unsaved")} />}
+        {tab?.dirty && <span className="reader-tab-dirty" title={t("reader.saveHint")} />}
         {tab?.saveError && <span className="reader-tab-error" title={t("reader.saveFailed")} />}
       </div>
       <div className="reader-toolbar-actions">

@@ -991,6 +991,20 @@
   font-size: 12.5px;
   line-height: 1.55;
 }
+.settings-tool-param-default {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.settings-tool-param-default-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-tool-param-default .hint {
+  margin: 6px 0 0;
+}
 
 .model-service-card {
   height: 100%;

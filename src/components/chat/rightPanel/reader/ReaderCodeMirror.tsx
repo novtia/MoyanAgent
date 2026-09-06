@@ -23,6 +23,7 @@ import {
   readerIndentKeymap,
   registerReaderDocumentView,
 } from "./readerCodeMirror/indentKeymap";
+import { runRegisteredReaderSave } from "./hooks/useEditorSave";
 import {
   createReaderCodeMirrorTheme,
   type ReaderCodeMirrorLayout,
@@ -175,7 +176,16 @@ export function ReaderCodeMirror({
         updateListener,
         copyHandler,
         ...(editable
-          ? [keymap.of([...readerIndentKeymap, ...defaultKeymap, ...historyKeymap])]
+          ? [keymap.of([
+              {
+                key: "Mod-s",
+                preventDefault: true,
+                run: runRegisteredReaderSave,
+              },
+              ...readerIndentKeymap,
+              ...defaultKeymap,
+              ...historyKeymap,
+            ])]
           : []),
         EditorView.contentAttributes.of({ "aria-label": ariaLabel }),
         EditorView.editable.of(editable),

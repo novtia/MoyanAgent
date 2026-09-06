@@ -8,6 +8,21 @@ import {
 import { useSession } from "../../../../../store/session";
 import { SAVE_DEBOUNCE_MS } from "../constants";
 
+let saveNowHandler: (() => void) | null = null;
+
+export function registerReaderSave(fn: () => void): () => void {
+  saveNowHandler = fn;
+  return () => {
+    if (saveNowHandler === fn) saveNowHandler = null;
+  };
+}
+
+/** Flush the open document. Always returns true so Ctrl/Cmd+S is consumed. */
+export function runRegisteredReaderSave(): boolean {
+  saveNowHandler?.();
+  return true;
+}
+
 export function useEditorSave(tab: ReaderFileTab) {
   const sessionId = useSession((s) => s.activeId);
   const updateTabText = useReader((s) => s.updateTabText);
@@ -15,6 +30,7 @@ export function useEditorSave(tab: ReaderFileTab) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestTextRef = useRef(tab.text);
   const dirtyRef = useRef(false);
+  const savingRef = useRef(false);
   const media = isMediaFileType(tab.fileType);
 
   useEffect(() => {
@@ -69,6 +85,34 @@ export function useEditorSave(tab: ReaderFileTab) {
       }
     };
   }, [media, sessionId, tab.path, tab.encoding, tab.hadBom, setTabDirty]);
+
+  const saveNow = useCallback(() => {
+    if (media || !sessionId || !tab.path || savingRef.current) return;
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (!dirtyRef.current) return;
+    savingRef.current = true;
+    void flushSave(latestTextRef.current).finally(() => {
+      savingRef.current = false;
+    });
+  }, [media, sessionId, tab.path, flushSave]);
+
+  useEffect(() => {
+    const unreg = registerReaderSave(saveNow);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.repeat) return;
+      if (e.key.toLowerCase() !== "s") return;
+      e.preventDefault();
+      saveNow();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      unreg();
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [saveNow]);
 
   const applyText = useCallback(
     (text: string) => {

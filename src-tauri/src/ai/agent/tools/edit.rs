@@ -10,8 +10,10 @@
 //! remainder of the file is left untouched.
 //!
 //! Matching prefers a verbatim substring. If that misses, Edit retries with
-//! unescaped JSON leftovers (`\"`) and with quote-folded text so ASCII `"`,
-//! typographic `“”`, and CJK `「」` are treated as the same glyph. A folded
+//! unescaped JSON leftovers (`\"`), quote-folded text so ASCII `"`,
+//! typographic `“”`, and CJK `「」` are treated as the same glyph, CRLF/LF
+//! swaps, and — for a long locator — a unique head+tail span so a
+//! paraphrased middle still lands on the intended passage. A folded
 //! hit replaces the file's real span and rewrites `new_string` quotes to that
 //! span's style, so a curly-quote model call does not change the file's
 //! existing quote characters.
@@ -33,6 +35,7 @@ use crate::ai::agent::tools::text_decode::{
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
 use crate::data::db::DbPool;
 use crate::data::pending_diff;
+use crate::data::settings;
 use crate::error::{AppError, AppResult};
 
 const WRITE_TOOL: &str = "Write";
@@ -179,19 +182,18 @@ impl FileEditTool {
                 name: EDIT_TOOL.to_string(),
                 description: "Surgically replace one unique span in a file. This is not a \
                     full-file rewrite. \
-                    Insert / append / expand: `old_string` is ONLY a short unique locator \
+                    Insert / append: `old_string` is ONLY a short unique locator \
                     at the insertion point (the sentence or paragraph ending you insert \
                     after). NEVER paste the whole chapter, the rest of the file, or all \
                     existing prose into `old_string`. `new_string` = that same locator \
                     followed by the new prose (or the locator with the insert spliced in). \
                     Unselected text before and after the locator is kept as-is — do not \
                     retype it. \
-                    Rewrite a passage: `old_string` is that passage only. Delete: empty \
+                    Rewrite or expand a passage: first Read the target paragraphs, then \
+                    copy `old_string` verbatim from that Read output — do not reconstruct \
+                    it from memory. `old_string` is that passage only. Delete: empty \
                     `new_string`. Full-document rewrite is the exception — only then may \
                     `old_string` be the entire file. \
-                    Copy `old_string` from the CreateDoc/Write `content` you just \
-                    submitted in this turn — do not Read the file first. Read only if \
-                    Edit fails, or the file was not written in this turn. \
                     `old_string` must match once unless `replace_all` is true. \
                     ASCII `\"` and typographic `“”`/`「」` match equivalently."
                     .to_string(),
@@ -207,13 +209,13 @@ impl FileEditTool {
                         },
                         "old_string": {
                             "type": "string",
-                            "description": "Short unique locator copied from the file. \
-                                For insert/append/expand, copy only the sentence or \
+                            "description": "Locator copied from the file. \
+                                For insert/append, copy only the sentence or \
                                 paragraph ending at the insertion point — never the \
                                 whole chapter or the rest of the document. \
-                                Copy from the CreateDoc/Write `content` you just wrote, \
-                                or from Read if you have not written this file in this \
-                                turn. Must match once unless `replace_all` is true."
+                                For rewrite/expand, copy the target passage verbatim \
+                                from a Read of those paragraphs. \
+                                Must match once unless `replace_all` is true."
                         },
                         "new_string": {
                             "type": "string",
@@ -239,6 +241,16 @@ impl FileEditTool {
     pub fn with_pool(mut self, pool: Arc<DbPool>) -> Self {
         self.pool = Some(pool);
         self
+    }
+
+    fn replace_all_default(&self) -> bool {
+        let Some(pool) = &self.pool else {
+            return false;
+        };
+        let Ok(conn) = pool.get() else {
+            return false;
+        };
+        settings::read_edit_replace_all_default(&conn)
     }
 }
 
@@ -277,7 +289,7 @@ impl Tool for FileEditTool {
                 .input
                 .get("replace_all")
                 .and_then(Value::as_bool)
-                .unwrap_or(false);
+                .unwrap_or_else(|| self.replace_all_default());
 
             if raw_old.is_empty() {
                 return Ok(ToolResult::error(
@@ -421,6 +433,12 @@ enum MatchPlan {
         ranges: Vec<(usize, usize)>,
         new: String,
     },
+    /// One byte range in the file (unique head+tail of a long paraphrased locator).
+    Span {
+        start: usize,
+        end: usize,
+        new: String,
+    },
 }
 
 impl MatchPlan {
@@ -428,6 +446,7 @@ impl MatchPlan {
         match self {
             Self::Exact { occurrences, .. } => *occurrences,
             Self::Folded { ranges, .. } => ranges.len(),
+            Self::Span { .. } => 1,
         }
     }
 }
@@ -441,55 +460,175 @@ struct AppliedEdit {
 }
 
 /// Prefer a verbatim substring; then unescaped JSON leftovers; then quote-folded
-/// matching so ASCII / curly / CJK quotes locate the same span.
+/// matching so ASCII / curly / CJK quotes locate the same span; then CRLF/LF
+/// swaps; then a unique head+tail span for a long paraphrased locator.
 fn plan_edit(file: &str, raw_old: &str, raw_new: &str) -> Result<MatchPlan, MatchError> {
-    let exact = file.matches(raw_old).count();
-    if exact > 0 {
-        return Ok(MatchPlan::Exact {
-            old: raw_old.to_string(),
-            new: raw_new.to_string(),
-            occurrences: exact,
-        });
-    }
-
-    let folded = find_quote_folded_ranges(file, raw_old);
-    if !folded.is_empty() {
-        return Ok(MatchPlan::Folded {
-            ranges: folded,
-            new: raw_new.to_string(),
-        });
+    if let Some(plan) = plan_literal(file, raw_old, raw_new) {
+        return Ok(plan);
     }
 
     let unescaped_old = normalize_tool_string(raw_old);
-    if unescaped_old == raw_old {
-        return Err(MatchError::NotFound);
-    }
-    let unescaped_new = normalize_tool_string(raw_new);
-
-    let u_exact = file.matches(&unescaped_old).count();
-    if u_exact > 0 {
-        if unescaped_old == unescaped_new {
-            return Err(MatchError::Identical);
+    if unescaped_old != raw_old {
+        let unescaped_new = normalize_tool_string(raw_new);
+        if let Some(plan) = plan_literal(file, &unescaped_old, &unescaped_new) {
+            if unescaped_old == unescaped_new {
+                return Err(MatchError::Identical);
+            }
+            return Ok(plan);
         }
-        return Ok(MatchPlan::Exact {
-            old: unescaped_old,
-            new: unescaped_new,
-            occurrences: u_exact,
-        });
+        if let Some(plan) = plan_newline(file, &unescaped_old, &unescaped_new) {
+            return Ok(plan);
+        }
+        if let Some(plan) = plan_anchor_span(file, &unescaped_old, &unescaped_new) {
+            return Ok(plan);
+        }
     }
 
-    let u_folded = find_quote_folded_ranges(file, &unescaped_old);
-    if !u_folded.is_empty() {
-        if unescaped_old == unescaped_new {
-            return Err(MatchError::Identical);
-        }
-        return Ok(MatchPlan::Folded {
-            ranges: u_folded,
-            new: unescaped_new,
-        });
+    if let Some(plan) = plan_newline(file, raw_old, raw_new) {
+        return Ok(plan);
+    }
+    if let Some(plan) = plan_anchor_span(file, raw_old, raw_new) {
+        return Ok(plan);
     }
 
     Err(MatchError::NotFound)
+}
+
+fn plan_literal(file: &str, old: &str, new: &str) -> Option<MatchPlan> {
+    let exact = file.matches(old).count();
+    if exact > 0 {
+        return Some(MatchPlan::Exact {
+            old: old.to_string(),
+            new: new.to_string(),
+            occurrences: exact,
+        });
+    }
+    let folded = find_quote_folded_ranges(file, old);
+    if !folded.is_empty() {
+        return Some(MatchPlan::Folded {
+            ranges: folded,
+            new: new.to_string(),
+        });
+    }
+    None
+}
+
+fn plan_newline(file: &str, old: &str, new: &str) -> Option<MatchPlan> {
+    let swapped = newline_swapped(old)?;
+    let plan = plan_literal(file, &swapped, &align_newlines(new, old, &swapped))?;
+    Some(plan)
+}
+
+fn newline_swapped(s: &str) -> Option<String> {
+    if s.contains("\r\n") {
+        Some(s.replace("\r\n", "\n"))
+    } else if s.contains('\n') {
+        Some(s.replace('\n', "\r\n"))
+    } else {
+        None
+    }
+}
+
+fn align_newlines(new: &str, raw_old: &str, matched_old: &str) -> String {
+    let raw_crlf = raw_old.contains("\r\n");
+    let matched_crlf = matched_old.contains("\r\n");
+    if matched_crlf && !raw_crlf {
+        new.replace('\n', "\r\n")
+    } else if !matched_crlf && raw_crlf {
+        new.replace("\r\n", "\n")
+    } else {
+        new.to_string()
+    }
+}
+
+const MIN_ANCHOR_OLD_CHARS: usize = 80;
+const MIN_ANCHOR_CHARS: usize = 24;
+const MAX_ANCHOR_CHARS: usize = 80;
+
+fn plan_anchor_span(file: &str, old: &str, new: &str) -> Option<MatchPlan> {
+    let (start, end) = find_anchor_span(file, old)?;
+    Some(MatchPlan::Span {
+        start,
+        end,
+        new: new.to_string(),
+    })
+}
+
+fn find_anchor_span(file: &str, old: &str) -> Option<(usize, usize)> {
+    let old_chars = old.chars().count();
+    if old_chars < MIN_ANCHOR_OLD_CHARS {
+        return None;
+    }
+    let head = unique_growing_prefix(file, old)?;
+    let tail = unique_growing_suffix(file, old)?;
+    let start = unique_byte_start(file, head)?;
+    let tail_at = unique_byte_start(file, tail)?;
+    let end = tail_at + tail.len();
+    if start >= end {
+        return None;
+    }
+    let span_chars = file[start..end].chars().count();
+    // Reject a span that is wildly shorter or longer than the locator.
+    if span_chars * 5 < old_chars * 2 || span_chars * 2 > old_chars * 5 {
+        return None;
+    }
+    Some((start, end))
+}
+
+fn unique_growing_prefix<'a>(file: &str, old: &'a str) -> Option<&'a str> {
+    let max = old.chars().count() / 2;
+    let mut n = MIN_ANCHOR_CHARS;
+    while n <= max && n <= MAX_ANCHOR_CHARS {
+        let head = prefix_chars(old, n);
+        if unique_byte_start(file, head).is_some() {
+            return Some(head);
+        }
+        n += 8;
+    }
+    None
+}
+
+fn unique_growing_suffix<'a>(file: &str, old: &'a str) -> Option<&'a str> {
+    let max = old.chars().count() / 2;
+    let mut n = MIN_ANCHOR_CHARS;
+    while n <= max && n <= MAX_ANCHOR_CHARS {
+        let tail = suffix_chars(old, n);
+        if unique_byte_start(file, tail).is_some() {
+            return Some(tail);
+        }
+        n += 8;
+    }
+    None
+}
+
+fn prefix_chars(s: &str, n: usize) -> &str {
+    match s.char_indices().nth(n) {
+        Some((i, _)) => &s[..i],
+        None => s,
+    }
+}
+
+fn suffix_chars(s: &str, n: usize) -> &str {
+    let total = s.chars().count();
+    if total <= n {
+        return s;
+    }
+    match s.char_indices().nth(total - n) {
+        Some((i, _)) => &s[i..],
+        None => s,
+    }
+}
+
+fn unique_byte_start(hay: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return None;
+    }
+    let mut it = hay.match_indices(needle);
+    let first = it.next()?;
+    if it.next().is_some() {
+        return None;
+    }
+    Some(first.0)
 }
 
 fn apply_edit(file: &str, plan: MatchPlan, replace_all: bool) -> AppliedEdit {
@@ -540,6 +679,21 @@ fn apply_edit(file: &str, plan: MatchPlan, replace_all: bool) -> AppliedEdit {
                 old_string: first_old,
                 new_string: first_new,
                 replaced_count: use_ranges.len(),
+                match_start,
+            }
+        }
+        MatchPlan::Span { start, end, new } => {
+            let match_start = file[..start].chars().count();
+            let old = file[start..end].to_string();
+            let mut updated = String::with_capacity(file.len().saturating_add(new.len()));
+            updated.push_str(&file[..start]);
+            updated.push_str(&new);
+            updated.push_str(&file[end..]);
+            AppliedEdit {
+                updated,
+                old_string: old,
+                new_string: new,
+                replaced_count: 1,
                 match_start,
             }
         }
@@ -763,6 +917,65 @@ mod edit_tests {
         assert!(!res.is_error, "unexpected error: {:?}", res.content);
         assert_eq!(disk(&ctx, &name), "Q\nB\nQ\nD");
         assert_eq!(res.content["replaced_count"], 2);
+    }
+
+    #[tokio::test]
+    async fn omitted_replace_all_follows_settings_default() {
+        let db = crate::data::db::test_support::TempDb::new("edit-replace-all");
+        crate::data::settings::apply_patch(
+            &db.conn(),
+            crate::data::settings::SettingsPatch {
+                edit_replace_all_default: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let (ctx, name) = seed("X\nB\nX\nD");
+        let tool = FileEditTool::new(Arc::new(FileSnapshotStore::new()))
+            .with_pool(Arc::new(db.pool()));
+        let res = tool
+            .execute(ToolInvocation {
+                id: MessageId("edit".into()),
+                input: json!({ "path": name, "old_string": "X", "new_string": "Q" }),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "Q\nB\nQ\nD");
+        assert_eq!(res.content["replaced_count"], 2);
+        assert_eq!(res.content["replace_all"], true);
+    }
+
+    #[tokio::test]
+    async fn explicit_replace_all_false_overrides_settings_default() {
+        let db = crate::data::db::test_support::TempDb::new("edit-replace-all-off");
+        crate::data::settings::apply_patch(
+            &db.conn(),
+            crate::data::settings::SettingsPatch {
+                edit_replace_all_default: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let (ctx, name) = seed("X\nB\nX\nD");
+        let tool = FileEditTool::new(Arc::new(FileSnapshotStore::new()))
+            .with_pool(Arc::new(db.pool()));
+        let res = tool
+            .execute(ToolInvocation {
+                id: MessageId("edit".into()),
+                input: json!({
+                    "path": name,
+                    "old_string": "X",
+                    "new_string": "Q",
+                    "replace_all": false
+                }),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert!(res.is_error);
+        assert_eq!(disk(&ctx, &name), "X\nB\nX\nD");
     }
 
     #[tokio::test]
@@ -1007,5 +1220,56 @@ const re = /\d+\\s/g;
         assert!(!res.is_error, "unexpected error: {:?}", res.content);
         assert_eq!(disk(&ctx, &name), "\"B\" and \"B\"");
         assert_eq!(res.content["replaced_count"], 2);
+    }
+
+    #[tokio::test]
+    async fn edit_matches_lf_locator_against_crlf_file() {
+        let (ctx, name) = seed("A\r\nB\r\nC");
+        let res = run_edit(
+            &ctx,
+            json!({ "path": name, "old_string": "A\nB", "new_string": "X\nY" }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "X\r\nY\r\nC");
+    }
+
+    #[tokio::test]
+    async fn edit_anchor_span_when_middle_is_paraphrased() {
+        let start = "START_ANCHOR_UNIQUE_24CH!!";
+        let end = "END_ANCHOR_UNIQUE_24CHARS!!";
+        let file_mid = "the original passage sits here and is several sentences long so the locator is over eighty characters.";
+        let old_mid = "the rewritten passage sits here and is several sentences long so the locator is over eighty characters.";
+        let (ctx, name) = seed(&format!("intro\n{start}{file_mid}{end}\noutro"));
+        let res = run_edit(
+            &ctx,
+            json!({
+                "path": name,
+                "old_string": format!("{start}{old_mid}{end}"),
+                "new_string": format!("{start}EXPANDED{end}"),
+            }),
+        )
+        .await;
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(disk(&ctx, &name), format!("intro\n{start}EXPANDED{end}\noutro"));
+    }
+
+    #[tokio::test]
+    async fn edit_anchor_span_rejects_ambiguous_head() {
+        let start = "START_ANCHOR_UNIQUE_24CH!!";
+        let end = "END_ANCHOR_UNIQUE_24CHARS!!";
+        let pad = "the rewritten passage sits here and is several sentences long so the locator is over eighty characters.";
+        let (ctx, name) = seed(&format!("{start}aaa{end}\n{start}bbb{end}"));
+        let res = run_edit(
+            &ctx,
+            json!({
+                "path": name,
+                "old_string": format!("{start}{pad}{end}"),
+                "new_string": "NO",
+            }),
+        )
+        .await;
+        assert!(res.is_error);
+        assert_eq!(disk(&ctx, &name), format!("{start}aaa{end}\n{start}bbb{end}"));
     }
 }

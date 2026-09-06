@@ -9,14 +9,18 @@ export function ToolDetail({
   selected,
   enabled,
   echoContent,
+  replaceAllDefault,
   onSetEnabled,
   onSetEchoContent,
+  onSetReplaceAllDefault,
 }: {
   selected: AgentToolSpec | null;
   enabled: boolean;
   echoContent: boolean;
+  replaceAllDefault: boolean;
   onSetEnabled: (name: string, enabled: boolean) => void;
   onSetEchoContent: (enabled: boolean) => void;
+  onSetReplaceAllDefault: (enabled: boolean) => void;
 }) {
   const { t } = useTranslation();
 
@@ -125,6 +129,21 @@ export function ToolDetail({
                 </div>
                 {field.description && (
                   <p className="settings-tool-param-desc">{field.description}</p>
+                )}
+                {selected.name === "Edit" && field.name === "replace_all" && (
+                  <div className="settings-tool-param-default">
+                    <div className="settings-tool-param-default-row">
+                      <span className="field-label">
+                        {t("settings.tools.replaceAllDefaultTitle")}
+                      </span>
+                      <ProviderEnableSwitch
+                        enabled={replaceAllDefault}
+                        onChange={onSetReplaceAllDefault}
+                        title={t("settings.tools.replaceAllDefaultTitle")}
+                      />
+                    </div>
+                    <p className="hint">{t("settings.tools.replaceAllDefaultDesc")}</p>
+                  </div>
                 )}
               </div>
             ))}

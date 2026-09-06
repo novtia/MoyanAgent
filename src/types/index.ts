@@ -163,6 +163,8 @@ export interface Settings {
   disabled_tools: string[];
   /** When true, CreateDoc echoes the written body in the tool result. */
   create_doc_echo_content: boolean;
+  /** When true, Edit treats a missing `replace_all` as true. */
+  edit_replace_all_default: boolean;
 }
 
 /** Builtin API search kinds (local scraping is separate). */
@@ -231,6 +233,7 @@ export interface SettingsPatch {
   enabled_skill_ids?: string[];
   disabled_tools?: string[];
   create_doc_echo_content?: boolean;
+  edit_replace_all_default?: boolean;
 }
 
 /** Static description of a registered agent tool. */

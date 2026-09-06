@@ -25,6 +25,11 @@ in this turn's CreateDoc/Write/Edit arguments. Copy a short unique Edit `old_str
 from the insertion point or tail of that text, never the whole chapter. \
 Read again only after Edit fails.";
 
+/// Shown when Read is asked for a span it already returned this turn.
+pub const ALREADY_READ_NOTE: &str = "This span was already returned by an earlier Read \
+this turn. Copy Edit `old_string` from that Read output. Do not Read the same \
+paragraphs again.";
+
 /// Stable content hash used for read-receipt equality checks.
 ///
 /// Uses [`std::collections::hash_map::DefaultHasher`], which is seeded with
@@ -58,6 +63,7 @@ pub fn record_receipt(
             FileReceipt {
                 hash: content_hash(text),
                 from_write,
+                covered: Vec::new(),
             },
         );
     }
@@ -83,6 +89,84 @@ pub fn is_fresh_write(
     };
     s.get(&key)
         .is_some_and(|r| r.from_write && r.hash == content_hash(text))
+}
+
+/// Record that a Read already returned `[from, to]` (inclusive, 1-based).
+///
+/// If the file bytes changed, the previous spans are dropped.
+pub fn record_read_span(
+    state: &Mutex<HashMap<PathBuf, FileReceipt>>,
+    path: &Path,
+    text: &str,
+    from: usize,
+    to: usize,
+) {
+    let key = receipt_key(path);
+    let hash = content_hash(text);
+    let (from, to) = (from.min(to), from.max(to));
+    if let Ok(mut s) = state.lock() {
+        match s.get_mut(&key) {
+            Some(r) if r.hash == hash => {
+                r.covered = union_range(&r.covered, from, to);
+            }
+            _ => {
+                s.insert(
+                    key,
+                    FileReceipt {
+                        hash,
+                        from_write: false,
+                        covered: vec![(from, to)],
+                    },
+                );
+            }
+        }
+    }
+}
+
+/// When the file is unchanged and `from..=to` sits inside a span already
+/// returned this turn, the covered ranges. `None` means Read should return
+/// the body.
+pub fn already_read_span(
+    state: &Mutex<HashMap<PathBuf, FileReceipt>>,
+    path: &Path,
+    text: &str,
+    from: usize,
+    to: usize,
+) -> Option<Vec<(usize, usize)>> {
+    let key = receipt_key(path);
+    let hash = content_hash(text);
+    let (from, to) = (from.min(to), from.max(to));
+    let Ok(s) = state.lock() else {
+        return None;
+    };
+    s.get(&key).and_then(|r| {
+        if r.hash == hash && range_covered(&r.covered, from, to) {
+            Some(r.covered.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn union_range(ranges: &[(usize, usize)], from: usize, to: usize) -> Vec<(usize, usize)> {
+    let mut v: Vec<(usize, usize)> = ranges.to_vec();
+    v.push((from, to));
+    v.sort_by_key(|r| r.0);
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for (a, b) in v {
+        if let Some(last) = out.last_mut() {
+            if a <= last.1.saturating_add(1) {
+                last.1 = last.1.max(b);
+                continue;
+            }
+        }
+        out.push((a, b));
+    }
+    out
+}
+
+fn range_covered(ranges: &[(usize, usize)], from: usize, to: usize) -> bool {
+    ranges.iter().any(|&(a, b)| from >= a && to <= b)
 }
 
 /// Expand a requested inclusive 1-based range to at least
@@ -166,6 +250,24 @@ mod tests {
         assert!(!is_fresh_write(&state, &path, "other"));
         clear_receipt(&state, &path);
         assert!(!is_fresh_write(&state, &path, "hello"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn overlapping_read_span_is_already_read() {
+        let dir = std::env::temp_dir().join(format!("moyan-receipt-{}-{}", std::process::id(), 2));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ch.txt");
+        std::fs::write(&path, "hello").unwrap();
+        let state = Mutex::new(HashMap::new());
+        record_read_span(&state, &path, "hello", 100, 130);
+        assert!(already_read_span(&state, &path, "hello", 110, 116).is_some());
+        assert!(already_read_span(&state, &path, "hello", 100, 130).is_some());
+        assert!(already_read_span(&state, &path, "hello", 1, 40).is_none());
+        assert!(already_read_span(&state, &path, "hello", 125, 140).is_none());
+        assert!(already_read_span(&state, &path, "changed", 110, 116).is_none());
+        record_read_span(&state, &path, "hello", 131, 140);
+        assert!(already_read_span(&state, &path, "hello", 120, 135).is_some());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

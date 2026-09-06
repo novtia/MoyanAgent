@@ -203,6 +203,7 @@ const zhCN = {
   reader: {
     fileTabs: "已打开文件",
     unsaved: "未保存",
+    saveHint: "未保存，Ctrl+S 立即保存",
     saveFailed: "保存失败",
     diffParagraph: "段落 [P{{n}}]",
     diffBlockIndex: "编辑 {{current}} / {{total}}",
@@ -758,7 +759,11 @@ const zhCN = {
       enableTool: "启用工具",
       disableTool: "停用工具",
       echoTitle: "回显正文给模型",
-      echoDesc: "启用后，CreateDoc 成功结果会带回完整正文，避免模型写完就忘。",
+      echoDesc:
+        "启用后，CreateDoc 成功结果会带回完整正文，并且不再拦截随后的 Read。改稿前应先读目标段落，再把原文原样填进 Edit 的 old_string。",
+      replaceAllDefaultTitle: "默认替换全部",
+      replaceAllDefaultDesc:
+        "模型没有传 replace_all 时使用此默认值。打开后，同一处 old_string 出现多次会全部替换。",
       paramsTitle: "输入参数",
       paramsDesc: "模型调用此工具时需要填写的字段。",
       required: "必填",

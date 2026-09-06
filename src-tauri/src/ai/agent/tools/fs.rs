@@ -12,7 +12,8 @@ use serde_json::Value;
 use crate::ai::agent::tools::paragraph::paragraph_count;
 use crate::ai::agent::tools::project_path::{self, display_path, FILE_REF_DESC};
 use crate::ai::agent::tools::read_receipt::{
-    expand_read_range, is_fresh_write, record_receipt, DO_NOT_REREAD_NOTE, MIN_READ_CONTEXT_LINES,
+    already_read_span, expand_read_range, is_fresh_write, record_read_span, record_receipt,
+    ALREADY_READ_NOTE, DO_NOT_REREAD_NOTE, MIN_READ_CONTEXT_LINES,
 };
 use crate::ai::agent::tools::text_decode::detect_and_decode;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
@@ -209,9 +210,10 @@ impl FileReadTool {
                 name: TOOL_NAME.to_string(),
                 description: "Read a text file from the local filesystem. \
                     Returns the file's plain text (no line labels), so you can copy exact \
-                    snippets into Edit's `old_string` when you have not just written \
-                    the file. For insert/append, that snippet is only the insertion \
-                    point (a sentence or paragraph ending), never the whole chapter. \
+                    snippets into Edit's `old_string`. For insert/append, that snippet \
+                    is only the insertion point (a sentence or paragraph ending), never \
+                    the whole chapter. Before rewriting or expanding a passage, Read those \
+                    paragraphs and copy `old_string` verbatim — do not reconstruct it. \
                     When the user message cites a ranged file mention like \
                     `@\"chapter.md\"#P003-P007` (or the chip label shows `· P003–P007`), \
                     call ranged Read for that span: set `path` to the file and pass \
@@ -222,11 +224,14 @@ impl FileReadTool {
                     For open-ended prose tasks without a range mention, Read the full file \
                     once up front only if you did not just create or overwrite it. A document \
                     title without `.md` / `.txt` is enough when it \
-                    uniquely identifies the file. After CreateDoc / Write / a successful \
-                    Edit, do NOT Read that file — you already have the text you submitted, \
-                    and a re-read of an unchanged write returns no body. \
+                    uniquely identifies the file.                     After Write / a successful Edit, do not \
+                    re-Read the whole file unless the next Edit needs a fresh locator. \
+                    A re-read of an unchanged Write returns no body. \
+                    Do not re-Read a span already returned this turn — a second Read \
+                    of those unchanged paragraphs also returns no body; copy \
+                    `old_string` from the earlier Read. \
+                    After CreateDoc, Read the target paragraphs once before Edit. \
                     After Edit fails, re-Read the relevant span before retrying. \
-                    Do not re-read before every Edit. \
                     Long files come back one page at a time: when the result has \
                     `truncated: true`, the text stops at `paragraph_to` and \
                     `next_paragraph_from` is where the following page starts. Continue from \
@@ -346,6 +351,30 @@ impl Tool for FileReadTool {
                     }
                 };
 
+            if let Some(covered) = already_read_span(
+                &invocation.context.read_file_state,
+                &canonical,
+                &text,
+                requested_from,
+                requested_to,
+            ) {
+                let chars = text.chars().filter(|c| !c.is_whitespace()).count();
+                return Ok(ToolResult::ok(serde_json::json!({
+                    "path": display_path(&canonical),
+                    "bytes": bytes.len(),
+                    "encoding": decoded.encoding.label(),
+                    "had_bom": decoded.had_bom,
+                    "chars": chars,
+                    "paragraphs_total": paragraphs_total,
+                    "requested_paragraph_from": requested_from,
+                    "requested_paragraph_to": requested_to,
+                    "covered_paragraphs": covered,
+                    "unchanged": true,
+                    "already_read": true,
+                    "note": ALREADY_READ_NOTE,
+                })));
+            }
+
             let (mut slice_text, mut paragraph_to, mut capped) =
                 collect_paragraphs(&text, paragraph_from, paragraph_to, READ_MAX_CHARS);
             // A document with no line breaks is one enormous paragraph, which
@@ -366,11 +395,12 @@ impl Tool for FileReadTool {
             let paragraphs_returned = paragraph_to - paragraph_from + 1;
             let ranged = range.is_some();
 
-            record_receipt(
+            record_read_span(
                 &invocation.context.read_file_state,
                 &canonical,
                 &text,
-                false,
+                paragraph_from,
+                paragraph_to,
             );
 
             Ok(ToolResult::ok(serde_json::json!({
@@ -608,6 +638,81 @@ mod read_range_tests {
             .unwrap();
         assert_eq!(res.content["text"], "hello");
         assert!(res.content.get("unchanged").is_none());
+        let _ = Arc::clone(&ctx);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_second_read_of_an_already_returned_span_returns_no_body() {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "moyan-read-already-{}-{}",
+            std::process::id(),
+            n
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let body = (1..=40)
+            .map(|i| format!("第{i}段内容"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(dir.join("chapter.txt"), &body).unwrap();
+        let ctx = ToolUseContextBuilder::new(AgentId::new(), dir.clone())
+            .build()
+            .0;
+        let tool = FileReadTool::new();
+        let first = tool
+            .execute(ToolInvocation {
+                id: MessageId("read1".into()),
+                input: json!({
+                    "path": "chapter.txt",
+                    "paragraph_from": 10,
+                    "paragraph_to": 30
+                }),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert!(!first.is_error, "unexpected error: {:?}", first.content);
+        assert!(first.content.get("text").is_some());
+        assert!(first.content.get("already_read").is_none());
+
+        let overlap = tool
+            .execute(ToolInvocation {
+                id: MessageId("read2".into()),
+                input: json!({
+                    "path": "chapter.txt",
+                    "paragraph_from": 15,
+                    "paragraph_to": 22
+                }),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(overlap.content["already_read"], true);
+        assert_eq!(overlap.content["unchanged"], true);
+        assert!(
+            overlap.content.get("text").is_none(),
+            "must not re-echo a span the model already has"
+        );
+        assert!(overlap.content["note"]
+            .as_str()
+            .unwrap()
+            .contains("already returned"));
+
+        let outside = tool
+            .execute(ToolInvocation {
+                id: MessageId("read3".into()),
+                input: json!({
+                    "path": "chapter.txt",
+                    "paragraph_from": 31,
+                    "paragraph_to": 40
+                }),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert!(outside.content.get("text").is_some());
+        assert!(outside.content.get("already_read").is_none());
         let _ = Arc::clone(&ctx);
         let _ = std::fs::remove_dir_all(&dir);
     }

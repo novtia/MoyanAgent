@@ -10,9 +10,11 @@
 //! root — `folder` cannot escape it. The successful result reports the path,
 //! file metadata, and a non-whitespace character count (`chars`) so the model
 //! and UI can report document length after create/overwrite. By default the
-//! body is not echoed (it is already in the tool-call arguments). When
-//! settings `create_doc_echo_content` is on, the written body is returned in
-//! `content` so the model can reread what it just authored.
+//! body is not echoed (it is already in the tool-call arguments). A write
+//! receipt is never recorded, so a follow-up Read returns the real file and
+//! Edit can copy `old_string` verbatim. When settings
+//! `create_doc_echo_content` is on, the written body is also returned in
+//! `content`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,7 +23,6 @@ use serde_json::{json, Value};
 
 use crate::ai::agent::core::file_snapshot::{FileOp, FileSnapshotStore};
 use crate::ai::agent::tools::project_path::display_path;
-use crate::ai::agent::tools::read_receipt::{record_receipt, DO_NOT_REREAD_NOTE};
 use crate::ai::agent::tools::text_decode::{
     detect_and_decode, normalize_tool_string, write_text_file, TextEncoding,
 };
@@ -32,9 +33,12 @@ use crate::error::{AppError, AppResult};
 
 const TOOL_NAME: &str = "CreateDoc";
 
-const ECHO_CONTENT_NOTE: &str = "The document body is echoed in `content`. Do not Read \
-this file back. Copy a short unique Edit `old_string` from the insertion point or tail \
-of that text, never the whole chapter.";
+const READ_BEFORE_EDIT_NOTE: &str = "Before Edit, Read the target paragraphs and copy \
+`old_string` verbatim from that Read output. Do not reconstruct the locator from memory.";
+
+const ECHO_CONTENT_NOTE: &str = "The document body is echoed in `content`. Before Edit, \
+Read the target paragraphs and copy `old_string` verbatim from that Read output. \
+Do not reconstruct the locator from memory.";
 
 #[derive(Clone)]
 pub struct CreateDocTool {
@@ -62,10 +66,10 @@ impl CreateDocTool {
                     `overwrite: true` to replace the whole file on purpose. \
                     Prefer this over Write for authoring new documents — you only \
                     supply the title, the content, the type, and optionally a folder. \
-                    After success, do NOT Read the new file: you already hold \
-                    `content`. To expand it, Edit using a short unique `old_string` \
-                    from the tail of that `content` (the insertion point), never \
-                    the whole body."
+                    After success, Read the target paragraphs before Edit and copy \
+                    `old_string` verbatim from that Read output. Do not reconstruct \
+                    the locator from memory. A true append only needs a short unique \
+                    tail locator."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -237,14 +241,9 @@ impl Tool for CreateDocTool {
             // joined path if canonicalization fails for any reason.
             let canonical = std::fs::canonicalize(&path).unwrap_or(path);
 
-            record_receipt(
-                &invocation.context.read_file_state,
-                &canonical,
-                &content,
-                true,
-            );
-
             let echo = self.echo_content();
+            // Never record a write receipt: a stub Read is why Edit then
+            // reconstructs `old_string` from memory and misses.
             let mut payload = json!({
                 "path": display_path(&canonical),
                 "title": title,
@@ -252,7 +251,7 @@ impl Tool for CreateDocTool {
                 "folder": folder.map(str::trim).filter(|s| !s.is_empty()),
                 "created": created,
                 "chars": count_words(&content),
-                "note": if echo { ECHO_CONTENT_NOTE } else { DO_NOT_REREAD_NOTE },
+                "note": if echo { ECHO_CONTENT_NOTE } else { READ_BEFORE_EDIT_NOTE },
             });
             if echo {
                 payload["content"] = json!(content);
@@ -436,8 +435,8 @@ mod overwrite_tests {
             first.content["note"]
                 .as_str()
                 .unwrap()
-                .contains("Do not Read"),
-            "success should tell the model not to re-read"
+                .contains("Read the target paragraphs"),
+            "success should tell the model to Read before Edit"
         );
 
         let second = run(&ctx, doc("第一章", "新稿")).await;
@@ -478,8 +477,17 @@ mod overwrite_tests {
             first.content["note"]
                 .as_str()
                 .unwrap()
-                .contains("echoed in `content`"),
-            "echo mode should tell the model the body is in the result"
+                .contains("Read the target paragraphs"),
+            "echo mode should tell the model to Read before Edit"
+        );
+        let path = ctx.cwd.join("回显章.txt");
+        assert!(
+            !crate::ai::agent::tools::read_receipt::is_fresh_write(
+                &ctx.read_file_state,
+                &path,
+                "模型刚写的正文",
+            ),
+            "echo mode must not block a follow-up Read"
         );
     }
 

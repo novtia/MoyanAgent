@@ -34,6 +34,7 @@ export function ToolsSection() {
 
   const disabledTools = settings?.disabled_tools ?? [];
   const echoContent = settings?.create_doc_echo_content ?? false;
+  const replaceAllDefault = settings?.edit_replace_all_default ?? false;
   const selected = tools?.find((tool) => tool.name === selectedName) ?? null;
 
   const filteredTools = useMemo(() => {
@@ -104,9 +105,13 @@ export function ToolsSection() {
           selected={selected}
           enabled={selected ? !disabledTools.includes(selected.name) : false}
           echoContent={echoContent}
+          replaceAllDefault={replaceAllDefault}
           onSetEnabled={setEnabled}
           onSetEchoContent={(next) => {
             void update({ create_doc_echo_content: next });
+          }}
+          onSetReplaceAllDefault={(next) => {
+            void update({ edit_replace_all_default: next });
           }}
         />
       </div>

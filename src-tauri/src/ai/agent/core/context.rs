@@ -71,11 +71,14 @@ pub struct ToolUseContext {
 }
 
 /// Last Read/Write observation for a path: content hash plus whether the
-/// model already holds the body from a CreateDoc / Write / Edit call.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// model already holds the body from a CreateDoc / Write / Edit call, and
+/// which paragraph spans a Read already returned this turn.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileReceipt {
     pub hash: u64,
     pub from_write: bool,
+    /// Inclusive 1-based paragraph ranges already returned to the model.
+    pub covered: Vec<(usize, usize)>,
 }
 
 impl ToolUseContext {

@@ -35,6 +35,7 @@ pub const KEY_AUTO_BACKUP_CHAT_KEEP: &str = "auto_backup_chat_keep";
 pub const KEY_ENABLED_SKILL_IDS: &str = "enabled_skill_ids";
 pub const KEY_DISABLED_TOOLS: &str = "disabled_tools";
 pub const KEY_CREATE_DOC_ECHO_CONTENT: &str = "create_doc_echo_content";
+pub const KEY_EDIT_REPLACE_ALL_DEFAULT: &str = "edit_replace_all_default";
 
 pub const DEFAULT_HISTORY_TURNS: i64 = 10;
 pub const DEFAULT_AUTO_BACKUP_CHAT_INTERVAL_MINUTES: i64 = 30;
@@ -250,6 +251,17 @@ pub fn read_create_doc_echo_content(conn: &DbConn) -> bool {
     .unwrap_or(false)
 }
 
+pub fn read_edit_replace_all_default(conn: &DbConn) -> bool {
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        params![KEY_EDIT_REPLACE_ALL_DEFAULT],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .map(|v| v == "true" || v == "1")
+    .unwrap_or(false)
+}
+
 pub(crate) fn normalize_route_provider_slugs(raw: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -335,6 +347,9 @@ pub struct Settings {
     /// When true, CreateDoc echoes the written body in the tool result.
     #[serde(default)]
     pub create_doc_echo_content: bool,
+    /// When true, Edit treats a missing `replace_all` as true.
+    #[serde(default)]
+    pub edit_replace_all_default: bool,
 }
 
 fn default_web_search_enabled() -> bool {
@@ -399,6 +414,7 @@ impl Default for Settings {
             enabled_skill_ids: Vec::new(),
             disabled_tools: Vec::new(),
             create_doc_echo_content: false,
+            edit_replace_all_default: false,
         }
     }
 }
@@ -484,6 +500,8 @@ pub struct SettingsPatch {
     pub disabled_tools: Option<Vec<String>>,
     #[serde(default)]
     pub create_doc_echo_content: Option<bool>,
+    #[serde(default)]
+    pub edit_replace_all_default: Option<bool>,
 }
 
 pub fn read(conn: &DbConn) -> AppResult<Settings> {
@@ -579,6 +597,7 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
                 }
             }
             KEY_CREATE_DOC_ECHO_CONTENT => s.create_doc_echo_content = v == "true" || v == "1",
+            KEY_EDIT_REPLACE_ALL_DEFAULT => s.edit_replace_all_default = v == "true" || v == "1",
             _ => {}
         }
     }
@@ -1008,6 +1027,13 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
         write_kv(
             conn,
             KEY_CREATE_DOC_ECHO_CONTENT,
+            if v { "true" } else { "false" },
+        )?;
+    }
+    if let Some(v) = patch.edit_replace_all_default {
+        write_kv(
+            conn,
+            KEY_EDIT_REPLACE_ALL_DEFAULT,
             if v { "true" } else { "false" },
         )?;
     }
