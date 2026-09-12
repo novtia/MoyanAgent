@@ -97,7 +97,7 @@ pub(crate) fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) ->
                     "function": {
                         "name": t.name,
                         "description": t.description,
-                        "parameters": t.schema,
+                        "parameters": crate::ai::chat::with_declared_property_order(&t.schema),
                     }
                 })
             })

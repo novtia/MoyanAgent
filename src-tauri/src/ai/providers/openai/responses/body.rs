@@ -61,7 +61,7 @@ pub(crate) fn build_responses_body(request: &ChatRequest) -> Value {
                     "type": "function",
                     "name": t.name,
                     "description": t.description,
-                    "parameters": t.schema,
+                    "parameters": crate::ai::chat::with_declared_property_order(&t.schema),
                 })
             })
             .collect();

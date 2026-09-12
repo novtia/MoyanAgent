@@ -36,10 +36,11 @@ const TCP_KEEPALIVE_SECS: u64 = 30;
 /// still connected". Only connection establishment is bounded
 /// ([`CONNECT_TIMEOUT_SECS`]).
 pub(crate) fn build_chat_client() -> reqwest::Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
-        .tcp_keepalive(std::time::Duration::from_secs(TCP_KEEPALIVE_SECS))
-        .build()
+    crate::ai::http_proxy::build_client(
+        reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
+            .tcp_keepalive(std::time::Duration::from_secs(TCP_KEEPALIVE_SECS)),
+    )
 }
 
 pub const OPENAI_SDK: &str = "openai";

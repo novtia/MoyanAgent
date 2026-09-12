@@ -51,9 +51,9 @@ async fn generate(request: ChatRequest) -> AppResult<GenerateResponse> {
     }
 
     let body = build_body(&request)?;
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(20))
-        .build()?;
+    let client = crate::ai::http_proxy::build_client(
+        Client::builder().connect_timeout(Duration::from_secs(20)),
+    )?;
     let task_id = create_task(
         &client,
         &tasks_url,

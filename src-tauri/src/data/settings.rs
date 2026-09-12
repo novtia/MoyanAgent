@@ -36,6 +36,9 @@ pub const KEY_ENABLED_SKILL_IDS: &str = "enabled_skill_ids";
 pub const KEY_DISABLED_TOOLS: &str = "disabled_tools";
 pub const KEY_CREATE_DOC_ECHO_CONTENT: &str = "create_doc_echo_content";
 pub const KEY_EDIT_REPLACE_ALL_DEFAULT: &str = "edit_replace_all_default";
+pub const KEY_READ_PARAGRAPH_LABELS: &str = "read_paragraph_labels";
+pub const KEY_HTTP_PROXY_ENABLED: &str = "http_proxy_enabled";
+pub const KEY_HTTP_PROXY_URL: &str = "http_proxy_url";
 
 pub const DEFAULT_HISTORY_TURNS: i64 = 10;
 pub const DEFAULT_AUTO_BACKUP_CHAT_INTERVAL_MINUTES: i64 = 30;
@@ -262,6 +265,17 @@ pub fn read_edit_replace_all_default(conn: &DbConn) -> bool {
     .unwrap_or(false)
 }
 
+pub fn read_paragraph_labels_enabled(conn: &DbConn) -> bool {
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        params![KEY_READ_PARAGRAPH_LABELS],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .map(|v| v == "true" || v == "1")
+    .unwrap_or(false)
+}
+
 pub(crate) fn normalize_route_provider_slugs(raw: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -350,6 +364,15 @@ pub struct Settings {
     /// When true, Edit treats a missing `replace_all` as true.
     #[serde(default)]
     pub edit_replace_all_default: bool,
+    /// When true, Read prefixes each returned line with `[P001]`.
+    #[serde(default)]
+    pub read_paragraph_labels: bool,
+    /// Master switch for the outbound HTTP/SOCKS proxy.
+    #[serde(default)]
+    pub http_proxy_enabled: bool,
+    /// Proxy URL, e.g. `http://127.0.0.1:7890` or `socks5://127.0.0.1:7891`.
+    #[serde(default)]
+    pub http_proxy_url: String,
 }
 
 fn default_web_search_enabled() -> bool {
@@ -415,6 +438,9 @@ impl Default for Settings {
             disabled_tools: Vec::new(),
             create_doc_echo_content: false,
             edit_replace_all_default: false,
+            read_paragraph_labels: false,
+            http_proxy_enabled: false,
+            http_proxy_url: String::new(),
         }
     }
 }
@@ -502,6 +528,12 @@ pub struct SettingsPatch {
     pub create_doc_echo_content: Option<bool>,
     #[serde(default)]
     pub edit_replace_all_default: Option<bool>,
+    #[serde(default)]
+    pub read_paragraph_labels: Option<bool>,
+    #[serde(default)]
+    pub http_proxy_enabled: Option<bool>,
+    #[serde(default)]
+    pub http_proxy_url: Option<String>,
 }
 
 pub fn read(conn: &DbConn) -> AppResult<Settings> {
@@ -598,6 +630,9 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             }
             KEY_CREATE_DOC_ECHO_CONTENT => s.create_doc_echo_content = v == "true" || v == "1",
             KEY_EDIT_REPLACE_ALL_DEFAULT => s.edit_replace_all_default = v == "true" || v == "1",
+            KEY_READ_PARAGRAPH_LABELS => s.read_paragraph_labels = v == "true" || v == "1",
+            KEY_HTTP_PROXY_ENABLED => s.http_proxy_enabled = v == "true" || v == "1",
+            KEY_HTTP_PROXY_URL => s.http_proxy_url = v,
             _ => {}
         }
     }
@@ -900,6 +935,13 @@ fn infer_capabilities(id: &str) -> Vec<String> {
 }
 
 pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
+    if patch.http_proxy_enabled.is_some() || patch.http_proxy_url.is_some() {
+        validate_http_proxy_patch(
+            conn,
+            patch.http_proxy_enabled,
+            patch.http_proxy_url.as_deref(),
+        )?;
+    }
     if let Some(v) = patch.api_key {
         write_kv(conn, KEY_API_KEY, &v)?;
     }
@@ -1037,7 +1079,57 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
             if v { "true" } else { "false" },
         )?;
     }
+    if let Some(v) = patch.read_paragraph_labels {
+        write_kv(
+            conn,
+            KEY_READ_PARAGRAPH_LABELS,
+            if v { "true" } else { "false" },
+        )?;
+    }
+    if let Some(v) = patch.http_proxy_enabled {
+        write_kv(
+            conn,
+            KEY_HTTP_PROXY_ENABLED,
+            if v { "true" } else { "false" },
+        )?;
+    }
+    if let Some(v) = patch.http_proxy_url {
+        write_kv(conn, KEY_HTTP_PROXY_URL, v.trim())?;
+    }
     read(conn)
+}
+
+fn read_kv_opt(conn: &DbConn, key: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = ?1",
+        params![key],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+}
+
+/// Refuse to persist an enabled proxy with an empty/invalid URL, and refuse
+/// storing a non-empty URL that cannot be used as a proxy.
+fn validate_http_proxy_patch(
+    conn: &DbConn,
+    enabled: Option<bool>,
+    url: Option<&str>,
+) -> AppResult<()> {
+    let next_url = match url {
+        Some(v) => v.trim().to_string(),
+        None => read_kv_opt(conn, KEY_HTTP_PROXY_URL).unwrap_or_default(),
+    };
+    let next_enabled = match enabled {
+        Some(v) => v,
+        None => {
+            let stored = read_kv_opt(conn, KEY_HTTP_PROXY_ENABLED).unwrap_or_default();
+            stored == "true" || stored == "1"
+        }
+    };
+    if next_enabled || !next_url.is_empty() {
+        crate::ai::http_proxy::validate_proxy_url(&next_url)?;
+    }
+    Ok(())
 }
 
 /// Read only the web-search configuration (a subset of [`Settings`]) without

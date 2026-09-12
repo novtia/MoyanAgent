@@ -63,7 +63,7 @@ pub fn run() {
             // Snapshots land in SQLite as the tools write, so an interrupted
             // generation still leaves a rollback record behind.
             let file_snapshots = Arc::new(FileSnapshotStore::with_pool(Arc::new(pool.clone())));
-            tools.register(FileReadTool::new());
+            tools.register(FileReadTool::new().with_pool(Arc::new(pool.clone())));
             tools.register(crate::ai::agent::tools::list_files::ListFilesTool::new());
             tools.register(crate::ai::agent::tools::grep::GrepTool::new());
             tools.register(crate::ai::agent::tools::edit::FileWriteTool::new(
@@ -151,7 +151,8 @@ pub fn run() {
             {
                 let conn = pool.get()?;
                 if let Ok(s) = crate::data::settings::read(&conn) {
-                    tools.set_global_deny(s.disabled_tools);
+                    tools.set_global_deny(s.disabled_tools.clone());
+                    crate::ai::http_proxy::set_from_settings(&s);
                 }
             }
 

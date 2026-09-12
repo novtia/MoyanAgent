@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
 import { useReader } from "../../store/reader";
+import { useRightPanel } from "../../store/rightPanel";
 import { dialog } from "../ui";
 import { MessageList } from "./messageList";
 import { ChatFindBar } from "./messageList/ChatFindBar";
@@ -54,7 +55,8 @@ export function ChatView({
   }, [session?.id, chatFindSessionId, closeChatFind]);
 
   const [moreOpen, setMoreOpen] = useState(false);
-  const [galleryOpen, setGalleryOpen] = useState(false);
+  const galleryOpen = useRightPanel((s) => s.open);
+  const setGalleryOpen = useRightPanel((s) => s.setOpen);
   const [fontOpen, setFontOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement | null>(null);
   const fontRef = useRef<HTMLDivElement | null>(null);
@@ -67,7 +69,7 @@ export function ChatView({
     if (readerOpenSeq === lastReaderSeq.current) return;
     lastReaderSeq.current = readerOpenSeq;
     setGalleryOpen(true);
-  }, [readerOpenSeq]);
+  }, [readerOpenSeq, setGalleryOpen]);
 
   useEffect(() => {
     if (!moreOpen) return;

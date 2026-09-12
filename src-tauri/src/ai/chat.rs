@@ -226,6 +226,52 @@ pub struct ToolDefinition {
     pub schema: serde_json::Value,
 }
 
+/// Schema actually sent to the model.
+///
+/// Copies each object schema's `properties` insertion order into Gemini's
+/// `propertyOrdering` field. Without it, Gemini (and several OpenAI-compat
+/// Gemini proxies) emit function-call keys alphabetically — so `new_string`
+/// is generated before `old_string`. OpenAI / Claude ignore the unknown
+/// keyword. Existing `propertyOrdering` is left untouched.
+pub fn with_declared_property_order(schema: &serde_json::Value) -> serde_json::Value {
+    let mut out = schema.clone();
+    stamp_property_ordering(&mut out);
+    out
+}
+
+fn stamp_property_ordering(schema: &mut serde_json::Value) {
+    let Some(obj) = schema.as_object_mut() else {
+        return;
+    };
+
+    let declared: Vec<String> = obj
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default();
+    if !declared.is_empty() && !obj.contains_key("propertyOrdering") {
+        obj.insert(
+            "propertyOrdering".into(),
+            serde_json::Value::Array(declared.into_iter().map(serde_json::Value::String).collect()),
+        );
+    }
+
+    if let Some(props) = obj
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        let names: Vec<String> = props.keys().cloned().collect();
+        for name in names {
+            if let Some(child) = props.get_mut(&name) {
+                stamp_property_ordering(child);
+            }
+        }
+    }
+    if let Some(items) = obj.get_mut("items") {
+        stamp_property_ordering(items);
+    }
+}
+
 /// Tool result the host sends back on the next turn. Mirrors OpenAI's
 /// `role: "tool"` message and Anthropic's `tool_result` content block.
 #[derive(Debug, Clone)]
@@ -425,5 +471,63 @@ impl ChatRequest {
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_declared_property_order;
+    use serde_json::json;
+
+    #[test]
+    fn stamps_properties_insertion_order() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "path": { "type": "string" },
+                "old_string": { "type": "string" },
+                "new_string": { "type": "string" },
+                "replace_all": { "type": "boolean" }
+            }
+        });
+        assert_eq!(
+            with_declared_property_order(&schema)["propertyOrdering"],
+            json!(["path", "old_string", "new_string", "replace_all"])
+        );
+    }
+
+    #[test]
+    fn keeps_explicit_property_ordering() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "b": {}, "a": {} },
+            "propertyOrdering": ["b", "a"]
+        });
+        assert_eq!(
+            with_declared_property_order(&schema)["propertyOrdering"],
+            json!(["b", "a"])
+        );
+    }
+
+    #[test]
+    fn stamps_nested_object_properties() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "outer": {
+                    "type": "object",
+                    "properties": {
+                        "first": { "type": "string" },
+                        "second": { "type": "string" }
+                    }
+                }
+            }
+        });
+        let stamped = with_declared_property_order(&schema);
+        assert_eq!(stamped["propertyOrdering"], json!(["outer"]));
+        assert_eq!(
+            stamped["properties"]["outer"]["propertyOrdering"],
+            json!(["first", "second"])
+        );
     }
 }

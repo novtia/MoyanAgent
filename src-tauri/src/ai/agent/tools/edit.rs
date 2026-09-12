@@ -1,9 +1,15 @@
 //! File-mutation tools: `Write` (overwrite) and `Edit` (string replace).
 //!
-//! `Edit` has one operation: find an `old_string` in the file and replace it
+//! `Edit` has one operation: find an `old_string` in a file and replace it
 //! with `new_string`. By default `old_string` must match exactly once; if it
 //! occurs multiple times the edit is rejected unless `replace_all` is set. An
 //! empty `new_string` deletes the matched text.
+//!
+//! The schema declares arguments as `path`, then `old_string`, then
+//! `new_string`. That insertion order is stamped onto `propertyOrdering` at
+//! the LLM wire (see [`crate::ai::chat::with_declared_property_order`]) so
+//! models emit the locator before the replacement instead of alphabetical
+//! `new_string` / `old_string`.
 //!
 //! For insert/append the model is instructed to pass only a short unique
 //! locator (the insertion point), not the whole chapter. The unmatched
@@ -181,7 +187,8 @@ impl FileEditTool {
             spec: ToolSpec {
                 name: EDIT_TOOL.to_string(),
                 description: "Surgically replace one unique span in a file. This is not a \
-                    full-file rewrite. \
+                    full-file rewrite. Arguments are generated in declaration order: \
+                    path, old_string, then new_string. \
                     Insert / append: `old_string` is ONLY a short unique locator \
                     at the insertion point (the sentence or paragraph ending you insert \
                     after). NEVER paste the whole chapter, the rest of the file, or all \
@@ -209,10 +216,10 @@ impl FileEditTool {
                         },
                         "old_string": {
                             "type": "string",
-                            "description": "Locator copied from the file. \
-                                For insert/append, copy only the sentence or \
-                                paragraph ending at the insertion point — never the \
-                                whole chapter or the rest of the document. \
+                            "description": "Locator copied from the file. Fill this in \
+                                BEFORE `new_string`. For insert/append, copy only the \
+                                sentence or paragraph ending at the insertion point — \
+                                never the whole chapter or the rest of the document. \
                                 For rewrite/expand, copy the target passage verbatim \
                                 from a Read of those paragraphs. \
                                 Must match once unless `replace_all` is true."
@@ -220,10 +227,11 @@ impl FileEditTool {
                         "new_string": {
                             "type": "string",
                             "description": "Replacement for that locator only; the rest \
-                                of the file is left untouched. For insert/append, start \
-                                with the same locator then continue with the new prose. \
+                                of the file is left untouched. Fill this in LAST, after \
+                                path and old_string. For insert/append, start with the \
+                                same locator then continue with the new prose. \
                                 Document body only — no explanations, notes, or change \
-                                logs. Fill this in LAST, after path/old_string."
+                                logs."
                         },
                         "replace_all": {
                             "type": "boolean",
@@ -827,6 +835,26 @@ mod edit_tests {
         detect_and_decode(&bytes).text
     }
 
+    #[test]
+    fn schema_declares_old_string_before_new_string() {
+        let tool = FileEditTool::new(Arc::new(FileSnapshotStore::new()));
+        let keys: Vec<String> = tool.spec().schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(
+            keys,
+            vec!["path", "old_string", "new_string", "replace_all"]
+        );
+        let stamped = crate::ai::chat::with_declared_property_order(&tool.spec().schema);
+        assert_eq!(
+            stamped["propertyOrdering"],
+            json!(["path", "old_string", "new_string", "replace_all"])
+        );
+    }
+
     #[tokio::test]
     async fn replaces_unique_substring() {
         let (ctx, name) = seed("A\nB\nC\nD");
@@ -931,8 +959,8 @@ mod edit_tests {
         )
         .unwrap();
         let (ctx, name) = seed("X\nB\nX\nD");
-        let tool = FileEditTool::new(Arc::new(FileSnapshotStore::new()))
-            .with_pool(Arc::new(db.pool()));
+        let tool =
+            FileEditTool::new(Arc::new(FileSnapshotStore::new())).with_pool(Arc::new(db.pool()));
         let res = tool
             .execute(ToolInvocation {
                 id: MessageId("edit".into()),
@@ -959,8 +987,8 @@ mod edit_tests {
         )
         .unwrap();
         let (ctx, name) = seed("X\nB\nX\nD");
-        let tool = FileEditTool::new(Arc::new(FileSnapshotStore::new()))
-            .with_pool(Arc::new(db.pool()));
+        let tool =
+            FileEditTool::new(Arc::new(FileSnapshotStore::new())).with_pool(Arc::new(db.pool()));
         let res = tool
             .execute(ToolInvocation {
                 id: MessageId("edit".into()),
@@ -1251,7 +1279,10 @@ const re = /\d+\\s/g;
         )
         .await;
         assert!(!res.is_error, "unexpected error: {:?}", res.content);
-        assert_eq!(disk(&ctx, &name), format!("intro\n{start}EXPANDED{end}\noutro"));
+        assert_eq!(
+            disk(&ctx, &name),
+            format!("intro\n{start}EXPANDED{end}\noutro")
+        );
     }
 
     #[tokio::test]
@@ -1270,6 +1301,9 @@ const re = /\d+\\s/g;
         )
         .await;
         assert!(res.is_error);
-        assert_eq!(disk(&ctx, &name), format!("{start}aaa{end}\n{start}bbb{end}"));
+        assert_eq!(
+            disk(&ctx, &name),
+            format!("{start}aaa{end}\n{start}bbb{end}")
+        );
     }
 }

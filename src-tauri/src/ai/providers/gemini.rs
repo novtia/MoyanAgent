@@ -263,7 +263,7 @@ fn build_body(request: &ChatRequest, stream_function_args: bool) -> Value {
                 json!({
                     "name": t.name,
                     "description": t.description,
-                    "parameters": t.schema,
+                    "parameters": crate::ai::chat::with_declared_property_order(&t.schema),
                 })
             })
             .collect();
@@ -1581,6 +1581,31 @@ mod tests {
     }
 
     #[test]
+    fn function_parameters_preserve_property_order() {
+        let req = ChatRequest {
+            tools: vec![ToolDefinition {
+                name: "Edit".into(),
+                description: "edit".into(),
+                schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "old_string": { "type": "string" },
+                        "new_string": { "type": "string" },
+                        "replace_all": { "type": "boolean" }
+                    }
+                }),
+            }],
+            ..sample_request(false)
+        };
+        let body = build_body(&req, false);
+        assert_eq!(
+            body["tools"][0]["functionDeclarations"][0]["parameters"]["propertyOrdering"],
+            json!(["path", "old_string", "new_string", "replace_all"])
+        );
+    }
+
+    #[test]
     fn parse_response_keeps_thought_only_turns() {
         let txt = r#"{
             "candidates": [{
@@ -1882,9 +1907,7 @@ mod tests {
         let mut req = sample_request(false);
         req.model = "gemini-2.5-flash-image".into();
         let body = build_body(&req, false);
-        assert!(body
-            .pointer("/generationConfig/thinkingConfig")
-            .is_none());
+        assert!(body.pointer("/generationConfig/thinkingConfig").is_none());
     }
 
     #[test]

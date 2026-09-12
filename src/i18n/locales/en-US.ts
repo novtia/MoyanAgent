@@ -228,7 +228,7 @@ const enUS: Resource = {
     indentFirstLine: "First-line indent",
     outdentFirstLine: "Remove first-line indent",
     indentFirstLineHint:
-      "Add a two-em-space indent to every paragraph. Shift-click to remove.",
+      "Add a two-em-space indent to every paragraph and a blank line between them. Shift-click to remove the indent.",
     indentDiffBlocked: "First-line indent is unavailable while edits are pending review",
     search: "Search",
     showFiles: "Show file tree",
@@ -491,7 +491,7 @@ const enUS: Resource = {
       Delete: "Delete a file (rolls back with its message)",
       Edit:
         "Replace a short unique locator in the file (insert/append: the sentence at the insertion point, never the whole chapter). new_string is that locator plus new prose only.",
-      Read: "Read a local text file; each line is one numbered paragraph ([P001], …; empty lines included)",
+      Read: "Read a local text file; optionally prefix each line with [P001] in tool settings",
       ListFiles: "List files and subdirectories under a path",
       RoleState: "Maintain character attribute and state cards",
       ConsultRoles: "Consult in-scene roles in parallel (TRPG)",
@@ -758,7 +758,7 @@ const enUS: Resource = {
       default: "Pick the model for lightweight background tasks",
       search: "Configure web search providers and API keys",
       tools: "Enable or disable tools globally and inspect each tool's parameters",
-      system: "Backup & restore, auto-backup, notification sound, app info, and data locations",
+      system: "Backup & restore, auto-backup, network proxy, notification sound, app info, and data locations",
     },
     tools: {
       searchPlaceholder: "Search tools...",
@@ -777,6 +777,9 @@ const enUS: Resource = {
       replaceAllDefaultTitle: "Default replace all",
       replaceAllDefaultDesc:
         "Used when the model omits replace_all. When on, every occurrence of old_string is replaced.",
+      paragraphLabelsTitle: "Return paragraph numbers",
+      paragraphLabelsDesc:
+        "When on, each Read line is prefixed with [P001]. Those labels are not in the file — do not copy them into Edit old_string.",
       paramsTitle: "Input parameters",
       paramsDesc: "Fields the model fills in when it calls this tool.",
       required: "Required",
@@ -968,6 +971,13 @@ const enUS: Resource = {
     system: {
       notifySoundTitle: "Notification sound",
       notifySoundDesc: "Play a chime when the assistant finishes replying",
+      proxyTitle: "Network proxy",
+      proxyDesc: "Used to reach Gemini / Vertex and other overseas APIs. Supports http:// and socks5://",
+      proxyUrlTitle: "Proxy URL",
+      proxyUrlDesc: "For example http://127.0.0.1:7890 or socks5://127.0.0.1:7891. Credentials can be embedded in the URL.",
+      proxyUrlPlaceholder: "http://127.0.0.1:7890",
+      proxyUrlRequired: "A proxy URL is required when the proxy is on",
+      proxyUrlInvalid: "Invalid URL. Use http://, https://, socks5://, or socks5h://",
       infoTitle: "App info",
       infoDesc: "Version and runtime on this device",
       version: "Version",

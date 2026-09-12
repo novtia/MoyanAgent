@@ -54,9 +54,9 @@ pub async fn fetch_models(
     }
     let url = models_url(&sdk, endpoint);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(LIST_TIMEOUT_SECS))
-        .build()?;
+    let client = crate::ai::http_proxy::build_client(
+        reqwest::Client::builder().timeout(std::time::Duration::from_secs(LIST_TIMEOUT_SECS)),
+    )?;
 
     let mut req = client.get(&url).header("Content-Type", "application/json");
     if sdk == VERTEX_SDK {
@@ -129,9 +129,9 @@ pub async fn fetch_model_endpoints(
     }
     let url = endpoints_url(endpoint, model_id);
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(LIST_TIMEOUT_SECS))
-        .build()?;
+    let client = crate::ai::http_proxy::build_client(
+        reqwest::Client::builder().timeout(std::time::Duration::from_secs(LIST_TIMEOUT_SECS)),
+    )?;
 
     let resp = client
         .get(&url)

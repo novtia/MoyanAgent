@@ -10,17 +10,21 @@ export function ToolDetail({
   enabled,
   echoContent,
   replaceAllDefault,
+  paragraphLabels,
   onSetEnabled,
   onSetEchoContent,
   onSetReplaceAllDefault,
+  onSetParagraphLabels,
 }: {
   selected: AgentToolSpec | null;
   enabled: boolean;
   echoContent: boolean;
   replaceAllDefault: boolean;
+  paragraphLabels: boolean;
   onSetEnabled: (name: string, enabled: boolean) => void;
   onSetEchoContent: (enabled: boolean) => void;
   onSetReplaceAllDefault: (enabled: boolean) => void;
+  onSetParagraphLabels: (enabled: boolean) => void;
 }) {
   const { t } = useTranslation();
 
@@ -94,6 +98,23 @@ export function ToolDetail({
                 />
               </div>
               <p className="hint">{t("settings.tools.echoDesc")}</p>
+            </div>
+          </div>
+        )}
+
+        {selected.name === "Read" && (
+          <div className="model-provider-config">
+            <div className="model-provider-switch-row">
+              <div className="model-provider-switch-head">
+                <span className="field-label">
+                  {t("settings.tools.paragraphLabelsTitle")}
+                </span>
+                <ProviderEnableSwitch
+                  enabled={paragraphLabels}
+                  onChange={onSetParagraphLabels}
+                />
+              </div>
+              <p className="hint">{t("settings.tools.paragraphLabelsDesc")}</p>
             </div>
           </div>
         )}

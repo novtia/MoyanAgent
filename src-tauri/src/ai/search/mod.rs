@@ -157,11 +157,12 @@ pub trait SearchBackend: Send + Sync {
 /// Shared HTTP client for search. Bounded (total + connect timeout) and sends
 /// a browser UA so HTML engines behave.
 pub(crate) fn build_search_client() -> reqwest::Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-        .timeout(Duration::from_secs(SEARCH_TIMEOUT_SECS))
-        .build()
+    crate::ai::http_proxy::build_client(
+        reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+            .timeout(Duration::from_secs(SEARCH_TIMEOUT_SECS)),
+    )
 }
 
 /// Pick the concrete backend for a config. Returns an error when the selected

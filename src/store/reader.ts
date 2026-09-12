@@ -453,6 +453,15 @@ function persistTabs(sessionId: string | null, tabs: ReaderFileTab[], activeTabI
   }
 }
 
+export function clearPersistedReaderTabs(sessionId: string | null) {
+  if (!sessionId || typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(`${STORAGE_PREFIX}${sessionId}`);
+  } catch {
+    /* ignore */
+  }
+}
+
 function findTabIndex(tabs: ReaderFileTab[], path: string): number {
   const key = normalizeReaderPath(path);
   return tabs.findIndex((t) => normalizeReaderPath(t.path) === key);

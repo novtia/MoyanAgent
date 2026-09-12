@@ -54,9 +54,9 @@ async fn generate(request: ChatRequest) -> AppResult<GenerateResponse> {
     };
 
     let provider_label = provider_label(&request);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(UPSTREAM_TIMEOUT_SECS))
-        .build()?;
+    let client = crate::ai::http_proxy::build_client(
+        reqwest::Client::builder().timeout(std::time::Duration::from_secs(UPSTREAM_TIMEOUT_SECS)),
+    )?;
 
     let txt = post_with_retries(
         &client,

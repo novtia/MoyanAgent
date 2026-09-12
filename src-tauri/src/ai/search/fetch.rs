@@ -43,13 +43,20 @@ pub async fn fetch_page(url: &str) -> AppResult<FetchedPage> {
     let mut target = parse_fetchable_url(url)?;
     let mut hops = 0usize;
 
+    let via_proxy = crate::ai::http_proxy::is_enabled();
+
     let (final_url, body) = loop {
-        // Resolve and vet the destination ourselves, then pin the address we
-        // approved for the actual request. Re-resolving inside the HTTP client
-        // would reopen the door to a DNS answer that changes between the check
-        // and the connection (DNS rebinding).
-        let addr = resolve_public_addr(&target).await?;
-        let client = build_pinned_client(&target, addr)?;
+        // Direct fetches pin the approved public IP so a later DNS answer
+        // cannot bounce us onto a private address. Proxied fetches cannot
+        // pin (the TCP peer is the proxy), so we only vet the URL host and
+        // let the proxy resolve DNS.
+        let client = if via_proxy {
+            refuse_non_public_target(&target)?;
+            build_proxied_fetch_client()?
+        } else {
+            let addr = resolve_public_addr(&target).await?;
+            build_pinned_client(&target, addr)?
+        };
 
         let resp = client
             .get(target.clone())
@@ -171,6 +178,43 @@ async fn resolve_public_addr(url: &Url) -> AppResult<SocketAddr> {
     Ok(first)
 }
 
+/// Reject destinations that must never be fetched, even through a proxy:
+/// IP literals that are not public, localhost, and cloud metadata hostnames.
+/// Named public hosts are left to the proxy to resolve.
+fn refuse_non_public_target(url: &Url) -> AppResult<()> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| AppError::Invalid("url must have a host".into()))?;
+    let host_for_ip = host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host);
+    if let Ok(ip) = host_for_ip.parse::<IpAddr>() {
+        if ip_is_public(ip) {
+            return Ok(());
+        }
+        return Err(non_public_target_error(host.to_string()));
+    }
+    let host = host.to_ascii_lowercase();
+    if host == "localhost" || host.ends_with(".localhost") || is_blocked_metadata_host(&host) {
+        return Err(non_public_target_error(host));
+    }
+    Ok(())
+}
+
+fn is_blocked_metadata_host(host: &str) -> bool {
+    matches!(
+        host,
+        "metadata.google.internal" | "metadata.goog" | "metadata.google.internal."
+    )
+}
+
+fn non_public_target_error(host: String) -> AppError {
+    AppError::Invalid(format!(
+        "fetch: `{host}` is a non-public address — refusing to fetch internal network resources"
+    ))
+}
+
 /// A client that talks only to `addr`, with redirects disabled so the caller
 /// can vet each hop.
 fn build_pinned_client(url: &Url, addr: SocketAddr) -> AppResult<reqwest::Client> {
@@ -183,6 +227,17 @@ fn build_pinned_client(url: &Url, addr: SocketAddr) -> AppResult<reqwest::Client
         .resolve(host, addr)
         .build()
         .map_err(|e| AppError::Http(format!("fetch: cannot build client: {e}")))
+}
+
+fn build_proxied_fetch_client() -> AppResult<reqwest::Client> {
+    crate::ai::http_proxy::build_client(
+        reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .redirect(reqwest::redirect::Policy::none()),
+    )
+    .map_err(|e| AppError::Http(format!("fetch: cannot build client: {e}")))
 }
 
 /// Refuse content that is not text before spending bandwidth on it.
@@ -433,6 +488,35 @@ mod tests {
         assert!(
             check_content_type(None).is_ok(),
             "an undeclared type is left to the extractor"
+        );
+    }
+
+    #[test]
+    fn proxied_fetch_still_refuses_private_and_metadata_hosts() {
+        for raw in [
+            "http://127.0.0.1:11434/api/tags",
+            "http://localhost:8080/",
+            "http://foo.localhost/",
+            "http://[::1]/",
+            "http://192.168.1.1/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://metadata.google.internal/",
+            "http://metadata.goog/",
+        ] {
+            let url = parse_fetchable_url(raw).expect("scheme is fine");
+            let err = refuse_non_public_target(&url).expect_err("must not be contacted");
+            assert!(
+                err.to_string().contains("non-public"),
+                "unexpected error for {raw}: {err}"
+            );
+        }
+
+        assert!(
+            refuse_non_public_target(&parse_fetchable_url("https://example.com/a").unwrap())
+                .is_ok()
+        );
+        assert!(
+            refuse_non_public_target(&parse_fetchable_url("https://1.1.1.1/").unwrap()).is_ok()
         );
     }
 }

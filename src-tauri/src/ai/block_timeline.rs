@@ -314,7 +314,10 @@ mod tests {
         let segs = restore_timeline_from_blocks(&blocks);
         match &segs[0] {
             TimelineSegment::ToolRound { calls, .. } => {
-                assert_eq!(calls[0].thought_signature.as_deref(), Some("sig-from-block"));
+                assert_eq!(
+                    calls[0].thought_signature.as_deref(),
+                    Some("sig-from-block")
+                );
                 let round = segs[0].to_tool_round().unwrap();
                 assert_eq!(
                     round.assistant.tool_calls[0].thought_signature.as_deref(),

@@ -5,7 +5,11 @@
 //! stub instead of echoing the body back into the model context.
 //!
 //! The tool handles common on-disk encodings (UTF-8/UTF-16/GBK) via
-//! [`super::text_decode`].
+//! [`super::text_decode`]. Host setting `read_paragraph_labels` (toggled in
+//! the UI, not a tool argument) prefixes each returned line with `[P001]`.
+
+use std::fmt::Write as _;
+use std::sync::Arc;
 
 use serde_json::Value;
 
@@ -17,6 +21,8 @@ use crate::ai::agent::tools::read_receipt::{
 };
 use crate::ai::agent::tools::text_decode::detect_and_decode;
 use crate::ai::agent::tools::{Tool, ToolFuture, ToolInvocation, ToolResult, ToolSpec};
+use crate::data::db::DbPool;
+use crate::data::settings;
 use crate::error::{AppError, AppResult};
 
 const TOOL_NAME: &str = "Read";
@@ -192,9 +198,25 @@ fn resolve_read_target(
     Ok((path, explicit.or(suffix_range)))
 }
 
+/// Prefix each paragraph with a `[P001]`-style label. Labels are not in the
+/// file; Edit `old_string` must copy the body after the prefix.
+fn with_paragraph_labels(text: &str, from: usize) -> String {
+    let mut out = String::with_capacity(text.len().saturating_add(8));
+    for (i, line) in text.split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let _ = write!(out, "[P{:03}] {line}", from + i);
+    }
+    out
+}
+
 #[derive(Clone)]
 pub struct FileReadTool {
-    spec: ToolSpec,
+    spec_plain: ToolSpec,
+    spec_labeled: ToolSpec,
+    /// When set, successful Reads honour the host `read_paragraph_labels` flag.
+    pool: Option<Arc<DbPool>>,
 }
 
 impl Default for FileReadTool {
@@ -205,78 +227,137 @@ impl Default for FileReadTool {
 
 impl FileReadTool {
     pub fn new() -> Self {
+        let spec_plain = ToolSpec {
+            name: TOOL_NAME.to_string(),
+            description: "Read a text file from the local filesystem. \
+                Returns the file's plain text (no line labels), so you can copy exact \
+                snippets into Edit's `old_string`. For insert/append, that snippet \
+                is only the insertion point (a sentence or paragraph ending), never \
+                the whole chapter. Before rewriting or expanding a passage, Read those \
+                paragraphs and copy `old_string` verbatim — do not reconstruct it. \
+                When the user message cites a ranged file mention like \
+                `@\"chapter.md\"#P003-P007` (or the chip label shows `· P003–P007`), \
+                call ranged Read for that span: set `path` to the file and pass \
+                `paragraph_from` / `paragraph_to` (1-based inclusive line numbers; \
+                one line = one paragraph). You may also append `#P003-P007` on `path` \
+                instead of the two args. Short ranges are auto-expanded with nearby \
+                context (at least 20 lines when the file is long enough). \
+                For open-ended prose tasks without a range mention, Read the full file \
+                once up front only if you did not just create or overwrite it. A document \
+                title without `.md` / `.txt` is enough when it \
+                uniquely identifies the file.                     After Write / a successful Edit, do not \
+                re-Read the whole file unless the next Edit needs a fresh locator. \
+                A re-read of an unchanged Write returns no body. \
+                Do not re-Read a span already returned this turn — a second Read \
+                of those unchanged paragraphs also returns no body; copy \
+                `old_string` from the earlier Read. \
+                After CreateDoc, Read the target paragraphs once before Edit. \
+                After Edit fails, re-Read the relevant span before retrying. \
+                Long files come back one page at a time: when the result has \
+                `truncated: true`, the text stops at `paragraph_to` and \
+                `next_paragraph_from` is where the following page starts. Continue from \
+                there only if you actually need the rest — prefer a targeted range over \
+                paging through a whole manuscript."
+                .to_string(),
+            schema: read_tool_schema(),
+            read_only: true,
+            concurrency_safe: true,
+        };
+        let mut spec_labeled = spec_plain.clone();
+        spec_labeled.description = "Read a text file from the local filesystem. \
+            Each returned line is prefixed with `[P001]` (1-based paragraph number; \
+            empty lines included). Those prefixes are host labels, not file text — \
+            copy Edit `old_string` from the paragraph body only, never the `[P00N]` \
+            label. For insert/append, that snippet is only the insertion point \
+            (a sentence or paragraph ending), never the whole chapter. Before \
+            rewriting or expanding a passage, Read those paragraphs and copy \
+            `old_string` verbatim — do not reconstruct it. \
+            When the user message cites a ranged file mention like \
+            `@\"chapter.md\"#P003-P007` (or the chip label shows `· P003–P007`), \
+            call ranged Read for that span: set `path` to the file and pass \
+            `paragraph_from` / `paragraph_to` (1-based inclusive line numbers; \
+            one line = one paragraph). You may also append `#P003-P007` on `path` \
+            instead of the two args. Short ranges are auto-expanded with nearby \
+            context (at least 20 lines when the file is long enough). \
+            For open-ended prose tasks without a range mention, Read the full file \
+            once up front only if you did not just create or overwrite it. A document \
+            title without `.md` / `.txt` is enough when it \
+            uniquely identifies the file. After Write / a successful Edit, do not \
+            re-Read the whole file unless the next Edit needs a fresh locator. \
+            A re-read of an unchanged Write returns no body. \
+            Do not re-Read a span already returned this turn — a second Read \
+            of those unchanged paragraphs also returns no body; copy \
+            `old_string` from the earlier Read (without `[P00N]` prefixes). \
+            After CreateDoc, Read the target paragraphs once before Edit. \
+            After Edit fails, re-Read the relevant span before retrying. \
+            Long files come back one page at a time: when the result has \
+            `truncated: true`, the text stops at `paragraph_to` and \
+            `next_paragraph_from` is where the following page starts. Continue from \
+            there only if you actually need the rest — prefer a targeted range over \
+            paging through a whole manuscript."
+            .to_string();
         Self {
-            spec: ToolSpec {
-                name: TOOL_NAME.to_string(),
-                description: "Read a text file from the local filesystem. \
-                    Returns the file's plain text (no line labels), so you can copy exact \
-                    snippets into Edit's `old_string`. For insert/append, that snippet \
-                    is only the insertion point (a sentence or paragraph ending), never \
-                    the whole chapter. Before rewriting or expanding a passage, Read those \
-                    paragraphs and copy `old_string` verbatim — do not reconstruct it. \
-                    When the user message cites a ranged file mention like \
-                    `@\"chapter.md\"#P003-P007` (or the chip label shows `· P003–P007`), \
-                    call ranged Read for that span: set `path` to the file and pass \
-                    `paragraph_from` / `paragraph_to` (1-based inclusive line numbers; \
-                    one line = one paragraph). You may also append `#P003-P007` on `path` \
-                    instead of the two args. Short ranges are auto-expanded with nearby \
-                    context (at least 20 lines when the file is long enough). \
-                    For open-ended prose tasks without a range mention, Read the full file \
-                    once up front only if you did not just create or overwrite it. A document \
-                    title without `.md` / `.txt` is enough when it \
-                    uniquely identifies the file.                     After Write / a successful Edit, do not \
-                    re-Read the whole file unless the next Edit needs a fresh locator. \
-                    A re-read of an unchanged Write returns no body. \
-                    Do not re-Read a span already returned this turn — a second Read \
-                    of those unchanged paragraphs also returns no body; copy \
-                    `old_string` from the earlier Read. \
-                    After CreateDoc, Read the target paragraphs once before Edit. \
-                    After Edit fails, re-Read the relevant span before retrying. \
-                    Long files come back one page at a time: when the result has \
-                    `truncated: true`, the text stops at `paragraph_to` and \
-                    `next_paragraph_from` is where the following page starts. Continue from \
-                    there only if you actually need the rest — prefer a targeted range over \
-                    paging through a whole manuscript."
-                    .to_string(),
-                schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": format!(
-                                "{FILE_REF_DESC} A `.md` / `.txt` suffix may be omitted \
-                                 when the title uniquely identifies the document \
-                                 (e.g. `notes` reads `notes.md`). \
-                                 Optional `#P003` / `#P003-P007` suffix \
-                                 selects a 1-based paragraph (line) range when \
-                                 `paragraph_from` / `paragraph_to` are omitted."
-                            )
-                        },
-                        "paragraph_from": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "description": "First paragraph/line to return (1-based, inclusive). \
-                                Prefer this over a `#P…` path suffix. Omit (with no suffix) to read the full file."
-                        },
-                        "paragraph_to": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "description": "Last paragraph/line to return (1-based, inclusive). \
-                                Defaults to `paragraph_from` when omitted."
-                        }
-                    },
-                    "required": ["path"]
-                }),
-                read_only: true,
-                concurrency_safe: true,
-            },
+            spec_plain,
+            spec_labeled,
+            pool: None,
         }
     }
+
+    pub fn with_pool(mut self, pool: Arc<DbPool>) -> Self {
+        self.pool = Some(pool);
+        self
+    }
+
+    fn paragraph_labels(&self) -> bool {
+        let Some(pool) = &self.pool else {
+            return false;
+        };
+        let Ok(conn) = pool.get() else {
+            return false;
+        };
+        settings::read_paragraph_labels_enabled(&conn)
+    }
+}
+
+fn read_tool_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": format!(
+                    "{FILE_REF_DESC} A `.md` / `.txt` suffix may be omitted \
+                     when the title uniquely identifies the document \
+                     (e.g. `notes` reads `notes.md`). \
+                     Optional `#P003` / `#P003-P007` suffix \
+                     selects a 1-based paragraph (line) range when \
+                     `paragraph_from` / `paragraph_to` are omitted."
+                )
+            },
+            "paragraph_from": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "First paragraph/line to return (1-based, inclusive). \
+                    Prefer this over a `#P…` path suffix. Omit (with no suffix) to read the full file."
+            },
+            "paragraph_to": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Last paragraph/line to return (1-based, inclusive). \
+                    Defaults to `paragraph_from` when omitted."
+            }
+        },
+        "required": ["path"]
+    })
 }
 
 impl Tool for FileReadTool {
     fn spec(&self) -> &ToolSpec {
-        &self.spec
+        if self.paragraph_labels() {
+            &self.spec_labeled
+        } else {
+            &self.spec_plain
+        }
     }
 
     fn validate(&self, input: &Value) -> AppResult<()> {
@@ -394,6 +475,10 @@ impl Tool for FileReadTool {
             let chars = slice_text.chars().filter(|c| !c.is_whitespace()).count();
             let paragraphs_returned = paragraph_to - paragraph_from + 1;
             let ranged = range.is_some();
+            let paragraph_labels = self.paragraph_labels();
+            if paragraph_labels {
+                slice_text = with_paragraph_labels(&slice_text, paragraph_from);
+            }
 
             record_read_span(
                 &invocation.context.read_file_state,
@@ -418,6 +503,7 @@ impl Tool for FileReadTool {
                 "context_expanded": context_expanded,
                 "min_context_lines": MIN_READ_CONTEXT_LINES,
                 "paragraphs_returned": paragraphs_returned,
+                "paragraph_labels": paragraph_labels,
                 "ranged": ranged,
                 "truncated": capped,
                 "next_paragraph_from": next_paragraph_from,
@@ -638,6 +724,54 @@ mod read_range_tests {
             .unwrap();
         assert_eq!(res.content["text"], "hello");
         assert!(res.content.get("unchanged").is_none());
+        assert_eq!(res.content["paragraph_labels"], false);
+        let _ = Arc::clone(&ctx);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn paragraph_labels_prefix_each_line() {
+        assert_eq!(
+            with_paragraph_labels("one\ntwo\n", 3),
+            "[P003] one\n[P004] two\n[P005] "
+        );
+    }
+
+    #[tokio::test]
+    async fn paragraph_labels_setting_prefixes_returned_text() {
+        let db = crate::data::db::test_support::TempDb::new("read-paragraph-labels");
+        crate::data::settings::apply_patch(
+            &db.conn(),
+            crate::data::settings::SettingsPatch {
+                read_paragraph_labels: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!(
+            "moyan-read-labels-{}-{}",
+            std::process::id(),
+            n
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("notes.txt"), "hello\nworld").unwrap();
+        let ctx = ToolUseContextBuilder::new(AgentId::new(), dir.clone())
+            .build()
+            .0;
+        let tool = FileReadTool::new().with_pool(Arc::new(db.pool()));
+        let res = tool
+            .execute(ToolInvocation {
+                id: MessageId("read".into()),
+                input: json!({ "path": "notes.txt" }),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert!(!res.is_error, "unexpected error: {:?}", res.content);
+        assert_eq!(res.content["text"], "[P001] hello\n[P002] world");
+        assert_eq!(res.content["paragraph_labels"], true);
+        assert!(tool.spec().description.contains("[P001]"));
         let _ = Arc::clone(&ctx);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -645,11 +779,8 @@ mod read_range_tests {
     #[tokio::test]
     async fn a_second_read_of_an_already_returned_span_returns_no_body() {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!(
-            "moyan-read-already-{}-{}",
-            std::process::id(),
-            n
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("moyan-read-already-{}-{}", std::process::id(), n));
         std::fs::create_dir_all(&dir).unwrap();
         let body = (1..=40)
             .map(|i| format!("第{i}段内容"))

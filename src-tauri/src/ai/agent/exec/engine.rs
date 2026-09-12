@@ -697,7 +697,7 @@ fn collect_tool_definitions(tools: &ToolPool) -> Vec<crate::ai::chat::ToolDefini
             crate::ai::chat::ToolDefinition {
                 name: s.name.clone(),
                 description: s.description.clone(),
-                schema: s.schema.clone(),
+                schema: crate::ai::chat::with_declared_property_order(&s.schema),
             }
         })
         .collect()

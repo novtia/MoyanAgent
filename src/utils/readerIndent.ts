@@ -109,8 +109,55 @@ function skipMarkdownStructure(
 }
 
 /**
- * Toolbar action: first-line indent every prose paragraph in the file.
+ * Indices of prose lines that are immediately followed by another prose line
+ * (no blank line in between). Markdown structure breaks the run.
+ */
+function adjacentProseBlankAfterIndices(lines: string[], markdown: boolean): number[] {
+  const after: number[] = [];
+  let inFence = false;
+  let prevProse = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (markdown) {
+      const structure = skipMarkdownStructure(line, inFence);
+      inFence = structure.inFence;
+      if (structure.skip) {
+        prevProse = -1;
+        continue;
+      }
+    }
+    if (!line.trim()) {
+      prevProse = -1;
+      continue;
+    }
+    if (prevProse >= 0 && prevProse === i - 1) {
+      after.push(prevProse);
+    }
+    prevProse = i;
+  }
+  return after;
+}
+
+function shiftSelectionPastInserts(
+  selectionStart: number,
+  selectionEnd: number,
+  insertAts: number[],
+  insertLen: number,
+): { selectionStart: number; selectionEnd: number } {
+  let nextStart = selectionStart;
+  let nextEnd = selectionEnd;
+  for (const at of insertAts) {
+    if (nextStart > at) nextStart += insertLen;
+    if (nextEnd > at) nextEnd += insertLen;
+  }
+  return { selectionStart: nextStart, selectionEnd: nextEnd };
+}
+
+/**
+ * Toolbar action: first-line indent every prose paragraph, and insert a blank
+ * line between adjacent paragraphs that currently sit on consecutive lines.
  * Skips blank lines; in Markdown also skips headings, lists, quotes, tables, and fences.
+ * Outdent only removes the indent — existing blank lines are left in place.
  */
 export function applyDocumentFirstLineIndent(
   text: string,
@@ -163,6 +210,29 @@ export function applyDocumentFirstLineIndent(
     if (selectionEnd >= lineStart) newEnd += INDENT_LEN;
   }
 
+  if (!outdent) {
+    const blankAfter = adjacentProseBlankAfterIndices(lines, markdown);
+    if (blankAfter.length > 0) {
+      const indented = lines.join("\n");
+      const indentedStarts = lineStartOffsets(indented);
+      const insertAts = blankAfter.map(
+        (i) => (indentedStarts[i] ?? 0) + (lines[i]?.length ?? 0),
+      );
+      const shifted = shiftSelectionPastInserts(newStart, newEnd, insertAts, 1);
+      newStart = shifted.selectionStart;
+      newEnd = shifted.selectionEnd;
+      const rebuilt: string[] = [];
+      const blankAt = new Set(blankAfter);
+      for (let i = 0; i < lines.length; i += 1) {
+        rebuilt.push(lines[i] ?? "");
+        if (blankAt.has(i)) rebuilt.push("");
+      }
+      lines.length = 0;
+      lines.push(...rebuilt);
+      changed = true;
+    }
+  }
+
   if (!changed) return null;
   return {
     text: lines.join("\n"),
@@ -192,21 +262,38 @@ export function buildDocumentFirstLineIndentChanges(
   if (!result) return null;
 
   const oldLines = text.split("\n");
-  const newLines = result.text.split("\n");
   const starts = lineStartOffsets(text);
   const changes: ParagraphIndentChange[] = [];
+  let inFence = false;
 
   for (let i = 0; i < oldLines.length; i += 1) {
-    if (oldLines[i] === newLines[i]) continue;
+    const line = oldLines[i] ?? "";
+    if (markdown) {
+      const structure = skipMarkdownStructure(line, inFence);
+      inFence = structure.inFence;
+      if (structure.skip) continue;
+    }
+    if (!outdent && !line.trim()) continue;
+
     const lineStart = starts[i] ?? 0;
     if (outdent) {
+      if (!line.startsWith(PARAGRAPH_INDENT)) continue;
       changes.push({ from: lineStart, to: lineStart + INDENT_LEN, insert: "" });
-    } else {
+    } else if (!line.startsWith(PARAGRAPH_INDENT)) {
       changes.push({ from: lineStart, to: lineStart, insert: PARAGRAPH_INDENT });
     }
   }
 
+  if (!outdent) {
+    for (const i of adjacentProseBlankAfterIndices(oldLines, markdown)) {
+      const line = oldLines[i] ?? "";
+      const insertAt = (starts[i] ?? 0) + line.length;
+      changes.push({ from: insertAt, to: insertAt, insert: "\n" });
+    }
+  }
+
   if (changes.length === 0) return null;
+  changes.sort((a, b) => a.from - b.from || a.to - b.to);
   return {
     changes,
     selectionStart: result.selectionStart,

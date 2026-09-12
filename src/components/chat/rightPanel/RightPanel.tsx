@@ -22,7 +22,6 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
   const { t } = useTranslation();
   const active = useSession((s) => s.active);
   const sessionMedia = useSession((s) => s.sessionMedia);
-  const activeSessionId = useSession((s) => s.activeId);
   const projects = useProject((s) => s.projects);
 
   const hasProjectPath = useMemo(() => {
@@ -51,7 +50,7 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
     closeOtherTabs,
     closeTabsToRight,
     closeAllTabs,
-  } = usePanelTabs(activeSessionId, hasProjectPath);
+  } = usePanelTabs(hasProjectPath);
 
   const { tabsScrollRef, tabOverflow, updateTabOverflow, scrollTabs } = useTabScroll(
     tabs,

@@ -132,7 +132,7 @@ fn build_body(request: &ChatRequest) -> Value {
                 json!({
                     "name": t.name,
                     "description": t.description,
-                    "input_schema": t.schema,
+                    "input_schema": crate::ai::chat::with_declared_property_order(&t.schema),
                 })
             })
             .collect();

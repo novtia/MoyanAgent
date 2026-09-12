@@ -14,7 +14,8 @@ import {
   composerModeFromAgentType,
 } from "../../config/chatMode";
 import { useRoleState } from "../roleState";
-import { useReader, syncPendingDiffsForSession } from "../reader";
+import { useReader, syncPendingDiffsForSession, clearPersistedReaderTabs } from "../reader";
+import { useRightPanel } from "../rightPanel";
 import { playNotifySound } from "../notifySound";
 import {
   type PendingAskUser,
@@ -367,6 +368,7 @@ export const useSession = create<SessionStore>((set, get) => {
     });
     void useRoleState.getState().loadLatest(id, roleStateScopeForSession(id));
     useReader.getState().bindSession(id);
+    useRightPanel.getState().bindSession(id);
     void syncPendingDiffsForSession(id);
   },
 
@@ -420,8 +422,12 @@ export const useSession = create<SessionStore>((set, get) => {
           busy: false,
           pendingAskUser: null,
         });
+        useReader.getState().bindSession(null);
+        useRightPanel.getState().bindSession(null);
       }
     }
+    useRightPanel.getState().forgetSession(id);
+    clearPersistedReaderTabs(id);
     await get().refreshList();
   },
 

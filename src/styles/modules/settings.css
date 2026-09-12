@@ -347,6 +347,9 @@
   width: 92px;
   flex-shrink: 0;
 }
+.settings-row--stack .row {
+  margin-bottom: 0;
+}
 
 /* Toggle */
 .settings-toggle {

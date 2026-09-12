@@ -224,7 +224,7 @@ const zhCN = {
     more: "更多",
     indentFirstLine: "首行缩进",
     outdentFirstLine: "取消首行缩进",
-    indentFirstLineHint: "为全文段落加上首行缩进（两个全角空格）。按住 Shift 点击可取消。",
+    indentFirstLineHint: "为全文段落加上首行缩进（两个全角空格），并在段落之间空一行。按住 Shift 点击可取消缩进。",
     indentDiffBlocked: "有待确认的编辑差异时无法首行缩进",
     search: "搜索",
     showFiles: "显示文件树",
@@ -482,7 +482,7 @@ const zhCN = {
       Delete: "删除文件（可随消息回滚还原）",
       Edit:
         "只替换文件里插入点的短锚点（插入/续写：选插入位置那一句，不要整章进 old_string）。new_string 为该锚点加新正文。",
-      Read: "读取本地文本，每行标注段落编号 [P001]…（含空行）",
+      Read: "读取本地文本；可在工具设置中打开段落编号 [P001]",
       ListFiles: "列出目录下的文件与子目录",
       RoleState: "维护角色属性与状态面板",
       ConsultRoles: "并行征询在场角色抉择（跑团）",
@@ -745,7 +745,7 @@ const zhCN = {
       default: "选择执行轻量任务时使用的模型",
       search: "配置网络搜索供应商与密钥",
       tools: "启用或禁用全局工具，并查看每个工具的参数",
-      system: "备份恢复、自动备份、提示音、应用信息与数据存储位置",
+      system: "备份恢复、自动备份、网络代理、提示音、应用信息与数据存储位置",
     },
     tools: {
       searchPlaceholder: "搜索工具...",
@@ -764,6 +764,9 @@ const zhCN = {
       replaceAllDefaultTitle: "默认替换全部",
       replaceAllDefaultDesc:
         "模型没有传 replace_all 时使用此默认值。打开后，同一处 old_string 出现多次会全部替换。",
+      paragraphLabelsTitle: "返回段落编号",
+      paragraphLabelsDesc:
+        "启用后，Read 结果每一行会带 [P001] 编号，方便定位；编号不是文件原文，改稿时不要写进 old_string。",
       paramsTitle: "输入参数",
       paramsDesc: "模型调用此工具时需要填写的字段。",
       required: "必填",
@@ -945,6 +948,13 @@ const zhCN = {
     system: {
       notifySoundTitle: "提示音",
       notifySoundDesc: "AI 回复完成时播放提示音",
+      proxyTitle: "网络代理",
+      proxyDesc: "用于访问 Gemini / Vertex 等境外接口。支持 http:// 与 socks5://",
+      proxyUrlTitle: "代理地址",
+      proxyUrlDesc: "例如 http://127.0.0.1:7890 或 socks5://127.0.0.1:7891。账号密码可写在 URL 中。",
+      proxyUrlPlaceholder: "http://127.0.0.1:7890",
+      proxyUrlRequired: "开启代理时必须填写地址",
+      proxyUrlInvalid: "地址无效，请使用 http://、https://、socks5:// 或 socks5h://",
       infoTitle: "应用信息",
       infoDesc: "本机版本与运行时信息",
       version: "版本",

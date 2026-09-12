@@ -573,7 +573,14 @@ mod pool_tests {
         assert_eq!(names, vec!["Read".to_string()]);
         global.set_global_deny(Vec::<String>::new());
         let names = worker_tool_names(&global);
-        assert_eq!(names, vec!["Bash".to_string(), "CreateDoc".to_string(), "Read".to_string()]);
+        assert_eq!(
+            names,
+            vec![
+                "Bash".to_string(),
+                "CreateDoc".to_string(),
+                "Read".to_string()
+            ]
+        );
     }
 
     #[tokio::test]

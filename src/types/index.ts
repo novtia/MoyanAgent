@@ -165,6 +165,12 @@ export interface Settings {
   create_doc_echo_content: boolean;
   /** When true, Edit treats a missing `replace_all` as true. */
   edit_replace_all_default: boolean;
+  /** When true, Read prefixes each returned line with `[P001]`. */
+  read_paragraph_labels: boolean;
+  /** Master switch for the outbound HTTP/SOCKS proxy. */
+  http_proxy_enabled: boolean;
+  /** Proxy URL, e.g. `http://127.0.0.1:7890` or `socks5://127.0.0.1:7891`. */
+  http_proxy_url: string;
 }
 
 /** Builtin API search kinds (local scraping is separate). */
@@ -234,6 +240,9 @@ export interface SettingsPatch {
   disabled_tools?: string[];
   create_doc_echo_content?: boolean;
   edit_replace_all_default?: boolean;
+  read_paragraph_labels?: boolean;
+  http_proxy_enabled?: boolean;
+  http_proxy_url?: string;
 }
 
 /** Static description of a registered agent tool. */
