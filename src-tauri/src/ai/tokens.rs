@@ -279,7 +279,14 @@ fn estimate_timeline_tokens(segments: &[TimelineSegment]) -> i64 {
 pub fn estimate_history_turn_tokens(turn: &HistoryTurn) -> i64 {
     let mut total = MESSAGE_OVERHEAD_TOKENS;
     total += estimate_opt_text(turn.text.as_ref());
-    total += estimate_opt_text(turn.thinking_content.as_ref());
+    // `thinking_content` holds the turn's reasoning concatenated, and the
+    // timeline segments hold the very same text split per round. Providers
+    // send one or the other — the flat field only when there is no timeline to
+    // replay — so charging for both doubles the price of every tool-heavy turn
+    // and makes the trimmer cut far more than it has to.
+    if turn.timeline.is_empty() {
+        total += estimate_opt_text(turn.thinking_content.as_ref());
+    }
     total += estimate_timeline_tokens(&turn.timeline);
     total += turn.images.len() as i64 * IMAGE_TOKENS;
     total

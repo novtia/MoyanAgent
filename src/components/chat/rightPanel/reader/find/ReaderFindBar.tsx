@@ -5,12 +5,13 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useReader } from "../../../../../store/reader";
+import { normalizeReaderPath, useReader } from "../../../../../store/reader";
 import {
   groupFindMatches,
   useReaderFind,
   type ReaderFindScope,
 } from "../../../../../store/readerFind";
+import { useRightPanel } from "../../../../../store/rightPanel";
 import type { ReaderFindBarProps } from "../types";
 import { FindGroupedMatchList } from "./FindGroupedMatchList";
 import { FindMatchList } from "./FindMatchList";
@@ -41,7 +42,16 @@ export function ReaderFindBar({ disabled, disabledReason }: ReaderFindBarProps) 
   const refreshMatches = useReaderFind((s) => s.refreshMatches);
   const goToFile = useReaderFind((s) => s.goToFile);
   const goToMatch = useReaderFind((s) => s.goToMatch);
-  const activeTabId = useReader((s) => s.activeTabId);
+  const boundTabId = useReaderFind((s) => s.boundTabId);
+  const boundPath = useRightPanel((s) =>
+    boundTabId ? (s.tabs.find((tb) => tb.id === boundTabId)?.path ?? null) : null,
+  );
+  // Re-run a file-scope search once the document for this tab is cached.
+  const boundDocId = useReader((s) => {
+    if (!boundPath) return null;
+    const key = normalizeReaderPath(boundPath);
+    return s.tabs.find((doc) => normalizeReaderPath(doc.path) === key)?.id ?? null;
+  });
   const findInputRef = useRef<HTMLInputElement>(null);
   const activeListBtnRef = useRef<HTMLButtonElement>(null);
   const isComposingRef = useRef(false);
@@ -80,7 +90,7 @@ export function ReaderFindBar({ disabled, disabledReason }: ReaderFindBarProps) 
     if (open && scope === "file") {
       void refreshMatches();
     }
-  }, [activeTabId, open, scope, refreshMatches]);
+  }, [boundTabId, boundDocId, open, scope, refreshMatches]);
 
   useEffect(() => {
     if (open) {

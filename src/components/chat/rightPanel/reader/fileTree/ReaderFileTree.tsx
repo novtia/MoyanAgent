@@ -68,11 +68,6 @@ export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) 
   }, [projectId, projects]);
 
   const refresh = useCallback(() => bumpTree(), [bumpTree]);
-  const bindSession = useFileExplorer((s) => s.bindSession);
-
-  useEffect(() => {
-    bindSession(activeId, root);
-  }, [activeId, root, bindSession]);
 
   const expand = useCallback((dir: string) => {
     setExpanded((prev) => {

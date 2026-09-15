@@ -9,7 +9,11 @@ import {
   type ReaderFileTab,
 } from "../../../../../store/reader";
 
-/** Lazily load a restored / freshly-selected file whose content isn't cached yet. */
+/**
+ * Lazily cache a restored / freshly-selected file whose content isn't loaded
+ * yet. Purely a content load: it never focuses a tab or opens the panel, so
+ * restoring a session cannot pop the reader open behind the user's back.
+ */
 export function useLazyLoadFile(
   path: string | null | undefined,
   tab: ReaderFileTab | null,
@@ -24,10 +28,7 @@ export function useLazyLoadFile(
     const fileType = inferFileType(path);
     // Upgrade a stale text tab that was incorrectly opened for a media file.
     if (tab && isMediaFileType(fileType) && !isMediaFileType(tab.fileType)) {
-      openDoc(
-        { path, text: "", fileType, chars: 0, lines: 0 },
-        { activate: true },
-      );
+      openDoc({ path, text: "", fileType, chars: 0, lines: 0 });
       return;
     }
 
@@ -38,38 +39,25 @@ export function useLazyLoadFile(
 
     if (isMediaFileType(fileType)) {
       // Media tabs do not decode bytes — the viewer loads via asset protocol.
-      openDoc(
-        {
-          path,
-          text: "",
-          fileType,
-          chars: 0,
-          lines: 0,
-        },
-        { activate: true },
-      );
+      openDoc({ path, text: "", fileType, chars: 0, lines: 0 });
       return;
     }
 
     api
       .readProjectFile(activeId, path)
       .then(async (file) => {
-        if (cancelled) return;
-        // Activate: the panel is already showing this path, so the reader
-        // store's active tab must match — otherwise find/replace searches and
-        // highlights the wrong file.
-        openDoc(
-          {
-            path,
-            text: file.text,
-            fileType: inferFileType(path),
-            encoding: file.encoding,
-            hadBom: file.hadBom,
-            chars: countWords(file.text),
-            lines: file.text.split("\n").length,
-          },
-          { activate: true },
-        );
+        // Drop the result when the session changed while reading from disk:
+        // another conversation's reader cache must never receive this doc.
+        if (cancelled || useReader.getState().sessionId !== activeId) return;
+        openDoc({
+          path,
+          text: file.text,
+          fileType: inferFileType(path),
+          encoding: file.encoding,
+          hadBom: file.hadBom,
+          chars: countWords(file.text),
+          lines: file.text.split("\n").length,
+        });
         await syncPendingDiffsForPath(activeId, path);
       })
       .catch((err) => {

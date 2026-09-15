@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../store/session";
-import { useReader } from "../../store/reader";
 import { useRightPanel } from "../../store/rightPanel";
 import { dialog } from "../ui";
 import { MessageList } from "./messageList";
@@ -61,15 +60,16 @@ export function ChatView({
   const moreRef = useRef<HTMLDivElement | null>(null);
   const fontRef = useRef<HTMLDivElement | null>(null);
 
-  // Open the right panel whenever a document is sent to the reader (from a
-  // Read tool result or the "open in reader" button on a tool card).
-  const readerOpenSeq = useReader((s) => s.openSeq);
-  const lastReaderSeq = useRef(readerOpenSeq);
+  // Expand the panel when a file is opened through an explicit intent (file
+  // tree, find result, tool card). Passive restores do not bump revealSeq, so
+  // switching sessions never pops the panel open on its own.
+  const revealSeq = useRightPanel((s) => s.revealSeq);
+  const lastRevealSeq = useRef(revealSeq);
   useEffect(() => {
-    if (readerOpenSeq === lastReaderSeq.current) return;
-    lastReaderSeq.current = readerOpenSeq;
+    if (revealSeq === lastRevealSeq.current) return;
+    lastRevealSeq.current = revealSeq;
     setGalleryOpen(true);
-  }, [readerOpenSeq, setGalleryOpen]);
+  }, [revealSeq, setGalleryOpen]);
 
   useEffect(() => {
     if (!moreOpen) return;

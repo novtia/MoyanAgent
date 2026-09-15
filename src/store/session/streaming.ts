@@ -285,22 +285,19 @@ async function handleReaderToolComplete(
 
   if (tool === "CreateDoc") {
     const reader = useReader.getState();
-    // Cache the new file in the reader store but do not steal the visible tab
-    // or bump openSeq — the user may be mid-read in another document.
+    // Cache the new file's content only. Tabs and focus belong to the panel
+    // store — the user may be mid-read in another document.
     const activeSession = useSession.getState().activeId;
     if (path && activeSession) {
       try {
         const disk = await api.readProjectFile(activeSession, path);
-        reader.openDoc(
-          {
-            path,
-            text: disk.text,
-            fileType: inferFileType(path),
-            encoding: disk.encoding,
-            hadBom: disk.hadBom,
-          },
-          { activate: false },
-        );
+        reader.openDoc({
+          path,
+          text: disk.text,
+          fileType: inferFileType(path),
+          encoding: disk.encoding,
+          hadBom: disk.hadBom,
+        });
         return;
       } catch (e) {
         console.warn("CreateDoc: failed to cache reader doc from disk", e);
@@ -311,19 +308,16 @@ async function handleReaderToolComplete(
         ? (input as Record<string, unknown>)
         : {};
     if (path && typeof inp.content === "string") {
-      reader.openDoc(
-        {
-          path,
-          text: stripParagraphLabels(inp.content),
-          fileType: inferFileType(path),
-        },
-        { activate: false },
-      );
+      reader.openDoc({
+        path,
+        text: stripParagraphLabels(inp.content),
+        fileType: inferFileType(path),
+      });
       return;
     }
     // Legacy CreateDoc results still carried `text`.
     const doc = readerDocFromToolOutput(output);
-    if (doc) reader.openDoc(doc, { activate: false });
+    if (doc) reader.openDoc(doc);
     return;
   }
 
@@ -354,16 +348,13 @@ async function handleReaderToolComplete(
         try {
           const disk = await api.readProjectFile(sessionId, path);
           if (!existing) {
-            reader.openDoc(
-              {
-                path,
-                text: disk.text,
-                fileType: inferFileType(path),
-                encoding: disk.encoding,
-                hadBom: disk.hadBom,
-              },
-              { activate: false },
-            );
+            reader.openDoc({
+              path,
+              text: disk.text,
+              fileType: inferFileType(path),
+              encoding: disk.encoding,
+              hadBom: disk.hadBom,
+            });
           } else {
             reader.updateTabText(path, disk.text, { dirty: false });
           }
@@ -421,16 +412,13 @@ async function handleReaderToolComplete(
         : revertStringEdit(diskText, oldString, newString, matchStart, replaceAll);
 
     if (!existing) {
-      reader.openDoc(
-        {
-          path,
-          text: diskText,
-          fileType: inferFileType(path),
-          encoding: diskEncoding,
-          hadBom: diskHadBom,
-        },
-        { activate: false },
-      );
+      reader.openDoc({
+        path,
+        text: diskText,
+        fileType: inferFileType(path),
+        encoding: diskEncoding,
+        hadBom: diskHadBom,
+      });
       existing = reader.getTabByPath(path);
     }
 

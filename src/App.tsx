@@ -17,6 +17,9 @@ import { TitleBar } from "./components/layout/TitleBar";
 import { useSettings } from "./store/settings";
 import { useSession } from "./store/session";
 import { useProject } from "./store/project";
+// Side-effect import: binds right-panel / reader / file-tree state to the
+// active session for the whole app lifetime.
+import "./store/panelBindings";
 import {
   THEME_STORAGE_KEY,
   applyThemeMode,

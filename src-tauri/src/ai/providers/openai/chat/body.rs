@@ -244,25 +244,30 @@ pub(crate) fn history_turn_to_chat_message(
         allow_image_parts,
         false,
     );
-    if matches!(&content, Value::String(s) if s.trim().is_empty()) {
+    // DeepSeek (and compatible providers) require `reasoning_content` to be
+    // echoed back in assistant history turns when the original response
+    // included it; omitting it causes a 400 error.
+    let thinking = if role == "assistant" {
+        turn.thinking_content
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    } else {
+        None
+    };
+    // An assistant turn that was interrupted mid-tool-loop has reasoning but no
+    // prose reply. Dropping it for want of visible text is how a stopped turn
+    // disappeared from the next request entirely; `content: ""` is the same
+    // shape `append_openai_assistant_text_turn` uses for thinking-only turns.
+    if matches!(&content, Value::String(s) if s.trim().is_empty()) && thinking.is_none() {
         return None;
     }
 
     let mut msg = json!({ "role": role, "content": content });
-    // DeepSeek (and compatible providers) require `reasoning_content` to be
-    // echoed back in assistant history turns when the original response
-    // included it; omitting it causes a 400 error.
-    if role == "assistant" {
-        if let Some(t) = turn
-            .thinking_content
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            msg.as_object_mut()
-                .unwrap()
-                .insert("reasoning_content".into(), json!(t));
-        }
+    if let Some(thinking) = thinking {
+        msg.as_object_mut()
+            .unwrap()
+            .insert("reasoning_content".into(), json!(thinking));
     }
     Some(msg)
 }

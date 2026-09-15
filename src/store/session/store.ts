@@ -14,7 +14,7 @@ import {
   composerModeFromAgentType,
 } from "../../config/chatMode";
 import { useRoleState } from "../roleState";
-import { useReader, syncPendingDiffsForSession, clearPersistedReaderTabs } from "../reader";
+import { syncPendingDiffsForSession, clearPersistedReaderTabs } from "../reader";
 import { useRightPanel } from "../rightPanel";
 import { playNotifySound } from "../notifySound";
 import {
@@ -367,8 +367,8 @@ export const useSession = create<SessionStore>((set, get) => {
       },
     });
     void useRoleState.getState().loadLatest(id, roleStateScopeForSession(id));
-    useReader.getState().bindSession(id);
-    useRightPanel.getState().bindSession(id);
+    // Reader / right-panel binding is driven by `store/panelBindings.ts`,
+    // which subscribes to `activeId` so every entry point stays consistent.
     void syncPendingDiffsForSession(id);
   },
 
@@ -422,8 +422,6 @@ export const useSession = create<SessionStore>((set, get) => {
           busy: false,
           pendingAskUser: null,
         });
-        useReader.getState().bindSession(null);
-        useRightPanel.getState().bindSession(null);
       }
     }
     useRightPanel.getState().forgetSession(id);

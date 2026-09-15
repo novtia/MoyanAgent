@@ -10,6 +10,7 @@ import {
 } from "../utils/readerFind";
 import { normalizeReaderPath, readerFileName, useReader, inferFileType } from "./reader";
 import { useProject } from "./project";
+import { openFileInPanel, useRightPanel } from "./rightPanel";
 import { useSession } from "./session";
 
 export type ReaderFindScope = "file" | "all";
@@ -113,7 +114,26 @@ interface SearchTarget {
   inTab: boolean;
 }
 
+/** The slice of find state that belongs to one panel tab. */
+interface FindSlice {
+  open: boolean;
+  query: string;
+  replaceWith: string;
+  matchCase: boolean;
+  scope: ReaderFindScope;
+}
+
+const DEFAULT_SLICE: FindSlice = {
+  open: false,
+  query: "",
+  replaceWith: "",
+  matchCase: false,
+  scope: "file",
+};
+
 interface ReaderFindStore {
+  /** Panel tab whose find state is currently loaded (null = none bound). */
+  boundTabId: string | null;
   open: boolean;
   showReplace: boolean;
   query: string;
@@ -125,6 +145,10 @@ interface ReaderFindStore {
   navEpoch: number;
   matches: ReaderFindMatch[];
   searching: boolean;
+  /** Swap in the find state owned by `tabId` (saving the outgoing tab's). */
+  bindTab: (tabId: string | null) => void;
+  /** Forget every tab's find state (session switch). */
+  reset: () => void;
   openFind: (opts?: { replace?: boolean }) => void;
   close: () => void;
   setQuery: (query: string) => void;
@@ -171,18 +195,19 @@ async function buildSearchTargets(
   scope: ReaderFindScope,
   sessionId: string | null,
   projectRoot: string | null,
+  /** Path of the panel tab the find bar is bound to (file-scope target). */
+  boundPath: string | null,
 ): Promise<SearchTarget[]> {
   const reader = useReader.getState();
-  const activeTab =
-    reader.tabs.find((t) => t.id === reader.activeTabId) ?? reader.tabs[0] ?? null;
 
   if (scope === "file") {
-    if (!activeTab) return [];
+    const doc = boundPath ? reader.getTabByPath(boundPath) : undefined;
+    if (!doc) return [];
     return [
       {
-        tabId: activeTab.id,
-        path: activeTab.path,
-        text: activeTab.text,
+        tabId: doc.id,
+        path: doc.path,
+        text: doc.text,
         inTab: true,
       },
     ];
@@ -258,12 +283,26 @@ function resolveProjectRoot(): string | null {
 function activateMatch(match: ReaderFindMatch | null) {
   if (!match) return;
   const reader = useReader.getState();
-  const tab = reader.getTabByPath(match.path);
-  if (!tab && reader.sessionId) {
+  const sessionId = reader.sessionId;
+
+  // Focus the panel tab for this file (creating one when the match came from a
+  // project-wide search). When that moves focus to a different tab, the
+  // in-progress query travels with it instead of being replaced by that tab's
+  // own last search.
+  const panel = useRightPanel.getState();
+  const key = normalizeReaderPath(match.path);
+  const target = panel.tabs.find(
+    (tb) => tb.kind === "reader" && !!tb.path && normalizeReaderPath(tb.path) === key,
+  );
+  carrySlice =
+    !target || target.id !== panel.activeTabId ? sliceOf(useReaderFind.getState()) : null;
+  openFileInPanel(match.path, { reveal: true, sessionId });
+
+  if (!reader.getTabByPath(match.path) && sessionId) {
     void (async () => {
       try {
-        const file = await api.readProjectFile(reader.sessionId!, match.path);
-        // openDoc(activate) bumps openSeq → panel chrome focuses this path.
+        const file = await api.readProjectFile(sessionId, match.path);
+        if (useReader.getState().sessionId !== sessionId) return;
         useReader.getState().openDoc({
           path: match.path,
           text: file.text,
@@ -275,12 +314,39 @@ function activateMatch(match: ReaderFindMatch | null) {
         /* ignore */
       }
     })();
-    return;
   }
-  if (tab) {
-    // revealTab bumps openSeq so panel chrome follows find navigation.
-    reader.revealTab(tab.id);
-  }
+}
+
+function sliceOf(s: FindSlice): FindSlice {
+  return {
+    open: s.open,
+    query: s.query,
+    replaceWith: s.replaceWith,
+    matchCase: s.matchCase,
+    scope: s.scope,
+  };
+}
+
+/** In-memory find state per panel tab (mirrored into the tab's view state). */
+const slices = new Map<string, FindSlice>();
+/**
+ * Set right before find navigation moves focus to another tab, so the newly
+ * bound tab adopts the running search instead of its own stale slice.
+ */
+let carrySlice: FindSlice | null = null;
+
+function loadSlice(tabId: string): FindSlice {
+  const mem = slices.get(tabId);
+  if (mem) return mem;
+  const stored = useRightPanel.getState().tabs.find((tb) => tb.id === tabId)?.view?.find;
+  return stored ? { ...DEFAULT_SLICE, ...stored } : DEFAULT_SLICE;
+}
+
+/** File-scope search target: the path held by the bound panel tab. */
+function boundTabPath(tabId: string | null): string | null {
+  if (!tabId) return null;
+  const tab = useRightPanel.getState().tabs.find((tb) => tb.id === tabId);
+  return tab?.kind === "reader" ? (tab.path ?? null) : null;
 }
 
 function resolveMatchIndexAfterRefresh(
@@ -338,6 +404,7 @@ function applyTextToTarget(
 }
 
 export const useReaderFind = create<ReaderFindStore>((set, get) => ({
+  boundTabId: null,
   open: false,
   showReplace: false,
   query: "",
@@ -348,6 +415,61 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
   navEpoch: 0,
   matches: [],
   searching: false,
+
+  bindTab: (tabId) => {
+    const prevTabId = get().boundTabId;
+    if (prevTabId === tabId) {
+      carrySlice = null;
+      return;
+    }
+    if (prevTabId) {
+      const slice = sliceOf(get());
+      slices.set(prevTabId, slice);
+      useRightPanel.getState().updateTabView(prevTabId, { find: slice });
+    }
+    const carried = carrySlice;
+    carrySlice = null;
+    if (!tabId) {
+      set({
+        boundTabId: null,
+        ...DEFAULT_SLICE,
+        showReplace: false,
+        matchIndex: -1,
+        matches: [],
+        searching: false,
+      });
+      return;
+    }
+    if (carried) {
+      // Find navigation moved focus to this tab: same search, so keep the
+      // result list and the position the user just navigated to.
+      set({ boundTabId: tabId, ...carried });
+      return;
+    }
+    const next = loadSlice(tabId);
+    set({
+      boundTabId: tabId,
+      ...next,
+      showReplace: false,
+      matchIndex: -1,
+      matches: [],
+      searching: false,
+    });
+    if (next.open && next.query) void get().refreshMatches();
+  },
+
+  reset: () => {
+    slices.clear();
+    carrySlice = null;
+    set({
+      boundTabId: null,
+      ...DEFAULT_SLICE,
+      showReplace: false,
+      matchIndex: -1,
+      matches: [],
+      searching: false,
+    });
+  },
 
   openFind: (opts) => {
     set({
@@ -365,6 +487,12 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
       matchIndex: -1,
       matches: [],
     });
+    const tabId = get().boundTabId;
+    if (tabId) {
+      const slice = sliceOf(get());
+      slices.set(tabId, slice);
+      useRightPanel.getState().updateTabView(tabId, { find: slice });
+    }
   },
 
   setQuery: (query) => {
@@ -389,10 +517,17 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
     if (!open) return;
     const prev = get().getActiveMatch();
     const sessionId = useReader.getState().sessionId;
+    const tabId = get().boundTabId;
     set({ searching: true });
     try {
       const projectRoot = scope === "all" && sessionId ? resolveProjectRoot() : null;
-      const targets = await buildSearchTargets(scope, sessionId, projectRoot);
+      const targets = await buildSearchTargets(scope, sessionId, projectRoot, boundTabPath(tabId));
+      // Bail out if the user switched tab / session while we were scanning:
+      // those results belong to a search the user has already left behind.
+      if (get().boundTabId !== tabId || useReader.getState().sessionId !== sessionId) {
+        set({ searching: false });
+        return;
+      }
       const matches = buildMatches(targets, query, matchCase);
       const matchIndex = resolveMatchIndexAfterRefresh(matches, prev, prevIndex);
       set({
@@ -497,7 +632,12 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
     if (!query) return;
     const sessionId = useReader.getState().sessionId;
     const projectRoot = scope === "all" && sessionId ? resolveProjectRoot() : null;
-    const targets = await buildSearchTargets(scope, sessionId, projectRoot);
+    const targets = await buildSearchTargets(
+      scope,
+      sessionId,
+      projectRoot,
+      boundTabPath(get().boundTabId),
+    );
     for (const target of targets) {
       const ranges = findInText(target.text, query, matchCase);
       if (ranges.length === 0) continue;
@@ -511,3 +651,20 @@ export const useReaderFind = create<ReaderFindStore>((set, get) => ({
     await get().refreshMatches();
   },
 }));
+
+// Mirror every edit of the visible find state into the bound tab's slice, so
+// switching tabs (or reopening the find bar) restores exactly that tab's search.
+useReaderFind.subscribe((s, prev) => {
+  const tabId = s.boundTabId;
+  if (!tabId || tabId !== prev.boundTabId) return;
+  if (
+    s.open === prev.open &&
+    s.query === prev.query &&
+    s.replaceWith === prev.replaceWith &&
+    s.matchCase === prev.matchCase &&
+    s.scope === prev.scope
+  ) {
+    return;
+  }
+  slices.set(tabId, sliceOf(s));
+});

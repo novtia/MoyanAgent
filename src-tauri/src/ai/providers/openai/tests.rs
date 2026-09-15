@@ -696,6 +696,43 @@ fn assistant_tool_turn_skips_blank_thinking_without_payload() {
     assert!(messages.is_empty());
 }
 
+/// A turn stopped mid-tool-loop has reasoning but never got to a prose reply.
+/// Dropping it for want of visible text erased the whole turn from the next
+/// request, so the model could not remember what it had just been doing.
+#[test]
+fn thinking_only_assistant_history_turn_is_kept() {
+    use super::chat::body::history_turn_to_chat_message;
+    use crate::ai::chat::HistoryTurn;
+
+    let turn = HistoryTurn {
+        role: "assistant".into(),
+        text: None,
+        images: Vec::new(),
+        thinking_content: Some("被中断前的推理".into()),
+        timeline: Vec::new(),
+    };
+    let msg = history_turn_to_chat_message(&turn, true).expect("turn must survive");
+    assert_eq!(msg["role"], "assistant");
+    // Empty string (not null): DeepSeek requires content or tool_calls.
+    assert_eq!(msg["content"], "");
+    assert_eq!(msg["reasoning_content"], "被中断前的推理");
+}
+
+#[test]
+fn blank_assistant_history_turn_without_thinking_is_still_dropped() {
+    use super::chat::body::history_turn_to_chat_message;
+    use crate::ai::chat::HistoryTurn;
+
+    let turn = HistoryTurn {
+        role: "assistant".into(),
+        text: Some("   ".into()),
+        images: Vec::new(),
+        thinking_content: None,
+        timeline: Vec::new(),
+    };
+    assert!(history_turn_to_chat_message(&turn, true).is_none());
+}
+
 #[test]
 fn set_streaming_requests_include_usage_for_chat() {
     let mut body = json!({ "model": "doubao", "messages": [] });

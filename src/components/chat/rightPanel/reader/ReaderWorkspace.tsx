@@ -17,7 +17,10 @@ import {
   syncPendingDiffsForPath,
   useReader,
 } from "../../../../store/reader";
+import { useReaderFind } from "../../../../store/readerFind";
 import { useSession } from "../../../../store/session";
+import { usePanelTab } from "../context/PanelTabContext";
+import { DEFAULT_RATIO } from "./constants";
 import { ReaderFilePane } from "./components/ReaderFilePane";
 import { ReaderToolbar } from "./components/ReaderToolbar";
 import { ReaderFileTree } from "./fileTree/ReaderFileTree";
@@ -32,6 +35,7 @@ export type { ReaderWorkspaceProps } from "./types";
 
 export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
   const { t } = useTranslation();
+  const { tabId, isActive } = usePanelTab();
   const activeId = useSession((s) => s.activeId);
   const tabs = useReader((s) => s.tabs);
 
@@ -45,7 +49,14 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
   const isMedia = isMediaFileType(tab?.fileType);
   const hasPendingDiff = !isMedia && (tab?.pendingDiffs.length ?? 0) > 0;
 
-  useReaderFindShortcuts(!!tab);
+  // Find belongs to the visible tab: bind it here, and only listen for the
+  // shortcut while this pane is the active one.
+  const bindFindTab = useReaderFind((s) => s.bindTab);
+  useEffect(() => {
+    if (isActive) bindFindTab(tabId);
+  }, [isActive, tabId, bindFindTab]);
+
+  useReaderFindShortcuts(isActive && !!tab);
 
   const {
     ratio,
@@ -62,17 +73,8 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
     toggleSearch,
   } = useReaderSplit(!!isMarkdown, path);
 
-  const { canBack, canForward, goBack, goForward } = useReaderNavHistory(path, onOpenFile);
+  const { canBack, canForward, goBack, goForward } = useReaderNavHistory(path);
   const loadError = useLazyLoadFile(path, tab, activeId);
-  const setActiveTab = useReader((s) => s.setActiveTab);
-  const readerActiveTabId = useReader((s) => s.activeTabId);
-
-  // Keep reader.activeTabId aligned with the panel-visible path so find/replace
-  // (file scope) always searches the document the user is looking at.
-  useEffect(() => {
-    if (!tab || tab.id === readerActiveTabId) return;
-    setActiveTab(tab.id);
-  }, [tab, readerActiveTabId, setActiveTab]);
 
   // Re-open / switch path: restore Keep/Undo from backend (authoritative).
   useEffect(() => {
@@ -81,8 +83,9 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
   }, [path, tab?.id, activeId, isMedia]);
 
   useEffect(() => {
-    if (loadError) toast.error(t("fileExplorer.openFailed"), { description: loadError });
-  }, [loadError, t]);
+    if (!isActive || !loadError) return;
+    toast.error(t("fileExplorer.openFailed"), { description: loadError });
+  }, [isActive, loadError, t]);
 
   const fileName = path ? readerFileName(path) : "";
   const hasFile = !!path;
@@ -133,6 +136,9 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
   );
 
   const bothPanes = hasFile && showTree;
+  // The find bar is a single shared surface bound to the active tab; a hidden
+  // pane falls back to its file tree and restores the search on re-activation.
+  const showFindPane = rightView === "search" && isActive;
 
   const editorNode = (
     <div
@@ -153,7 +159,7 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
 
   const rightNode = (
     <div className="reader-split-tree" style={bothPanes ? { flex: "1 1 0" } : undefined}>
-      {rightView === "search" ? (
+      {showFindPane ? (
         <div className="reader-search-pane">
           <ReaderFindBar
             disabled={hasPendingDiff}
@@ -208,14 +214,14 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
                   e.preventDefault();
                   setResizing(true);
                 }}
-                onDoubleClick={() => setRatio(0.58)}
+                onDoubleClick={() => setRatio(DEFAULT_RATIO)}
               />
             )}
             {bothPanes && rightNode}
           </>
         ) : (
           <div className="reader-split-tree reader-split-tree--full">
-            {rightView === "search" ? (
+            {showFindPane ? (
               <div className="reader-search-pane">
                 <ReaderFindBar />
               </div>
@@ -227,9 +233,4 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
       </div>
     </div>
   );
-}
-
-/** @deprecated Use ReaderWorkspace */
-export function DocumentReader() {
-  return <ReaderWorkspace onOpenFile={() => {}} />;
 }

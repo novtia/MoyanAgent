@@ -252,7 +252,12 @@ fn stamp_property_ordering(schema: &mut serde_json::Value) {
     if !declared.is_empty() && !obj.contains_key("propertyOrdering") {
         obj.insert(
             "propertyOrdering".into(),
-            serde_json::Value::Array(declared.into_iter().map(serde_json::Value::String).collect()),
+            serde_json::Value::Array(
+                declared
+                    .into_iter()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
         );
     }
 

@@ -1,4 +1,4 @@
-export { ReaderWorkspace, DocumentReader } from "./ReaderWorkspace";
+export { ReaderWorkspace } from "./ReaderWorkspace";
 export { ReaderEditor } from "./ReaderEditor";
 export { ReaderFileTree } from "./fileTree/ReaderFileTree";
 export { ReaderFindBar, useReaderFindShortcuts } from "./find/ReaderFindBar";

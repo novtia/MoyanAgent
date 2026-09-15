@@ -13,7 +13,26 @@ use super::state::AppState;
 /// the user's new message and the completion reservation. In-session
 /// compaction cannot help here: it rewrites the in-memory request only, and
 /// every new user message rebuilds the history from these rows again.
-const HISTORY_BUDGET_RATIO: f64 = 0.5;
+///
+/// Sits below the 0.85 hard ceiling `enforce_request_budget` applies to the
+/// whole request, which is the real backstop; keeping this much lower than
+/// that only meant a tool-heavy previous turn got shredded long before the
+/// request was actually in danger.
+const HISTORY_BUDGET_RATIO: f64 = 0.65;
+
+/// Tool-result size caps, in estimated tokens, tried in order while replayed
+/// history is over budget. A manuscript the model re-read four times is the
+/// usual culprit, and middle-elision keeps both ends plus the metadata
+/// (`path`, ranges) it reasons about.
+const TOOL_RESULT_CAPS: [i64; 5] = [8_000, 4_000, 2_000, 1_000, 400];
+
+/// Tool-argument caps, tried after results and with a far higher floor: an
+/// `Edit` / `Write` call carries the prose the model just drafted, so cutting
+/// it is precisely what makes a resumed turn forget its own work.
+const TOOL_ARG_CAPS: [i64; 3] = [16_000, 8_000, 4_000];
+
+/// Longest argument hint kept when a tool round is collapsed to a note.
+const CALL_HINT_CHARS: usize = 60;
 
 /// Token budget for replayed history, derived from the session's context
 /// window. `None` (unknown window) means no token-based trimming.
@@ -91,11 +110,21 @@ pub(crate) fn build_history(
 ///
 /// `max_messages` bounds the *count* of turns, not their size — a single
 /// assistant turn carrying a long tool transcript can be worth more than the
-/// whole rest of the window. Tool rounds go first, oldest turn first, because
-/// they are bulky and their conclusions are already restated in the prose
-/// reply; only if that is not enough do whole turns get dropped.
+/// whole rest of the window.
+///
+/// Degrades in stages, cheapest loss first, always oldest turn first:
+///
+/// 1. shrink tool **output**, which is where the bulk actually is;
+/// 2. shrink oversized tool **arguments**, with a much higher floor;
+/// 3. collapse whole tool rounds into a prose note that keeps the round's
+///    reasoning;
+/// 4. drop whole turns.
+///
+/// Reasoning is never discarded on its own: models that run in thinking mode
+/// degrade badly when a replayed turn loses the thinking that produced it, so
+/// it only goes when its entire turn goes at stage 4.
 fn trim_history_to_budget(turns: &mut Vec<chat::HistoryTurn>, budget: i64) {
-    use crate::ai::tokens::estimate_history_turn_tokens;
+    use crate::ai::tokens::{estimate_history_turn_tokens, truncate_tool_content};
 
     if budget <= 0 {
         return;
@@ -105,20 +134,53 @@ fn trim_history_to_budget(turns: &mut Vec<chat::HistoryTurn>, budget: i64) {
         return;
     }
 
+    for cap in TOOL_RESULT_CAPS {
+        for turn in turns.iter_mut() {
+            if total <= budget {
+                return;
+            }
+            let before = estimate_history_turn_tokens(turn);
+            for seg in turn.timeline.iter_mut() {
+                if let chat::TimelineSegment::ToolRound { results, .. } = seg {
+                    for result in results.iter_mut() {
+                        truncate_tool_content(&mut result.content, cap);
+                    }
+                }
+            }
+            total -= before - estimate_history_turn_tokens(turn);
+        }
+    }
+
+    for cap in TOOL_ARG_CAPS {
+        for turn in turns.iter_mut() {
+            if total <= budget {
+                return;
+            }
+            let before = estimate_history_turn_tokens(turn);
+            for seg in turn.timeline.iter_mut() {
+                if let chat::TimelineSegment::ToolRound { calls, .. } = seg {
+                    for call in calls.iter_mut() {
+                        truncate_tool_content(&mut call.arguments, cap);
+                    }
+                }
+            }
+            total -= before - estimate_history_turn_tokens(turn);
+        }
+    }
+
     for turn in turns.iter_mut() {
         if total <= budget {
             return;
         }
-        let has_tool_rounds = turn
+        if !turn
             .timeline
             .iter()
-            .any(|s| matches!(s, chat::TimelineSegment::ToolRound { .. }));
-        if !has_tool_rounds {
+            .any(|s| matches!(s, chat::TimelineSegment::ToolRound { .. }))
+        {
             continue;
         }
         let before = estimate_history_turn_tokens(turn);
-        turn.timeline
-            .retain(|s| matches!(s, chat::TimelineSegment::Text { .. }));
+        collapse_tool_rounds(turn);
         total -= before - estimate_history_turn_tokens(turn);
     }
 
@@ -130,6 +192,88 @@ fn trim_history_to_budget(turns: &mut Vec<chat::HistoryTurn>, budget: i64) {
         drop_count += 1;
     }
     turns.drain(..drop_count);
+}
+
+/// Replace a turn's `ToolRound` segments with `Text` segments naming the calls
+/// that ran and carrying the round's reasoning forward.
+///
+/// Deleting the rounds outright is what used to happen, and it silently erased
+/// the whole turn: a turn that was interrupted mid-tool-loop has no prose reply
+/// either, so it ended up with an empty timeline *and* empty text — and every
+/// provider's history serializer drops an assistant message with no content.
+fn collapse_tool_rounds(turn: &mut chat::HistoryTurn) {
+    let mut out: Vec<chat::TimelineSegment> = Vec::with_capacity(turn.timeline.len());
+    for seg in std::mem::take(&mut turn.timeline) {
+        let (assistant_text, thinking_content, calls, results) = match seg {
+            chat::TimelineSegment::ToolRound {
+                assistant_text,
+                thinking_content,
+                calls,
+                results,
+            } => (assistant_text, thinking_content, calls, results),
+            other => {
+                out.push(other);
+                continue;
+            }
+        };
+        let mut lines: Vec<String> = Vec::new();
+        if let Some(text) = assistant_text
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            lines.push(text.to_string());
+        }
+        if !calls.is_empty() {
+            let names: Vec<String> = calls
+                .iter()
+                .map(|call| {
+                    let failed = results
+                        .iter()
+                        .any(|r| r.tool_call_id == call.id && r.is_error);
+                    let summary = summarize_tool_call(call);
+                    if failed {
+                        format!("{summary} → 失败")
+                    } else {
+                        summary
+                    }
+                })
+                .collect();
+            lines.push(format!(
+                "<elided-tool-round>本轮调用了 {}。工具的输出已因上下文长度省略，需要时请重新调用。</elided-tool-round>",
+                names.join("、")
+            ));
+        }
+        if lines.is_empty() && thinking_content.is_none() {
+            continue;
+        }
+        out.push(chat::TimelineSegment::Text {
+            text: lines.join("\n"),
+            thinking_content,
+        });
+    }
+    turn.timeline = out;
+}
+
+/// `Edit(第四章.txt)` — tool name plus the one argument that identifies what it
+/// acted on, so a collapsed round still says *what* the model did.
+fn summarize_tool_call(call: &chat::TimelineToolCall) -> String {
+    let hint = ["path", "file_path", "pattern", "command", "query", "url"]
+        .iter()
+        .find_map(|key| call.arguments.get(*key).and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            if s.chars().count() > CALL_HINT_CHARS {
+                format!("{}…", s.chars().take(CALL_HINT_CHARS).collect::<String>())
+            } else {
+                s.to_string()
+            }
+        });
+    match hint {
+        Some(hint) => format!("{}({hint})", call.name),
+        None => call.name.clone(),
+    }
 }
 
 /// First history index to send, keeping at most `max_messages` entries.
@@ -367,7 +511,7 @@ mod window_tests {
 #[cfg(test)]
 mod budget_tests {
     use super::{history_token_budget, trim_history_to_budget};
-    use crate::ai::chat::{HistoryTurn, TimelineSegment, TimelineToolResult};
+    use crate::ai::chat::{HistoryTurn, TimelineSegment, TimelineToolCall, TimelineToolResult};
     use crate::ai::tokens::estimate_history_turn_tokens;
 
     fn tool_turn(prose: &str, tool_output_chars: usize) -> HistoryTurn {
@@ -399,9 +543,58 @@ mod budget_tests {
         turns.iter().map(estimate_history_turn_tokens).sum()
     }
 
+    /// An assistant turn stopped mid-tool-loop: reasoning and tool calls, but
+    /// never a prose reply.
+    fn interrupted_turn(draft: &str, tool_output_chars: usize) -> HistoryTurn {
+        HistoryTurn {
+            role: "assistant".into(),
+            text: None,
+            images: Vec::new(),
+            thinking_content: Some("盘算了很久".into()),
+            timeline: vec![TimelineSegment::ToolRound {
+                assistant_text: None,
+                thinking_content: Some("盘算了很久".into()),
+                calls: vec![TimelineToolCall {
+                    id: "1".into(),
+                    name: "Edit".into(),
+                    arguments: serde_json::json!({
+                        "path": "第四章.txt",
+                        "new_string": draft,
+                    }),
+                    thought_signature: None,
+                }],
+                results: vec![TimelineToolResult {
+                    tool_call_id: "1".into(),
+                    content: serde_json::Value::String("z".repeat(tool_output_chars)),
+                    is_error: true,
+                }],
+            }],
+        }
+    }
+
+    fn rendered(turn: &HistoryTurn) -> String {
+        turn.timeline
+            .iter()
+            .map(|seg| match seg {
+                TimelineSegment::Text { text, .. } => text.clone(),
+                TimelineSegment::ToolRound { calls, results, .. } => {
+                    let mut s = String::new();
+                    for call in calls {
+                        s.push_str(&call.arguments.to_string());
+                    }
+                    for result in results {
+                        s.push_str(&result.content.to_string());
+                    }
+                    s
+                }
+                TimelineSegment::AgentStage { .. } => String::new(),
+            })
+            .collect()
+    }
+
     #[test]
-    fn budget_is_half_the_window_and_absent_when_unknown() {
-        assert_eq!(history_token_budget(Some(1_000_000)), Some(500_000));
+    fn budget_is_a_fixed_share_of_the_window_and_absent_when_unknown() {
+        assert_eq!(history_token_budget(Some(1_000_000)), Some(650_000));
         assert_eq!(history_token_budget(None), None);
         assert_eq!(history_token_budget(Some(0)), None);
     }
@@ -418,15 +611,143 @@ mod budget_tests {
     /// Ten messages of prose fit anywhere; ten messages each dragging a large
     /// tool transcript are what actually blow the window.
     #[test]
-    fn tool_transcripts_are_dropped_before_whole_turns() {
+    fn tool_transcripts_are_shrunk_before_whole_turns() {
         let mut turns: Vec<HistoryTurn> = (0..10).map(|_| tool_turn("summary", 40_000)).collect();
         trim_history_to_budget(&mut turns, 5_000);
         assert_eq!(turns.len(), 10, "prose turns should survive");
         assert!(total(&turns) <= 5_000);
-        assert!(turns.iter().all(|t| t
+        assert!(
+            turns.iter().all(|t| t
+                .timeline
+                .iter()
+                .any(|s| matches!(s, TimelineSegment::Text { text, .. } if text == "summary"))),
+            "the prose reply of every turn must survive"
+        );
+    }
+
+    /// The regression this staging exists for: the model drafts prose inside an
+    /// `Edit` call, the turn is interrupted, and the next request has to still
+    /// contain that draft. Tool *output* is the bulk and goes first.
+    #[test]
+    fn a_drafted_edit_survives_while_tool_output_is_shrunk() {
+        let draft = "云若雪".repeat(2_000);
+        let mut turns = vec![interrupted_turn(&draft, 200_000)];
+        trim_history_to_budget(&mut turns, 20_000);
+
+        assert!(total(&turns) <= 20_000);
+        let text = rendered(&turns[0]);
+        assert!(
+            text.contains(&"云若雪".repeat(500)),
+            "the drafted prose must survive the trim"
+        );
+        assert_eq!(
+            turns[0].thinking_content.as_deref(),
+            Some("盘算了很久"),
+            "reasoning is never discarded on its own"
+        );
+    }
+
+    /// A turn with tool rounds and no prose reply must not trim down to
+    /// nothing: an empty timeline plus empty text is dropped outright by every
+    /// provider's history serializer, which is how a stopped turn used to
+    /// vanish from the next request.
+    #[test]
+    fn an_interrupted_tool_only_turn_never_collapses_to_nothing() {
+        let mut turns = vec![interrupted_turn(&"墨".repeat(40_000), 200_000)];
+        trim_history_to_budget(&mut turns, 600);
+
+        assert_eq!(turns.len(), 1);
+        assert!(total(&turns) <= 600);
+        let turn = &turns[0];
+        assert!(!turn.timeline.is_empty(), "the turn must stay renderable");
+        let text = rendered(turn);
+        assert!(text.contains("Edit(第四章.txt)"), "got {text:?}");
+        assert!(text.contains("失败"), "a failed call must read as failed");
+        assert!(turn
             .timeline
             .iter()
-            .all(|s| matches!(s, TimelineSegment::Text { .. }))));
+            .any(|s| matches!(s, TimelineSegment::Text { thinking_content: Some(t), .. } if t == "盘算了很久")));
+    }
+
+    /// The reported session, to scale: a 128k window, nine tool rounds whose
+    /// reasoning alone runs to ~61k tokens, the same 20k-character chapter read
+    /// four times, and one `Edit` carrying ~10.8k characters of drafted prose.
+    /// Under the old trimmer the whole turn came back empty.
+    #[test]
+    fn a_real_interrupted_writing_turn_keeps_its_draft_and_reasoning() {
+        let chapter = "章".repeat(20_000);
+        let draft = "稿".repeat(10_801);
+        let round = |thinking_chars: usize, call: TimelineToolCall, output: &str| {
+            TimelineSegment::ToolRound {
+                assistant_text: None,
+                thinking_content: Some("思".repeat(thinking_chars)),
+                calls: vec![call],
+                results: vec![TimelineToolResult {
+                    tool_call_id: "x".into(),
+                    content: serde_json::Value::String(output.into()),
+                    is_error: false,
+                }],
+            }
+        };
+        let read = |id: &str| TimelineToolCall {
+            id: id.into(),
+            name: "Read".into(),
+            arguments: serde_json::json!({ "path": "第四章.txt" }),
+            thought_signature: None,
+        };
+        let mut timeline = vec![
+            round(20_000, read("r1"), &chapter),
+            round(
+                20_000,
+                TimelineToolCall {
+                    id: "e1".into(),
+                    name: "Edit".into(),
+                    arguments: serde_json::json!({
+                        "path": "第四章.txt",
+                        "old_string": "澈儿你听着",
+                        "new_string": draft,
+                    }),
+                    thought_signature: None,
+                },
+                "Edit: `old_string` not found",
+            ),
+        ];
+        for id in ["r2", "r3", "r4"] {
+            timeline.push(round(7_000, read(id), &chapter));
+        }
+        let mut turns = vec![
+            HistoryTurn {
+                role: "user".into(),
+                text: Some("阅读要求内容完成第四章后续。".into()),
+                images: Vec::new(),
+                thinking_content: None,
+                timeline: Vec::new(),
+            },
+            HistoryTurn {
+                role: "assistant".into(),
+                text: None,
+                images: Vec::new(),
+                thinking_content: Some("思".repeat(61_000)),
+                timeline,
+            },
+        ];
+
+        let budget = history_token_budget(Some(128_000)).unwrap();
+        trim_history_to_budget(&mut turns, budget);
+
+        assert_eq!(turns.len(), 2, "both turns must survive");
+        assert!(total(&turns) <= budget);
+        let text = rendered(&turns[1]);
+        assert!(text.contains(&draft), "the full draft must reach the model");
+        assert!(
+            turns[1]
+                .timeline
+                .iter()
+                .filter(|s| matches!(s, TimelineSegment::ToolRound { .. }))
+                .count()
+                == 5,
+            "no round should have been collapsed"
+        );
     }
 
     #[test]

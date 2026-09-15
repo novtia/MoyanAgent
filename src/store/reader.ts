@@ -80,21 +80,20 @@ export type ReaderPathOp =
   | { type: "remap"; from: string; to: string }
   | { type: "close"; paths: string[] };
 
+/**
+ * Per-session cache of loaded documents. It owns file *content* (text,
+ * encoding, pending diffs, dirty flags) — never which tab is on screen: the
+ * right-panel store is the single source of truth for tabs and activation.
+ */
 interface ReaderStore {
   sessionId: string | null;
   tabs: ReaderFileTab[];
-  activeTabId: string | null;
-  openSeq: number;
   /** Bumps whenever open file paths are remapped or closed due to FS ops. */
   pathSeq: number;
   lastPathOps: ReaderPathOp[];
   bindSession: (sessionId: string | null) => void;
-  openDoc: (doc: ReaderDoc, opts?: { activate?: boolean }) => void;
-  closeTab: (id: string) => void;
-  /** Switch the active reader tab without forcing panel chrome to follow. */
-  setActiveTab: (id: string) => void;
-  /** Activate a tab and bump openSeq so the right-panel chrome focuses its path. */
-  revealTab: (id: string) => void;
+  /** Insert or refresh the cached document for `doc.path`. */
+  openDoc: (doc: ReaderDoc) => void;
   updateTabText: (path: string, text: string, opts?: { dirty?: boolean }) => void;
   setTabDirty: (path: string, dirty: boolean, saveError?: boolean) => void;
   appendPendingDiff: (
@@ -117,7 +116,6 @@ interface ReaderStore {
   remapPaths: (pairs: { from: string; to: string }[]) => void;
   /** Close open tabs for deleted files/folders (exact path or nested under). */
   closeByPaths: (paths: string[]) => void;
-  clear: () => void;
 }
 
 const STORAGE_PREFIX = "atelier:reader-file-tabs:";
@@ -351,108 +349,6 @@ function docToTab(doc: ReaderDoc): ReaderFileTab {
   };
 }
 
-type PersistedTab = Pick<
-  ReaderFileTab,
-  | "path"
-  | "text"
-  | "fileType"
-  | "encoding"
-  | "hadBom"
-  | "chars"
-  | "lines"
-  | "bytes"
-  | "truncated"
->;
-
-function loadPersisted(sessionId: string | null): {
-  tabs: ReaderFileTab[];
-  activeTabId: string | null;
-} {
-  if (!sessionId || typeof window === "undefined") {
-    return { tabs: [], activeTabId: null };
-  }
-  try {
-    const raw = window.localStorage.getItem(`${STORAGE_PREFIX}${sessionId}`);
-    if (!raw) return { tabs: [], activeTabId: null };
-    const parsed = JSON.parse(raw) as {
-      tabs?: PersistedTab[];
-      activePath?: string | null;
-    };
-    const tabs: ReaderFileTab[] = (parsed.tabs ?? []).map((t) => {
-      const inferred = inferFileType(t.path);
-      // Prefer extension-based media detection over a stale persisted "text" type.
-      const fileType = isMediaFileType(inferred)
-        ? inferred
-        : (t.fileType ?? inferred);
-      const media = isMediaFileType(fileType);
-      return {
-        ...t,
-        path: sanitizeReaderPath(t.path),
-        fileType,
-        // Never persist/restore decoded binary blobs as text.
-        text: media ? "" : (t.text ?? ""),
-        chars: media ? 0 : t.chars,
-        lines: media ? 0 : t.lines,
-        encoding: t.encoding ?? DEFAULT_TEXT_ENCODING,
-        hadBom: t.hadBom ?? false,
-        id: newTabId(),
-        pendingDiffs: [],
-        dirty: false,
-        saveError: false,
-      };
-    });
-    const activePath = parsed.activePath ?? null;
-    const activeTabId =
-      activePath != null
-        ? tabs.find((t) => normalizeReaderPath(t.path) === normalizeReaderPath(activePath))?.id ??
-          tabs[0]?.id ??
-          null
-        : tabs[0]?.id ?? null;
-    return { tabs, activeTabId };
-  } catch {
-    return { tabs: [], activeTabId: null };
-  }
-}
-
-function persistTabs(sessionId: string | null, tabs: ReaderFileTab[], activeTabId: string | null) {
-  if (!sessionId || typeof window === "undefined") return;
-  const active = tabs.find((t) => t.id === activeTabId);
-  const payload = {
-    tabs: tabs.map(
-      ({
-        path,
-        text,
-        fileType,
-        encoding,
-        hadBom,
-        chars,
-        lines,
-        bytes,
-        truncated,
-      }): PersistedTab => {
-        const media = isMediaFileType(fileType);
-        return {
-          path,
-          text: media ? "" : text,
-          fileType,
-          encoding,
-          hadBom,
-          chars: media ? 0 : chars,
-          lines: media ? 0 : lines,
-          bytes,
-          truncated,
-        };
-      },
-    ),
-    activePath: active?.path ?? null,
-  };
-  try {
-    window.localStorage.setItem(`${STORAGE_PREFIX}${sessionId}`, JSON.stringify(payload));
-  } catch {
-    /* ignore quota */
-  }
-}
-
 export function clearPersistedReaderTabs(sessionId: string | null) {
   if (!sessionId || typeof window === "undefined") return;
   try {
@@ -461,6 +357,35 @@ export function clearPersistedReaderTabs(sessionId: string | null) {
     /* ignore */
   }
 }
+
+/**
+ * Drop the legacy per-session document caches.
+ *
+ * They stored whole file bodies, so a handful of sessions could exhaust the
+ * ~5 MB localStorage quota — after which *every* `setItem` throws and panel
+ * tabs silently stop persisting. Document text is re-read from disk on demand
+ * (see `useLazyLoadFile`), so nothing of value is lost.
+ */
+export function pruneReaderCaches(): number {
+  if (typeof window === "undefined") return 0;
+  let removed = 0;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (key && key.startsWith(STORAGE_PREFIX)) keys.push(key);
+    }
+    for (const key of keys) {
+      window.localStorage.removeItem(key);
+      removed += 1;
+    }
+  } catch {
+    /* ignore */
+  }
+  return removed;
+}
+
+pruneReaderCaches();
 
 function findTabIndex(tabs: ReaderFileTab[], path: string): number {
   const key = normalizeReaderPath(path);
@@ -530,42 +455,26 @@ export function applyReaderPathOpsToPath(
 export const useReader = create<ReaderStore>((set, get) => ({
   sessionId: null,
   tabs: [],
-  activeTabId: null,
-  openSeq: 0,
   pathSeq: 0,
   lastPathOps: [],
 
   bindSession: (sessionId) => {
-    const loaded = loadPersisted(sessionId);
     set({
       sessionId,
-      tabs: loaded.tabs,
-      activeTabId: loaded.activeTabId,
+      tabs: [],
       lastPathOps: [],
     });
   },
 
-  openDoc: (doc, opts) => {
-    const activate = opts?.activate !== false;
+  openDoc: (doc) => {
     set((s) => {
       const idx = findTabIndex(s.tabs, doc.path);
       let tabs = s.tabs;
-      let activeTabId = s.activeTabId;
 
       if (idx >= 0) {
         const existing = s.tabs[idx];
         // Keep in-flight edits / pending diff hunks when re-opening from Read.
-        if (existing.pendingDiffs.length > 0 || existing.dirty) {
-          if (activate) activeTabId = existing.id;
-          persistTabs(s.sessionId, tabs, activeTabId);
-          // Passive loads (activate:false) must not bump openSeq — that would
-          // steal the panel chrome / gallery focus away from the visible file.
-          return {
-            tabs,
-            activeTabId,
-            openSeq: activate ? s.openSeq + 1 : s.openSeq,
-          };
-        }
+        if (existing.pendingDiffs.length > 0 || existing.dirty) return s;
 
         const media = isMediaFileType(doc.fileType);
         const cleanText = media ? "" : stripParagraphLabels(doc.text);
@@ -587,55 +496,11 @@ export const useReader = create<ReaderStore>((set, get) => ({
               }
             : t,
         );
-        if (activate) activeTabId = tabs[idx].id;
       } else {
-        const tab = docToTab(doc);
-        tabs = [...s.tabs, tab];
-        if (activate) activeTabId = tab.id;
+        tabs = [...s.tabs, docToTab(doc)];
       }
 
-      persistTabs(s.sessionId, tabs, activeTabId);
-      return {
-        tabs,
-        activeTabId,
-        openSeq: activate ? s.openSeq + 1 : s.openSeq,
-      };
-    });
-  },
-
-  closeTab: (id) => {
-    set((s) => {
-      const idx = s.tabs.findIndex((t) => t.id === id);
-      if (idx < 0) return s;
-      const tabs = s.tabs.filter((t) => t.id !== id);
-      let activeTabId = s.activeTabId;
-      if (activeTabId === id) {
-        activeTabId = tabs[Math.min(idx, tabs.length - 1)]?.id ?? null;
-      }
-      persistTabs(s.sessionId, tabs, activeTabId);
-      return { tabs, activeTabId };
-    });
-  },
-
-  setActiveTab: (id) => {
-    set((s) => {
-      if (!s.tabs.some((t) => t.id === id)) return s;
-      if (s.activeTabId === id) return s;
-      persistTabs(s.sessionId, s.tabs, id);
-      return { activeTabId: id };
-    });
-  },
-
-  revealTab: (id) => {
-    set((s) => {
-      if (!s.tabs.some((t) => t.id === id)) return s;
-      if (s.activeTabId === id) {
-        // Already active in the store — still bump so panel chrome can catch up
-        // if it was showing a different path.
-        return { openSeq: s.openSeq + 1 };
-      }
-      persistTabs(s.sessionId, s.tabs, id);
-      return { activeTabId: id, openSeq: s.openSeq + 1 };
+      return { tabs };
     });
   },
 
@@ -655,7 +520,6 @@ export const useReader = create<ReaderStore>((set, get) => ({
             }
           : t,
       );
-      persistTabs(s.sessionId, tabs, s.activeTabId);
       return { tabs };
     });
   },
@@ -690,9 +554,6 @@ export const useReader = create<ReaderStore>((set, get) => ({
             }
           : t,
       );
-      persistTabs(s.sessionId, tabs, s.activeTabId);
-      // Do not bump openSeq: that forces the right-panel chrome onto this
-      // path and would yank the user out of whatever they were reading.
       return { tabs };
     });
   },
@@ -722,7 +583,6 @@ export const useReader = create<ReaderStore>((set, get) => ({
             }
           : t,
       );
-      persistTabs(s.sessionId, tabs, s.activeTabId);
       return { tabs };
     });
   },
@@ -750,7 +610,6 @@ export const useReader = create<ReaderStore>((set, get) => ({
             : t,
         ),
       });
-      persistTabs(s.sessionId, get().tabs, s.activeTabId);
       return { block, revertText: null };
     }
 
@@ -771,7 +630,6 @@ export const useReader = create<ReaderStore>((set, get) => ({
           : t,
       ),
     });
-    persistTabs(s.sessionId, get().tabs, s.activeTabId);
     return { block, revertText };
   },
 
@@ -793,7 +651,6 @@ export const useReader = create<ReaderStore>((set, get) => ({
           : t,
       ),
     });
-    persistTabs(s.sessionId, get().tabs, s.activeTabId);
   },
 
   rejectAllDiffs: (path) => {
@@ -818,7 +675,6 @@ export const useReader = create<ReaderStore>((set, get) => ({
           : t,
       ),
     });
-    persistTabs(s.sessionId, get().tabs, s.activeTabId);
     return { revertText };
   },
 
@@ -842,10 +698,7 @@ export const useReader = create<ReaderStore>((set, get) => ({
       .map((p) => ({ type: "remap" as const, from: p.from, to: p.to }));
     if (ops.length === 0) return;
     set((s) => {
-      let changed = false;
       let tabs = s.tabs;
-      /** Tab ids whose path was rewritten (exact file or under a renamed folder). */
-      const touchedIds = new Set<string>();
       for (const op of ops) {
         const seen = new Set<string>();
         const next: ReaderFileTab[] = [];
@@ -856,16 +709,10 @@ export const useReader = create<ReaderStore>((set, get) => ({
             seen.add(normalizeReaderPath(tab.path));
             continue;
           }
-          changed = true;
           const key = normalizeReaderPath(rewritten);
-          // Destination already open: drop the old-path tab (close old, keep new).
-          if (seen.has(key)) {
-            const kept = next.find((t) => normalizeReaderPath(t.path) === key);
-            if (kept) touchedIds.add(kept.id);
-            continue;
-          }
+          // Destination already cached: drop the old-path entry.
+          if (seen.has(key)) continue;
           seen.add(key);
-          touchedIds.add(tab.id);
           next.push({
             ...tab,
             path: rewritten,
@@ -874,22 +721,10 @@ export const useReader = create<ReaderStore>((set, get) => ({
         }
         tabs = next;
       }
-      if (!changed) return s;
-      // Prefer activating a rewritten tab so the panel opens the new path.
-      let activeTabId = s.activeTabId;
-      if (!activeTabId || !tabs.some((t) => t.id === activeTabId)) {
-        activeTabId =
-          tabs.find((t) => touchedIds.has(t.id))?.id ?? tabs[0]?.id ?? null;
-      } else if (!touchedIds.has(activeTabId)) {
-        const touched = tabs.find((t) => touchedIds.has(t.id));
-        if (touched) activeTabId = touched.id;
-      }
-      persistTabs(s.sessionId, tabs, activeTabId);
+      // pathSeq is published even when no document was cached: panel tabs
+      // whose content has not been loaded yet still have to follow the rename.
       return {
         tabs,
-        activeTabId,
-        // openSeq forces the right-panel chrome to open/focus the new path.
-        openSeq: s.openSeq + 1,
         pathSeq: s.pathSeq + 1,
         lastPathOps: ops,
       };
@@ -903,23 +738,14 @@ export const useReader = create<ReaderStore>((set, get) => ({
       const tabs = s.tabs.filter(
         (t) => !roots.some((root) => pathMatchesOrUnder(t.path, root)),
       );
-      if (tabs.length === s.tabs.length) return s;
-      let activeTabId = s.activeTabId;
-      if (activeTabId && !tabs.some((t) => t.id === activeTabId)) {
-        activeTabId = tabs[0]?.id ?? null;
-      }
-      persistTabs(s.sessionId, tabs, activeTabId);
+      // Always publish: a deleted file may be open in a tab whose content was
+      // never cached (or was dropped by the mount budget).
       return {
         tabs,
-        activeTabId,
         pathSeq: s.pathSeq + 1,
         lastPathOps: [{ type: "close", paths: roots }],
       };
     });
-  },
-
-  clear: () => {
-    set({ tabs: [], activeTabId: null, lastPathOps: [] });
   },
 }));
 

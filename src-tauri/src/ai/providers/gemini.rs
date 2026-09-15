@@ -672,17 +672,102 @@ fn emit_gemini_response(resp: &GenerateResponse, on_text_delta: &TextDeltaCallba
     }
 }
 
+/// Streamed content plus the stop diagnostics Gemini reports *only* on chunks
+/// that carry no `content.parts` (`finishReason`, `promptFeedback.blockReason`,
+/// blocked `safetyRatings`). A safety block looks exactly like an empty stream
+/// unless those fields are kept, so accumulate them alongside the content.
+#[derive(Default)]
+struct GeminiStreamAcc {
+    text: String,
+    thinking: String,
+    images: Vec<ImageResult>,
+    usage: TokenUsage,
+    calls: Vec<GeminiFunctionCallBuilder>,
+    finish_reason: Option<String>,
+    finish_message: Option<String>,
+    block_reason: Option<String>,
+    blocked_categories: Vec<String>,
+    saw_candidates: bool,
+}
+
+impl GeminiStreamAcc {
+    fn record_stop_diagnostics(&mut self, v: &Value) {
+        if v.pointer("/candidates/0").is_some() {
+            self.saw_candidates = true;
+        }
+        if let Some(reason) = v
+            .pointer("/candidates/0/finishReason")
+            .and_then(Value::as_str)
+        {
+            self.finish_reason = Some(reason.to_string());
+        }
+        if let Some(msg) = v
+            .pointer("/candidates/0/finishMessage")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            self.finish_message = Some(msg.to_string());
+        }
+        if let Some(reason) = v
+            .pointer("/promptFeedback/blockReason")
+            .and_then(Value::as_str)
+        {
+            self.block_reason = Some(reason.to_string());
+        }
+        for path in [
+            "/candidates/0/safetyRatings",
+            "/promptFeedback/safetyRatings",
+        ] {
+            let Some(ratings) = v.pointer(path).and_then(Value::as_array) else {
+                continue;
+            };
+            for rating in ratings {
+                if rating.get("blocked").and_then(Value::as_bool) != Some(true) {
+                    continue;
+                }
+                let Some(category) = rating.get("category").and_then(Value::as_str) else {
+                    continue;
+                };
+                if !self.blocked_categories.iter().any(|c| c == category) {
+                    self.blocked_categories.push(category.to_string());
+                }
+            }
+        }
+    }
+
+    fn empty_stream_details(&self) -> String {
+        let mut details = Vec::new();
+        if let Some(reason) = &self.finish_reason {
+            details.push(format!("finishReason={reason}"));
+        }
+        if let Some(reason) = &self.block_reason {
+            details.push(format!("blockReason={reason}"));
+        }
+        if !self.blocked_categories.is_empty() {
+            details.push(format!("blocked={}", self.blocked_categories.join(", ")));
+        }
+        if let Some(msg) = &self.finish_message {
+            details.push(format!("finishMessage={msg}"));
+        }
+        if !self.saw_candidates {
+            details.push("no candidates[] in any chunk".to_string());
+        }
+        if details.is_empty() {
+            "details: upstream reported no finishReason or blockReason".to_string()
+        } else {
+            format!("details: {}", details.join("; "))
+        }
+    }
+}
+
 async fn consume_gemini_sse(
     resp: reqwest::Response,
     on_text_delta: TextDeltaCallback,
 ) -> AppResult<GenerateResponse> {
     let mut stream = resp.bytes_stream();
     let mut buffer = Vec::new();
-    let mut text = String::new();
-    let mut thinking = String::new();
-    let mut images = Vec::new();
-    let mut usage_acc = TokenUsage::default();
-    let mut calls: Vec<GeminiFunctionCallBuilder> = Vec::new();
+    let mut acc = GeminiStreamAcc::default();
     let mut sse_debug_emitted = 0u32;
 
     while let Some(chunk) = stream.next().await {
@@ -692,63 +777,48 @@ async fn consume_gemini_sse(
             let drained: Vec<u8> = buffer.drain(..event_end + sep_len).collect();
             let event = String::from_utf8_lossy(&drained[..event_end]);
             debug_log_sse_event(&mut sse_debug_emitted, 12, &event);
-            handle_gemini_sse_event(
-                &event,
-                &mut text,
-                &mut thinking,
-                &mut images,
-                &mut usage_acc,
-                &mut calls,
-                &on_text_delta,
-            )?;
+            handle_gemini_sse_event(&event, &mut acc, &on_text_delta)?;
         }
     }
     if !buffer.is_empty() {
         let event = String::from_utf8_lossy(&buffer);
         debug_log_sse_event(&mut sse_debug_emitted, 12, &event);
-        handle_gemini_sse_event(
-            &event,
-            &mut text,
-            &mut thinking,
-            &mut images,
-            &mut usage_acc,
-            &mut calls,
-            &on_text_delta,
-        )?;
+        handle_gemini_sse_event(&event, &mut acc, &on_text_delta)?;
     }
 
-    for call in &mut calls {
+    for call in &mut acc.calls {
         call.finish(&on_text_delta);
     }
 
-    let tool_calls: Vec<crate::ai::chat::ProviderToolCall> = calls
+    let tool_calls: Vec<crate::ai::chat::ProviderToolCall> = std::mem::take(&mut acc.calls)
         .into_iter()
         .filter(|c| !c.name.is_empty())
         .map(GeminiFunctionCallBuilder::into_tool_call)
         .collect();
-    if text.trim().is_empty()
-        && thinking.trim().is_empty()
-        && images.is_empty()
+    if acc.text.trim().is_empty()
+        && acc.thinking.trim().is_empty()
+        && acc.images.is_empty()
         && tool_calls.is_empty()
     {
-        return Err(AppError::Upstream(
-            "upstream stream did not contain generated image, text, or tool_calls".into(),
-        ));
+        return Err(AppError::Upstream(format!(
+            "upstream stream did not contain generated image, text, or tool_calls. {}",
+            acc.empty_stream_details()
+        )));
     }
     Ok(GenerateResponse {
-        images,
+        images: acc.images,
         videos: Vec::new(),
-        text: if text.trim().is_empty() {
+        text: if acc.text.trim().is_empty() {
             None
         } else {
-            Some(text)
+            Some(acc.text)
         },
-        thinking_content: if thinking.trim().is_empty() {
+        thinking_content: if acc.thinking.trim().is_empty() {
             None
         } else {
-            Some(thinking)
+            Some(acc.thinking)
         },
-        usage: usage_acc,
+        usage: acc.usage,
         tool_calls,
         response_id: None,
     })
@@ -756,11 +826,7 @@ async fn consume_gemini_sse(
 
 fn handle_gemini_sse_event(
     event: &str,
-    text: &mut String,
-    thinking: &mut String,
-    images: &mut Vec<ImageResult>,
-    usage_acc: &mut TokenUsage,
-    calls: &mut Vec<GeminiFunctionCallBuilder>,
+    acc: &mut GeminiStreamAcc,
     on_text_delta: &TextDeltaCallback,
 ) -> AppResult<()> {
     let Some(data) = sse_data_payload(event) else {
@@ -780,17 +846,18 @@ fn handle_gemini_sse_event(
     }
     let next_usage = usage(&v);
     if next_usage.prompt_tokens.is_some() {
-        usage_acc.prompt_tokens = next_usage.prompt_tokens;
+        acc.usage.prompt_tokens = next_usage.prompt_tokens;
     }
     if next_usage.completion_tokens.is_some() {
-        usage_acc.completion_tokens = next_usage.completion_tokens;
+        acc.usage.completion_tokens = next_usage.completion_tokens;
     }
     if next_usage.total_tokens.is_some() {
-        usage_acc.total_tokens = next_usage.total_tokens;
+        acc.usage.total_tokens = next_usage.total_tokens;
     }
     if next_usage.cache_read_tokens.is_some() {
-        usage_acc.cache_read_tokens = next_usage.cache_read_tokens;
+        acc.usage.cache_read_tokens = next_usage.cache_read_tokens;
     }
+    acc.record_stop_diagnostics(&v);
     let Some(parts) = v
         .pointer("/candidates/0/content/parts")
         .and_then(Value::as_array)
@@ -802,24 +869,24 @@ fn handle_gemini_sse_event(
         if is_thought {
             if let Some(t) = part.get("text").and_then(Value::as_str) {
                 if !t.is_empty() {
-                    thinking.push_str(t);
+                    acc.thinking.push_str(t);
                     emit_thinking_deltas(on_text_delta, t);
                 }
             }
         } else if let Some(t) = part.get("text").and_then(Value::as_str) {
             if !t.is_empty() {
-                text.push_str(t);
+                acc.text.push_str(t);
                 (on_text_delta)(StreamDelta::text(t.to_string()));
             }
         }
         if let Some(image) = image_from_part(part) {
-            images.push(image);
+            acc.images.push(image);
         }
         if let Some(fc) = part
             .get("functionCall")
             .or_else(|| part.get("function_call"))
         {
-            ingest_gemini_function_call(calls, part, fc, on_text_delta);
+            ingest_gemini_function_call(&mut acc.calls, part, fc, on_text_delta);
         }
     }
     Ok(())
@@ -1824,40 +1891,82 @@ mod tests {
     #[test]
     fn stream_event_captures_thought_signature_from_part() {
         let (cb, _) = collect_cb();
-        let mut text = String::new();
-        let mut thinking = String::new();
-        let mut images = Vec::new();
-        let mut usage_acc = crate::ai::tokens::TokenUsage::default();
-        let mut calls = Vec::new();
+        let mut acc = GeminiStreamAcc::default();
         handle_gemini_sse_event(
             r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"Read","args":{"path":"a.md"}},"thoughtSignature":"stream-sig"}]}}]}"#,
-            &mut text,
-            &mut thinking,
-            &mut images,
-            &mut usage_acc,
-            &mut calls,
+            &mut acc,
             &cb,
         )
         .unwrap();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].thought_signature.as_deref(), Some("stream-sig"));
-        assert!(calls[0].id.starts_with("gemini-"));
-        let first_id = calls[0].id.clone();
+        assert_eq!(acc.calls.len(), 1);
+        assert_eq!(
+            acc.calls[0].thought_signature.as_deref(),
+            Some("stream-sig")
+        );
+        assert!(acc.calls[0].id.starts_with("gemini-"));
+        let first_id = acc.calls[0].id.clone();
         handle_gemini_sse_event(
             r#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"Grep","args":{"pattern":"x"}}}]}}]}"#,
-            &mut text,
-            &mut thinking,
-            &mut images,
-            &mut usage_acc,
-            &mut calls,
+            &mut acc,
             &cb,
         )
         .unwrap();
-        assert_eq!(calls.len(), 2);
-        assert_ne!(first_id, calls[1].id);
-        let tc = GeminiFunctionCallBuilder::into_tool_call(calls.remove(0));
+        assert_eq!(acc.calls.len(), 2);
+        assert_ne!(first_id, acc.calls[1].id);
+        let tc = GeminiFunctionCallBuilder::into_tool_call(acc.calls.remove(0));
         assert_eq!(tc.thought_signature.as_deref(), Some("stream-sig"));
         assert_eq!(tc.name, "Read");
+    }
+
+    #[test]
+    fn empty_stream_details_surface_safety_block() {
+        let (cb, _) = collect_cb();
+        let mut acc = GeminiStreamAcc::default();
+        handle_gemini_sse_event(
+            r#"data: {"candidates":[{"finishReason":"SAFETY","safetyRatings":[{"category":"HARM_CATEGORY_SEXUALLY_EXPLICIT","probability":"HIGH","blocked":true},{"category":"HARM_CATEGORY_HATE_SPEECH","probability":"LOW"}]}]}"#,
+            &mut acc,
+            &cb,
+        )
+        .unwrap();
+        let details = acc.empty_stream_details();
+        assert!(details.contains("finishReason=SAFETY"), "{details}");
+        assert!(
+            details.contains("blocked=HARM_CATEGORY_SEXUALLY_EXPLICIT"),
+            "{details}"
+        );
+        assert!(!details.contains("HARM_CATEGORY_HATE_SPEECH"), "{details}");
+    }
+
+    #[test]
+    fn empty_stream_details_surface_prompt_block() {
+        let (cb, _) = collect_cb();
+        let mut acc = GeminiStreamAcc::default();
+        handle_gemini_sse_event(
+            r#"data: {"promptFeedback":{"blockReason":"PROHIBITED_CONTENT"},"usageMetadata":{"promptTokenCount":12}}"#,
+            &mut acc,
+            &cb,
+        )
+        .unwrap();
+        let details = acc.empty_stream_details();
+        assert!(
+            details.contains("blockReason=PROHIBITED_CONTENT"),
+            "{details}"
+        );
+        assert!(
+            details.contains("no candidates[] in any chunk"),
+            "{details}"
+        );
+        assert_eq!(acc.usage.prompt_tokens, Some(12));
+    }
+
+    #[test]
+    fn empty_stream_details_report_absence_of_reason() {
+        let acc = GeminiStreamAcc::default();
+        let details = acc.empty_stream_details();
+        assert!(
+            details.contains("no candidates[] in any chunk"),
+            "{details}"
+        );
     }
 
     fn enable_thinking(req: &mut ChatRequest, effort: &str) {

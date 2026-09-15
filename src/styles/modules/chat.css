@@ -646,8 +646,17 @@
   gap: 2px;
   flex-shrink: 0;
 }
+/* Tab panes stack here; every open tab stays mounted and only the active one
+   is displayed, so each keeps its own scroll position and editor state. */
 .right-panel-body {
   flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.right-panel-pane {
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -657,17 +666,21 @@
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
 }
-.right-panel-body > .chat-gallery-grid,
-.right-panel-body > .agent-flow,
-.right-panel-body > .afc,
-.right-panel-body > .reader-workspace {
+.right-panel-pane.is-hidden {
+  display: none;
+}
+.right-panel-pane > .chat-gallery-grid,
+.right-panel-pane > .agent-flow,
+.right-panel-pane > .afc,
+.right-panel-pane > .reader-workspace,
+.right-panel-pane > .reader-workspace-outer {
   flex: 1 1 0;
   min-height: 0;
   min-width: 0;
   width: 100%;
 }
-/* Role archive grows with content; body is the scrollport (not an inner flex clip). */
-.right-panel-body > .arc-panel {
+/* Role archive grows with content; the pane is the scrollport (not an inner flex clip). */
+.right-panel-pane > .arc-panel {
   flex: 0 0 auto;
   width: 100%;
   min-width: 0;

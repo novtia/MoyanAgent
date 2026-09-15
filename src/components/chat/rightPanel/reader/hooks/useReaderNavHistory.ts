@@ -1,90 +1,59 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
-import {
-  applyReaderPathOpsToPath,
-  normalizeReaderPath,
-  useReader,
-} from "../../../../../store/reader";
+import { useCallback, useEffect, useRef } from "react";
+import { normalizeReaderPath } from "../../../../../store/reader";
+import { useRightPanel } from "../../../../../store/rightPanel";
+import { usePanelTab } from "../../context/PanelTabContext";
+import type { TabNavView } from "../../types";
 
-export function useReaderNavHistory(
-  path: string | null | undefined,
-  onOpenFile: (path: string) => void,
-) {
-  const histRef = useRef<{ stack: string[]; index: number }>({ stack: [], index: -1 });
+const EMPTY: TabNavView = { stack: [], index: -1 };
+
+/**
+ * Back/forward over the files visited in one reader tab. The stack lives in
+ * the tab's view state (rewritten centrally when files are renamed or
+ * deleted), so each tab navigates its own trail.
+ */
+export function useReaderNavHistory(path: string | null | undefined) {
+  const { tabId } = usePanelTab();
+  const history = useRightPanel(
+    (s) => s.tabs.find((tb) => tb.id === tabId)?.view?.history ?? EMPTY,
+  );
+  const updateTabView = useRightPanel((s) => s.updateTabView);
+  const setTabPath = useRightPanel((s) => s.setTabPath);
+  /** Set while we drive the path ourselves, so the trail is not re-appended. */
   const navPendingRef = useRef(false);
-  const [, bumpNav] = useReducer((x: number) => x + 1, 0);
-
-  // Rewrite history entries when files are renamed/moved/deleted.
-  const readerPathSeq = useReader((s) => s.pathSeq);
-  const lastHistPathSeq = useRef(readerPathSeq);
-  useEffect(() => {
-    if (readerPathSeq === lastHistPathSeq.current) return;
-    lastHistPathSeq.current = readerPathSeq;
-    const ops = useReader.getState().lastPathOps;
-    if (!ops.length) return;
-    const h = histRef.current;
-    const nextStack: string[] = [];
-    for (const p of h.stack) {
-      const rewritten = applyReaderPathOpsToPath(p, ops);
-      if (rewritten == null || rewritten === "") continue;
-      const key = normalizeReaderPath(rewritten);
-      if (nextStack.some((x) => normalizeReaderPath(x) === key)) continue;
-      nextStack.push(rewritten);
-    }
-    let index = h.index;
-    if (nextStack.length === 0) {
-      h.stack = [];
-      h.index = -1;
-    } else {
-      index = Math.max(0, Math.min(index, nextStack.length - 1));
-      // Prefer landing on the current workspace path if it survived.
-      if (path) {
-        const at = nextStack.findIndex(
-          (p) => normalizeReaderPath(p) === normalizeReaderPath(path),
-        );
-        if (at >= 0) index = at;
-      }
-      h.stack = nextStack;
-      h.index = index;
-    }
-    bumpNav();
-  }, [readerPathSeq, path]);
 
   useEffect(() => {
     if (!path) return;
-    const h = histRef.current;
     if (navPendingRef.current) {
       navPendingRef.current = false;
-      bumpNav();
       return;
     }
-    const cur = h.index >= 0 ? h.stack[h.index] : null;
-    if (cur && normalizeReaderPath(cur) === normalizeReaderPath(path)) return;
-    h.stack = h.stack.slice(0, h.index + 1);
-    h.stack.push(path);
-    h.index = h.stack.length - 1;
-    bumpNav();
-  }, [path]);
+    const current = history.index >= 0 ? history.stack[history.index] : null;
+    if (current && normalizeReaderPath(current) === normalizeReaderPath(path)) return;
+    const stack = [...history.stack.slice(0, history.index + 1), path];
+    updateTabView(tabId, { history: { stack, index: stack.length - 1 } });
+  }, [path, history, tabId, updateTabView]);
 
-  const canBack = histRef.current.index > 0;
-  const canForward = histRef.current.index < histRef.current.stack.length - 1;
+  const go = useCallback(
+    (index: number) => {
+      const target = history.stack[index];
+      if (!target) return;
+      navPendingRef.current = true;
+      updateTabView(tabId, { history: { stack: history.stack, index } });
+      setTabPath(tabId, target);
+    },
+    [history, tabId, updateTabView, setTabPath],
+  );
 
-  const goBack = useCallback(() => {
-    const h = histRef.current;
-    if (h.index <= 0) return;
-    h.index -= 1;
-    navPendingRef.current = true;
-    bumpNav();
-    onOpenFile(h.stack[h.index]!);
-  }, [onOpenFile]);
-
-  const goForward = useCallback(() => {
-    const h = histRef.current;
-    if (h.index >= h.stack.length - 1) return;
-    h.index += 1;
-    navPendingRef.current = true;
-    bumpNav();
-    onOpenFile(h.stack[h.index]!);
-  }, [onOpenFile]);
-
-  return { canBack, canForward, goBack, goForward };
+  return {
+    canBack: history.index > 0,
+    canForward: history.index >= 0 && history.index < history.stack.length - 1,
+    goBack: useCallback(() => {
+      if (history.index <= 0) return;
+      go(history.index - 1);
+    }, [history.index, go]),
+    goForward: useCallback(() => {
+      if (history.index >= history.stack.length - 1) return;
+      go(history.index + 1);
+    }, [history.index, history.stack.length, go]),
+  };
 }
