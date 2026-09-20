@@ -467,6 +467,11 @@ pub struct ChatRequest {
     pub todo_snapshot: Option<String>,
     /// OpenRouter `provider.only` slugs. Empty means automatic load balancing.
     pub route_providers: Vec<String>,
+    /// Tool names to force on the opening Vertex turn via
+    /// `functionCallingConfig.mode = ANY`. Empty means no force.
+    /// Later turns of the same run drop the constraint so the model can
+    /// finish in prose. Other SDKs ignore this field.
+    pub forced_tools: Vec<String>,
 }
 
 impl ChatRequest {

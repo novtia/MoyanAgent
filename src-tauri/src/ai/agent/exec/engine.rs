@@ -220,6 +220,7 @@ impl QueryEngine for ProviderQueryEngine {
                 chat.tools = staged.initial();
                 anchor = staged.is_staged().then_some(staged);
             }
+            chat.forced_tools = crate::ai::agent::tools::forced_tool_names();
 
             let _todo_guard = ClearTodoOnDrop {
                 tools: tools.clone(),
@@ -696,7 +697,10 @@ fn collect_tool_definitions(tools: &ToolPool) -> Vec<crate::ai::chat::ToolDefini
             let s = t.spec();
             crate::ai::chat::ToolDefinition {
                 name: s.name.clone(),
-                description: s.description.clone(),
+                description: crate::ai::agent::tools::resolved_tool_description(
+                    &s.name,
+                    &s.description,
+                ),
                 schema: crate::ai::chat::with_declared_property_order(&s.schema),
             }
         })

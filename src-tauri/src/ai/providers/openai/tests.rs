@@ -99,6 +99,7 @@ fn responses_cache_continue_omits_tools_and_instructions() {
         context_window: None,
         todo_snapshot: None,
         route_providers: Vec::new(),
+        forced_tools: Vec::new(),
     };
     let body = build_responses_body(&request);
     assert_eq!(body["previous_response_id"], "resp_prev");
@@ -155,6 +156,7 @@ fn todo_snapshot_is_the_last_input_item() {
         context_window: None,
         todo_snapshot: Some("<todolist>\n✔ #1 a [done]\n☐ #2 b [pending]\n</todolist>".into()),
         route_providers: Vec::new(),
+        forced_tools: Vec::new(),
     };
     let chat = build_chat_body(&request, false);
     let messages = chat["messages"].as_array().expect("messages");
@@ -214,6 +216,7 @@ fn openrouter_route_providers_become_provider_only() {
         context_window: None,
         todo_snapshot: None,
         route_providers: vec!["alibaba".into(), "together".into()],
+        forced_tools: Vec::new(),
     };
     let body = build_chat_body(&request, false);
     assert_eq!(body["provider"]["only"], json!(["alibaba", "together"]));
@@ -250,6 +253,7 @@ fn empty_route_providers_omit_openrouter_provider_field() {
         context_window: None,
         todo_snapshot: None,
         route_providers: Vec::new(),
+        forced_tools: Vec::new(),
     };
     let body = build_chat_body(&request, false);
     assert!(body.get("provider").is_none());
@@ -395,6 +399,7 @@ fn route_providers_ignored_off_openrouter() {
         context_window: None,
         todo_snapshot: None,
         route_providers: vec!["openai".into()],
+        forced_tools: Vec::new(),
     };
     let body = build_chat_body(&request, false);
     assert!(body.get("provider").is_none());
@@ -852,6 +857,7 @@ fn openrouter_chat_request(model: &str, with_tools: bool) -> ChatRequest {
         context_window: None,
         todo_snapshot: None,
         route_providers: Vec::new(),
+        forced_tools: Vec::new(),
     }
 }
 

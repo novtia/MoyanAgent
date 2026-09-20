@@ -1,6 +1,10 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ToolGlyph } from "../../chat/messageList/toolIcons";
-import { toolDescription } from "../../chat/rightPanel/agentFlow/toolUtils";
+import {
+  isCustomToolDescription,
+  modelToolDescription,
+} from "../../chat/rightPanel/agentFlow/toolUtils";
 import { ProviderEnableSwitch } from "../llm/modelService/ProviderEnableSwitch";
 import type { AgentToolSpec } from "../../../types";
 import { schemaFields } from "./schemaFields";
@@ -8,25 +12,52 @@ import { schemaFields } from "./schemaFields";
 export function ToolDetail({
   selected,
   enabled,
+  forced,
   echoContent,
   replaceAllDefault,
   paragraphLabels,
+  descriptions,
   onSetEnabled,
+  onSetForced,
   onSetEchoContent,
   onSetReplaceAllDefault,
   onSetParagraphLabels,
+  onSetDescription,
 }: {
   selected: AgentToolSpec | null;
   enabled: boolean;
+  forced: boolean;
   echoContent: boolean;
   replaceAllDefault: boolean;
   paragraphLabels: boolean;
+  descriptions: Record<string, string>;
   onSetEnabled: (name: string, enabled: boolean) => void;
+  onSetForced: (name: string, forced: boolean) => void;
   onSetEchoContent: (enabled: boolean) => void;
   onSetReplaceAllDefault: (enabled: boolean) => void;
   onSetParagraphLabels: (enabled: boolean) => void;
+  onSetDescription: (name: string, text: string | null) => void;
 }) {
   const { t } = useTranslation();
+  const selectedName = selected?.name;
+  const builtinDesc = selected?.description ?? "";
+  const overrideText = selectedName ? (descriptions[selectedName] ?? "") : "";
+  const [draft, setDraft] = useState(() =>
+    selected ? modelToolDescription(selected, descriptions) : "",
+  );
+
+  useEffect(() => {
+    if (!selectedName) {
+      setDraft("");
+      return;
+    }
+    setDraft(
+      modelToolDescription(
+        { name: selectedName, description: builtinDesc },
+        { [selectedName]: overrideText },
+      ),
+    );
+  }, [selectedName, builtinDesc, overrideText]);
 
   if (!selected) {
     return (
@@ -40,9 +71,28 @@ export function ToolDetail({
     );
   }
 
-  const blurb = toolDescription(t, selected.name);
-  const description = blurb === selected.name ? selected.description : blurb;
+  const customized =
+    isCustomToolDescription(selected, descriptions) ||
+    draft.replace(/\r\n/g, "\n").trim() !==
+      selected.description.replace(/\r\n/g, "\n").trim();
   const fields = schemaFields(selected.schema);
+
+  const commitDescription = () => {
+    const next = draft.replace(/\r\n/g, "\n").trim();
+    const builtin = selected.description.replace(/\r\n/g, "\n").trim();
+    const current = (descriptions[selected.name] ?? "").replace(/\r\n/g, "\n").trim();
+    if (next === "" || next === builtin) {
+      if (current !== "") onSetDescription(selected.name, null);
+      setDraft(selected.description);
+      return;
+    }
+    if (next !== current) onSetDescription(selected.name, next);
+  };
+
+  const resetDescription = () => {
+    setDraft(selected.description);
+    onSetDescription(selected.name, null);
+  };
 
   return (
     <section className="model-provider-detail">
@@ -56,6 +106,16 @@ export function ToolDetail({
             {selected.read_only && (
               <span className="model-provider-hero-sdk">
                 {t("settings.tools.readOnly")}
+              </span>
+            )}
+            {customized && (
+              <span className="model-provider-hero-sdk">
+                {t("settings.tools.descCustom")}
+              </span>
+            )}
+            {forced && (
+              <span className="model-provider-hero-sdk">
+                {t("settings.tools.forceBadge")}
               </span>
             )}
           </div>
@@ -72,7 +132,29 @@ export function ToolDetail({
           </div>
         </header>
 
-        <p className="settings-tool-detail-desc">{description}</p>
+        <div className="model-provider-config">
+          <div className="settings-tool-desc-head">
+            <span className="field-label">{t("settings.tools.descTitle")}</span>
+            {customized && (
+              <button
+                type="button"
+                className="appearance-reset-btn"
+                onClick={resetDescription}
+              >
+                {t("settings.tools.descReset")}
+              </button>
+            )}
+          </div>
+          <p className="hint">{t("settings.tools.descDesc")}</p>
+          <textarea
+            className="field-input field-input--lg settings-tool-desc-editor"
+            value={draft}
+            rows={8}
+            spellCheck={false}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commitDescription}
+          />
+        </div>
 
         <div className="model-provider-config">
           <div className="model-provider-switch-row">
@@ -84,6 +166,19 @@ export function ToolDetail({
               />
             </div>
             <p className="hint">{t("settings.tools.enableDesc")}</p>
+          </div>
+        </div>
+
+        <div className="model-provider-config">
+          <div className="model-provider-switch-row">
+            <div className="model-provider-switch-head">
+              <span className="field-label">{t("settings.tools.forceTitle")}</span>
+              <ProviderEnableSwitch
+                enabled={forced}
+                onChange={(next) => onSetForced(selected.name, next)}
+              />
+            </div>
+            <p className="hint">{t("settings.tools.forceDesc")}</p>
           </div>
         </div>
 

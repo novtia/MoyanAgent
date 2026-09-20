@@ -1,5 +1,6 @@
 use rusqlite::params;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::BTreeMap;
 
 use crate::data::db::DbConn;
 use crate::error::{AppError, AppResult};
@@ -34,6 +35,8 @@ pub const KEY_AUTO_BACKUP_CONFIG_KEEP: &str = "auto_backup_config_keep";
 pub const KEY_AUTO_BACKUP_CHAT_KEEP: &str = "auto_backup_chat_keep";
 pub const KEY_ENABLED_SKILL_IDS: &str = "enabled_skill_ids";
 pub const KEY_DISABLED_TOOLS: &str = "disabled_tools";
+pub const KEY_TOOL_DESCRIPTIONS: &str = "tool_descriptions";
+pub const KEY_FORCED_TOOLS: &str = "forced_tools";
 pub const KEY_CREATE_DOC_ECHO_CONTENT: &str = "create_doc_echo_content";
 pub const KEY_EDIT_REPLACE_ALL_DEFAULT: &str = "edit_replace_all_default";
 pub const KEY_READ_PARAGRAPH_LABELS: &str = "read_paragraph_labels";
@@ -243,6 +246,22 @@ fn normalize_tool_names(raw: Vec<String>) -> Vec<String> {
     out
 }
 
+fn normalize_tool_descriptions(raw: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
+    for (name, text) in raw {
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let text = text.replace("\r\n", "\n").trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        out.insert(name.to_string(), text);
+    }
+    out
+}
+
 pub fn read_create_doc_echo_content(conn: &DbConn) -> bool {
     conn.query_row(
         "SELECT value FROM settings WHERE key = ?1",
@@ -358,6 +377,14 @@ pub struct Settings {
     /// Tool names denied for every agent. Empty means all registered tools stay available.
     #[serde(default)]
     pub disabled_tools: Vec<String>,
+    /// Per-tool description overrides sent to the model. Missing / empty
+    /// values keep the built-in [`crate::ai::agent::tools::ToolSpec::description`].
+    #[serde(default)]
+    pub tool_descriptions: BTreeMap<String, String>,
+    /// Tool names forced on the opening Vertex turn (`ANY` allow-list).
+    /// Empty means the model may call any available tool or answer in prose.
+    #[serde(default)]
+    pub forced_tools: Vec<String>,
     /// When true, CreateDoc echoes the written body in the tool result.
     #[serde(default)]
     pub create_doc_echo_content: bool,
@@ -436,6 +463,8 @@ impl Default for Settings {
             auto_backup_chat_keep: default_auto_backup_chat_keep(),
             enabled_skill_ids: Vec::new(),
             disabled_tools: Vec::new(),
+            tool_descriptions: BTreeMap::new(),
+            forced_tools: Vec::new(),
             create_doc_echo_content: false,
             edit_replace_all_default: false,
             read_paragraph_labels: false,
@@ -524,6 +553,10 @@ pub struct SettingsPatch {
     pub enabled_skill_ids: Option<Vec<String>>,
     #[serde(default)]
     pub disabled_tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub tool_descriptions: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    pub forced_tools: Option<Vec<String>>,
     #[serde(default)]
     pub create_doc_echo_content: Option<bool>,
     #[serde(default)]
@@ -626,6 +659,16 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             KEY_DISABLED_TOOLS => {
                 if let Ok(list) = serde_json::from_str::<Vec<String>>(&v) {
                     s.disabled_tools = normalize_tool_names(list);
+                }
+            }
+            KEY_TOOL_DESCRIPTIONS => {
+                if let Ok(map) = serde_json::from_str::<BTreeMap<String, String>>(&v) {
+                    s.tool_descriptions = normalize_tool_descriptions(map);
+                }
+            }
+            KEY_FORCED_TOOLS => {
+                if let Ok(list) = serde_json::from_str::<Vec<String>>(&v) {
+                    s.forced_tools = normalize_tool_names(list);
                 }
             }
             KEY_CREATE_DOC_ECHO_CONTENT => s.create_doc_echo_content = v == "true" || v == "1",
@@ -1064,6 +1107,16 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
         let cleaned = normalize_tool_names(v);
         let json = serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
         write_kv(conn, KEY_DISABLED_TOOLS, &json)?;
+    }
+    if let Some(v) = patch.tool_descriptions {
+        let cleaned = normalize_tool_descriptions(v);
+        let json = serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
+        write_kv(conn, KEY_TOOL_DESCRIPTIONS, &json)?;
+    }
+    if let Some(v) = patch.forced_tools {
+        let cleaned = normalize_tool_names(v);
+        let json = serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
+        write_kv(conn, KEY_FORCED_TOOLS, &json)?;
     }
     if let Some(v) = patch.create_doc_echo_content {
         write_kv(

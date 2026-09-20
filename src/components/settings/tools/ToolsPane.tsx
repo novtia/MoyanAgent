@@ -1,8 +1,24 @@
 import { useTranslation } from "react-i18next";
 import { ToolGlyph } from "../../chat/messageList/toolIcons";
-import { toolDescription } from "../../chat/rightPanel/agentFlow/toolUtils";
+import {
+  isCustomToolDescription,
+  modelToolDescription,
+  toolDescription,
+} from "../../chat/rightPanel/agentFlow/toolUtils";
 import { ProviderEnableSwitch } from "../llm/modelService/ProviderEnableSwitch";
 import type { AgentToolSpec } from "../../../types";
+
+function listToolDescription(
+  t: (key: string, opts?: { defaultValue?: string }) => string,
+  tool: AgentToolSpec,
+  descriptions: Record<string, string>,
+): string {
+  if (isCustomToolDescription(tool, descriptions)) {
+    return modelToolDescription(tool, descriptions).replace(/\s+/g, " ").trim();
+  }
+  const localized = toolDescription(t, tool.name);
+  return localized === tool.name ? tool.description : localized;
+}
 
 function SearchIcon() {
   return (
@@ -18,6 +34,8 @@ export function ToolsPane({
   filteredTools,
   selectedName,
   disabledTools,
+  forcedTools,
+  descriptions,
   search,
   onSearchChange,
   onSelect,
@@ -27,6 +45,8 @@ export function ToolsPane({
   filteredTools: AgentToolSpec[];
   selectedName?: string;
   disabledTools: string[];
+  forcedTools: string[];
+  descriptions: Record<string, string>;
   search: string;
   onSearchChange: (value: string) => void;
   onSelect: (tool: AgentToolSpec) => void;
@@ -34,6 +54,7 @@ export function ToolsPane({
 }) {
   const { t } = useTranslation();
   const disabled = new Set(disabledTools);
+  const forced = new Set(forcedTools);
 
   return (
     <aside className="model-provider-pane">
@@ -65,11 +86,16 @@ export function ToolsPane({
                   <ToolGlyph tool={tool.name} />
                 </span>
                 <span className="model-provider-name settings-tool-name">
-                  <span className="model-provider-name-text">{tool.name}</span>
+                  <span className="model-provider-name-text">
+                    {tool.name}
+                    {forced.has(tool.name) && (
+                      <span className="settings-tool-force-tag">
+                        {t("settings.tools.forceBadge")}
+                      </span>
+                    )}
+                  </span>
                   <span className="settings-tool-list-desc">
-                    {toolDescription(t, tool.name) === tool.name
-                      ? tool.description
-                      : toolDescription(t, tool.name)}
+                    {listToolDescription(t, tool, descriptions)}
                   </span>
                 </span>
               </button>

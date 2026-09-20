@@ -1174,6 +1174,7 @@ pub(crate) async fn generate_title_with_quick_model(
         context_window: None,
         todo_snapshot: None,
         route_providers: Vec::new(),
+        forced_tools: Vec::new(),
     };
 
     let factory = crate::ai::providers::ProviderFactory::default();

@@ -671,6 +671,7 @@ mod budget_tests {
             context_window: Some(1_048_576),
             todo_snapshot: None,
             route_providers: Vec::new(),
+            forced_tools: Vec::new(),
         }
     }
 

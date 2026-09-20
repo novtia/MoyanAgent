@@ -152,6 +152,10 @@ pub fn run() {
                 let conn = pool.get()?;
                 if let Ok(s) = crate::data::settings::read(&conn) {
                     tools.set_global_deny(s.disabled_tools.clone());
+                    crate::ai::agent::tools::set_tool_description_overrides(
+                        s.tool_descriptions.clone(),
+                    );
+                    crate::ai::agent::tools::set_forced_tools(s.forced_tools.clone());
                     crate::ai::http_proxy::set_from_settings(&s);
                 }
             }

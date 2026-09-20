@@ -757,7 +757,7 @@ const enUS: Resource = {
       llm: "Manage providers, API access, and model lists",
       default: "Pick the model for lightweight background tasks",
       search: "Configure web search providers and API keys",
-      tools: "Enable or disable tools globally and inspect each tool's parameters",
+      tools: "Enable or disable tools globally, edit each tool's description, and inspect its parameters",
       system: "Backup & restore, auto-backup, network proxy, notification sound, app info, and data locations",
     },
     tools: {
@@ -786,6 +786,15 @@ const enUS: Resource = {
       optional: "Optional",
       noParams: "This tool has no input parameters.",
       readOnly: "Read-only",
+      descTitle: "Tool description",
+      descDesc:
+        "Sent to the model as this tool's description. Clear the field or restore the default to use the built-in text.",
+      descReset: "Restore default",
+      descCustom: "Custom",
+      forceTitle: "Force on first turn",
+      forceDesc:
+        "Vertex only. When on, this tool is added to the opening-turn allow-list, so the model must call one of the forced tools first. Later turns drop the constraint so it can finish in prose.",
+      forceBadge: "Forced",
     },
     default: {
       quickModelTitle: "Quick model",

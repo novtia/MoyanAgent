@@ -744,7 +744,7 @@ const zhCN = {
       llm: "管理模型供应商、API 接入与模型列表",
       default: "选择执行轻量任务时使用的模型",
       search: "配置网络搜索供应商与密钥",
-      tools: "启用或禁用全局工具，并查看每个工具的参数",
+      tools: "启用或禁用全局工具，修改每个工具的描述，并查看参数",
       system: "备份恢复、自动备份、网络代理、提示音、应用信息与数据存储位置",
     },
     tools: {
@@ -773,6 +773,14 @@ const zhCN = {
       optional: "可选",
       noParams: "该工具没有输入参数。",
       readOnly: "只读",
+      descTitle: "工具描述",
+      descDesc: "将作为工具 description 发给模型。清空或点恢复默认，会回到内置文案。",
+      descReset: "恢复默认",
+      descCustom: "已自定义",
+      forceTitle: "首轮强制调用",
+      forceDesc:
+        "仅对 Vertex 生效。开启后，该工具会加入首轮允许列表，模型必须先从已开启强制的工具里选一个。后续轮次不再强制，以便给出最终回复。",
+      forceBadge: "强制",
     },
     default: {
       quickModelTitle: "快速模型",

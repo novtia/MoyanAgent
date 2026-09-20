@@ -302,8 +302,8 @@ fn _abort_handle_marker(_h: AbortHandle) {}
 
 /// Assemble the final `system_prompt` for a sub-agent run.
 ///
-/// Always appends an `<env>` block with platform/shell metadata.
-/// The working directory line is included only when a DB project path
+/// Always appends an `<env>` block with the working directory.
+/// The working directory line is filled only when a DB project path
 /// is available (`env_cwd: Some`).
 fn compose_system_prompt(
     def: &AgentDefinition,
@@ -366,36 +366,14 @@ fn compose_user_prompt(def: &AgentDefinition, user_prompt: &str) -> String {
 
 /// Render the `<env>` block injected into every agent system prompt.
 ///
-/// Platform and shell are always present so the model never needs to
-/// probe the OS with Bash. The working directory comes exclusively from
-/// the database project `path` column — never from the host process.
+/// The working directory comes exclusively from the database project
+/// `path` column — never from the host process.
 fn env_details_block(project_cwd: Option<&std::path::Path>) -> String {
-    let platform = std::env::consts::OS;
-    let arch = std::env::consts::ARCH;
-    let shell = shell_description();
-    let mut lines = vec![
-        "<env>".to_string(),
-        format!("Platform: {platform}/{arch}"),
-        format!("Shell: {shell}"),
-    ];
-    match project_cwd.filter(|p| !p.as_os_str().is_empty()) {
-        Some(cwd) => lines.push(format!("Working directory: {}", cwd.display())),
-        None => lines.push(
-            "Working directory: (none — set the project's `path` in the database to enable \
+    let cwd_line = match project_cwd.filter(|p| !p.as_os_str().is_empty()) {
+        Some(cwd) => format!("Working directory: {}", cwd.display()),
+        None => "Working directory: (none — set the project's `path` in the database to enable \
              file/shell tools)"
-                .to_string(),
-        ),
-    }
-    lines.push("</env>".to_string());
-    lines.join("\n")
-}
-
-#[cfg(windows)]
-fn shell_description() -> &'static str {
-    "cmd.exe — use `dir`, `cd`, `type`; do NOT use `ls`, `pwd`, `find`, `uname`"
-}
-
-#[cfg(not(windows))]
-fn shell_description() -> &'static str {
-    "sh -c (POSIX) — use `ls`, `find`, `pwd`, etc."
+            .to_string(),
+    };
+    format!("<env>\n{cwd_line}\n</env>")
 }

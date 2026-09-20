@@ -271,15 +271,8 @@ fn build_body(request: &ChatRequest, stream_function_args: bool) -> Value {
             "tools".into(),
             json!([{ "functionDeclarations": function_declarations }]),
         );
-        if stream_function_args {
-            map.insert(
-                "toolConfig".into(),
-                json!({
-                    "functionCallingConfig": {
-                        "streamFunctionCallArguments": true
-                    }
-                }),
-            );
+        if let Some(tool_config) = vertex_or_stream_tool_config(request, stream_function_args) {
+            map.insert("toolConfig".into(), tool_config);
         }
     }
 
@@ -546,10 +539,79 @@ fn gemini_thinking_budget(effort: &str) -> i64 {
     }
 }
 
+/// Vertex opening turns may force a user-configured tool allow-list.
+/// Studio Gemini is unchanged (no `mode`). Argument streaming is
+/// orthogonal and may sit on the same `functionCallingConfig` object.
+fn vertex_or_stream_tool_config(request: &ChatRequest, stream_function_args: bool) -> Option<Value> {
+    let forced = vertex_opening_forced_names(request);
+    if forced.is_empty() && !stream_function_args {
+        return None;
+    }
+    let mut fcc = Map::new();
+    if !forced.is_empty() {
+        fcc.insert("mode".into(), json!("ANY"));
+        fcc.insert("allowedFunctionNames".into(), json!(forced));
+    }
+    if stream_function_args {
+        fcc.insert("streamFunctionCallArguments".into(), json!(true));
+    }
+    Some(json!({ "functionCallingConfig": fcc }))
+}
+
+fn is_vertex_sdk(request: &ChatRequest) -> bool {
+    crate::ai::providers::normalize_sdk(&request.provider.sdk) == VERTEX_SDK
+}
+
+/// `ANY` on every Vertex turn would prevent a final prose answer. Only the
+/// first provider call of a run (no in-turn tool chain, no prior tool
+/// history) is forced, and only for names the user enabled.
+fn vertex_opening_forced_names(request: &ChatRequest) -> Vec<String> {
+    if !is_vertex_sdk(request) || request.forced_tools.is_empty() {
+        return Vec::new();
+    }
+    if !request.tool_chain.is_empty() || request.pending_assistant_turn.is_some() {
+        return Vec::new();
+    }
+    if request.history.iter().any(|turn| {
+        turn.timeline.iter().any(|seg| {
+            matches!(seg, crate::ai::chat::TimelineSegment::ToolRound { .. })
+        })
+    }) {
+        return Vec::new();
+    }
+    request
+        .forced_tools
+        .iter()
+        .filter(|name| request.tools.iter().any(|t| t.name == **name))
+        .cloned()
+        .collect()
+}
+
 fn strip_stream_function_call_config(body: &mut Value) {
-    if let Some(map) = body.as_object_mut() {
-        map.remove("toolConfig");
-        map.remove("tool_config");
+    let Some(map) = body.as_object_mut() else {
+        return;
+    };
+    let mut drop_keys = Vec::new();
+    for key in ["toolConfig", "tool_config"] {
+        let Some(config) = map.get_mut(key).and_then(Value::as_object_mut) else {
+            continue;
+        };
+        for fcc_key in ["functionCallingConfig", "function_calling_config"] {
+            if let Some(fcc) = config.get_mut(fcc_key).and_then(Value::as_object_mut) {
+                fcc.remove("streamFunctionCallArguments");
+                fcc.remove("stream_function_call_arguments");
+            }
+        }
+        let empty = config.iter().all(|(k, v)| {
+            matches!(k.as_str(), "functionCallingConfig" | "function_calling_config")
+                && v.as_object().map(|m| m.is_empty()).unwrap_or(false)
+        });
+        if empty {
+            drop_keys.push(key.to_string());
+        }
+    }
+    for key in drop_keys {
+        map.remove(&key);
     }
 }
 
@@ -1550,6 +1612,7 @@ mod tests {
             context_window: None,
             todo_snapshot: None,
             route_providers: Vec::new(),
+            forced_tools: Vec::new(),
         }
     }
 
@@ -1645,6 +1708,95 @@ mod tests {
         let no_tools = build_body(&sample_request(false), true);
         assert!(no_tools.get("toolConfig").is_none());
         assert!(no_tools.get("tools").is_none());
+    }
+
+    fn vertex_tools_request() -> ChatRequest {
+        let mut req = sample_request(true);
+        req.provider.sdk = VERTEX_SDK.into();
+        req.tools = vec![
+            ToolDefinition {
+                name: "Read".into(),
+                description: "read".into(),
+                schema: json!({ "type": "object" }),
+            },
+            ToolDefinition {
+                name: "CreateDoc".into(),
+                description: "create".into(),
+                schema: json!({ "type": "object" }),
+            },
+            ToolDefinition {
+                name: "Edit".into(),
+                description: "edit".into(),
+                schema: json!({ "type": "object" }),
+            },
+        ];
+        req
+    }
+
+    fn with_forced(mut req: ChatRequest, names: &[&str]) -> ChatRequest {
+        req.forced_tools = names.iter().map(|s| (*s).to_string()).collect();
+        req
+    }
+
+    #[test]
+    fn vertex_opening_request_has_no_any_without_forced_tools() {
+        let req = vertex_tools_request();
+        let body = build_body(&req, false);
+        assert!(body.get("toolConfig").is_none());
+        let studio = with_forced(sample_request(true), &["CreateDoc"]);
+        let studio_body = build_body(&studio, false);
+        assert!(studio_body.get("toolConfig").is_none());
+    }
+
+    #[test]
+    fn vertex_opening_request_forces_configured_tools() {
+        let req = with_forced(vertex_tools_request(), &["Read", "CreateDoc", "Missing"]);
+        let body = build_body(&req, false);
+        assert_eq!(body["toolConfig"]["functionCallingConfig"]["mode"], "ANY");
+        assert_eq!(
+            body["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"],
+            json!(["Read", "CreateDoc"])
+        );
+        let edit_only = with_forced(vertex_tools_request(), &["Edit"]);
+        let edit_body = build_body(&edit_only, false);
+        assert_eq!(
+            edit_body["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"],
+            json!(["Edit"])
+        );
+    }
+
+    #[test]
+    fn vertex_later_tool_rounds_drop_any_mode() {
+        let mut req = with_forced(vertex_tools_request(), &["Read", "CreateDoc"]);
+        req.tool_chain.push(crate::ai::chat::ToolChainRound {
+            assistant: crate::ai::chat::PendingAssistantTurn {
+                text: None,
+                thinking_content: None,
+                tool_calls: Vec::new(),
+            },
+            results: Vec::new(),
+        });
+        let body = build_body(&req, false);
+        assert!(body.get("toolConfig").is_none());
+    }
+
+    #[test]
+    fn vertex_stream_retry_keeps_any_mode() {
+        let req = with_forced(vertex_tools_request(), &["Read", "CreateDoc"]);
+        let mut streamed = build_body(&req, true);
+        assert_eq!(
+            streamed["toolConfig"]["functionCallingConfig"]["streamFunctionCallArguments"],
+            true
+        );
+        strip_stream_function_call_config(&mut streamed);
+        assert_eq!(streamed["toolConfig"]["functionCallingConfig"]["mode"], "ANY");
+        assert_eq!(
+            streamed["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"],
+            json!(["Read", "CreateDoc"])
+        );
+        assert!(streamed["toolConfig"]["functionCallingConfig"]
+            .get("streamFunctionCallArguments")
+            .is_none());
     }
 
     #[test]

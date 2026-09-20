@@ -41,7 +41,7 @@ pub mod web_search;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -100,6 +100,49 @@ impl ToolResult {
             metadata: None,
         }
     }
+}
+
+fn tool_description_overrides() -> &'static Mutex<BTreeMap<String, String>> {
+    static MAP: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// Replace the process-wide tool-description overrides from settings.
+pub fn set_tool_description_overrides(map: BTreeMap<String, String>) {
+    if let Ok(mut g) = tool_description_overrides().lock() {
+        *g = map;
+    }
+}
+
+/// Description sent to the model: user override when non-empty, else builtin.
+pub fn resolved_tool_description(name: &str, builtin: &str) -> String {
+    tool_description_overrides()
+        .lock()
+        .ok()
+        .and_then(|g| g.get(name).cloned())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| builtin.to_string())
+}
+
+fn forced_tools_store() -> &'static Mutex<Vec<String>> {
+    static LIST: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+    LIST.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Replace the process-wide Vertex opening-turn force list from settings.
+pub fn set_forced_tools(names: Vec<String>) {
+    if let Ok(mut g) = forced_tools_store().lock() {
+        *g = names;
+    }
+}
+
+/// Tool names the user enabled for Vertex opening-turn `ANY`.
+pub fn forced_tool_names() -> Vec<String> {
+    forced_tools_store()
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default()
 }
 
 /// Async return type used by tools without `async-trait`.
@@ -581,6 +624,38 @@ mod pool_tests {
                 "Read".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn description_override_replaces_builtin_until_cleared() {
+        super::set_tool_description_overrides(std::collections::BTreeMap::from([(
+            "CreateDoc".into(),
+            "custom doc prompt".into(),
+        )]));
+        assert_eq!(
+            super::resolved_tool_description("CreateDoc", "builtin"),
+            "custom doc prompt"
+        );
+        assert_eq!(
+            super::resolved_tool_description("Read", "builtin read"),
+            "builtin read"
+        );
+        super::set_tool_description_overrides(std::collections::BTreeMap::new());
+        assert_eq!(
+            super::resolved_tool_description("CreateDoc", "builtin"),
+            "builtin"
+        );
+    }
+
+    #[test]
+    fn forced_tools_round_trip_until_cleared() {
+        super::set_forced_tools(vec!["Read".into(), "CreateDoc".into()]);
+        assert_eq!(
+            super::forced_tool_names(),
+            vec!["Read".to_string(), "CreateDoc".to_string()]
+        );
+        super::set_forced_tools(Vec::new());
+        assert!(super::forced_tool_names().is_empty());
     }
 
     #[tokio::test]

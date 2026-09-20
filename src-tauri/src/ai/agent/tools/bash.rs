@@ -55,9 +55,8 @@ impl BashTool {
             spec: ToolSpec {
                 name: TOOL_NAME.to_string(),
                 description: "Execute a shell command and return stdout/stderr/exit code. \
-                    Platform and shell type are in the `<env>` block — read that instead of \
-                    running `uname`. Requires a working directory from the database project \
-                    `path` (or an explicit absolute `cwd`). \
+                    Requires a working directory from the database project `path` \
+                    (or an explicit absolute `cwd`). \
                     Uses cmd on Windows and sh on Unix. Times out (default 60s)."
                     .to_string(),
                 schema: json!({
@@ -235,8 +234,7 @@ fn resolve_cwd(project_root: &Path, requested: Option<&str>) -> Result<PathBuf, 
     if project_root.as_os_str().is_empty() {
         return Err(
             "Bash: no working directory available. Set the project's `path` in the \
-             database, or pass an explicit absolute `cwd` inside it. To detect the OS, read \
-             `<env>Platform</env>` in the system prompt — do not run `uname`."
+             database, or pass an explicit absolute `cwd` inside it."
                 .to_string(),
         );
     }
@@ -424,7 +422,7 @@ fn cwd_validation_error(path: &std::path::Path) -> String {
         if looks_unix {
             return format!(
                 "Bash: `cwd` must be a Windows absolute path (e.g. `C:\\\\`), got `{display}`. \
-                 This host is Windows — read `<env>Platform</env>` instead of using Unix paths."
+                 This host is Windows — do not use Unix paths."
             );
         }
         format!(

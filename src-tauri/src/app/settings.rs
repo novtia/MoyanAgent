@@ -21,6 +21,8 @@ pub fn update_settings(
     let conn = state.conn()?;
     let updated = settings::apply_patch(&conn, patch)?;
     state.tools.set_global_deny(updated.disabled_tools.clone());
+    crate::ai::agent::tools::set_tool_description_overrides(updated.tool_descriptions.clone());
+    crate::ai::agent::tools::set_forced_tools(updated.forced_tools.clone());
     crate::ai::http_proxy::set_from_settings(&updated);
     Ok(updated)
 }

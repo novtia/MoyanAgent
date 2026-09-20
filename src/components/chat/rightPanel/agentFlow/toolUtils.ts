@@ -39,3 +39,22 @@ export function toolDescription(
 ) {
   return t(`agentFlow.toolDescriptions.${name}`, { defaultValue: name });
 }
+
+/** Description the model sees: user override when set, otherwise the builtin spec. */
+export function modelToolDescription(
+  spec: { name: string; description: string },
+  overrides?: Record<string, string> | null,
+): string {
+  const raw = overrides?.[spec.name];
+  if (raw != null && raw.trim() !== "") return raw;
+  return spec.description;
+}
+
+export function isCustomToolDescription(
+  spec: { name: string; description: string },
+  overrides?: Record<string, string> | null,
+): boolean {
+  const raw = overrides?.[spec.name];
+  if (raw == null || raw.trim() === "") return false;
+  return raw.replace(/\r\n/g, "\n").trim() !== spec.description.replace(/\r\n/g, "\n").trim();
+}

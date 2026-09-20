@@ -33,6 +33,8 @@ export function ToolsSection() {
   }, []);
 
   const disabledTools = settings?.disabled_tools ?? [];
+  const toolDescriptions = settings?.tool_descriptions ?? {};
+  const forcedTools = settings?.forced_tools ?? [];
   const echoContent = settings?.create_doc_echo_content ?? false;
   const replaceAllDefault = settings?.edit_replace_all_default ?? false;
   const paragraphLabels = settings?.read_paragraph_labels ?? false;
@@ -46,13 +48,15 @@ export function ToolsSection() {
       const desc = t(`agentFlow.toolDescriptions.${tool.name}`, {
         defaultValue: tool.description,
       });
+      const custom = toolDescriptions[tool.name] ?? "";
       return (
         tool.name.toLowerCase().includes(q) ||
         desc.toLowerCase().includes(q) ||
-        tool.description.toLowerCase().includes(q)
+        tool.description.toLowerCase().includes(q) ||
+        custom.toLowerCase().includes(q)
       );
     });
-  }, [tools, search, t]);
+  }, [tools, search, t, toolDescriptions]);
 
   const setEnabled = (name: string, enabled: boolean) => {
     const next = enabled
@@ -61,6 +65,29 @@ export function ToolsSection() {
         ? disabledTools
         : [...disabledTools, name];
     void update({ disabled_tools: next });
+  };
+
+  const setForced = (name: string, forced: boolean) => {
+    const has = forcedTools.includes(name);
+    if (forced === has) return;
+    const next = forced
+      ? [...forcedTools, name]
+      : forcedTools.filter((item) => item !== name);
+    void update({ forced_tools: next });
+  };
+
+  const setDescription = (name: string, text: string | null) => {
+    const next = { ...toolDescriptions };
+    const trimmed = text?.replace(/\r\n/g, "\n").trim() ?? "";
+    if (trimmed === "") {
+      if (!(name in next)) return;
+      delete next[name];
+    } else if (next[name] === trimmed) {
+      return;
+    } else {
+      next[name] = trimmed;
+    }
+    void update({ tool_descriptions: next });
   };
 
   if (error) {
@@ -97,18 +124,25 @@ export function ToolsSection() {
           filteredTools={filteredTools}
           selectedName={selected?.name}
           disabledTools={disabledTools}
+          forcedTools={forcedTools}
+          descriptions={toolDescriptions}
           search={search}
           onSearchChange={setSearch}
           onSelect={(tool) => setSelectedName(tool.name)}
           onSetEnabled={setEnabled}
         />
         <ToolDetail
+          key={selected?.name ?? "none"}
           selected={selected}
           enabled={selected ? !disabledTools.includes(selected.name) : false}
+          forced={selected ? forcedTools.includes(selected.name) : false}
           echoContent={echoContent}
           replaceAllDefault={replaceAllDefault}
           paragraphLabels={paragraphLabels}
+          descriptions={toolDescriptions}
           onSetEnabled={setEnabled}
+          onSetForced={setForced}
+          onSetDescription={setDescription}
           onSetEchoContent={(next) => {
             void update({ create_doc_echo_content: next });
           }}

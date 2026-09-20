@@ -161,6 +161,10 @@ export interface Settings {
   enabled_skill_ids: string[];
   /** Globally denied tool names. Empty means every registered tool stays available. */
   disabled_tools: string[];
+  /** Per-tool description overrides sent to the model. Empty / omitted keeps the builtin. */
+  tool_descriptions: Record<string, string>;
+  /** Tool names forced on the opening Vertex turn. Empty means no force. */
+  forced_tools: string[];
   /** When true, CreateDoc echoes the written body in the tool result. */
   create_doc_echo_content: boolean;
   /** When true, Edit treats a missing `replace_all` as true. */
@@ -238,6 +242,8 @@ export interface SettingsPatch {
   auto_backup_chat_keep?: number;
   enabled_skill_ids?: string[];
   disabled_tools?: string[];
+  tool_descriptions?: Record<string, string>;
+  forced_tools?: string[];
   create_doc_echo_content?: boolean;
   edit_replace_all_default?: boolean;
   read_paragraph_labels?: boolean;

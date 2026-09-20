@@ -67,5 +67,6 @@ pub fn build_chat_request(
         context_window: None,
         todo_snapshot: None,
         route_providers: provider.route_providers_for(model),
+        forced_tools: Vec::new(),
     })
 }
