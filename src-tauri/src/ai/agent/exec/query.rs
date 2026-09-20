@@ -80,10 +80,9 @@ pub struct QueryResult {
     pub response_id: Option<String>,
     /// Context window an upstream stated while rejecting a request for length.
     ///
-    /// A model missing from the local catalog has no window of its own, which
-    /// disables budget enforcement entirely. The rejection is the only place the
-    /// real figure is ever published, so the host persists it onto the session
-    /// and the next turn starts out enforcing the right limit.
+    /// The rejection is the only place a model missing from the local catalog
+    /// ever publishes its real figure, so the host persists it onto the
+    /// session for the composer context ring.
     pub observed_context_window: Option<i64>,
 }
 

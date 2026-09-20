@@ -457,9 +457,9 @@ pub struct ChatRequest {
     pub context_cache_enabled: bool,
     /// Maximum prompt+completion tokens the target model accepts, when known.
     ///
-    /// Sourced from the session's resolved model catalog entry. The agent loop
-    /// uses it to size compaction and to clamp `max_tokens`, so leaving it
-    /// `None` means "no budget enforcement" — the request goes out as built.
+    /// Sourced from the session's resolved model catalog entry. Used by the
+    /// composer's context ring and persisted when an upstream overflow
+    /// reports the model's real window. `None` means the window is unknown.
     pub context_window: Option<i64>,
     /// Live TodoList checklist. Providers MUST emit this as the last user
     /// message so a long transcript cannot bury unfinished items. `None`

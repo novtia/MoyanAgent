@@ -175,6 +175,49 @@ export interface Settings {
   http_proxy_enabled: boolean;
   /** Proxy URL, e.g. `http://127.0.0.1:7890` or `socks5://127.0.0.1:7891`. */
   http_proxy_url: string;
+  /** NovelAI image-generation tool credentials and default parameters. */
+  novelai: NovelAiSettings;
+}
+
+/** Persisted NovelAI tool settings (Settings → Tools → NovelAI). */
+export interface NovelAiSettings {
+  api_key: string;
+  model: string;
+  width: number;
+  height: number;
+  sampler: string;
+  noise_schedule: string;
+  steps: number;
+  scale: number;
+  cfg_rescale: number;
+  quality: string;
+  v5_mode: string;
+  uc_preset: string;
+  uc: string;
+  /** Weighted artist chain prepended before the model's prompt. */
+  artists: string;
+  straight_alpha: boolean;
+}
+
+export interface NovelAiSubscription {
+  tier: number;
+  tierName: string;
+  active: boolean;
+  opus: boolean;
+  anlas: number;
+  anlasFixed: number;
+  anlasPurchased: number;
+  usagePercent?: number | null;
+  usageNegative: boolean;
+  expiresAt?: unknown;
+}
+
+export interface NovelAiStatus {
+  configured: boolean;
+  hint: string;
+  subscription: NovelAiSubscription | null;
+  error?: string | null;
+  errorStatus?: number | null;
 }
 
 /** Builtin API search kinds (local scraping is separate). */
@@ -249,6 +292,7 @@ export interface SettingsPatch {
   read_paragraph_labels?: boolean;
   http_proxy_enabled?: boolean;
   http_proxy_url?: string;
+  novelai?: NovelAiSettings;
 }
 
 /** Static description of a registered agent tool. */

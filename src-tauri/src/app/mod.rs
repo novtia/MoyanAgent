@@ -4,9 +4,8 @@ use std::sync::{Arc, Mutex};
 use crate::ai::agent::exec::engine::ProviderQueryEngine;
 use crate::ai::agent::tools::agent_tool::{AgentTool, ChatRequestFactory, SubagentSessionHost};
 use crate::ai::agent::{
-    self, AgentRegistry, ConsultRolesTool, FileReadTool, FileSnapshotStore,
-    FsSessionMemoryExtractor, NotificationQueue, ProviderEngine, RoleStateStore, RoleStateTool,
-    StaticMcpRegistry, TaskStore, ToolPool,
+    self, AgentRegistry, ConsultRolesTool, FileReadTool, FileSnapshotStore, NotificationQueue,
+    ProviderEngine, RoleStateStore, RoleStateTool, StaticMcpRegistry, TaskStore, ToolPool,
 };
 use crate::ai::{session_log, token_log};
 use tauri::Manager;
@@ -95,6 +94,10 @@ pub fn run() {
                 Arc::new(pool.clone()),
             ));
             tools.register(crate::ai::agent::tools::web_fetch::WebFetchTool::new());
+            tools.register(crate::ai::agent::tools::novelai::NovelAITool::new(
+                Arc::new(pool.clone()),
+                file_snapshots.clone(),
+            ));
 
             // Build the agent-callable `Agent` tool. The chat factory
             // materialises a sub-agent `ChatRequest` from the current
@@ -170,7 +173,6 @@ pub fn run() {
                 query_engine,
                 mcp,
                 tools,
-                session_memory: Arc::new(FsSessionMemoryExtractor::new()),
                 role_states,
                 prompt_registry,
                 token_stats,
@@ -188,6 +190,7 @@ pub fn run() {
             settings::fetch_provider_models,
             settings::fetch_model_endpoints,
             settings::web_search,
+            settings::novelai_status,
             shell::get_app_info,
             shell::open_path,
             shell::open_url,
@@ -243,7 +246,6 @@ pub fn run() {
             role_state::update_role_state,
             role_state::reorder_role_states,
             role_state::delete_role_state,
-            agents::extract_session_memory,
             tokens::get_token_usage_summary,
             tokens::get_token_usage_daily,
             tokens::get_token_usage_by_tool,

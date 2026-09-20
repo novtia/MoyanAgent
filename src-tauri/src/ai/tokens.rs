@@ -78,18 +78,19 @@ pub fn extract_usage(v: &Value) -> TokenUsage {
 // Providers only report `usage` *after* a call succeeds, which is useless for
 // deciding whether a call may be made at all: a session restored from the
 // database can already exceed the window on its very first request. These
-// helpers give the agent loop a cheap, tokenizer-free approximation so it can
-// compact and clamp before anything is sent.
+// helpers give a cheap, tokenizer-free approximation of prompt size.
 
 /// Latin text averages roughly four characters per token.
 const ASCII_CHARS_PER_TOKEN: i64 = 4;
 
 /// Per-message framing (role markers, delimiters) charged by every provider.
+#[allow(dead_code)]
 const MESSAGE_OVERHEAD_TOKENS: i64 = 4;
 
 /// Flat charge for an inline image. Real cost is provider- and
 /// resolution-dependent (tile counts, detail level); this sits above the
 /// common single-tile case so estimates stay on the safe side.
+#[allow(dead_code)]
 const IMAGE_TOKENS: i64 = 1_500;
 
 /// Approximate token count of a text blob.
@@ -113,6 +114,7 @@ pub fn estimate_text_tokens(text: &str) -> i64 {
 
 /// Marker left in place of elided tool output. Phrased for the model: it has to
 /// understand that the content was cut for size, not that the tool failed.
+#[allow(dead_code)]
 fn elision_notice(dropped: i64) -> String {
     format!("\n\n…<{dropped} tokens elided to fit the context window; re-read a narrower range if you need this part>…\n\n")
 }
@@ -125,7 +127,8 @@ fn elision_notice(dropped: i64) -> String {
 /// dropped.
 ///
 /// Without this, a single uncapped tool result can exceed the whole window on
-/// its own, which no amount of round-windowing or history compaction can undo.
+/// its own.
+#[allow(dead_code)]
 pub fn truncate_tool_content(value: &mut Value, max_tokens: i64) -> bool {
     if max_tokens <= 0 || estimate_json_tokens(value) <= max_tokens {
         return false;
@@ -186,6 +189,7 @@ pub fn truncate_tool_content(value: &mut Value, max_tokens: i64) -> bool {
 }
 
 /// Middle-elide `text` so its estimate fits `max_tokens`.
+#[allow(dead_code)]
 fn truncate_text_to_tokens(text: &mut String, max_tokens: i64) -> bool {
     if estimate_text_tokens(text) <= max_tokens {
         return false;
@@ -215,6 +219,7 @@ fn truncate_text_to_tokens(text: &mut String, max_tokens: i64) -> bool {
     true
 }
 
+#[allow(dead_code)]
 fn estimate_json_tokens(value: &Value) -> i64 {
     match value {
         Value::Null => 1,
@@ -231,10 +236,12 @@ fn estimate_json_tokens(value: &Value) -> i64 {
     }
 }
 
+#[allow(dead_code)]
 fn estimate_opt_text(text: Option<&String>) -> i64 {
     text.map(|s| estimate_text_tokens(s)).unwrap_or(0)
 }
 
+#[allow(dead_code)]
 fn estimate_timeline_tokens(segments: &[TimelineSegment]) -> i64 {
     segments
         .iter()
@@ -276,14 +283,15 @@ fn estimate_timeline_tokens(segments: &[TimelineSegment]) -> i64 {
 
 /// Approximate cost of one replayed conversation turn, including the tool
 /// transcript a prior assistant turn carries.
+#[allow(dead_code)]
 pub fn estimate_history_turn_tokens(turn: &HistoryTurn) -> i64 {
     let mut total = MESSAGE_OVERHEAD_TOKENS;
     total += estimate_opt_text(turn.text.as_ref());
     // `thinking_content` holds the turn's reasoning concatenated, and the
     // timeline segments hold the very same text split per round. Providers
     // send one or the other — the flat field only when there is no timeline to
-    // replay — so charging for both doubles the price of every tool-heavy turn
-    // and makes the trimmer cut far more than it has to.
+    // replay — so charging for both would double the price of every
+    // tool-heavy turn.
     if turn.timeline.is_empty() {
         total += estimate_opt_text(turn.thinking_content.as_ref());
     }
@@ -294,6 +302,7 @@ pub fn estimate_history_turn_tokens(turn: &HistoryTurn) -> i64 {
 
 /// Approximate cost of one in-turn tool round as the provider will serialise
 /// it: the assistant message that emitted the calls plus every result.
+#[allow(dead_code)]
 pub fn estimate_tool_round_tokens(round: &ToolChainRound) -> i64 {
     let mut total = MESSAGE_OVERHEAD_TOKENS;
     total += estimate_opt_text(round.assistant.text.as_ref());
@@ -312,6 +321,7 @@ pub fn estimate_tool_round_tokens(round: &ToolChainRound) -> i64 {
 /// Approximate the prompt size of a [`ChatRequest`] as the provider will
 /// serialise it: system prompt, replayed history, in-turn tool rounds, the
 /// tool schema, and the pending user message.
+#[allow(dead_code)]
 pub fn estimate_chat_tokens(chat: &ChatRequest) -> i64 {
     let mut total = MESSAGE_OVERHEAD_TOKENS + estimate_text_tokens(&chat.system_prompt);
     total += MESSAGE_OVERHEAD_TOKENS + estimate_text_tokens(&chat.prompt);

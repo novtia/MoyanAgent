@@ -7,6 +7,7 @@ import { ConsultRolesChip } from "./ConsultRolesChip";
 import { DeleteDocCard } from "./DeleteDocCard";
 import { GrepToolCard } from "./GrepToolCard";
 import { ListFilesCard } from "./ListFilesCard";
+import { NovelAIToolCard } from "./NovelAIToolCard";
 import { ReadToolCard } from "./ReadToolCard";
 import { RoleStateChip } from "./RoleStateChip";
 import { StreamingDocCard } from "./StreamingDocCard";
@@ -29,6 +30,7 @@ const TOOL_REGISTRY: Record<string, ComponentType<ToolCardProps>> = {
   Grep: GrepToolCard,
   WebSearch: WebSearchToolCard,
   WebFetch: WebFetchToolCard,
+  NovelAI: NovelAIToolCard,
   Agent: AgentToolCard,
   RoleState: RoleStateChip,
   ConsultRoles: ConsultRolesChip,

@@ -10,15 +10,12 @@ use crate::error::{AppError, AppResult};
 use crate::media::images;
 
 use crate::app::dto::{decorate_message, MessageAbs};
-use crate::app::history::{build_history, concat_block_text, history_token_budget};
+use crate::app::history::{build_history, concat_block_text};
 use crate::app::messages::reload_message;
 use crate::app::reader_paths::session_project_cwd;
 use crate::app::state::AppState;
 
-use super::engine::{
-    generation_abort_lock, maybe_extract_session_memory, run_agent_chain,
-    run_cancellable_generation,
-};
+use super::engine::{generation_abort_lock, run_agent_chain, run_cancellable_generation};
 use super::params::{effective_agent_chain, resolve_session_generation};
 use super::streaming::{
     new_stream_blocks, persist_streamed_assistant_snapshot, snapshot_stream_blocks,
@@ -393,7 +390,6 @@ pub async fn generate_image(
             &req.session_id,
             None,
             history_turns.max(0) as usize,
-            history_token_budget(Some(resolved.context_window)),
         )?;
         let mut chat_request = router::build_chat_request(
             &resolved.provider,
@@ -596,7 +592,6 @@ pub async fn generate_image(
     // 4) write assistant message
     match result {
         Ok(resp) => {
-            maybe_extract_session_memory(&state, &app, &req.session_id, &resp.usage);
             let blocks = snapshot_stream_blocks(&stream_blocks);
             let conn = state.conn()?;
             persist_session_response_cache(
@@ -869,7 +864,6 @@ pub async fn regenerate_image(
             &req.session_id,
             Some(user_msg_existing.created_at),
             history_turns.max(0) as usize,
-            history_token_budget(Some(resolved.context_window)),
         )?;
         let mut chat_request = router::build_chat_request(
             &resolved.provider,
@@ -1026,7 +1020,6 @@ pub async fn regenerate_image(
 
     match result {
         Ok(resp) => {
-            maybe_extract_session_memory(&state, &app, &req.session_id, &resp.usage);
             let blocks = snapshot_stream_blocks(&stream_blocks);
             let conn = state.conn()?;
             persist_session_response_cache(

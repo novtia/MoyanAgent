@@ -127,6 +127,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "FileEdit",
     "CreateDoc",
     "Delete",
+    "NovelAI",
 ];
 
 /// Bash-prefix patterns that imply the command will mutate state.
@@ -458,7 +459,7 @@ mod tests {
 
     #[test]
     fn plan_mode_refuses_write_tools_case_insensitively() {
-        for tool in ["Write", "edit", "CreateDoc", "DELETE", "Patch"] {
+        for tool in ["Write", "edit", "CreateDoc", "DELETE", "Patch", "NovelAI"] {
             assert!(denied(PermissionMode::Plan, tool, ""));
         }
     }

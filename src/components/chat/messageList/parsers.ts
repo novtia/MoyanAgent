@@ -274,3 +274,51 @@ export function parseListFilesToolOutput(output: unknown): ListFilesParsed | nul
     entries,
   };
 }
+
+export type NovelAiImage = {
+  path: string;
+  width?: number;
+  height?: number;
+  bytes?: number;
+};
+
+export type NovelAiOutput = {
+  images: NovelAiImage[];
+  model?: string;
+  seed?: number;
+  width?: number;
+  height?: number;
+  steps?: number;
+  sampler?: string;
+  prompt?: string;
+};
+
+export function parseNovelAiOutput(output: unknown): NovelAiOutput | null {
+  const o = asObj(output);
+  if (!o) return null;
+  const images: NovelAiImage[] = [];
+  if (Array.isArray(o.images)) {
+    for (const row of o.images) {
+      const img = asObj(row);
+      if (!img) continue;
+      const path = asStr(img.path);
+      if (!path) continue;
+      images.push({
+        path,
+        width: asNum(img.width),
+        height: asNum(img.height),
+        bytes: asNum(img.bytes),
+      });
+    }
+  }
+  return {
+    images,
+    model: asStr(o.model),
+    seed: asNum(o.seed),
+    width: asNum(o.width),
+    height: asNum(o.height),
+    steps: asNum(o.steps),
+    sampler: asStr(o.sampler),
+    prompt: asStr(o.prompt),
+  };
+}

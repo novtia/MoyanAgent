@@ -96,3 +96,19 @@ pub async fn web_search(
     )
     .await
 }
+
+/// Probe the saved (or just-typed) NovelAI token against `/user/subscription`.
+#[tauri::command]
+pub async fn novelai_status(
+    state: tauri::State<'_, Arc<AppState>>,
+    token: Option<String>,
+) -> Result<crate::ai::nai::NovelAiStatus, AppError> {
+    let token = match token.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        Some(t) => t,
+        None => {
+            let conn = state.conn()?;
+            settings::read_novelai_config(&conn).api_key
+        }
+    };
+    Ok(crate::ai::nai::status_for_token(&token).await)
+}

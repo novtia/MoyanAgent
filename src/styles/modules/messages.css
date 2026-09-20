@@ -1162,9 +1162,49 @@ button.flow-head:disabled {
 .bash-tool,
 .grep-tool,
 .web-search-tool,
-.web-fetch-tool {
+.web-fetch-tool,
+.nai-tool {
   width: 100%;
   margin: 6px 0;
+}
+
+.nai-tool-body {
+  padding: 0 8px 8px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nai-tool-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.nai-tool-thumb {
+  appearance: none;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-2, var(--bg));
+  overflow: hidden;
+  cursor: pointer;
+  max-width: 220px;
+}
+.nai-tool-thumb img {
+  display: block;
+  width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+}
+.nai-tool-prompt {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-mute);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* OpenCode-style Agent jump card (temp child session) */

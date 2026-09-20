@@ -5,9 +5,9 @@ use tauri::{AppHandle, Emitter};
 
 use crate::ai::agent::core::context::{AbortHandle, AbortSignal};
 use crate::ai::agent::exec::query::ToolEventCallback;
-use crate::ai::agent::{self, RunAgentParams, TaskState, ToolPool};
+use crate::ai::agent::{self, RunAgentParams, ToolPool};
 use crate::ai::{chat, parameters, router};
-use crate::data::{paths, session, settings};
+use crate::data::{session, settings};
 use crate::error::{AppError, AppResult};
 
 use crate::app::history::append_role_state_history_tail;
@@ -417,27 +417,4 @@ pub(crate) async fn run_cancellable_generation(
         tool_calls: Vec::new(),
         response_id: run.response_id,
     })
-}
-
-pub(crate) fn maybe_extract_session_memory(
-    state: &AppState,
-    app: &AppHandle,
-    session_id: &str,
-    usage: &crate::ai::tokens::TokenUsage,
-) {
-    if !state.session_memory.should_update(usage, 0) {
-        return;
-    }
-    let Ok(dir) = paths::session_dir(app, session_id) else {
-        return;
-    };
-    let latest = state
-        .task_store
-        .list()
-        .into_iter()
-        .filter(|t| !matches!(t.state, TaskState::Pending | TaskState::Running))
-        .max_by_key(|t| t.ended_at_ms.unwrap_or(t.started_at_ms));
-    let _ = state
-        .session_memory
-        .extract_now(session_id, &dir, latest.as_ref());
 }

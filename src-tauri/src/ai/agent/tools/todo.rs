@@ -146,9 +146,9 @@ impl Default for TodoListTool {
 impl TodoListTool {
     /// Compact live checklist injected at the end of every model request.
     ///
-    /// Placed last so recency bias still sees it after a long transcript or
-    /// a compaction summary. `premature_stop` adds a "do not halt" rider
-    /// when the model tried to end the turn with unfinished items remaining.
+    /// Placed last so recency bias still sees it after a long transcript.
+    /// `premature_stop` adds a "do not halt" rider when the model tried to
+    /// end the turn with unfinished items remaining.
     pub fn prompt_snapshot(&self, ctx: &ToolUseContext, premature_stop: bool) -> Option<String> {
         self.prompt_snapshot_for_key(&scope_key(ctx), premature_stop)
     }

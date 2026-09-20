@@ -421,8 +421,8 @@ pub(crate) fn tool_event_callback(
                 }),
             );
         }
-        // Other variants (Assistant text, User, Progress, CompactBoundary)
-        // aren't structural tool events - ignore them here.
+        // Other variants (Assistant text, User, Progress) aren't
+        // structural tool events — ignore them here.
         _ => {}
     })
 }

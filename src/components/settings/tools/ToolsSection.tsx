@@ -139,6 +139,7 @@ export function ToolsSection() {
           echoContent={echoContent}
           replaceAllDefault={replaceAllDefault}
           paragraphLabels={paragraphLabels}
+          novelai={settings?.novelai}
           descriptions={toolDescriptions}
           onSetEnabled={setEnabled}
           onSetForced={setForced}
@@ -151,6 +152,9 @@ export function ToolsSection() {
           }}
           onSetParagraphLabels={(next) => {
             void update({ read_paragraph_labels: next });
+          }}
+          onSetNovelai={(next) => {
+            void update({ novelai: next });
           }}
         />
       </div>

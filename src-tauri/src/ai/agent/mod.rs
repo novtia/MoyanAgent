@@ -22,9 +22,8 @@
 //!       registry     load / merge / filter definitions
 //!       mcp          MCP-server availability registry
 //!
-//!     memory/        ── L2..L5 context-memory layers
-//!       (mod.rs)     traits: SessionMemory, AutoMemory, AgentMemory, ...
-//!       session      per-session summary.md extractor (Fs-backed)
+//!     memory/        ── L2..L4 context-memory layers
+//!       (mod.rs)     traits: AutoMemory, AgentMemory, ...
 //!
 //!     tools/         ── tool trait + built-in tools
 //!       (mod.rs)     Tool trait, ToolPool, ToolInvocation, ...
@@ -113,10 +112,6 @@ mod re_exports {
     pub use super::config::definition::{AgentDefinition, AgentSource, Isolation};
     pub use super::config::mcp::{McpRegistry, StaticMcpRegistry};
     pub use super::config::registry::AgentRegistry;
-    // memory
-    pub use super::memory::session::{
-        FsSessionMemoryExtractor, SessionMemoryConfig, DEFAULT_TEMPLATE as SESSION_MEMORY_TEMPLATE,
-    };
     // exec
     pub use super::exec::engine::{
         inject_attachments_into_history, run_chat_request, AgentChatOutcome, EngineTurn,

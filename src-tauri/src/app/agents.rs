@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
 
 use crate::ai::agent::{self, Task, TaskState};
-use crate::data::{custom_agents, paths};
+use crate::data::custom_agents;
 use crate::error::AppError;
 
 use super::generation::params::resolve_generation_definition;
@@ -100,13 +99,6 @@ pub fn set_mcp_servers(
     Ok(())
 }
 
-#[derive(Debug, Serialize)]
-pub(crate) struct SessionMemoryInfo {
-    pub(crate) session_id: String,
-    pub(crate) summary_path: String,
-    pub(crate) total_tokens: i64,
-}
-
 #[tauri::command]
 pub fn list_agent_tools(state: tauri::State<Arc<AppState>>) -> Result<Vec<String>, AppError> {
     let mut names: Vec<String> = state
@@ -131,34 +123,6 @@ pub fn list_agent_tool_specs(
         .collect();
     specs.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(specs)
-}
-
-#[tauri::command]
-pub fn extract_session_memory(
-    state: tauri::State<Arc<AppState>>,
-    app: AppHandle,
-    session_id: String,
-) -> Result<SessionMemoryInfo, AppError> {
-    let dir = paths::session_dir(&app, &session_id)?;
-
-    // Use the most recent completed task for this agent_type/session as
-    // the source. If nothing matches we still write the default template.
-    let latest_task = state
-        .task_store
-        .list()
-        .into_iter()
-        .filter(|t| !matches!(t.state, TaskState::Pending | TaskState::Running))
-        .max_by_key(|t| t.ended_at_ms.unwrap_or(t.started_at_ms));
-
-    let sm = state
-        .session_memory
-        .extract_now(&session_id, &dir, latest_task.as_ref())?;
-
-    Ok(SessionMemoryInfo {
-        session_id: sm.session_id,
-        summary_path: sm.summary_path.to_string_lossy().into_owned(),
-        total_tokens: sm.last_usage.total_tokens.unwrap_or(0),
-    })
 }
 
 #[tauri::command]

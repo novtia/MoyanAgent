@@ -56,7 +56,7 @@ export function ListFilesCard({
   block: Extract<AssistantBlock, { type: "tool_use" }>;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(block.status === "success");
+  const [open, setOpen] = useState(false);
   const status = block.status;
   const parsed = useMemo(
     () => parseListFilesToolOutput(block.output),

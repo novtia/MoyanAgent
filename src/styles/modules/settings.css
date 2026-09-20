@@ -1350,6 +1350,30 @@
   margin-top: 6px;
 }
 
+.settings-nai-fields {
+  margin-top: 12px;
+}
+.settings-nai-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.settings-nai-test-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.settings-nai-status.is-error {
+  color: var(--rose-500);
+}
+.settings-nai-artists {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
 /* model list */
 .model-list-head {
   display: flex;

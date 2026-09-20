@@ -6,7 +6,8 @@ import {
   modelToolDescription,
 } from "../../chat/rightPanel/agentFlow/toolUtils";
 import { ProviderEnableSwitch } from "../llm/modelService/ProviderEnableSwitch";
-import type { AgentToolSpec } from "../../../types";
+import type { AgentToolSpec, NovelAiSettings } from "../../../types";
+import { NovelAiConfigFields } from "./NovelAiConfigFields";
 import { schemaFields } from "./schemaFields";
 
 export function ToolDetail({
@@ -16,12 +17,14 @@ export function ToolDetail({
   echoContent,
   replaceAllDefault,
   paragraphLabels,
+  novelai,
   descriptions,
   onSetEnabled,
   onSetForced,
   onSetEchoContent,
   onSetReplaceAllDefault,
   onSetParagraphLabels,
+  onSetNovelai,
   onSetDescription,
 }: {
   selected: AgentToolSpec | null;
@@ -30,12 +33,14 @@ export function ToolDetail({
   echoContent: boolean;
   replaceAllDefault: boolean;
   paragraphLabels: boolean;
+  novelai: NovelAiSettings | undefined;
   descriptions: Record<string, string>;
   onSetEnabled: (name: string, enabled: boolean) => void;
   onSetForced: (name: string, forced: boolean) => void;
   onSetEchoContent: (enabled: boolean) => void;
   onSetReplaceAllDefault: (enabled: boolean) => void;
   onSetParagraphLabels: (enabled: boolean) => void;
+  onSetNovelai: (next: NovelAiSettings) => void;
   onSetDescription: (name: string, text: string | null) => void;
 }) {
   const { t } = useTranslation();
@@ -212,6 +217,10 @@ export function ToolDetail({
               <p className="hint">{t("settings.tools.paragraphLabelsDesc")}</p>
             </div>
           </div>
+        )}
+
+        {selected.name === "NovelAI" && (
+          <NovelAiConfigFields value={novelai} onChange={onSetNovelai} />
         )}
 
         <div className="model-list-head">

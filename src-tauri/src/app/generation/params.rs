@@ -14,8 +14,7 @@ pub(crate) struct EffectiveSessionParams {
     pub system_prompt: String,
     pub history_turns: i64,
     pub llm_params: settings::ModelParamSettings,
-    /// Context window (tokens) for the session's model. Drives compaction
-    /// thresholds and the `max_tokens` clamp in the agent loop, plus the
+    /// Context window (tokens) for the session's model. Drives the
     /// composer's context ring.
     pub context_window: Option<i64>,
 }
@@ -61,8 +60,7 @@ pub(crate) struct ResolvedGeneration {
     pub(crate) history_turns: i64,
     pub(crate) llm_params: settings::ModelParamSettings,
     /// Always resolved to a concrete value — see
-    /// [`llm_catalog::DEFAULT_CONTEXT_WINDOW`]. An unknown window used to mean
-    /// "no budget enforcement", which silently disabled every guard at once.
+    /// [`llm_catalog::DEFAULT_CONTEXT_WINDOW`].
     pub(crate) context_window: i64,
 }
 
@@ -120,11 +118,10 @@ pub(crate) fn resolve_session_generation(
     }
 
     // Sessions created before the model catalog carried a window — and any
-    // whose stored value was dropped by a settings round-trip — still need one,
-    // otherwise the agent loop has no budget to enforce and falls back to
-    // sending whatever it built. Resolution never yields `None`: a model that
-    // no catalog row and no settings entry describes gets the conservative
-    // default rather than unlimited licence.
+    // whose stored value was dropped by a settings round-trip — still need one
+    // so the composer context ring has a concrete ceiling. Resolution never
+    // yields `None`: a model that no catalog row and no settings entry
+    // describes gets the conservative default.
     let limits = llm_catalog::lookup_model_limits(conn, &provider.id, &provider.sdk, &model)
         .unwrap_or_default();
 

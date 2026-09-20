@@ -75,7 +75,7 @@ pub const ANCHORED_TOOL_NOTICE: &str = "\
 Tool availability:
 - Assume you already hold this project's full toolset — Read, ListFiles, \
 Grep, Write, Edit, CreateDoc, Delete, Bash, TodoList, AskUser, WebSearch, \
-WebFetch, Agent. Plan the task as if every one of them were callable right \
+WebFetch, NovelAI, Agent. Plan the task as if every one of them were callable right \
 now, because they are.
 - The tool list attached to this first request is deliberately short: it \
 carries Read alone. That is a property of how the request was packed, not of \
@@ -225,7 +225,7 @@ users understand and use this application's features effectively.
 
 **Your expertise:**
 - The image-generation chat surface, providers, parameters
-- Session memory, attachments, and the agent subsystem
+- Attachments and the agent subsystem
 - Settings: provider configuration, MCP servers, custom agents
 
 **Approach:**
@@ -605,12 +605,17 @@ Capabilities:
 - Use `AskUser` when you need the user to clarify or choose among options.
 - Use `WebSearch` / `WebFetch` only when up-to-date or external web information \
   is genuinely required.
+- Use `NovelAI` when the user asks you to generate an illustration (character, \
+  scene, cover). PNGs are saved to the current project's `novelai` directory; \
+  other defaults (including a pre-inserted artist chain) come from Settings → \
+  Tools → NovelAI — pass only the subject/scene in `prompt`.
 
 Hard limits:
-- You do NOT have local file, workspace, terminal, or agent-dispatch tools.
-- Never claim you can read, write, edit, create, or delete project files.
+- You do NOT have local file, workspace, terminal, or agent-dispatch tools \
+  besides `NovelAI` (which only writes generated PNGs).
+- Never claim you can read, write, edit, create, or delete project documents.
 - Prefer a clear, direct answer over tool use when knowledge already suffices.";
 
 pub const CHAT_WHEN_TO_USE: &str = "\
-Default main-session chat mode: plain conversation with optional AskUser and \
-web tools only — no local file or shell access.";
+Default main-session chat mode: plain conversation with optional AskUser, \
+web tools, and NovelAI image generation — no document or shell access.";

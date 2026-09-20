@@ -42,6 +42,7 @@ pub const KEY_EDIT_REPLACE_ALL_DEFAULT: &str = "edit_replace_all_default";
 pub const KEY_READ_PARAGRAPH_LABELS: &str = "read_paragraph_labels";
 pub const KEY_HTTP_PROXY_ENABLED: &str = "http_proxy_enabled";
 pub const KEY_HTTP_PROXY_URL: &str = "http_proxy_url";
+pub const KEY_NOVELAI: &str = "novelai";
 
 pub const DEFAULT_HISTORY_TURNS: i64 = 10;
 pub const DEFAULT_AUTO_BACKUP_CHAT_INTERVAL_MINUTES: i64 = 30;
@@ -400,6 +401,9 @@ pub struct Settings {
     /// Proxy URL, e.g. `http://127.0.0.1:7890` or `socks5://127.0.0.1:7891`.
     #[serde(default)]
     pub http_proxy_url: String,
+    /// NovelAI image-generation tool credentials and default parameters.
+    #[serde(default)]
+    pub novelai: crate::ai::nai::NovelAiSettings,
 }
 
 fn default_web_search_enabled() -> bool {
@@ -470,6 +474,7 @@ impl Default for Settings {
             read_paragraph_labels: false,
             http_proxy_enabled: false,
             http_proxy_url: String::new(),
+            novelai: crate::ai::nai::NovelAiSettings::default(),
         }
     }
 }
@@ -567,6 +572,8 @@ pub struct SettingsPatch {
     pub http_proxy_enabled: Option<bool>,
     #[serde(default)]
     pub http_proxy_url: Option<String>,
+    #[serde(default)]
+    pub novelai: Option<crate::ai::nai::NovelAiSettings>,
 }
 
 pub fn read(conn: &DbConn) -> AppResult<Settings> {
@@ -676,6 +683,11 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             KEY_READ_PARAGRAPH_LABELS => s.read_paragraph_labels = v == "true" || v == "1",
             KEY_HTTP_PROXY_ENABLED => s.http_proxy_enabled = v == "true" || v == "1",
             KEY_HTTP_PROXY_URL => s.http_proxy_url = v,
+            KEY_NOVELAI => {
+                if let Ok(cfg) = serde_json::from_str::<crate::ai::nai::NovelAiSettings>(&v) {
+                    s.novelai = crate::ai::nai::normalize_settings(cfg);
+                }
+            }
             _ => {}
         }
     }
@@ -1149,6 +1161,12 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
     if let Some(v) = patch.http_proxy_url {
         write_kv(conn, KEY_HTTP_PROXY_URL, v.trim())?;
     }
+    if let Some(v) = patch.novelai {
+        let cleaned = crate::ai::nai::normalize_settings(v);
+        let json =
+            serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
+        write_kv(conn, KEY_NOVELAI, &json)?;
+    }
     read(conn)
 }
 
@@ -1224,6 +1242,15 @@ pub fn read_web_search_config(conn: &DbConn) -> AppResult<crate::ai::search::Web
         }
     }
     Ok(cfg)
+}
+
+/// Read only the NovelAI tool configuration without the heavier
+/// [`read`] merge. Used by the tool so config changes apply immediately.
+pub fn read_novelai_config(conn: &DbConn) -> crate::ai::nai::NovelAiSettings {
+    read_kv_opt(conn, KEY_NOVELAI)
+        .and_then(|v| serde_json::from_str::<crate::ai::nai::NovelAiSettings>(&v).ok())
+        .map(crate::ai::nai::normalize_settings)
+        .unwrap_or_default()
 }
 
 fn parse_optional_f64(v: &str) -> Option<f64> {

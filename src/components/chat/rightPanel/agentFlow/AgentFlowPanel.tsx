@@ -171,7 +171,7 @@ export function AgentFlowPanel({ open }: { open: boolean }) {
         const def = await api.getAgentDefinition(defAgentType);
         const defAll = def.tools.includes("*");
         // Node config only offers tools the agent definition already allows.
-        // Main session `chat` → AskUser / WebSearch / WebFetch only.
+        // Main session `chat` → AskUser / WebSearch / WebFetch / NovelAI.
         const defTools = resolveDefTools(
           def.tools,
           defAll,

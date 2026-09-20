@@ -42,6 +42,7 @@ import type {
   AgentToolSpec,
   SkillInfo,
   WebSearchOutcome,
+  NovelAiStatus,
 } from "../types";
 
 /** Per-session fields the backend merges into generation (debug log only). */
@@ -75,6 +76,10 @@ export const api = {
     invoke<WebSearchOutcome>("web_search", {
       query,
       maxResults: maxResults ?? null,
+    }),
+  novelaiStatus: (token?: string | null) =>
+    invoke<NovelAiStatus>("novelai_status", {
+      token: token ?? null,
     }),
 
   // app info

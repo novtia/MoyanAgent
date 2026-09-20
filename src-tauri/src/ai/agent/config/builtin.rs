@@ -6,7 +6,7 @@
 //! reviewed / diffed independently of the wiring code here.
 //!
 //! - `general-purpose` — multi-step research/execution, full tool access.
-//! - `chat`            — main-session normal chat; AskUser + web tools only.
+//! - `chat`            — main-session normal chat; AskUser + web + NovelAI.
 //! - `Explore`         — read-only investigation agent (fast).
 //! - `Plan`            — read-only planning agent (architect).
 //! - `claude-code-guide` — in-app guide; answers questions about this codebase.
@@ -42,6 +42,7 @@ const WRITE_TOOLS: &[&str] = &[
     "NotebookEdit",
     "ExitPlanMode",
     "TodoList",
+    "NovelAI",
 ];
 
 fn read_only_deny() -> Vec<String> {
@@ -99,10 +100,16 @@ fn anchored() -> AgentDefinition {
 }
 
 fn chat() -> AgentDefinition {
-    // Main-session normal conversation: no local file / shell / agent tools.
+    // Main-session normal conversation: no local file / shell / agent tools
+    // besides NovelAI image generation.
     let mut d = AgentDefinition::builtin(AGENT_CHAT, prompts::CHAT_PROMPT);
     d.when_to_use = prompts::CHAT_WHEN_TO_USE.into();
-    d.tools = vec!["AskUser".into(), "WebSearch".into(), "WebFetch".into()];
+    d.tools = vec![
+        "AskUser".into(),
+        "WebSearch".into(),
+        "WebFetch".into(),
+        "NovelAI".into(),
+    ];
     d
 }
 

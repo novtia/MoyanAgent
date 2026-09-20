@@ -2,6 +2,7 @@ pub(crate) mod agent;
 pub(crate) mod block_timeline;
 pub(crate) mod chat;
 pub(crate) mod http_proxy;
+pub(crate) mod nai;
 pub(crate) mod parameters;
 pub(crate) mod providers;
 pub(crate) mod router;

@@ -201,12 +201,9 @@ pub fn apply_route_provider_overlay(
 /// Fallback window for a model that neither the catalog tables nor the user's
 /// `model_services` describe.
 ///
-/// Deliberately conservative. Enforcing a 128k budget on a model that really
-/// holds more only costs some capacity; the alternative — leaving the window
-/// `None` — switches off *every* budget check at once, because history
-/// trimming, the compaction threshold and the `max_tokens` clamp all read an
-/// unknown window as "no limit". That is how a request reaches a million
-/// tokens before anything inspects it.
+/// Deliberately conservative. Used when neither the catalog tables nor the
+/// user's `model_services` describe the model, so the composer context ring
+/// still has a concrete ceiling to display.
 pub const DEFAULT_CONTEXT_WINDOW: i64 = 128_000;
 
 /// Ceiling on a user-configured `max_tokens` when the model does not publish

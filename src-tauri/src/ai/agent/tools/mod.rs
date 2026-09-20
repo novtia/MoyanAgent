@@ -27,6 +27,7 @@ pub mod edit;
 pub mod fs;
 pub mod grep;
 pub mod list_files;
+pub mod novelai;
 pub mod paragraph;
 pub mod pe_docs;
 pub mod project_path;

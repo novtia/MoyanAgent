@@ -28,7 +28,6 @@ use crate::ai::agent::core::task::{Task, TaskId, TaskState, TaskStore};
 use crate::ai::agent::exec::query::{
     QueryEngine, QueryFuture, QueryRequest, QueryResult, ToolEventCallback,
 };
-use crate::ai::agent::memory::compaction as compaction_mod;
 use crate::ai::agent::tools::{ToolInvocation, ToolPool, ToolResult};
 use crate::ai::agent::types::{AgentId, MessageEvent, MessageId};
 use crate::ai::chat::{
@@ -135,8 +134,6 @@ const DEFAULT_MAX_TURNS: u32 = 60;
 pub struct ProviderQueryEngine {
     provider: Arc<ProviderEngine>,
     resolver: Arc<dyn PermissionResolver>,
-    /// Compaction policy applied between turns. `None` ⇒ disabled.
-    compaction: Option<crate::ai::agent::memory::compaction::CompactionPolicy>,
 }
 
 impl Default for ProviderQueryEngine {
@@ -144,26 +141,13 @@ impl Default for ProviderQueryEngine {
         Self {
             provider: Arc::new(ProviderEngine::new()),
             resolver: Arc::new(AllowAllResolver),
-            compaction: Some(Default::default()),
         }
     }
 }
 
 impl ProviderQueryEngine {
     pub fn new(provider: Arc<ProviderEngine>, resolver: Arc<dyn PermissionResolver>) -> Self {
-        Self {
-            provider,
-            resolver,
-            compaction: Some(Default::default()),
-        }
-    }
-
-    pub fn with_compaction(
-        mut self,
-        policy: Option<crate::ai::agent::memory::compaction::CompactionPolicy>,
-    ) -> Self {
-        self.compaction = policy;
-        self
+        Self { provider, resolver }
     }
 }
 
@@ -237,36 +221,18 @@ impl QueryEngine for ProviderQueryEngine {
 
             // When the model tries to stop with unfinished TodoList items,
             // keep looping and re-inject the live ✔/☐ snapshot at the END
-            // of the next request. History nudges get buried (and compacted
-            // away) once the transcript is long — that's why the model
-            // used to forget remaining items.
+            // of the next request. History nudges get buried once the
+            // transcript is long — that's why the model used to forget
+            // remaining items.
             const MAX_TODO_NUDGES: u32 = 32;
             let turn_limit = max_turns.unwrap_or(DEFAULT_MAX_TURNS).max(1);
             let mut turn_count: u32 = 0;
             let mut todo_nudges: u32 = 0;
             let mut premature_todo_stop = false;
-
-            // Bind the compaction policy to the model actually being called so
-            // its thresholds track that model's window instead of a build-time
-            // default chosen for 128k models.
-            let mut compaction = self
-                .compaction
-                .clone()
-                .map(|p| p.with_context_window(chat.context_window));
-            // One shrink-and-retry per run. A second overflow means the shrink
-            // did not help and retrying would just burn another request.
-            let mut overflow_retried = false;
-            // Window read out of an upstream rejection, reported so the host can
-            // persist it against the session.
-            let mut observed_context_window: Option<i64> = None;
-            // History length right after the last compaction attempt; guards
-            // against re-summarising a history that has not grown since.
-            let mut compacted_history_len: Option<usize> = None;
-            // The user's configured ceiling. Each turn re-derives its clamp
-            // from this rather than from the previous turn's clamped value, so
-            // room freed by a compaction is handed back to the completion
-            // instead of leaving the run permanently capped.
-            let configured_max_tokens = chat.parameters.model.max_tokens;
+            // Host-facing slot for a window read out of an upstream rejection.
+            // Success paths never populate it after compaction was removed;
+            // generation still recovers the value from the error report.
+            let observed_context_window: Option<i64> = None;
 
             loop {
                 if context.abort.aborted() {
@@ -316,41 +282,6 @@ impl QueryEngine for ProviderQueryEngine {
                     None => (None, None),
                 };
 
-                // Context budget, enforced *before* the call. Reacting to
-                // reported usage alone is too late for the first call of a
-                // turn: its history was just rebuilt from the database and can
-                // already exceed the window, which the provider answers with a
-                // 400 rather than a usage report.
-                if let Some(policy) = compaction.as_ref() {
-                    // At most one summariser call per history state. Compaction
-                    // cannot shrink the `keep_recent` turns it preserves, so if
-                    // those alone still read as over-occupancy the naive check
-                    // would compact again on every remaining turn of the run —
-                    // an extra request each time, for a history that is already
-                    // as small as this policy can make it.
-                    let history_grew =
-                        compacted_history_len.is_none_or(|len| chat.history.len() > len);
-                    if history_grew
-                        && compaction_mod::should_summarise_history(&chat, &usage, policy)
-                    {
-                        if let Err(e) =
-                            compaction_mod::compact(&mut chat, self.provider.as_ref(), policy).await
-                        {
-                            eprintln!("[atelier] context compaction failed: {e}");
-                        }
-                        // Latched on the attempt, not on success: a summariser
-                        // that just failed will keep failing this turn.
-                        compacted_history_len = Some(chat.history.len());
-                    }
-                    // Budget enforcement is deliberately outside the latch and
-                    // outside the "is there history to summarise" question. The
-                    // tool chain grows every single round while `history` stays
-                    // put, so a guard that only fires when history grows leaves
-                    // the fastest-growing part of the request unpoliced.
-                    chat.parameters.model.max_tokens = configured_max_tokens;
-                    compaction_mod::enforce_request_budget(&mut chat, policy);
-                }
-
                 let turn_result = tokio::select! {
                     t = self.provider.run_turn(chat.clone(), turn_delta) => t,
                     _ = context.abort.wait_aborted() => {
@@ -359,45 +290,7 @@ impl QueryEngine for ProviderQueryEngine {
                 };
                 let turn = match turn_result {
                     Ok(t) => t,
-                    Err(e) => {
-                        // The rejection states the model's real window and its
-                        // own count of the messages. Folding both in before the
-                        // retry is what turns a blind second attempt into an
-                        // informed one — and teaches a model the catalog does
-                        // not describe how big it actually is.
-                        let report = crate::error::error_context_overflow_report(&e);
-                        if let (Some(report), Some(policy)) = (report.as_ref(), compaction.as_mut())
-                        {
-                            compaction_mod::apply_overflow_report(&mut chat, policy, report);
-                            if let Some(window) = report.context_window {
-                                observed_context_window = Some(window);
-                            }
-                        }
-                        let recoverable = !overflow_retried && report.is_some();
-                        let shrank = match (recoverable, compaction.as_ref()) {
-                            (true, Some(policy)) => {
-                                overflow_retried = true;
-                                compaction_mod::shrink_after_overflow(
-                                    &mut chat,
-                                    self.provider.as_ref(),
-                                    policy,
-                                )
-                                .await
-                            }
-                            _ => false,
-                        };
-                        if !shrank {
-                            return Err(e);
-                        }
-                        // The shrink already summarised or dropped older turns,
-                        // so the pre-call check must not immediately do it again.
-                        compacted_history_len = Some(chat.history.len());
-                        eprintln!(
-                            "[atelier] upstream rejected the request for context length; \
-                             retrying with a compacted conversation"
-                        );
-                        continue;
-                    }
+                    Err(e) => return Err(e),
                 };
                 let EngineTurn {
                     response,
@@ -593,11 +486,6 @@ impl QueryEngine for ProviderQueryEngine {
                 // Persist this round into tool_chain so the next loop
                 // iteration sends the full in-turn tool history.
                 commit_tool_round(&mut chat);
-                crate::ai::agent::memory::tool_chain::trim_tool_chain(
-                    &mut chat.tool_chain,
-                    crate::ai::agent::memory::tool_chain::DEFAULT_MAX_NON_TODO_TOOL_ROUNDS,
-                    crate::ai::agent::memory::tool_chain::token_budget(chat.context_window),
-                );
 
                 // The model committed to the anchored trajectory by calling a
                 // tool, so give it back the catalog it was actually filtered
@@ -923,6 +811,7 @@ mod tool_anchor_tests {
         "Edit",
         "Grep",
         "ListFiles",
+        "NovelAI",
         "Read",
         "RoleState",
         "TodoList",

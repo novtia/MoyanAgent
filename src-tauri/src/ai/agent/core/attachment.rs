@@ -26,7 +26,7 @@ pub enum AttachmentKind {
     RelevantMemories { entries: Vec<RelevantMemoryEntry> },
     /// Notification produced when a background task completes.
     TaskNotification(TaskNotification),
-    /// Skill body reinstated after compact.
+    /// Skill body injected as a hidden reminder.
     InvokedSkill { name: String, body: String },
     /// Date / agent listing / MCP delta etc.
     Delta { topic: String, body: String },

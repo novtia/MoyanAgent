@@ -73,8 +73,7 @@ pub enum MessageRole {
 }
 
 /// Where the current `query()` call originated from. Mirrors the TS
-/// `querySource` discriminator used by Session Memory, autoCompact,
-/// hooks and the SDK boundary.
+/// `querySource` discriminator used by hooks and the SDK boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QuerySource {
@@ -86,10 +85,6 @@ pub enum QuerySource {
     Forked,
     /// In-process teammate runner.
     Teammate,
-    /// Special source used by `extractSessionMemory()`.
-    SessionMemory,
-    /// Internal compact summarisation call.
-    Compact,
     /// SDK / programmatic embedding.
     Sdk,
 }
@@ -141,11 +136,6 @@ pub enum MessageEvent {
     Progress {
         id: MessageId,
         note: String,
-    },
-    /// Marker inserted by compact/sessionMemoryCompact.
-    CompactBoundary {
-        id: MessageId,
-        summary_message_id: MessageId,
     },
 }
 

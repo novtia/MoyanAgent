@@ -21,7 +21,7 @@ pub const SESSION_AGENT_PLAN: &str = "Plan";
 /// Agent mode with two-stage tool exposure (first request advertises `Read`
 /// only). Same capabilities as [`SESSION_AGENT_GENERAL`].
 pub const SESSION_AGENT_ANCHORED: &str = "anchored";
-/// Default main-session mode: normal chat with AskUser + web tools only.
+/// Default main-session mode: normal chat with AskUser, web tools, and NovelAI.
 pub const SESSION_AGENT_CHAT: &str = "chat";
 /// TRPG director mode (project sessions only).
 pub const SESSION_AGENT_DIRECTOR: &str = "trpg-director";

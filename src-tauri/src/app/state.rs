@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::ai::agent::core::context::AbortHandle;
 use crate::ai::agent::{
-    AgentRegistry, FsSessionMemoryExtractor, NotificationQueue, ProviderEngine, QueryEngine,
-    RoleStateStore, StaticMcpRegistry, TaskStore, ToolPool,
+    AgentRegistry, NotificationQueue, ProviderEngine, QueryEngine, RoleStateStore,
+    StaticMcpRegistry, TaskStore, ToolPool,
 };
 use crate::ai::{session_log, token_log};
 use crate::data::db::{self, DbPool};
@@ -30,9 +30,6 @@ pub struct AppState {
     /// Shared tool pool. Currently holds [`FileReadTool`]; further
     /// host-implemented tools register on top.
     pub tools: Arc<ToolPool>,
-    /// Per-session-memory extractor. Stateless aside from the last
-    /// observed [`SessionMemory`] snapshot.
-    pub session_memory: Arc<FsSessionMemoryExtractor>,
     /// Shared, project/session-scoped character state board mutated by the
     /// `RoleState` tool and snapshotted per assistant message.
     pub role_states: Arc<RoleStateStore>,
