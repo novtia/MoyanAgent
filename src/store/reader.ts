@@ -254,9 +254,11 @@ export function readerFolderLabel(path: string): string {
 function readToolPath(input: unknown, output: unknown): string {
   const o = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const out = output && typeof output === "object" ? (output as Record<string, unknown>) : {};
+  // `Read` takes `path` as a list; a one-item list is a single-file read.
+  const inPath = Array.isArray(o.path) ? o.path[0] : o.path;
   const raw =
     (typeof out.path === "string" && out.path.trim()) ||
-    (typeof o.path === "string" && o.path.trim()) ||
+    (typeof inPath === "string" && inPath.trim()) ||
     "";
   return raw ? sanitizeReaderPath(raw) : "";
 }
@@ -299,6 +301,52 @@ export function formatReadToolTitle(input: unknown, output: unknown): string {
     return folder ? `${folder} · ${range}` : range;
   }
   return readerFileName(path);
+}
+
+export type ReadBatchItem = {
+  title: string;
+  text: string;
+  error?: string;
+};
+
+/**
+ * Per-item view of a multi-file `Read` call (`input.path[]` → `output.results[]`).
+ * Returns `null` when the call read a single file.
+ */
+export function parseReadBatch(
+  input: unknown,
+  output: unknown,
+): ReadBatchItem[] | null {
+  const inp =
+    input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const out =
+    output && typeof output === "object"
+      ? (output as Record<string, unknown>)
+      : {};
+  const results = Array.isArray(out.results) ? out.results : null;
+  if (!(out.batch === true && results)) return null;
+
+  // Requested items in call order (`path` is a list of file refs).
+  const requested: unknown[] = Array.isArray(inp.path)
+    ? inp.path.map((p) => ({ path: p }))
+    : [];
+
+  const count = Math.max(requested.length, results.length);
+  const items: ReadBatchItem[] = [];
+  for (let i = 0; i < count; i++) {
+    const res = results[i];
+    const resObj =
+      res && typeof res === "object" ? (res as Record<string, unknown>) : null;
+    const title =
+      formatReadToolTitle(requested[i], resObj) ||
+      (typeof resObj?.path === "string" ? readerFileName(resObj.path) : "");
+    items.push({
+      title,
+      text: typeof resObj?.text === "string" ? resObj.text : "",
+      error: typeof resObj?.error === "string" ? resObj.error : undefined,
+    });
+  }
+  return items;
 }
 
 /**

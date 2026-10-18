@@ -5,6 +5,7 @@ import {
   useRef,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import type { EditorView } from "@codemirror/view";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../../api/tauri";
 import { copyText } from "../../../../utils/clipboard";
@@ -19,6 +20,7 @@ import {
 } from "../../../../store/reader";
 import { useReaderFind } from "../../../../store/readerFind";
 import { useSession } from "../../../../store/session";
+import { useSettings } from "../../../../store/settings";
 import { usePanelTab } from "../context/PanelTabContext";
 import { DEFAULT_RATIO } from "./constants";
 import { ReaderFilePane } from "./components/ReaderFilePane";
@@ -28,7 +30,8 @@ import { ReaderFindBar, useReaderFindShortcuts } from "./find/ReaderFindBar";
 import { useLazyLoadFile } from "./hooks/useLazyLoadFile";
 import { useReaderNavHistory } from "./hooks/useReaderNavHistory";
 import { useReaderSplit } from "./hooks/useReaderSplit";
-import { indentRegisteredReaderDocument } from "./readerCodeMirror/indentKeymap";
+import { ReaderEditorViewContext } from "./readerCodeMirror/editorViewContext";
+import { indentReaderView } from "./readerCodeMirror/indentKeymap";
 import type { ReaderWorkspaceProps } from "./types";
 
 export type { ReaderWorkspaceProps } from "./types";
@@ -89,14 +92,22 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
 
   const fileName = path ? readerFileName(path) : "";
   const hasFile = !!path;
-  const canIndent = !!tab && !isMedia && !hasPendingDiff;
+  const firstLineIndent = useSettings((s) => s.settings?.reader_first_line_indent ?? true);
+  const paragraphSpacing = useSettings((s) => s.settings?.reader_paragraph_spacing ?? true);
+  const formatOptions = useMemo(
+    () => ({ firstLineIndent, paragraphSpacing }),
+    [firstLineIndent, paragraphSpacing],
+  );
+  const formatEnabled = firstLineIndent || paragraphSpacing;
+  const canIndent = !!tab && !isMedia && !hasPendingDiff && formatEnabled;
+  const editorViewRef = useRef<EditorView | null>(null);
 
   const onIndent = useCallback(
     (e: ReactMouseEvent) => {
       if (!canIndent) return;
-      indentRegisteredReaderDocument(e.shiftKey, !!isMarkdown);
+      indentReaderView(editorViewRef.current, e.shiftKey, !!isMarkdown, formatOptions);
     },
-    [canIndent, isMarkdown],
+    [canIndent, isMarkdown, formatOptions],
   );
 
   const onMore = useCallback(
@@ -105,18 +116,18 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
       openContextMenu(e, [
         {
           id: "indent-first",
-          label: t("reader.indentFirstLine"),
+          label: t("reader.format"),
           disabled: !canIndent,
           onSelect: () => {
-            indentRegisteredReaderDocument(false, !!isMarkdown);
+            indentReaderView(editorViewRef.current, false, !!isMarkdown, formatOptions);
           },
         },
         {
           id: "outdent-first",
-          label: t("reader.outdentFirstLine"),
+          label: t("reader.formatUndo"),
           disabled: !canIndent,
           onSelect: () => {
-            indentRegisteredReaderDocument(true, !!isMarkdown);
+            indentReaderView(editorViewRef.current, true, !!isMarkdown, formatOptions);
           },
         },
         { type: "separator", id: "indent-sep" },
@@ -132,7 +143,7 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
         },
       ]);
     },
-    [path, t, canIndent, isMarkdown],
+    [path, t, canIndent, isMarkdown, formatOptions],
   );
 
   const bothPanes = hasFile && showTree;
@@ -173,64 +184,74 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
   );
 
   return (
-    <div className="reader-workspace-outer">
-      <ReaderToolbar
-        path={path}
-        fileName={fileName}
-        tab={tab}
-        canBack={canBack}
-        canForward={canForward}
-        onBack={goBack}
-        onForward={goForward}
-        preview={preview}
-        isMarkdown={!!isMarkdown}
-        isMedia={!!isMedia}
-        hasFile={hasFile}
-        findOpen={findOpen}
-        showTree={showTree}
-        rightViewIsTree={rightView === "tree"}
-        canIndent={canIndent}
+    <ReaderEditorViewContext.Provider value={editorViewRef}>
+      <div className="reader-workspace-outer">
+        <ReaderToolbar
+          path={path}
+          fileName={fileName}
+          tab={tab}
+          canBack={canBack}
+          canForward={canForward}
+          onBack={goBack}
+          onForward={goForward}
+          preview={preview}
+          isMarkdown={!!isMarkdown}
+          isMedia={!!isMedia}
+          hasFile={hasFile}
+          findOpen={findOpen}
+          showTree={showTree}
+          rightViewIsTree={rightView === "tree"}
+          canIndent={canIndent}
         indentTitle={
-          hasPendingDiff ? t("reader.indentDiffBlocked") : t("reader.indentFirstLineHint")
+          hasPendingDiff
+            ? t("reader.indentDiffBlocked")
+            : !formatEnabled
+              ? t("reader.formatDisabled")
+              : firstLineIndent && paragraphSpacing
+                ? t("reader.indentFirstLineHint")
+                : firstLineIndent
+                  ? t("reader.formatHintIndent")
+                  : t("reader.formatHintSpacing")
         }
-        onPreview={() => setPreview(true)}
-        onSource={() => setPreview(false)}
-        onIndent={onIndent}
-        onMore={onMore}
-        onToggleSearch={toggleSearch}
-        onToggleFileTree={toggleFileTree}
-      />
-      <div ref={containerRef} className="reader-workspace">
-        {hasFile ? (
-          <>
-            {editorNode}
-            {bothPanes && (
-              <div
-                className={`reader-split-divider${resizing ? " is-resizing" : ""}`}
-                role="separator"
-                aria-orientation="vertical"
-                onMouseDown={(e) => {
-                  if (e.button !== 0) return;
-                  e.preventDefault();
-                  setResizing(true);
-                }}
-                onDoubleClick={() => setRatio(DEFAULT_RATIO)}
-              />
-            )}
-            {bothPanes && rightNode}
-          </>
-        ) : (
-          <div className="reader-split-tree reader-split-tree--full">
-            {showFindPane ? (
-              <div className="reader-search-pane">
-                <ReaderFindBar />
-              </div>
-            ) : (
-              <ReaderFileTree activePath={null} onOpenFile={onOpenFile} />
-            )}
-          </div>
-        )}
+          onPreview={() => setPreview(true)}
+          onSource={() => setPreview(false)}
+          onIndent={onIndent}
+          onMore={onMore}
+          onToggleSearch={toggleSearch}
+          onToggleFileTree={toggleFileTree}
+        />
+        <div ref={containerRef} className="reader-workspace">
+          {hasFile ? (
+            <>
+              {editorNode}
+              {bothPanes && (
+                <div
+                  className={`reader-split-divider${resizing ? " is-resizing" : ""}`}
+                  role="separator"
+                  aria-orientation="vertical"
+                  onMouseDown={(e) => {
+                    if (e.button !== 0) return;
+                    e.preventDefault();
+                    setResizing(true);
+                  }}
+                  onDoubleClick={() => setRatio(DEFAULT_RATIO)}
+                />
+              )}
+              {bothPanes && rightNode}
+            </>
+          ) : (
+            <div className="reader-split-tree reader-split-tree--full">
+              {showFindPane ? (
+                <div className="reader-search-pane">
+                  <ReaderFindBar />
+                </div>
+              ) : (
+                <ReaderFileTree activePath={null} onOpenFile={onOpenFile} />
+              )}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </ReaderEditorViewContext.Provider>
   );
 }

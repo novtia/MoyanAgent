@@ -8,6 +8,7 @@ import type { ThemeMode } from "../types";
 import { AccentColorCard } from "./AccentColorCard";
 import { LanguageDropdown } from "./LanguageDropdown";
 import { LayoutCard } from "./LayoutCard";
+import { ReaderFormatCard } from "./ReaderFormatCard";
 import { TypographyCard } from "./TypographyCard";
 
 interface AppearanceSectionProps {
@@ -91,6 +92,7 @@ export function AppearanceSection({
 
       <TypographyCard />
       <LayoutCard />
+      <ReaderFormatCard />
 
       <div className="settings-card">
         <div className="settings-row">

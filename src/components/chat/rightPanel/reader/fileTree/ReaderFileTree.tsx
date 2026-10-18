@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -20,6 +21,13 @@ import { toast } from "../../../../ui/Toast";
 import { useProject } from "../../../../../store/project";
 import { useSession } from "../../../../../store/session";
 import { normalizeReaderPath, useReader } from "../../../../../store/reader";
+import {
+  EMPTY_EXPANDED,
+  getTreeScroll,
+  setTreeScroll,
+  useReaderTree,
+} from "../../../../../store/readerTree";
+import { usePanelTab } from "../../context/PanelTabContext";
 import {
   useFileExplorer,
   baseName,
@@ -59,7 +67,17 @@ export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) 
   const setClipboard = useFileExplorer((s) => s.setClipboard);
   const refreshNonce = useFileExplorer((s) => s.treeVersion);
   const bumpTree = useFileExplorer((s) => s.bumpTree);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  // Expanded folders are project-wide: every reader tab shows the same tree.
+  const expandedList = useReaderTree((s) =>
+    projectId ? (s.byProject[projectId]?.expanded ?? EMPTY_EXPANDED) : EMPTY_EXPANDED,
+  );
+  const expanded = useMemo(() => new Set(expandedList), [expandedList]);
+  const setExpanded = useCallback<React.Dispatch<React.SetStateAction<Set<string>>>>(
+    (updater) => {
+      if (projectId) useReaderTree.getState().setExpanded(projectId, updater);
+    },
+    [projectId],
+  );
 
   const root = useMemo(() => {
     if (!projectId) return null;
@@ -153,6 +171,7 @@ export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) 
     <TreeContext.Provider value={ctx}>
       <ReaderFileTreeShell
         root={root}
+        projectId={projectId}
         sessionId={activeId}
         clipboard={clipboard}
         setClipboard={setClipboard}
@@ -169,6 +188,7 @@ export function ReaderFileTree({ activePath, onOpenFile }: ReaderFileTreeProps) 
 
 interface ReaderFileTreeShellProps {
   root: string;
+  projectId: string | null;
   sessionId: string;
   clipboard: ReturnType<typeof useFileExplorer.getState>["clipboard"];
   setClipboard: ReturnType<typeof useFileExplorer.getState>["setClipboard"];
@@ -182,6 +202,7 @@ interface ReaderFileTreeShellProps {
 
 function ReaderFileTreeShell({
   root,
+  projectId,
   sessionId,
   clipboard,
   setClipboard,
@@ -201,6 +222,32 @@ function ReaderFileTreeShell({
     onImported,
   });
   const { marquee, marqueeHandlers } = useTreeMarquee(bodyRef);
+  const { isActive } = usePanelTab();
+
+  // One scroll position per project, handed from tab to tab: a hidden pane
+  // loses its offset, so the tab being activated restores the shared one.
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el || !projectId || !isActive) return;
+    const target = getTreeScroll(projectId);
+    let frame = 0;
+    let tries = 0;
+    const restore = () => {
+      if (Math.abs(el.scrollTop - target) <= 1) return;
+      el.scrollTop = target;
+      // Rows may still be loading; retry briefly until the content is tall enough.
+      if (Math.abs(el.scrollTop - target) > 1 && tries++ < 20) {
+        frame = requestAnimationFrame(restore);
+      }
+    };
+    restore();
+    const onScroll = () => setTreeScroll(projectId, el.scrollTop);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, [projectId, isActive]);
 
   return (
       <div
@@ -275,6 +322,17 @@ function ReaderFileTreeShell({
   );
 }
 
+/** Last known listing per `session + folder`; shared by every tree instance. */
+const dirListingCache = new Map<string, ProjectDirEntry[]>();
+const ruleStatesCache = new Map<string, Record<string, boolean>>();
+
+function sameListing(a: ProjectDirEntry[], b: ProjectDirEntry[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((e, i) => e.path === b[i].path && e.name === b[i].name && e.isDir === b[i].isDir)
+  );
+}
+
 interface TreeLevelProps {
   dirPath: string;
   depth: number;
@@ -285,8 +343,16 @@ interface TreeLevelProps {
 function TreeLevel({ dirPath, depth, expanded, setExpanded }: TreeLevelProps) {
   const { t } = useTranslation();
   const { sessionId, refreshNonce } = useTree();
-  const [entries, setEntries] = useState<ProjectDirEntry[] | null>(null);
-  const [ruleStates, setRuleStates] = useState<Record<string, boolean>>({});
+  const cacheKey = `${sessionId}\n${dirPath}`;
+  // Seed from the last listing of this folder. Every reader tab owns its own
+  // tree instance, so a freshly mounted one (e.g. the tab a clicked file opens
+  // in) would otherwise start empty and flash "loading" level by level.
+  const [entries, setEntries] = useState<ProjectDirEntry[] | null>(
+    () => dirListingCache.get(cacheKey) ?? null,
+  );
+  const [ruleStates, setRuleStates] = useState<Record<string, boolean>>(
+    () => ruleStatesCache.get(cacheKey) ?? {},
+  );
   const [error, setError] = useState<string | null>(null);
   const indent = 8 + depth * 14;
   const rulesDir = isRulesDir(dirPath);
@@ -297,7 +363,10 @@ function TreeLevel({ dirPath, depth, expanded, setExpanded }: TreeLevelProps) {
       .listProjectDir(sessionId, dirPath)
       .then((list) => {
         if (!cancelled) {
-          setEntries(list);
+          dirListingCache.set(cacheKey, list);
+          // Keep the old array when nothing changed so a silent refresh does
+          // not re-render (or re-mount) any rows.
+          setEntries((prev) => (prev && sameListing(prev, list) ? prev : list));
           setError(null);
         }
       })
@@ -309,9 +378,11 @@ function TreeLevel({ dirPath, depth, expanded, setExpanded }: TreeLevelProps) {
         .listProjectRules(sessionId)
         .then((rules) => {
           if (!cancelled) {
-            setRuleStates(
-              Object.fromEntries(rules.map((r) => [baseName(r.path).toLowerCase(), r.enabled])),
+            const states = Object.fromEntries(
+              rules.map((r) => [baseName(r.path).toLowerCase(), r.enabled]),
             );
+            ruleStatesCache.set(cacheKey, states);
+            setRuleStates(states);
           }
         })
         .catch(() => {
@@ -321,7 +392,7 @@ function TreeLevel({ dirPath, depth, expanded, setExpanded }: TreeLevelProps) {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, dirPath, refreshNonce, rulesDir]);
+  }, [sessionId, dirPath, refreshNonce, rulesDir, cacheKey]);
 
   if (error) {
     return (

@@ -43,6 +43,7 @@ import {
 } from "./mention";
 import { askUserActiveReady } from "./askUser";
 import { ComposerAskUserBar } from "./ComposerAskUserBar";
+import { ComposerErrorBanner } from "./ComposerErrorBanner";
 import { ComposerFileTree } from "./ComposerFileTree";
 import { READER_FILE_DRAG_TYPE } from "../../utils/readerDrag";
 import { ATELIER_DRAG_TYPE } from "./rightPanel/gallery";
@@ -891,15 +892,17 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
 
   return (
     <div className="composer-dock">
-      <div
-        className={`composer-card ${dragOver ? "drag-over" : ""}`}
-        data-local-file-dropzone="true"
-        data-drop-hint={t("composer.dropHint")}
-        onDragEnter={onDragEnter}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
-      >
+      <div className="composer-stack">
+        <ComposerErrorBanner />
+        <div
+          className={`composer-card ${dragOver ? "drag-over" : ""}`}
+          data-local-file-dropzone="true"
+          data-drop-hint={t("composer.dropHint")}
+          onDragEnter={onDragEnter}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+        >
         {needsSetup && (
           <button
             type="button"
@@ -1559,6 +1562,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
               )}
             </button>
           </div>
+        </div>
         </div>
       </div>
     </div>

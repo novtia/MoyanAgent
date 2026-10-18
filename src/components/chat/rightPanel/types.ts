@@ -22,11 +22,11 @@ export interface TabNavView {
 
 /**
  * View state owned by a single tab. Nothing here is shared between tabs, so
- * two reader tabs keep independent split ratios, find queries and history.
+ * two reader tabs keep independent find queries and history. The file tree's
+ * visibility, split ratio and expanded folders are project-wide instead
+ * (see store/readerTree.ts).
  */
 export interface TabViewState {
-  ratio?: number;
-  showTree?: boolean;
   rightView?: ReaderRightView;
   preview?: boolean;
   find?: TabFindView;

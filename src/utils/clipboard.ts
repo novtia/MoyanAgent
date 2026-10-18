@@ -3,6 +3,8 @@ import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
 import {
   clearRememberedReaderSelection,
   consumeReaderSelectionCopyFlag,
+  encodeReaderSelectionHtml,
+  peekRememberedReaderSelection,
 } from "./readerSelection";
 
 const IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -15,6 +17,15 @@ const IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
 export async function copyText(text: string): Promise<void> {
   if (!text) return;
   await invoke("clipboard_write_text", { text });
+}
+
+/**
+ * Write plain text plus an HTML flavor in one clipboard transaction, so other
+ * apps / Win+V get the text while in-app paste can read structured metadata.
+ */
+export async function copyRich(text: string, html: string): Promise<void> {
+  if (!text) return;
+  await invoke("clipboard_write_rich", { text, html });
 }
 
 /** Copy an on-disk image file to the OS clipboard. */
@@ -43,7 +54,10 @@ export function installClipboardHistoryFix(): void {
   if (typeof document === "undefined") return;
   document.addEventListener("copy", (e) => {
     // After target handlers: keep reader→@ memory only for multi-line reader copies.
-    if (!consumeReaderSelectionCopyFlag()) clearRememberedReaderSelection();
+    const isReaderCopy = consumeReaderSelectionCopyFlag();
+    // Snapshot before a non-reader copy clears the memory.
+    const readerPayload = isReaderCopy ? peekRememberedReaderSelection() : null;
+    if (!isReaderCopy) clearRememberedReaderSelection();
 
     if (e.defaultPrevented) {
       const text =
@@ -51,7 +65,11 @@ export function installClipboardHistoryFix(): void {
         window.getSelection()?.toString() ||
         "";
       if (!text) return;
-      void invoke("clipboard_write_text", { text }).catch((err) => {
+      // Reader copy: keep text + HTML (with project-scoped metadata) together.
+      const write = readerPayload
+        ? copyRich(text, encodeReaderSelectionHtml(readerPayload))
+        : invoke("clipboard_write_text", { text });
+      void write.catch((err) => {
         console.warn("[clipboard] history fix failed", err);
       });
       return;

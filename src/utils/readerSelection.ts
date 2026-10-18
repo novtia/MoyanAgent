@@ -9,6 +9,45 @@ export interface ReaderSelectionPayload {
   paragraphTo: number;
   /** Selected plain text (what external paste / Win+V should see). */
   text: string;
+  /** Project root the file belongs to; paste into another project is rejected. */
+  projectRoot?: string | null;
+  /** Session the copy came from (informational). */
+  sessionId?: string | null;
+}
+
+function normalizeRootForCompare(p: string): string {
+  let t = p.trim();
+  if (/^\\\\\?\\UNC\\/i.test(t)) t = `\\\\${t.slice(8)}`;
+  else if (/^\\\\\?\\/.test(t)) t = t.slice(4);
+  return t.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+/**
+ * True when the payload's file belongs to `currentRoot`. Without a current
+ * project root nothing matches, so the paste falls back to plain text.
+ */
+export function isReaderSelectionForProject(
+  payload: ReaderSelectionPayload,
+  currentRoot: string | null | undefined,
+): boolean {
+  if (!currentRoot?.trim()) return false;
+  const current = normalizeRootForCompare(currentRoot);
+  if (payload.projectRoot?.trim()) {
+    return normalizeRootForCompare(payload.projectRoot) === current;
+  }
+  const path = normalizeRootForCompare(payload.path);
+  return path === current || path.startsWith(`${current}/`);
+}
+
+/** True if `path` lies inside `root` (case-insensitive, slash-agnostic). */
+export function isPathInProject(
+  path: string,
+  root: string | null | undefined,
+): boolean {
+  if (!root?.trim()) return false;
+  const current = normalizeRootForCompare(root);
+  const p = normalizeRootForCompare(path);
+  return p === current || p.startsWith(`${current}/`);
 }
 
 /**
@@ -22,6 +61,11 @@ let readerSelectionCopyPending = false;
 export function rememberReaderSelection(payload: ReaderSelectionPayload): void {
   lastReaderSelection = payload;
   readerSelectionCopyPending = true;
+}
+
+/** Last multi-line reader copy, if any (used to rewrite the clipboard with HTML). */
+export function peekRememberedReaderSelection(): ReaderSelectionPayload | null {
+  return lastReaderSelection;
 }
 
 export function clearRememberedReaderSelection(): void {

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useReaderFind } from "../../../../../store/readerFind";
 import { useRightPanel } from "../../../../../store/rightPanel";
+import { useReaderTree } from "../../../../../store/readerTree";
+import { useSession } from "../../../../../store/session";
 import { usePanelTab } from "../../context/PanelTabContext";
 import { DEFAULT_RATIO, MAX_RATIO, MIN_RATIO } from "../constants";
 import type { RightView } from "../types";
@@ -10,17 +12,30 @@ function clampRatio(value: number): number {
 }
 
 /**
- * Split layout of one reader tab. Ratio, tree visibility, right-pane mode and
- * markdown preview live in that tab's view state, so two reader tabs never
- * fight over a shared layout.
+ * Split layout of a reader tab. The file tree is shared by the whole project:
+ * its visibility and the editor/tree ratio live in the per-project tree store,
+ * so every reader tab shows the same tree. Only the right-pane mode (tree vs
+ * find results) and markdown preview stay in the tab's own view state, because
+ * they follow that tab's find session and file.
  */
 export function useReaderSplit(isMarkdown: boolean, path: string | null | undefined) {
   const { tabId, isActive } = usePanelTab();
   const view = useRightPanel((s) => s.tabs.find((tb) => tb.id === tabId)?.view);
   const updateTabView = useRightPanel((s) => s.updateTabView);
 
-  const storedRatio = view?.ratio ?? DEFAULT_RATIO;
-  const showTree = view?.showTree ?? true;
+  const projectId = useSession((s) => s.active?.session.project_id ?? null);
+  const treeLayout = useReaderTree((s) => (projectId ? s.byProject[projectId] : undefined));
+  const setTreeShow = useReaderTree((s) => s.setShowTree);
+  const setTreeRatio = useReaderTree((s) => s.setRatio);
+
+  const storedRatio = treeLayout?.ratio ?? DEFAULT_RATIO;
+  const showTree = treeLayout?.showTree ?? true;
+  const setShowTree = useCallback(
+    (show: boolean) => {
+      if (projectId) setTreeShow(projectId, show);
+    },
+    [projectId, setTreeShow],
+  );
   const rightView: RightView = view?.rightView ?? "tree";
   const preview = (view?.preview ?? false) && isMarkdown;
 
@@ -39,8 +54,10 @@ export function useReaderSplit(isMarkdown: boolean, path: string | null | undefi
   const ratio = dragRatio ?? storedRatio;
 
   const setRatio = useCallback(
-    (next: number) => updateTabView(tabId, { ratio: clampRatio(next) }),
-    [tabId, updateTabView],
+    (next: number) => {
+      if (projectId) setTreeRatio(projectId, clampRatio(next));
+    },
+    [projectId, setTreeRatio],
   );
 
   const setPreview = useCallback(
@@ -57,31 +74,31 @@ export function useReaderSplit(isMarkdown: boolean, path: string | null | undefi
   useEffect(() => {
     if (!isActive || !findBound) return;
     if (findOpen) {
-      if (rightView !== "search" || !showTree) {
-        updateTabView(tabId, { rightView: "search", showTree: true });
-      }
+      if (rightView !== "search") updateTabView(tabId, { rightView: "search" });
+      if (!showTree) setShowTree(true);
     } else if (rightView === "search") {
       updateTabView(tabId, { rightView: "tree" });
     }
-  }, [isActive, findBound, findOpen, rightView, showTree, tabId, updateTabView]);
+  }, [isActive, findBound, findOpen, rightView, showTree, tabId, updateTabView, setShowTree]);
 
   const toggleFileTree = useCallback(() => {
     if (showTree && rightView === "tree") {
-      updateTabView(tabId, { showTree: false });
+      setShowTree(false);
       return;
     }
     if (findOpen) closeFind();
-    updateTabView(tabId, { rightView: "tree", showTree: true });
-  }, [showTree, rightView, findOpen, closeFind, tabId, updateTabView]);
+    updateTabView(tabId, { rightView: "tree" });
+    setShowTree(true);
+  }, [showTree, rightView, findOpen, closeFind, tabId, updateTabView, setShowTree]);
 
   const toggleSearch = useCallback(() => {
     if (findOpen) {
       closeFind();
     } else {
-      updateTabView(tabId, { showTree: true });
+      setShowTree(true);
       openFind();
     }
-  }, [findOpen, closeFind, openFind, tabId, updateTabView]);
+  }, [findOpen, closeFind, openFind, setShowTree]);
 
   useEffect(() => {
     if (!resizing) return;
@@ -101,12 +118,12 @@ export function useReaderSplit(isMarkdown: boolean, path: string | null | undefi
     };
   }, [resizing]);
 
-  // Commit the dragged ratio to the tab once the mouse is released.
+  // Commit the dragged ratio to the project once the mouse is released.
   useEffect(() => {
     if (resizing || dragRatio == null) return;
-    updateTabView(tabId, { ratio: dragRatio });
+    setRatio(dragRatio);
     setDragRatio(null);
-  }, [resizing, dragRatio, tabId, updateTabView]);
+  }, [resizing, dragRatio, setRatio]);
 
   useEffect(() => {
     if (!resizing) return;

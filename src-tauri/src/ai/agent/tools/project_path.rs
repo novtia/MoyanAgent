@@ -113,6 +113,15 @@ fn resolve_file_ref(
 
     let as_path = PathBuf::from(raw);
     if as_path.is_absolute() {
+        // An absolute path that does not exist (a stale or mistyped prefix,
+        // another machine's layout) is not worth failing on when its tail
+        // names a file the project really has. Existing paths — including ones
+        // outside the project — still go through the strict check below.
+        if search == BasenameSearch::Enabled && !as_path.exists() {
+            if let Some(found) = resolve_absolute_by_tail(cwd, &as_path, tool)? {
+                return Ok(found);
+            }
+        }
         return resolve_absolute_compat(cwd, &as_path, tool);
     }
 
@@ -148,14 +157,72 @@ fn resolve_file_ref(
                 }
             }
         }
-        if segments.len() == 1 {
-            if let Some(found) = find_unique_file_by_basename(&root_canon, last, tool)? {
-                return Ok(found);
+        // Breadcrumb that starts with the folders the project root itself ends
+        // in (`杂文/我真没想到重生啊/大纲.md` for a project rooted at
+        // `…\杂文\我真没想到重生啊`): the leading part is the project, so only
+        // the remainder is relative to it. Exact, so it goes before any search.
+        if let Some(rest) = strip_root_ancestor_prefix(&root_canon, &segments) {
+            if !rest.is_empty() {
+                let found = resolve_file_ref(cwd, &rest.join("\\"), tool, search)?;
+                if found.is_file() {
+                    return Ok(found);
+                }
             }
+        }
+        // The breadcrumb does not exist where it was spelled. Models routinely
+        // prefix the path with folders that are *above* the project root (the
+        // project is `…\杂文\我真没想到重生啊` and they send
+        // `杂文/我真没想到重生啊/大纲.md`), or drop a folder in the middle.
+        // Look for the file by its name and keep the candidate whose parent
+        // folders agree with the breadcrumb the most; only an unambiguous best
+        // match is used.
+        if let Some(found) = find_unique_by_path_suffix(&root_canon, &segments, false, 1, tool)? {
+            return Ok(found);
         }
     }
 
     Ok(target)
+}
+
+/// If `segments` begins with the last `k` folder names of `root` (compared
+/// case-insensitively, longest `k` first), return what follows them.
+fn strip_root_ancestor_prefix(root: &Path, segments: &[String]) -> Option<Vec<String>> {
+    let names: Vec<String> = root
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy().to_lowercase()),
+            _ => None,
+        })
+        .collect();
+    let max_k = names.len().min(segments.len());
+    (1..=max_k).rev().find_map(|k| {
+        let tail = &names[names.len() - k..];
+        let head_matches = tail
+            .iter()
+            .zip(&segments[..k])
+            .all(|(a, b)| *a == b.to_lowercase());
+        head_matches.then(|| segments[k..].to_vec())
+    })
+}
+
+/// Map an absolute path that does not exist onto the project by its tail.
+fn resolve_absolute_by_tail(cwd: &Path, path: &Path, tool: &str) -> AppResult<Option<PathBuf>> {
+    let segments: Vec<String> = path
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    if segments.is_empty() {
+        return Ok(None);
+    }
+    let root = resolve_project_root(cwd)?;
+    let root_canon = paths::canonicalize_with_missing_tail(&root).unwrap_or(root);
+    // The folders of an absolute path were chosen deliberately, so a bare
+    // name coincidence is not enough: require the parent folder to agree too.
+    let min_match = segments.len().min(2);
+    find_unique_by_path_suffix(&root_canon, &segments, false, min_match, tool)
 }
 
 /// Resolve a project folder reference (empty → project root).
@@ -195,6 +262,23 @@ pub fn resolve_project_dir(cwd: &Path, raw: Option<&str>, tool: &str) -> AppResu
 
     if target.is_dir() {
         return canonicalize_existing(&target, tool);
+    }
+
+    if let Some(rest) = strip_root_ancestor_prefix(&root_canon, &segments) {
+        let mut t = root_canon.clone();
+        for seg in &rest {
+            t.push(seg);
+        }
+        if t.is_dir() {
+            return canonicalize_existing(&t, tool);
+        }
+    }
+
+    // Same leniency as files: `杂文/我真没想到重生啊/第一卷` when the project
+    // root already is `…/我真没想到重生啊` finds `第一卷` by its trailing folders.
+    // Folders are only listed or searched, never written, so this is safe.
+    if let Some(found) = find_unique_by_path_suffix(&root_canon, &segments, true, 1, tool)? {
+        return Ok(found);
     }
 
     Err(AppError::Invalid(format!(
@@ -319,18 +403,73 @@ fn resolve_unique_doc_by_stem(
     }
 }
 
-fn find_unique_file_by_basename(root: &Path, name: &str, tool: &str) -> AppResult<Option<PathBuf>> {
-    let mut matches = Vec::new();
+/// Number of trailing path components of `rel` that agree with `segments`
+/// (compared from the end). The last component is already known to match by
+/// name; the folders above it are compared case-insensitively.
+fn suffix_match_len(rel: &Path, segments: &[String]) -> usize {
+    let comps: Vec<String> = rel
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    let mut n = 0;
+    for (have, want) in comps.iter().rev().zip(segments.iter().rev()) {
+        if n > 0 && have.to_lowercase() != want.to_lowercase() {
+            break;
+        }
+        n += 1;
+    }
+    n
+}
+
+/// Find the one file (or, with `want_dir`, folder) under `root` that best fits
+/// a breadcrumb which does not exist as written.
+///
+/// Candidates are everything named like the last segment. They are ranked by
+/// how many trailing segments of the breadcrumb their own path ends with, and
+/// the best rank wins when it is unique and at least `min_match`. A tie is an
+/// error that lists the candidates, so the model can pick instead of guessing.
+fn find_unique_by_path_suffix(
+    root: &Path,
+    segments: &[String],
+    want_dir: bool,
+    min_match: usize,
+    tool: &str,
+) -> AppResult<Option<PathBuf>> {
+    let Some(name) = segments.last() else {
+        return Ok(None);
+    };
+    let mut candidates = Vec::new();
     let mut budget = MAX_SEARCH_DIRS;
-    collect_files_named(root, name, root, 0, &mut budget, &mut matches)?;
-    match matches.len() {
-        0 => Ok(None),
-        1 => Ok(Some(matches.remove(0))),
-        _ => Err(ambiguous_file_error(tool, name, root, &matches)),
+    collect_named(root, name, root, 0, &mut budget, want_dir, &mut candidates)?;
+
+    let scored: Vec<(usize, PathBuf)> = candidates
+        .into_iter()
+        .map(|p| {
+            let n = suffix_match_len(p.strip_prefix(root).unwrap_or(&p), segments);
+            (n, p)
+        })
+        .collect();
+    let Some(best) = scored.iter().map(|(n, _)| *n).max() else {
+        return Ok(None);
+    };
+    if best < min_match {
+        return Ok(None);
+    }
+    let mut top: Vec<PathBuf> = scored
+        .into_iter()
+        .filter(|(n, _)| *n == best)
+        .map(|(_, p)| p)
+        .collect();
+    match top.len() {
+        1 => Ok(Some(top.remove(0))),
+        _ => Err(ambiguous_file_error(tool, &segments.join("\\"), root, &top)),
     }
 }
 
-/// Walk `dir` looking for files named `name`.
+/// Walk `dir` looking for files (or, with `want_dir`, folders) named `name`.
 ///
 /// Symlinks and Windows junctions are never followed: a link inside the project
 /// pointing at `C:\` would otherwise let a bare file name resolve to a file
@@ -338,12 +477,13 @@ fn find_unique_file_by_basename(root: &Path, name: &str, tool: &str) -> AppResul
 /// until the stack overflows. `depth` / `budget` bound pathological trees even
 /// when no links are involved, and every match is re-checked against the root
 /// because `canonicalize` can still move a path elsewhere.
-fn collect_files_named(
+fn collect_named(
     dir: &Path,
     name: &str,
     root: &Path,
     depth: usize,
     budget: &mut usize,
+    want_dir: bool,
     out: &mut Vec<PathBuf>,
 ) -> AppResult<()> {
     if depth > MAX_SEARCH_DEPTH || *budget == 0 {
@@ -363,10 +503,11 @@ fn collect_files_named(
         }
         let path = entry.path();
         if file_type.is_file() {
-            if path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .is_some_and(|n| file_name_matches_query(n, name))
+            if !want_dir
+                && path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|n| file_name_matches_query(n, name))
             {
                 let resolved = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
                 if is_within(root, &resolved) {
@@ -380,7 +521,18 @@ fn collect_files_named(
             if is_reparse_point(&path) {
                 continue;
             }
-            collect_files_named(&path, name, root, depth + 1, budget, out)?;
+            if want_dir
+                && path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|n| n.to_lowercase() == name.to_lowercase())
+            {
+                let resolved = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+                if is_within(root, &resolved) {
+                    out.push(resolved);
+                }
+            }
+            collect_named(&path, name, root, depth + 1, budget, want_dir, out)?;
         }
     }
     Ok(())
@@ -608,6 +760,85 @@ mod tests {
         assert!(
             msg.contains("notes.md") && msg.contains("notes.txt"),
             "{msg}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The reported failure: project root is `…/杂文/我真没想到重生啊` and the
+    /// model prefixed the breadcrumb with the folders above it.
+    #[test]
+    fn breadcrumb_prefixed_with_the_roots_own_folders_resolves() {
+        let base = unique_temp("ancestor_prefix");
+        let root = base.join("杂文").join("我真没想到重生啊");
+        std::fs::create_dir_all(root.join("第一卷")).expect("mkdir");
+        std::fs::write(root.join("大纲.md"), "outline").expect("seed");
+        // A same-named file deeper down must not make the root copy ambiguous.
+        std::fs::write(root.join("第一卷").join("大纲.md"), "volume outline").expect("seed");
+
+        let found = resolve_project_file(&root, "杂文/我真没想到重生啊/大纲.md", "Read")
+            .expect("resolve");
+        assert_eq!(std::fs::read_to_string(&found).unwrap(), "outline");
+
+        let found = resolve_project_file(&root, "我真没想到重生啊/大纲.md", "Read").expect("resolve");
+        assert_eq!(std::fs::read_to_string(&found).unwrap(), "outline");
+
+        let dir = resolve_project_dir(&root, Some("杂文/我真没想到重生啊/第一卷"), "ListFiles")
+            .expect("dir");
+        assert!(dir.ends_with("第一卷"), "{dir:?}");
+        let dir =
+            resolve_project_dir(&root, Some("杂文/我真没想到重生啊"), "ListFiles").expect("root");
+        assert!(dir.ends_with("我真没想到重生啊"), "{dir:?}");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A folder dropped from (or added to) the middle of the breadcrumb still
+    /// finds the one file with that name; two candidates stay an error.
+    #[test]
+    fn breadcrumb_with_a_wrong_folder_finds_the_best_match() {
+        let root = unique_temp("suffix_rank");
+        std::fs::create_dir_all(root.join("第一卷").join("设定")).expect("mkdir");
+        std::fs::create_dir_all(root.join("第二卷")).expect("mkdir");
+        std::fs::write(root.join("第一卷").join("设定").join("人物.md"), "a").expect("seed");
+        std::fs::write(root.join("第二卷").join("人物.md"), "b").expect("seed");
+
+        // Two files share the name; the breadcrumb's folder decides.
+        let found = resolve_project_file(&root, "草稿/设定/人物.md", "Read").expect("resolve");
+        assert!(found.ends_with(Path::new("设定").join("人物.md")), "{found:?}");
+
+        // Nothing in the breadcrumb tells them apart → list the candidates.
+        let err = resolve_project_file(&root, "草稿/人物.md", "Read").expect_err("ambiguous");
+        assert!(err.to_string().contains("matches 2 files"), "{err}");
+
+        // Writes never retarget.
+        let strict =
+            resolve_project_file_strict(&root, "草稿/人物.md", "Write").expect("strict");
+        assert!(!strict.is_file());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A stale absolute prefix maps onto the project by its tail, but only when
+    /// the parent folder agrees too.
+    #[test]
+    fn nonexistent_absolute_path_maps_onto_the_project_by_its_tail() {
+        let root = unique_temp("abs_tail");
+        std::fs::create_dir_all(root.join("杂文")).expect("mkdir");
+        std::fs::write(root.join("杂文").join("大纲.md"), "x").expect("seed");
+
+        let stale = Path::new(if cfg!(windows) { r"Z:\old\box" } else { "/old/box" })
+            .join("杂文")
+            .join("大纲.md");
+        let found = resolve_project_file(&root, stale.to_str().unwrap(), "Read").expect("resolve");
+        assert!(found.ends_with(Path::new("杂文").join("大纲.md")), "{found:?}");
+
+        let wrong_parent = Path::new(if cfg!(windows) { r"Z:\old" } else { "/old" })
+            .join("别处")
+            .join("大纲.md");
+        assert!(
+            resolve_project_file(&root, wrong_parent.to_str().unwrap(), "Read").is_err(),
+            "a bare name coincidence is not enough for an absolute path"
         );
 
         let _ = std::fs::remove_dir_all(&root);

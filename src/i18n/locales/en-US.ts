@@ -227,8 +227,15 @@ const enUS: Resource = {
     more: "More",
     indentFirstLine: "First-line indent",
     outdentFirstLine: "Remove first-line indent",
+    format: "Format",
+    formatUndo: "Remove formatting",
     indentFirstLineHint:
-      "Add a two-em-space indent to every paragraph and a blank line between them. Shift-click to remove the indent.",
+      "Add a two-em-space indent to every paragraph and a blank line between them. Shift-click to remove the indent and the blank lines between paragraphs.",
+    formatHintIndent:
+      "Add a two-em-space indent to every paragraph. Shift-click to remove it.",
+    formatHintSpacing:
+      "Insert a blank line between adjacent paragraphs. Shift-click to remove those blank lines.",
+    formatDisabled: "Turn on first-line indent or paragraph spacing in Settings → Appearance",
     indentDiffBlocked: "First-line indent is unavailable while edits are pending review",
     search: "Search",
     showFiles: "Show file tree",
@@ -754,7 +761,7 @@ const enUS: Resource = {
     tabTools: "Tools",
     tabSystem: "System",
     subtitle: {
-      appearance: "Customize the theme, accent, and typography",
+      appearance: "Customize the theme, accent, typography, and reader formatting",
       llm: "Manage providers, API access, and model lists",
       default: "Pick the model for lightweight background tasks",
       search: "Configure web search providers and API keys",
@@ -866,6 +873,10 @@ const enUS: Resource = {
         "Model used for lightweight tasks such as renaming session titles. A title is generated automatically after the first message in a new session.",
       quickModelNone: "Not set",
       quickModelEmpty: "Add and enable a model in Model services first.",
+      quickPromptTitle: "Quick model system prompt",
+      quickPromptDesc:
+        "System prompt used when the quick model names a session. The default forbids file paths in titles; leave the box empty or restore the default if the result gets worse.",
+      quickPromptReset: "Restore default",
     },
     search: {
       enableTitle: "Enable web search",
@@ -967,6 +978,13 @@ const enUS: Resource = {
         default: "Default",
         rounded: "Rounded",
       },
+      readerFormatTitle: "Reader formatting",
+      readerFormatDesc:
+        "The reader format button applies only the options turned on here. The button is unavailable when both are off.",
+      firstLineIndentTitle: "First-line indent",
+      firstLineIndentDesc: "Start each prose paragraph with two full-width spaces",
+      paragraphSpacingTitle: "Paragraph spacing",
+      paragraphSpacingDesc: "Insert a blank line between adjacent prose paragraphs",
       languageTitle: "Language",
       languageDesc: "Choose the interface language",
       languageOptionZhCN: "中文",

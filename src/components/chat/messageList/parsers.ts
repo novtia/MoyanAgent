@@ -81,6 +81,9 @@ export type GrepFileResult = {
 export type GrepOutput = {
   path?: string;
   query: string;
+  /** Every term searched when the call batched several queries. */
+  queries?: string[];
+  per_query?: { query: string; paragraphs: number }[];
   total_matches?: number;
   truncated?: boolean;
   files_capped?: boolean;
@@ -103,6 +106,26 @@ function parseMatches(raw: unknown): GrepMatch[] {
     });
   }
   return out;
+}
+
+function parseQueries(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.filter((q): q is string => typeof q === "string" && !!q);
+  return out.length ? out : undefined;
+}
+
+function parsePerQuery(
+  raw: unknown,
+): { query: string; paragraphs: number }[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: { query: string; paragraphs: number }[] = [];
+  for (const row of raw) {
+    const r = asObj(row);
+    const query = r ? asStr(r.query) : undefined;
+    if (!r || !query) continue;
+    out.push({ query, paragraphs: asNum(r.paragraphs) ?? 0 });
+  }
+  return out.length ? out : undefined;
 }
 
 export function parseGrepOutput(output: unknown): GrepOutput | null {
@@ -128,6 +151,8 @@ export function parseGrepOutput(output: unknown): GrepOutput | null {
       truncated: asBool(o.truncated),
       files_capped: asBool(o.files_capped),
       files,
+      queries: parseQueries(o.queries),
+      per_query: parsePerQuery(o.per_query),
     };
   }
 

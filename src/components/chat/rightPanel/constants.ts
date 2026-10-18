@@ -8,6 +8,8 @@ export const OPEN_KEY = "atelier:right-panel-open";
 export const LEGACY_TABS_KEY = "atelier:right-panel-tabs";
 /** Per-session right-panel chrome tabs (not the reader file contents). */
 export const TABS_KEY_PREFIX = "atelier:right-panel-tabs:";
+/** Per-project file-tree layout shared by every reader tab (JSON map by project id). */
+export const READER_TREE_KEY = "atelier:reader-tree";
 /** Stored tab payload schema version. */
 export const TABS_SCHEMA_VERSION = 2;
 /** Max simultaneously mounted tab panes (keep-alive budget, LRU beyond this). */

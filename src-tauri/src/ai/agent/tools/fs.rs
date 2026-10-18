@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use crate::ai::agent::core::context::ToolUseContext;
 use crate::ai::agent::tools::paragraph::paragraph_count;
 use crate::ai::agent::tools::project_path::{self, display_path, FILE_REF_DESC};
 use crate::ai::agent::tools::read_receipt::{
@@ -35,6 +36,70 @@ const TOOL_NAME: &str = "Read";
 /// (roughly one token per glyph) as well as for ASCII, and the CJK case is the
 /// expensive one.
 const READ_MAX_CHARS: usize = 40_000;
+
+/// Most files / ranges accepted in one `Read` call.
+const MAX_BATCH_READS: usize = 20;
+/// Total characters one batched `Read` may return across all of its items.
+/// Without a shared budget, N reads could return N full pages at once.
+const BATCH_MAX_CHARS: usize = 80_000;
+/// Every item of a batch gets at least this much room, even when earlier items
+/// spent the budget, so a late item is truncated (and pageable) rather than
+/// returned empty.
+const BATCH_MIN_ITEM_CHARS: usize = 4_000;
+
+/// One file / range requested from `Read`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReadRequest {
+    path: String,
+    paragraph_from: Option<usize>,
+    paragraph_to: Option<usize>,
+}
+
+/// Normalise the tool input into a list of reads.
+///
+/// `path` is a list (a bare string is the one-item case). Each entry may carry
+/// its own `#P003-P007` range; `paragraph_from` / `paragraph_to` apply to the
+/// entries that do not.
+fn parse_read_requests(input: &Value) -> AppResult<Vec<ReadRequest>> {
+    let raw: Vec<&str> = match input.get("path") {
+        Some(Value::String(s)) => vec![s.as_str()],
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|v| {
+                v.as_str().ok_or_else(|| {
+                    AppError::Invalid("Read: every `path` entry must be a string".into())
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?,
+        _ => {
+            return Err(AppError::Invalid(
+                "Read: `path` must be a string or a list of strings".into(),
+            ))
+        }
+    };
+    if raw.is_empty() {
+        return Err(AppError::Invalid("Read: `path` must not be empty".into()));
+    }
+    if raw.len() > MAX_BATCH_READS {
+        return Err(AppError::Invalid(format!(
+            "Read: at most {MAX_BATCH_READS} paths per call (got {})",
+            raw.len()
+        )));
+    }
+    let from = parse_optional_paragraph(input.get("paragraph_from"), "paragraph_from")?;
+    let to = parse_optional_paragraph(input.get("paragraph_to"), "paragraph_to")?;
+    raw.into_iter()
+        .map(|p| {
+            // An entry's own `#P…` suffix wins over the shared range.
+            let own_range = split_path_paragraph_suffix(p)?.1.is_some();
+            Ok(ReadRequest {
+                path: p.to_string(),
+                paragraph_from: if own_range { None } else { from },
+                paragraph_to: if own_range { None } else { to },
+            })
+        })
+        .collect()
+}
 
 /// Collect paragraphs `[from, to]`, stopping early once `max_chars` is spent.
 ///
@@ -229,7 +294,11 @@ impl FileReadTool {
     pub fn new() -> Self {
         let spec_plain = ToolSpec {
             name: TOOL_NAME.to_string(),
-            description: "Read a text file from the local filesystem. \
+            description: "Read text files from the local filesystem. `path` is a list: put \
+                every file / range you need into ONE call (one item is fine too) instead of \
+                one Read per span. Give each item its own range as `file.md#P003-P007`; \
+                with several items the result is `results`, in order, and one bad item does \
+                not fail the rest. \
                 Returns the file's plain text (no line labels), so you can copy exact \
                 snippets into Edit's `old_string`. For insert/append, that snippet \
                 is only the insertion point (a sentence or paragraph ending), never \
@@ -264,7 +333,11 @@ impl FileReadTool {
             concurrency_safe: true,
         };
         let mut spec_labeled = spec_plain.clone();
-        spec_labeled.description = "Read a text file from the local filesystem. \
+        spec_labeled.description = "Read text files from the local filesystem. `path` is a list: put \
+            every file / range you need into ONE call (one item is fine too) instead of \
+            one Read per span. Give each item its own range as `file.md#P003-P007`; \
+            with several items the result is `results`, in order, and one bad item does \
+            not fail the rest. \
             Each returned line is prefixed with `[P001]` (1-based paragraph number; \
             empty lines included). Those prefixes are host labels, not file text — \
             copy Edit `old_string` from the paragraph body only, never the `[P00N]` \
@@ -324,21 +397,25 @@ fn read_tool_schema() -> Value {
         "type": "object",
         "properties": {
             "path": {
-                "type": "string",
+                "type": "array",
+                "minItems": 1,
+                "maxItems": MAX_BATCH_READS,
+                "items": { "type": "string" },
                 "description": format!(
-                    "{FILE_REF_DESC} A `.md` / `.txt` suffix may be omitted \
+                    "Files to read; one or several, each item {FILE_REF_DESC} \
+                     A `.md` / `.txt` suffix may be omitted \
                      when the title uniquely identifies the document \
                      (e.g. `notes` reads `notes.md`). \
-                     Optional `#P003` / `#P003-P007` suffix \
-                     selects a 1-based paragraph (line) range when \
-                     `paragraph_from` / `paragraph_to` are omitted."
+                     An item may end in `#P003` / `#P003-P007` to select its own \
+                     1-based paragraph (line) range, so several ranges of one \
+                     file are just several items."
                 )
             },
             "paragraph_from": {
                 "type": "integer",
                 "minimum": 1,
-                "description": "First paragraph/line to return (1-based, inclusive). \
-                    Prefer this over a `#P…` path suffix. Omit (with no suffix) to read the full file."
+                "description": "First paragraph/line to return (1-based, inclusive), for every `path` item without its own `#P…` suffix. \
+                    Omit (with no suffix) to read the full file."
             },
             "paragraph_to": {
                 "type": "integer",
@@ -361,34 +438,119 @@ impl Tool for FileReadTool {
     }
 
     fn validate(&self, input: &Value) -> AppResult<()> {
-        let path = input
-            .get("path")
-            .and_then(Value::as_str)
-            .ok_or_else(|| AppError::Invalid("Read: `path` must be a string".into()))?;
-        let from = parse_optional_paragraph(input.get("paragraph_from"), "paragraph_from")?;
-        let to = parse_optional_paragraph(input.get("paragraph_to"), "paragraph_to")?;
-        resolve_read_target(path, from, to)?;
+        for req in parse_read_requests(input)? {
+            resolve_read_target(&req.path, req.paragraph_from, req.paragraph_to)?;
+        }
         Ok(())
     }
 
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
-            let raw_path = invocation
-                .input
-                .get("path")
-                .and_then(Value::as_str)
-                .ok_or_else(|| AppError::Invalid("Read: missing path".into()))?;
-            let from =
-                parse_optional_paragraph(invocation.input.get("paragraph_from"), "paragraph_from")?;
-            let to =
-                parse_optional_paragraph(invocation.input.get("paragraph_to"), "paragraph_to")?;
+            let requests = parse_read_requests(&invocation.input)?;
+            let ctx = invocation.context;
+
+            // A lone request keeps the original flat result shape.
+            if requests.len() == 1 {
+                let req = &requests[0];
+                return self.read_one(
+                    ctx,
+                    &req.path,
+                    req.paragraph_from,
+                    req.paragraph_to,
+                    READ_MAX_CHARS,
+                );
+            }
+
+            // Batch: the requests run in order (the "already returned this
+            // turn" bookkeeping depends on it) and share one character budget so
+            // N reads cannot add up to N full pages of context. A failure in one
+            // item is reported in place and does not abort the others.
+            let mut budget = BATCH_MAX_CHARS;
+            let mut results: Vec<Value> = Vec::with_capacity(requests.len());
+            let mut failed = 0usize;
+            for req in &requests {
+                let max_chars = READ_MAX_CHARS.min(budget).max(BATCH_MIN_ITEM_CHARS);
+                let outcome = self.read_one(
+                    ctx,
+                    &req.path,
+                    req.paragraph_from,
+                    req.paragraph_to,
+                    max_chars,
+                );
+                match outcome {
+                    Ok(res) if !res.is_error => {
+                        let used = res
+                            .content
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .map_or(0, |t| t.chars().count());
+                        budget = budget.saturating_sub(used);
+                        results.push(res.content);
+                    }
+                    Ok(res) => {
+                        failed += 1;
+                        let message = res
+                            .content
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .unwrap_or("read failed")
+                            .to_string();
+                        results.push(serde_json::json!({ "path": req.path, "error": message }));
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        results.push(
+                            serde_json::json!({ "path": req.path, "error": e.to_string() }),
+                        );
+                    }
+                }
+            }
+
+            let body = serde_json::json!({
+                "batch": true,
+                "count": results.len(),
+                "succeeded": results.len() - failed,
+                "failed": failed,
+                "results": results,
+            });
+            if failed == results.len() {
+                return Ok(ToolResult {
+                    content: body,
+                    is_error: true,
+                    metadata: None,
+                });
+            }
+            Ok(ToolResult::ok(body))
+        })
+    }
+}
+
+impl FileReadTool {
+    /// Read one file / paragraph range. `max_chars` caps the returned text.
+    fn read_one(
+        &self,
+        ctx: &ToolUseContext,
+        raw_path: &str,
+        from: Option<usize>,
+        to: Option<usize>,
+        max_chars: usize,
+    ) -> AppResult<ToolResult> {
+        {
             let (path, range) = resolve_read_target(raw_path, from, to)?;
-            let canonical =
-                project_path::resolve_project_file(&invocation.context.cwd, &path, TOOL_NAME)?;
+            let canonical = project_path::resolve_project_file(&ctx.cwd, &path, TOOL_NAME)?;
             crate::ai::agent::tools::pe_docs::refuse_nondoc(TOOL_NAME, &canonical)?;
 
             if !canonical.is_file() {
-                return Ok(ToolResult::error(format!("Read: file not found: `{path}`")));
+                // Name the folder that was searched: a model that sees only
+                // "not found" retries the same spelling, one that sees the
+                // root can re-aim the path or list the folder.
+                let searched = project_path::resolve_project_root(&ctx.cwd)
+                    .map(|r| format!(" (project root: `{}`)", display_path(&r)))
+                    .unwrap_or_default();
+                return Ok(ToolResult::error(format!(
+                    "Read: file not found: `{path}`{searched}. Paths are relative to the project \
+                     root; use ListFiles to see what exists."
+                )));
             }
 
             let bytes = std::fs::read(&canonical)
@@ -397,7 +559,7 @@ impl Tool for FileReadTool {
             let text = decoded.text;
             let paragraphs_total = paragraph_count(&text);
 
-            if is_fresh_write(&invocation.context.read_file_state, &canonical, &text) {
+            if is_fresh_write(&ctx.read_file_state, &canonical, &text) {
                 let chars = text.chars().filter(|c| !c.is_whitespace()).count();
                 return Ok(ToolResult::ok(serde_json::json!({
                     "path": display_path(&canonical),
@@ -433,7 +595,7 @@ impl Tool for FileReadTool {
                 };
 
             if let Some(covered) = already_read_span(
-                &invocation.context.read_file_state,
+                &ctx.read_file_state,
                 &canonical,
                 &text,
                 requested_from,
@@ -457,10 +619,10 @@ impl Tool for FileReadTool {
             }
 
             let (mut slice_text, mut paragraph_to, mut capped) =
-                collect_paragraphs(&text, paragraph_from, paragraph_to, READ_MAX_CHARS);
+                collect_paragraphs(&text, paragraph_from, paragraph_to, max_chars);
             // A document with no line breaks is one enormous paragraph, which
             // the per-paragraph loop above cannot split.
-            if let Some(head) = head_limit(&slice_text, READ_MAX_CHARS) {
+            if let Some(head) = head_limit(&slice_text, max_chars) {
                 slice_text = head;
                 capped = true;
             }
@@ -481,7 +643,7 @@ impl Tool for FileReadTool {
             }
 
             record_read_span(
-                &invocation.context.read_file_state,
+                &ctx.read_file_state,
                 &canonical,
                 &text,
                 paragraph_from,
@@ -509,7 +671,7 @@ impl Tool for FileReadTool {
                 "next_paragraph_from": next_paragraph_from,
                 "text": slice_text,
             })))
-        })
+        }
     }
 }
 
@@ -579,6 +741,94 @@ mod read_range_tests {
         assert_eq!(res.content["truncated"], false);
         assert!(res.content["next_paragraph_from"].is_null());
         let _ = Arc::clone(&ctx);
+    }
+
+    #[test]
+    fn read_requests_take_one_path_or_a_list() {
+        // A bare string is the one-item case.
+        let one = parse_read_requests(&json!({ "path": "a.md", "paragraph_from": 2 })).unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].paragraph_from, Some(2));
+
+        let list = parse_read_requests(&json!({ "path": ["a.md"] })).unwrap();
+        assert_eq!(list.len(), 1);
+
+        // Per-item ranges ride on the `#P…` suffix; the shared range fills the rest.
+        let many = parse_read_requests(&json!({
+            "path": ["a.md", "b.md#P003-P005", "b.md#P010"],
+            "paragraph_from": 1,
+            "paragraph_to": 2,
+        }))
+        .unwrap();
+        assert_eq!(many.len(), 3);
+        assert_eq!((many[0].paragraph_from, many[0].paragraph_to), (Some(1), Some(2)));
+        assert_eq!((many[1].paragraph_from, many[1].paragraph_to), (None, None));
+        assert!(many[1].path.ends_with("#P003-P005"));
+
+        assert!(parse_read_requests(&json!({})).is_err());
+        assert!(parse_read_requests(&json!({ "path": [] })).is_err());
+        assert!(parse_read_requests(&json!({ "path": [1] })).is_err());
+        let too_many: Vec<String> = (0..=MAX_BATCH_READS).map(|i| format!("f{i}.md")).collect();
+        assert!(parse_read_requests(&json!({ "path": too_many })).is_err());
+    }
+
+    #[tokio::test]
+    async fn several_paths_are_read_in_one_call() {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir =
+            std::env::temp_dir().join(format!("moyan-read-batch-{}-{}", std::process::id(), n));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "a1\na2\na3").unwrap();
+        let long: String = (1..=60).map(|i| format!("b{i}")).collect::<Vec<_>>().join("\n");
+        std::fs::write(dir.join("b.txt"), &long).unwrap();
+        let ctx = ToolUseContextBuilder::new(AgentId::new(), dir.clone())
+            .build()
+            .0;
+        let tool = FileReadTool::new();
+
+        let res = tool
+            .execute(ToolInvocation {
+                id: MessageId("batch".into()),
+                input: json!({ "path": ["a.txt", "b.txt#P005-P006", "missing.txt"] }),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert!(!res.is_error, "one bad item must not fail the batch");
+        assert_eq!(res.content["batch"], true);
+        assert_eq!(res.content["count"], 3);
+        assert_eq!(res.content["succeeded"], 2);
+        assert_eq!(res.content["failed"], 1);
+        let results = res.content["results"].as_array().unwrap();
+        assert_eq!(results[0]["text"], "a1\na2\na3");
+        assert!(results[1]["text"].as_str().unwrap().contains("b5"));
+        assert!(results[2].get("error").is_some());
+
+        // The same span again is deduplicated inside a later call too.
+        let again = tool
+            .execute(ToolInvocation {
+                id: MessageId("batch2".into()),
+                input: json!({ "path": ["b.txt#P005-P006", "a.txt#P001"] }),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(again.content["results"][0]["already_read"], true);
+
+        // A one-item list reads like the single-file call.
+        let single = tool
+            .execute(ToolInvocation {
+                id: MessageId("single".into()),
+                input: json!({ "path": ["b.txt#P040-P041"] }),
+                context: ctx.as_ref(),
+            })
+            .await
+            .unwrap();
+        assert!(single.content.get("batch").is_none());
+        assert!(single.content["text"].as_str().unwrap().contains("b40"));
+
+        let _ = Arc::clone(&ctx);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

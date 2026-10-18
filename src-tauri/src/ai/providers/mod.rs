@@ -7,6 +7,7 @@ mod ark_images;
 mod ark_video;
 mod claude;
 mod gemini;
+pub(crate) mod gemini_model;
 mod grok;
 pub mod model_list;
 pub mod openai;

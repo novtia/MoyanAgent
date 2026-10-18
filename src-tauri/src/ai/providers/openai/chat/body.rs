@@ -19,7 +19,11 @@ pub(crate) fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) ->
 
     let mut messages: Vec<Value> = Vec::new();
     let sys = request.system_prompt.trim();
-    if !sys.is_empty() {
+    // Echo applies its own system prompt server-side and rejects any
+    // client-supplied one, so for that endpoint the system text is folded into
+    // the first user turn after `messages` is assembled.
+    let echo = is_echo_endpoint(&request.provider.endpoint);
+    if !sys.is_empty() && !echo {
         messages.push(json!({ "role": "system", "content": sys }));
     }
     for turn in &request.history {
@@ -67,6 +71,10 @@ pub(crate) fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) ->
         messages.push(json!({ "role": "user", "content": snap }));
     }
 
+    if echo {
+        fold_system_into_first_user(&mut messages, sys);
+    }
+
     let mut body = json!({
         "model": request.model,
         "messages": messages,
@@ -77,6 +85,13 @@ pub(crate) fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) ->
     request
         .parameters
         .apply_thinking_params(map, &request.provider.endpoint);
+    if echo {
+        // Echo requires `persona` on every request; an explicit custom
+        // parameter of the same name still takes precedence.
+        if let Some(persona) = request.parameters.model.resolved_persona() {
+            map.entry("persona").or_insert(Value::String(persona));
+        }
+    }
     if is_openrouter_endpoint(&request.provider.endpoint) && openrouter_wants_image_output(request)
     {
         if let Some(image_config) = request.parameters.image_config() {
@@ -106,6 +121,63 @@ pub(crate) fn build_chat_body(request: &ChatRequest, allow_image_parts: bool) ->
     }
 
     body
+}
+
+/// Echo (`echo.fulcrum.inc`) only accepts user / assistant turns.
+pub(crate) fn is_echo_endpoint(endpoint: &str) -> bool {
+    endpoint
+        .trim()
+        .to_ascii_lowercase()
+        .contains("echo.fulcrum.inc")
+}
+
+/// Prepend `system` to the first user message (creating one if the
+/// conversation has none) so that no `system` role is ever sent.
+pub(crate) fn fold_system_into_first_user(messages: &mut Vec<Value>, system: &str) {
+    let system = system.trim();
+    if system.is_empty() {
+        return;
+    }
+    // Defensive: drop any stray system-role message and keep its text.
+    let mut extra: Vec<String> = Vec::new();
+    messages.retain(|m| {
+        if m.get("role").and_then(Value::as_str) == Some("system") {
+            if let Some(s) = m.get("content").and_then(Value::as_str) {
+                extra.push(s.to_string());
+            }
+            false
+        } else {
+            true
+        }
+    });
+    let mut prefix = system.to_string();
+    for s in extra {
+        prefix.push_str("\n\n");
+        prefix.push_str(&s);
+    }
+
+    let Some(first_user) = messages
+        .iter_mut()
+        .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))
+    else {
+        messages.insert(0, json!({ "role": "user", "content": prefix }));
+        return;
+    };
+    match first_user.get_mut("content") {
+        Some(Value::String(s)) => {
+            *s = if s.trim().is_empty() {
+                prefix
+            } else {
+                format!("{prefix}\n\n{s}")
+            };
+        }
+        Some(Value::Array(parts)) => {
+            parts.insert(0, json!({ "type": "text", "text": prefix }));
+        }
+        _ => {
+            first_user["content"] = Value::String(prefix);
+        }
+    }
 }
 
 pub(crate) fn append_openai_assistant_text_turn(

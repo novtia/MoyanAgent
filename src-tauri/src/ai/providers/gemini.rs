@@ -16,6 +16,7 @@ use crate::ai::providers::openai::common::{
     should_retry_http_error, should_retry_transport, sleep_for_attempt, sse_data_payload,
     stream_read_error, MAX_ATTEMPTS,
 };
+use crate::ai::providers::gemini_model;
 use crate::ai::providers::{ChatProvider, ProviderFuture, GEMINI_SDK, VERTEX_SDK};
 use crate::ai::tokens::TokenUsage;
 use crate::error::{AppError, AppResult};
@@ -243,6 +244,7 @@ fn build_body(request: &ChatRequest, stream_function_args: bool) -> Value {
         append_gemini_tool_results(&mut contents, pending, &request.tool_results);
     }
     append_gemini_todo_snapshot(&mut contents, request);
+    append_vertex_continue_turns(&mut contents, request);
 
     let mut body = json!({ "contents": contents });
     let map = body.as_object_mut().unwrap();
@@ -422,6 +424,31 @@ fn append_gemini_todo_snapshot(contents: &mut Vec<Value>, request: &ChatRequest)
     }));
 }
 
+/// Vertex rejects `parts: []` and treats empty text as missing, so use a space.
+fn vertex_empty_content(role: &str) -> Value {
+    json!({ "role": role, "parts": [{ "text": " " }] })
+}
+
+/// Vertex only: after the user turn, pair it with an empty model, then an
+/// empty user plus a prefilled model turn (`继续`), then a trailing empty
+/// user so the request does not end on a model turn.
+/// Tool follow-up rounds keep native functionCall / functionResponse order.
+fn append_vertex_continue_turns(contents: &mut Vec<Value>, request: &ChatRequest) {
+    if !is_vertex_sdk(request) {
+        return;
+    }
+    if !request.tool_chain.is_empty() || request.pending_assistant_turn.is_some() {
+        return;
+    }
+    contents.push(vertex_empty_content("model"));
+    contents.push(vertex_empty_content("user"));
+    contents.push(json!({
+        "role": "model",
+        "parts": [{ "text": "继续" }]
+    }));
+    contents.push(vertex_empty_content("user"));
+}
+
 fn history_turn_to_content(turn: &HistoryTurn) -> Option<Value> {
     let text = turn.text.as_deref();
     if text.map(|s| s.trim().is_empty()).unwrap_or(true) && turn.images.is_empty() {
@@ -483,13 +510,13 @@ fn generation_config(request: &ChatRequest) -> Map<String, Value> {
 /// spends thinking tokens, but parts never carry `thought: true`.
 fn apply_gemini_thinking_config(out: &mut Map<String, Value>, request: &ChatRequest) {
     let effort = request.parameters.model.resolved_thinking_effort();
-    if effort.is_none() && !gemini_supports_thought_summaries(&request.model) {
+    if effort.is_none() && !gemini_model::supports_thought_summaries(&request.model) {
         return;
     }
     let mut thinking = Map::new();
     thinking.insert("includeThoughts".into(), json!(true));
     if let Some(effort) = effort {
-        if gemini_uses_thinking_level(&request.model) {
+        if gemini_model::uses_thinking_level(&request.model) {
             thinking.insert(
                 "thinkingLevel".into(),
                 json!(gemini_thinking_level(&effort)),
@@ -502,22 +529,6 @@ fn apply_gemini_thinking_config(out: &mut Map<String, Value>, request: &ChatRequ
         }
     }
     out.insert("thinkingConfig".into(), Value::Object(thinking));
-}
-
-fn gemini_supports_thought_summaries(model: &str) -> bool {
-    let m = model.to_ascii_lowercase();
-    if gemini_image_or_video_model(&m) {
-        return false;
-    }
-    m.contains("gemini-2.5") || m.contains("gemini-3") || m.contains("thinking")
-}
-
-fn gemini_uses_thinking_level(model: &str) -> bool {
-    model.to_ascii_lowercase().contains("gemini-3")
-}
-
-fn gemini_image_or_video_model(model: &str) -> bool {
-    model.contains("image") || model.contains("imagen") || model.contains("veo")
 }
 
 fn gemini_thinking_level(effort: &str) -> &'static str {
@@ -2152,6 +2163,20 @@ mod tests {
     }
 
     #[test]
+    fn gemini_3_8_and_4_use_level_never_budget() {
+        for model in ["gemini-3.8-flash", "gemini-4-argon"] {
+            let mut req = sample_request(false);
+            req.provider.sdk = VERTEX_SDK.into();
+            req.model = model.into();
+            enable_thinking(&mut req, "medium");
+            let cfg = &build_body(&req, true)["generationConfig"]["thinkingConfig"];
+            assert_eq!(cfg["includeThoughts"], true, "{model}");
+            assert_eq!(cfg["thinkingLevel"], "MEDIUM", "{model}");
+            assert!(cfg.get("thinkingBudget").is_none(), "{model}");
+        }
+    }
+
+    #[test]
     fn gemini_2_5_thinking_sends_budget_and_include_thoughts() {
         let mut req = sample_request(false);
         req.provider.sdk = VERTEX_SDK.into();
@@ -2205,5 +2230,59 @@ mod tests {
         req.provider.sdk = GEMINI_SDK.into();
         req.provider.safety_threshold = Some("none".into());
         assert!(build_body(&req, false).get("safetySettings").is_none());
+    }
+
+    #[test]
+    fn vertex_user_turn_appends_empty_user_and_continue_model() {
+        let mut req = sample_request(false);
+        req.provider.sdk = VERTEX_SDK.into();
+        req.prompt = "你好".into();
+        let contents = build_body(&req, false)["contents"].as_array().unwrap().clone();
+        assert_eq!(contents.len(), 5);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "你好");
+        assert_eq!(contents[1]["role"], "model");
+        assert_eq!(contents[1]["parts"][0]["text"], " ");
+        assert_eq!(contents[2]["role"], "user");
+        assert_eq!(contents[2]["parts"][0]["text"], " ");
+        assert_eq!(contents[3]["role"], "model");
+        assert_eq!(contents[3]["parts"][0]["text"], "继续");
+        assert_eq!(contents[4]["role"], "user");
+        assert_eq!(contents[4]["parts"][0]["text"], " ");
+
+        let studio = sample_request(false);
+        let studio_contents = build_body(&studio, false)["contents"].as_array().unwrap().clone();
+        assert_eq!(studio_contents.len(), 1);
+        assert_eq!(studio_contents[0]["parts"][0]["text"], "hi");
+    }
+
+    #[test]
+    fn vertex_tool_follow_up_skips_continue_prefill() {
+        let mut req = vertex_tools_request();
+        req.prompt = "你好".into();
+        req.tool_chain.push(crate::ai::chat::ToolChainRound {
+            assistant: crate::ai::chat::PendingAssistantTurn {
+                text: None,
+                thinking_content: None,
+                tool_calls: vec![crate::ai::chat::ProviderToolCall::new(
+                    "gemini-1",
+                    "Read",
+                    json!({ "path": "a.md" }),
+                )],
+            },
+            results: vec![crate::ai::chat::ToolResultMessage {
+                tool_call_id: "gemini-1".into(),
+                content: json!({ "ok": true }),
+                is_error: false,
+            }],
+        });
+        let contents = build_body(&req, false)["contents"].as_array().unwrap().clone();
+        assert_eq!(contents[0]["parts"][0]["text"], "你好");
+        assert!(contents.iter().all(|c| c["parts"]
+            .as_array()
+            .map(|p| p.iter().all(|part| part.get("text") != Some(&json!("继续"))))
+            .unwrap_or(true)));
+        assert_eq!(contents.last().unwrap()["role"], "user");
+        assert!(contents.last().unwrap()["parts"][0].get("functionResponse").is_some());
     }
 }

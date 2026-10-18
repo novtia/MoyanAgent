@@ -28,9 +28,6 @@ function parseView(raw: unknown): TabViewState | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const v = raw as Record<string, unknown>;
   const view: TabViewState = {};
-  const ratio = num(v.ratio, 0.1, 0.95);
-  if (ratio != null) view.ratio = ratio;
-  if (typeof v.showTree === "boolean") view.showTree = v.showTree;
   if (v.rightView === "tree" || v.rightView === "search") view.rightView = v.rightView;
   if (typeof v.preview === "boolean") view.preview = v.preview;
 

@@ -12,6 +12,7 @@ pub const KEY_ACTIVE_PROVIDER_ID: &str = "active_provider_id";
 pub const KEY_MODEL_SERVICES: &str = "model_services";
 pub const KEY_QUICK_MODEL_PROVIDER_ID: &str = "quick_model_provider_id";
 pub const KEY_QUICK_MODEL: &str = "quick_model";
+pub const KEY_QUICK_MODEL_PROMPT: &str = "quick_model_prompt";
 pub const KEY_DEFAULT_RATIO: &str = "default_aspect_ratio";
 pub const KEY_DEFAULT_SIZE: &str = "default_image_size";
 pub const KEY_DEFAULT_THINKING_ENABLED: &str = "default_thinking_enabled";
@@ -40,9 +41,34 @@ pub const KEY_FORCED_TOOLS: &str = "forced_tools";
 pub const KEY_CREATE_DOC_ECHO_CONTENT: &str = "create_doc_echo_content";
 pub const KEY_EDIT_REPLACE_ALL_DEFAULT: &str = "edit_replace_all_default";
 pub const KEY_READ_PARAGRAPH_LABELS: &str = "read_paragraph_labels";
+pub const KEY_READER_FIRST_LINE_INDENT: &str = "reader_first_line_indent";
+pub const KEY_READER_PARAGRAPH_SPACING: &str = "reader_paragraph_spacing";
 pub const KEY_HTTP_PROXY_ENABLED: &str = "http_proxy_enabled";
 pub const KEY_HTTP_PROXY_URL: &str = "http_proxy_url";
 pub const KEY_NOVELAI: &str = "novelai";
+
+/// Built-in system prompt for the quick model when it names a session.
+///
+/// The user message often *starts* with a serialized file mention
+/// (`@"C:\\Users\\…\\大纲.md"#P003`); a model told only to "summarize the
+/// message" echoes that path back as the title. The prompt therefore forbids
+/// paths outright and says what a file reference means instead. Editable under
+/// Settings → Default model; an empty stored value restores this text.
+pub const DEFAULT_TITLE_SYSTEM_PROMPT: &str = "\
+你是「会话标题助手」，只负责给一段对话起一个简短的标题。
+
+规则：
+1. 标题概括用户这条消息想做的事（意图或主题），不超过 12 个汉字；如果消息是英文，不超过 6 个单词。
+2. 标题里绝对不能出现文件路径、盘符（如 C:\\）、反斜杠、扩展名（.md、.txt 等）、`@` 引用、网址，或 `#P003` 这类段落标记。消息里的文件引用只说明用户在处理哪份文档；需要时用文档名（不含后缀）代指，例如「大纲」「第一章」。
+3. 不要照抄用户原话的开头，不要以「帮我」「请」「关于」开头。用名词短语或动宾短语，例如「后续三章大纲设计」「润色第一章开头」。
+4. 用户用什么语言写，标题就用什么语言。
+5. 必须调用 SetSessionTitle 工具提交标题，且只调用一次；不要用文字回复，不做任何解释。工具参数 title 里只放标题本身：不加引号、书名号、句号、序号，不加「标题：」之类前缀。
+
+示例：
+用户：@\"C:\\\\Users\\\\Administrator\\\\Documents\\\\MoYanAgent\\\\Project\\\\杂文\\\\大纲.md\" 设计后续 3 章的大纲
+调用：SetSessionTitle(title = \"后续三章大纲设计\")
+用户：把第二段改得更口语一点
+调用：SetSessionTitle(title = \"第二段口语化润色\")";
 
 pub const DEFAULT_HISTORY_TURNS: i64 = 10;
 pub const DEFAULT_AUTO_BACKUP_CHAT_INTERVAL_MINUTES: i64 = 30;
@@ -64,9 +90,22 @@ pub struct ModelParamSettings {
     /// When enabled and unset, backends default to `high`.
     #[serde(default)]
     pub thinking_effort: Option<String>,
+    /// Writer the model should imitate. Only sent to Echo
+    /// (`echo.fulcrum.inc`), which rejects requests without it.
+    #[serde(default)]
+    pub persona: Option<String>,
 }
 
 impl ModelParamSettings {
+    /// Trimmed, non-empty persona name.
+    pub fn resolved_persona(&self) -> Option<String> {
+        self.persona
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    }
+
     /// Effort string to send upstream when thinking is enabled.
     pub fn resolved_thinking_effort(&self) -> Option<String> {
         if !self.thinking_enabled.unwrap_or(false) {
@@ -91,6 +130,7 @@ impl Default for ModelParamSettings {
             presence_penalty: None,
             thinking_enabled: None,
             thinking_effort: None,
+            persona: None,
         }
     }
 }
@@ -325,6 +365,10 @@ pub struct Settings {
     /// Model id of the "quick model". Empty means unset.
     #[serde(default)]
     pub quick_model: String,
+    /// System prompt the quick model uses when naming a session. Empty means
+    /// the built-in prompt (`DEFAULT_TITLE_SYSTEM_PROMPT`); `read` always fills it in.
+    #[serde(default)]
+    pub quick_model_prompt: String,
     pub default_aspect_ratio: String,
     pub default_image_size: String,
     /// Global default for the composer thinking toggle (reasoning models only).
@@ -395,6 +439,12 @@ pub struct Settings {
     /// When true, Read prefixes each returned line with `[P001]`.
     #[serde(default)]
     pub read_paragraph_labels: bool,
+    /// Reader toolbar: two full-width spaces at the start of each prose paragraph.
+    #[serde(default = "default_reader_format_enabled")]
+    pub reader_first_line_indent: bool,
+    /// Reader toolbar: a blank line between adjacent prose paragraphs.
+    #[serde(default = "default_reader_format_enabled")]
+    pub reader_paragraph_spacing: bool,
     /// Master switch for the outbound HTTP/SOCKS proxy.
     #[serde(default)]
     pub http_proxy_enabled: bool,
@@ -407,6 +457,10 @@ pub struct Settings {
 }
 
 fn default_web_search_enabled() -> bool {
+    true
+}
+
+fn default_reader_format_enabled() -> bool {
     true
 }
 
@@ -444,6 +498,7 @@ impl Default for Settings {
             model_services: Vec::new(),
             quick_model_provider_id: String::new(),
             quick_model: String::new(),
+            quick_model_prompt: DEFAULT_TITLE_SYSTEM_PROMPT.to_string(),
             default_aspect_ratio: String::new(),
             default_image_size: String::new(),
             default_thinking_enabled: false,
@@ -472,6 +527,8 @@ impl Default for Settings {
             create_doc_echo_content: false,
             edit_replace_all_default: false,
             read_paragraph_labels: false,
+            reader_first_line_indent: true,
+            reader_paragraph_spacing: true,
             http_proxy_enabled: false,
             http_proxy_url: String::new(),
             novelai: crate::ai::nai::NovelAiSettings::default(),
@@ -512,6 +569,8 @@ pub struct SettingsPatch {
     pub quick_model_provider_id: Option<String>,
     #[serde(default)]
     pub quick_model: Option<String>,
+    #[serde(default)]
+    pub quick_model_prompt: Option<String>,
     #[serde(default)]
     pub default_aspect_ratio: Option<String>,
     #[serde(default)]
@@ -569,6 +628,10 @@ pub struct SettingsPatch {
     #[serde(default)]
     pub read_paragraph_labels: Option<bool>,
     #[serde(default)]
+    pub reader_first_line_indent: Option<bool>,
+    #[serde(default)]
+    pub reader_paragraph_spacing: Option<bool>,
+    #[serde(default)]
     pub http_proxy_enabled: Option<bool>,
     #[serde(default)]
     pub http_proxy_url: Option<String>,
@@ -599,6 +662,13 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             }
             KEY_QUICK_MODEL_PROVIDER_ID => s.quick_model_provider_id = v,
             KEY_QUICK_MODEL => s.quick_model = v,
+            // Empty keeps the built-in prompt (that is how
+            // restore default is stored).
+            KEY_QUICK_MODEL_PROMPT => {
+                if !v.trim().is_empty() {
+                    s.quick_model_prompt = v;
+                }
+            }
             KEY_DEFAULT_RATIO => s.default_aspect_ratio = v,
             KEY_DEFAULT_SIZE => s.default_image_size = v,
             KEY_DEFAULT_THINKING_ENABLED => s.default_thinking_enabled = v == "true" || v == "1",
@@ -681,6 +751,10 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             KEY_CREATE_DOC_ECHO_CONTENT => s.create_doc_echo_content = v == "true" || v == "1",
             KEY_EDIT_REPLACE_ALL_DEFAULT => s.edit_replace_all_default = v == "true" || v == "1",
             KEY_READ_PARAGRAPH_LABELS => s.read_paragraph_labels = v == "true" || v == "1",
+            KEY_READER_FIRST_LINE_INDENT => {
+                s.reader_first_line_indent = v == "true" || v == "1"
+            }
+            KEY_READER_PARAGRAPH_SPACING => s.reader_paragraph_spacing = v == "true" || v == "1",
             KEY_HTTP_PROXY_ENABLED => s.http_proxy_enabled = v == "true" || v == "1",
             KEY_HTTP_PROXY_URL => s.http_proxy_url = v,
             KEY_NOVELAI => {
@@ -940,13 +1014,6 @@ fn model_group(id: &str) -> String {
     id.split('/').next().unwrap_or("custom").to_string()
 }
 
-fn gemini_id_implies_reasoning(id: &str) -> bool {
-    !id.contains("image")
-        && !id.contains("imagen")
-        && !id.contains("veo")
-        && (id.contains("gemini-2.5") || id.contains("gemini-3"))
-}
-
 fn infer_capabilities(id: &str) -> Vec<String> {
     let id = id.to_ascii_lowercase();
     let mut out = Vec::new();
@@ -965,7 +1032,7 @@ fn infer_capabilities(id: &str) -> Vec<String> {
         || id.contains("thinking")
         || id.contains("o1")
         || id.contains("o3")
-        || gemini_id_implies_reasoning(&id)
+        || crate::ai::providers::gemini_model::implies_reasoning(&id)
     {
         out.push("reasoning".into());
     }
@@ -1022,6 +1089,9 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
     }
     if let Some(v) = patch.quick_model {
         write_kv(conn, KEY_QUICK_MODEL, &v)?;
+    }
+    if let Some(v) = patch.quick_model_prompt {
+        write_kv(conn, KEY_QUICK_MODEL_PROMPT, &v)?;
     }
     if let Some(v) = patch.default_aspect_ratio {
         write_kv(conn, KEY_DEFAULT_RATIO, &v)?;
@@ -1148,6 +1218,20 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
         write_kv(
             conn,
             KEY_READ_PARAGRAPH_LABELS,
+            if v { "true" } else { "false" },
+        )?;
+    }
+    if let Some(v) = patch.reader_first_line_indent {
+        write_kv(
+            conn,
+            KEY_READER_FIRST_LINE_INDENT,
+            if v { "true" } else { "false" },
+        )?;
+    }
+    if let Some(v) = patch.reader_paragraph_spacing {
+        write_kv(
+            conn,
+            KEY_READER_PARAGRAPH_SPACING,
             if v { "true" } else { "false" },
         )?;
     }

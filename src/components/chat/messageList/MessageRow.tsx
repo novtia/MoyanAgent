@@ -39,7 +39,7 @@ import {
 } from "../mention";
 import type { AssistantBlock, AttachmentDraft, ImageRefAbs, SkillInfo } from "../../../types";
 import { AssistantContent } from "./AssistantContent";
-import { ChunkedText } from "./ChunkedText";
+import { ChatMarkdown } from "./ChatMarkdown";
 import { MessageTokenUsage } from "./MessageTokenUsage";
 import { PlateActions } from "./PlateActions";
 import { ThinkingBlock } from "./ThinkingBlock";
@@ -782,7 +782,11 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
           )}
 
           {!editing && showMessageText && !isError && (
-            <div className="text">
+            <div
+              className={
+                isUser || findQuery ? "text" : "text chat-md"
+              }
+            >
               {isUser ? (
                 <MentionText
                   text={m.text || ""}
@@ -792,7 +796,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
               ) : findQuery ? (
                 highlightQuery(m.text || "", findQuery)
               ) : (
-                <ChunkedText text={m.text || ""} />
+                <ChatMarkdown text={m.text || ""} />
               )}
             </div>
           )}

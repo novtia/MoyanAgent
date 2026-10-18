@@ -361,6 +361,30 @@ export function ScopeConfigModal({
                   <p className="config-modal-section-desc">{paramsHint}</p>
                 </div>
 
+                <div className="config-modal-field">
+                  <label className="config-modal-field-label" htmlFor="config-persona">
+                    Persona（Echo）
+                  </label>
+                  <input
+                    id="config-persona"
+                    type="text"
+                    className="field-input config-modal-name-input"
+                    value={llmParamsDraft.persona ?? ""}
+                    spellCheck={false}
+                    placeholder="例如 Emily Dickinson"
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setLlmParamsDraft((cur) => ({
+                        ...cur,
+                        persona: next.trim() ? next : null,
+                      }));
+                    }}
+                  />
+                  <div className="hint">
+                    Echo 模型模仿的作者名；仅在使用 Echo 服务时发送，其他服务会忽略。
+                  </div>
+                </div>
+
                 <div className="cfg-params" key={paramsResetKey}>
                   <SliderParamRow
                     label="模型温度"

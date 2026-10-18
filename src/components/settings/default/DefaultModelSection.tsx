@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "../../../store/settings";
 import { normalizeProviders } from "../llm/modelServices";
@@ -73,6 +73,24 @@ export function DefaultModelSection() {
     });
   };
 
+  // The backend always returns an effective prompt (the built-in one when
+  // nothing custom is stored), so the editor never shows an empty box.
+  const storedPrompt = settings?.quick_model_prompt ?? "";
+  const [draft, setDraft] = useState(storedPrompt);
+  useEffect(() => {
+    setDraft(storedPrompt);
+  }, [storedPrompt]);
+
+  const commitPrompt = () => {
+    if (draft === storedPrompt) return;
+    // Clearing the box is the same as restoring the default.
+    void update({ quick_model_prompt: draft.trim() ? draft : "" });
+  };
+
+  const resetPrompt = () => {
+    void update({ quick_model_prompt: "" });
+  };
+
   return (
     <div className="settings-card">
       <div className="settings-row">
@@ -101,6 +119,31 @@ export function DefaultModelSection() {
             />
           </div>
         )}
+      </div>
+      <div className="settings-row settings-row--stack settings-row--prompt">
+        <div className="settings-tool-desc-head">
+          <span className="settings-row-title">
+            {t("settings.default.quickPromptTitle")}
+          </span>
+          <button
+            type="button"
+            className="appearance-reset-btn"
+            onClick={resetPrompt}
+          >
+            {t("settings.default.quickPromptReset")}
+          </button>
+        </div>
+        <div className="settings-row-desc">
+          {t("settings.default.quickPromptDesc")}
+        </div>
+        <textarea
+          className="field-input field-input--lg settings-tool-desc-editor"
+          value={draft}
+          rows={14}
+          spellCheck={false}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitPrompt}
+        />
       </div>
     </div>
   );

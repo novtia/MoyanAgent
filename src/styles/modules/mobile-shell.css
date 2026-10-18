@@ -225,6 +225,7 @@ html[data-shell="mobile"] .messages:not(.is-empty) {
 html[data-shell="mobile"] .messages-inner,
 html[data-shell="mobile"] .messages-shell > .messages-inner,
 html[data-shell="mobile"] .empty-chat-inner,
+html[data-shell="mobile"] .composer-stack,
 html[data-shell="mobile"] .composer-card {
   max-width: none;
   width: 100%;

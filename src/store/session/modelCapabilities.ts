@@ -1,3 +1,4 @@
+import { geminiImpliesReasoning } from "../../utils/geminiModel";
 import { useSettings } from "../settings";
 import { useSession } from "./store";
 
@@ -24,20 +25,10 @@ export function modelCapabilities(
 }
 
 function withImpliedReasoning(modelId: string, caps: string[]): string[] {
-  if (caps.includes("reasoning") || !geminiIdImpliesReasoning(modelId)) {
+  if (caps.includes("reasoning") || !geminiImpliesReasoning(modelId)) {
     return caps;
   }
   return [...caps, "reasoning"];
-}
-
-function geminiIdImpliesReasoning(modelId: string): boolean {
-  const id = modelId.toLowerCase();
-  return (
-    !id.includes("image") &&
-    !id.includes("imagen") &&
-    !id.includes("veo") &&
-    (id.includes("gemini-2.5") || id.includes("gemini-3"))
-  );
 }
 
 /**

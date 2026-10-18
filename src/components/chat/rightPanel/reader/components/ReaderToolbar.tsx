@@ -124,7 +124,7 @@ export function ReaderToolbar({
             type="button"
             className="reader-toolbar-btn"
             title={indentTitle}
-            aria-label={t("reader.indentFirstLine")}
+            aria-label={t("reader.format")}
             disabled={!canIndent}
             onClick={onIndent}
           >

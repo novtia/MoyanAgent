@@ -5,6 +5,7 @@ import type {
   ModelServiceModel,
   ProviderSdkConfig,
 } from "../../../types";
+import { geminiImpliesReasoning } from "../../../utils/geminiModel";
 
 export type { ProviderSdkConfig };
 
@@ -272,6 +273,7 @@ export const EMPTY_MODEL_PARAMS: ModelParamSettings = {
   presence_penalty: null,
   thinking_enabled: null,
   thinking_effort: null,
+  persona: null,
 };
 
 export const CAPABILITY_OPTIONS = [
@@ -385,15 +387,6 @@ export function resolveManageGroupIconId(group: string): string {
   return resolveBrandIconId(group);
 }
 
-function geminiIdImpliesReasoning(id: string): boolean {
-  return (
-    !id.includes("image") &&
-    !id.includes("imagen") &&
-    !id.includes("veo") &&
-    (id.includes("gemini-2.5") || id.includes("gemini-3"))
-  );
-}
-
 export function inferCapabilities(model: string) {
   const id = model.toLowerCase();
   const caps = new Set<string>();
@@ -418,7 +411,7 @@ export function inferCapabilities(model: string) {
     id.includes("opus") ||
     id.includes("sonnet") ||
     id.includes("deepseek") ||
-    geminiIdImpliesReasoning(id)
+    geminiImpliesReasoning(id)
   ) {
     caps.add("reasoning");
   }

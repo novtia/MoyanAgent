@@ -37,6 +37,9 @@ Guidelines:
   reasons — nothing that is not the document itself. \
   Read again only when Edit fails, or when you need a file you did not \
   just write.
+- Batch your lookups: Grep's `query` / `path` and Read's `path` are lists. To \
+  search several terms or files, or read several files or ranges, put them all \
+  in ONE call. Do not issue one tool call per term or per span.
 - For analysis: start broad and narrow down. Use multiple search strategies \
   if the first doesn't yield results.
 - Be thorough: check multiple locations, consider different naming \

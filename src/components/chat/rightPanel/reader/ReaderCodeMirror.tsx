@@ -8,7 +8,8 @@ import {
   keymap,
   lineNumbers,
 } from "@codemirror/view";
-import { useEffect, useMemo, useRef } from "react";
+import { useContext, useEffect, useMemo, useRef } from "react";
+import { useFileExplorer } from "../../../../store/fileExplorer";
 import { formatParagraphNumber } from "../../../../store/reader";
 import type { TextRange } from "../../../../utils/readerFind";
 import {
@@ -19,10 +20,8 @@ import {
 } from "../../../../utils/readerSelection";
 import { diffSignGutterExtension } from "./readerCodeMirror/diffSignGutter";
 import { applyFindHighlights, findHighlightField } from "./readerCodeMirror/findHighlights";
-import {
-  readerIndentKeymap,
-  registerReaderDocumentView,
-} from "./readerCodeMirror/indentKeymap";
+import { readerIndentKeymap } from "./readerCodeMirror/indentKeymap";
+import { ReaderEditorViewContext } from "./readerCodeMirror/editorViewContext";
 import { runRegisteredReaderSave } from "./hooks/useEditorSave";
 import {
   createReaderCodeMirrorTheme,
@@ -100,6 +99,9 @@ export function ReaderCodeMirror({
 }: ReaderCodeMirrorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const editorViewSlot = useContext(ReaderEditorViewContext);
+  const editorViewSlotRef = useRef(editorViewSlot);
+  editorViewSlotRef.current = editorViewSlot;
   const onChangeRef = useRef(onChange);
   const filePathRef = useRef(filePath);
   const paragraphBaseRef = useRef(paragraphBase);
@@ -148,6 +150,8 @@ export function ReaderCodeMirror({
           paragraphFrom: picked.fromLine + base,
           paragraphTo: picked.toLine + base,
           text: picked.text,
+          projectRoot: useFileExplorer.getState().projectRoot,
+          sessionId: useFileExplorer.getState().sessionId,
         };
         // Clipboard shows original text; composer turns this into an @ chip on paste.
         rememberReaderSelection(payload);
@@ -195,11 +199,11 @@ export function ReaderCodeMirror({
 
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
-    const unregisterDocument =
-      layout === "document" && editable ? registerReaderDocumentView(view) : null;
+    const slot = editorViewSlotRef.current;
+    if (slot && layout === "document" && editable) slot.current = view;
 
     const destroy = () => {
-      unregisterDocument?.();
+      if (slot?.current === view) slot.current = null;
       view.destroy();
       viewRef.current = null;
     };
@@ -213,9 +217,12 @@ export function ReaderCodeMirror({
       };
       scrollEl.addEventListener("scroll", onScroll, { passive: true });
       return () => {
-        onScroll();
         scrollEl.removeEventListener("scroll", onScroll);
-        destroy();
+        try {
+          onScroll();
+        } finally {
+          destroy();
+        }
       };
     }
 

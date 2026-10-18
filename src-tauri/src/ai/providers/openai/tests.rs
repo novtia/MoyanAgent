@@ -223,6 +223,97 @@ fn openrouter_route_providers_become_provider_only() {
 }
 
 #[test]
+fn echo_endpoint_never_sends_system_role() {
+    let mut request = ChatRequest {
+        provider: crate::ai::chat::ProviderConfig {
+            id: "echo".into(),
+            name: "Echo".into(),
+            sdk: "openai".into(),
+            endpoint: "https://echo.fulcrum.inc/api/v1/chat/completions".into(),
+            api_key: "k".into(),
+            context_cache_enabled: false,
+            safety_threshold: None,
+        },
+        model: "echo".into(),
+        prompt: "写第二章".into(),
+        attachments: Vec::new(),
+        system_prompt: "你是小说作者".into(),
+        history: Vec::new(),
+        parameters: crate::ai::parameters::factory().build(
+            "auto".into(),
+            "auto".into(),
+            crate::data::settings::ModelParamSettings::default(),
+        ),
+        tools: Vec::new(),
+        tool_chain: Vec::new(),
+        tool_results: Vec::new(),
+        pending_assistant_turn: None,
+        previous_response_id: None,
+        context_cache_enabled: false,
+        context_window: None,
+        todo_snapshot: None,
+        route_providers: Vec::new(),
+        forced_tools: Vec::new(),
+    };
+    let body = build_chat_body(&request, false);
+    let messages = body["messages"].as_array().expect("messages");
+    assert!(messages.iter().all(|m| m["role"] != "system"));
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["role"], "user");
+    assert_eq!(messages[0]["content"], "你是小说作者\n\n写第二章");
+
+    // Non-Echo endpoints keep the system role.
+    request.provider.endpoint = "https://api.openai.com/v1/chat/completions".into();
+    let body = build_chat_body(&request, false);
+    assert_eq!(body["messages"][0]["role"], "system");
+}
+
+#[test]
+fn echo_endpoint_sends_persona_from_params() {
+    let mut request = ChatRequest {
+        provider: crate::ai::chat::ProviderConfig {
+            id: "echo".into(),
+            name: "Echo".into(),
+            sdk: "openai".into(),
+            endpoint: "https://echo.fulcrum.inc/api/v1/chat/completions".into(),
+            api_key: "k".into(),
+            context_cache_enabled: false,
+            safety_threshold: None,
+        },
+        model: "echo".into(),
+        prompt: "hi".into(),
+        attachments: Vec::new(),
+        system_prompt: String::new(),
+        history: Vec::new(),
+        parameters: crate::ai::parameters::factory().build(
+            "auto".into(),
+            "auto".into(),
+            crate::data::settings::ModelParamSettings {
+                persona: Some("  Emily Dickinson ".into()),
+                ..Default::default()
+            },
+        ),
+        tools: Vec::new(),
+        tool_chain: Vec::new(),
+        tool_results: Vec::new(),
+        pending_assistant_turn: None,
+        previous_response_id: None,
+        context_cache_enabled: false,
+        context_window: None,
+        todo_snapshot: None,
+        route_providers: Vec::new(),
+        forced_tools: Vec::new(),
+    };
+    let body = build_chat_body(&request, false);
+    assert_eq!(body["persona"], "Emily Dickinson");
+
+    // Other providers never receive the field.
+    request.provider.endpoint = "https://api.openai.com/v1/chat/completions".into();
+    let body = build_chat_body(&request, false);
+    assert!(body.get("persona").is_none());
+}
+
+#[test]
 fn empty_route_providers_omit_openrouter_provider_field() {
     let request = ChatRequest {
         provider: crate::ai::chat::ProviderConfig {

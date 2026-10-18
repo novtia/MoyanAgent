@@ -980,6 +980,18 @@
   resize: vertical;
   line-height: 1.55;
 }
+/* Prompt editor as a stacked row inside a settings-card (no nested card). */
+.settings-row--prompt {
+  gap: 0;
+}
+.settings-row--prompt .settings-row-desc {
+  max-width: none;
+}
+.settings-row--prompt .settings-tool-desc-editor {
+  box-sizing: border-box;
+  margin-top: 12px;
+  min-height: 280px;
+}
 .settings-tool-params {
   display: grid;
   gap: 10px;

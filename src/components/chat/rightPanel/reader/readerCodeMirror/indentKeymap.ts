@@ -4,6 +4,7 @@ import type { EditorView } from "@codemirror/view";
 import {
   buildDocumentFirstLineIndentChanges,
   buildParagraphIndentChanges,
+  type DocumentFormatOptions,
 } from "../../../../../utils/readerIndent";
 
 function dispatchIndent(
@@ -37,32 +38,33 @@ export function runDocumentFirstLineIndent(
   view: EditorView,
   outdent: boolean,
   markdown: boolean,
+  options: DocumentFormatOptions,
 ): boolean {
   const text = view.state.doc.toString();
   const sel = view.state.selection.main;
   return dispatchIndent(
     view,
-    buildDocumentFirstLineIndentChanges(text, outdent, markdown, sel.from, sel.to),
+    buildDocumentFirstLineIndentChanges(
+      text,
+      outdent,
+      markdown,
+      sel.from,
+      sel.to,
+      options,
+    ),
   );
 }
 
-let documentView: EditorView | null = null;
-
-export function registerReaderDocumentView(view: EditorView): () => void {
-  documentView = view;
-  return () => {
-    if (documentView === view) documentView = null;
-  };
-}
-
-/** Toolbar first-line indent: every prose paragraph in the open document editor. */
-export function indentRegisteredReaderDocument(
+/** Toolbar format for the editor owned by this reader pane. */
+export function indentReaderView(
+  view: EditorView | null,
   outdent: boolean,
   markdown: boolean,
+  options: DocumentFormatOptions,
 ): boolean {
-  if (!documentView || documentView.state.readOnly) return false;
-  const ok = runDocumentFirstLineIndent(documentView, outdent, markdown);
-  if (ok) documentView.focus();
+  if (!view || view.state.readOnly) return false;
+  const ok = runDocumentFirstLineIndent(view, outdent, markdown, options);
+  if (ok && view.dom.isConnected) view.focus();
   return ok;
 }
 

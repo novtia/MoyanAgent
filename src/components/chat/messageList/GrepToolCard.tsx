@@ -13,22 +13,32 @@ function fileName(path: string): string {
   return parts[parts.length - 1] || cleaned;
 }
 
-function highlightQuery(text: string, query: string): ReactNode {
-  if (!query) return text;
+/** Highlight every occurrence of any of 	erms (earliest, then longest, wins). */
+function highlightQuery(text: string, terms: string[]): ReactNode {
+  const needles = terms.filter(Boolean).map((q) => q.toLowerCase());
+  if (!needles.length) return text;
   const lower = text.toLowerCase();
-  const q = query.toLowerCase();
   const parts: ReactNode[] = [];
   let i = 0;
   let key = 0;
   while (i < text.length) {
-    const idx = lower.indexOf(q, i);
-    if (idx < 0) {
+    let best = -1;
+    let bestLen = 0;
+    for (const q of needles) {
+      const idx = lower.indexOf(q, i);
+      if (idx < 0) continue;
+      if (best < 0 || idx < best || (idx === best && q.length > bestLen)) {
+        best = idx;
+        bestLen = q.length;
+      }
+    }
+    if (best < 0) {
       parts.push(text.slice(i));
       break;
     }
-    if (idx > i) parts.push(text.slice(i, idx));
-    parts.push(<mark key={key++}>{text.slice(idx, idx + query.length)}</mark>);
-    i = idx + query.length;
+    if (best > i) parts.push(text.slice(i, best));
+    parts.push(<mark key={key++}>{text.slice(best, best + bestLen)}</mark>);
+    i = best + bestLen;
   }
   return parts;
 }
@@ -41,10 +51,25 @@ export function GrepToolCard({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const status = block.status;
-  const input = (block.input ?? {}) as { query?: string; path?: string };
+  const input = (block.input ?? {}) as {
+    // Both are lists; a bare string is tolerated.
+    query?: string | string[];
+    path?: string | string[];
+  };
   const parsed = useMemo(() => parseGrepOutput(block.output), [block.output]);
-  const query = parsed?.query || input.query || "";
-  const path = sanitizeFsPath(parsed?.path || input.path || "");
+  const terms = useMemo(() => {
+    if (parsed?.queries?.length) return parsed.queries;
+    const fromInput = ([] as unknown[])
+      .concat(input.query ?? [])
+      .filter((q): q is string => typeof q === "string" && !!q);
+    if (fromInput.length) return [...new Set(fromInput)];
+    return parsed?.query ? [parsed.query] : [];
+  }, [parsed, input.query]);
+  const query = terms.join(" | ");
+  const inputPath = ([] as unknown[]).concat(input.path ?? [])[0];
+  const path = sanitizeFsPath(
+    parsed?.path || (typeof inputPath === "string" ? inputPath : ""),
+  );
   const total =
     parsed?.total_matches ??
     parsed?.files.reduce((n, f) => n + f.matches.length, 0) ??
@@ -125,7 +150,7 @@ export function GrepToolCard({
                           : "·")}
                     </span>
                     <span className="grep-text">
-                      {highlightQuery(m.text, query)}
+                      {highlightQuery(m.text, terms)}
                     </span>
                   </div>
                 ))}

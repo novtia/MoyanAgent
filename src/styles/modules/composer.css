@@ -11,6 +11,63 @@
 .messages:not(.is-empty) ~ .composer-dock {
   padding-left: var(--msg-timeline-gutter);
 }
+.composer-stack {
+  width: 100%;
+  max-width: var(--chat-content-width);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.composer-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--rose-50);
+  border: 1px solid #fecdd3;
+  border-radius: var(--radius);
+  color: var(--ink);
+  padding: 10px 8px 10px 14px;
+}
+.composer-error-body {
+  flex: 1;
+  min-width: 0;
+}
+.composer-error-close {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  margin-top: -2px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.composer-error-close:hover {
+  background: color-mix(in srgb, var(--rose-500) 12%, transparent);
+  color: var(--ink);
+}
+.composer-error-stamp {
+  display: block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.composer-error-text {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 7.5em;
+  overflow: auto;
+}
 .composer-card {
   width: 100%;
   max-width: var(--chat-content-width);
@@ -366,25 +423,43 @@
   pointer-events: none;
 }
 
-.composer-mention {
+/*
+ * Inline cards (@file / role / skill) share one geometry so they never push
+ * the line box taller than the surrounding text:
+ *   - chip height   = text line-height - 2px (1px breathing room top/bottom)
+ *   - chip content  = chip height - border, used as the text line-height
+ *   - vertical-align: baseline, with the text child as the baseline source
+ * `--mention-lh` is the unitless line-height of the host text (editor: 1.55).
+ */
+.composer-editor {
+  --mention-lh: 1.55;
+}
+.composer-mention,
+.composer-role-cite,
+.composer-skill-cite {
   position: relative;
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  box-sizing: border-box;
   max-width: 100%;
+  height: calc(var(--mention-lh, 1.55) * 1em - 2px);
   margin: 0 2px;
-  padding: 2px 8px 2px 6px;
+  padding: 0 8px 0 6px;
   border-radius: var(--radius-sm);
+  font-size: inherit;
+  font-weight: 500;
+  /* inner line height = height - 2 * 1px border; inherited as px by children */
+  line-height: calc(var(--mention-lh, 1.55) * 1em - 4px);
+  vertical-align: baseline;
+  user-select: none;
+  white-space: nowrap;
+}
+.composer-mention {
   background: color-mix(in srgb, var(--ink) 4%, var(--bg-soft));
   border: 1px solid var(--line);
   box-shadow: none;
   color: var(--ink);
-  font-size: inherit;
-  font-weight: 500;
-  line-height: 1.35;
-  vertical-align: middle;
-  user-select: none;
-  white-space: nowrap;
   transition: background 0.15s ease, border-color 0.15s ease;
   cursor: pointer;
 }
@@ -401,12 +476,15 @@
 .composer-mention.media-image.has-preview {
   position: relative;
   gap: 0;
+  height: auto;
   padding: 0;
   overflow: hidden;
   border: 0;
   background: transparent;
   box-shadow: none;
   line-height: 0;
+  /* thumbnail is a real block-sized object, not text-height */
+  vertical-align: middle;
 }
 .composer-mention.media-image.has-preview:hover {
   border-color: transparent;
@@ -438,8 +516,10 @@
 /* Static (read-only) chip used when rendering message history in the chat list. */
 .composer-mention--static {
   cursor: default;
-  margin: 1px 2px;
-  padding: 4px 10px 4px 8px;
+  padding: 0 8px 0 6px;
+}
+.composer-mention.media-image.has-preview.composer-mention--static {
+  padding: 0;
 }
 .composer-mention--static:hover {
   transform: none;
@@ -451,11 +531,19 @@
   justify-content: center;
   color: var(--ink-mute);
   line-height: 0;
+  /* never taller than the chip's inner height */
+  width: 1.1em;
+  height: 1.1em;
+  max-height: 100%;
 }
 .composer-mention-icon svg {
   display: block;
+  width: 100%;
+  height: 100%;
 }
 .composer-mention-label {
+  /* baseline source for the chip: text sits exactly on the host baseline */
+  align-self: baseline;
   min-width: 0;
   max-width: min(320px, 100%);
   overflow: hidden;
@@ -508,38 +596,31 @@
   display: none;
 }
 
-/* Role-state / skill cite — single-line chip, same height as composer text / @mention */
+/* Role-state / skill cite — geometry shared with .composer-mention above */
 .composer-role-cite,
 .composer-skill-cite {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
   max-width: min(320px, 100%);
-  height: calc(1.55em + 4px);
-  margin: 0 2px;
   padding: 0 6px 0 7px;
-  box-sizing: border-box;
-  vertical-align: middle;
   border: 1px solid var(--arc-line-strong, var(--line));
-  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--arc-tint, var(--ink)) 14%, var(--bg-soft));
   color: var(--arc-ink, var(--ink));
   font-family: var(--chat-font-family, var(--app-font-family, inherit));
-  font-size: inherit;
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
-  user-select: none;
   cursor: default;
 }
 .composer-role-cite-body {
   display: inline-flex;
-  align-items: center;
+  /* all text parts share one baseline; each part's line-height = chip inner height */
+  align-items: baseline;
+  align-self: baseline;
   gap: 5px;
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
+}
+.composer-role-cite-eyebrow,
+.composer-skill-cite-eyebrow,
+.composer-skill-cite-name {
+  align-self: baseline;
 }
 .composer-role-cite-eyebrow,
 .composer-skill-cite-eyebrow {

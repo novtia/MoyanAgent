@@ -1,3 +1,4 @@
+import { clearRememberedReaderSelection } from "../utils/readerSelection";
 import { useFileExplorer } from "./fileExplorer";
 import { useProject } from "./project";
 import { useReader } from "./reader";
@@ -33,6 +34,8 @@ function bind(sessionId: string | null) {
   useRightPanel.getState().bindSession(sessionId);
   useFileExplorer.getState().bindSession(sessionId, projectRootOf(sessionId));
   useReaderFind.getState().reset();
+  // A reader copy must not survive a project/session switch.
+  clearRememberedReaderSelection();
 }
 
 let boundSessionId = useSession.getState().activeId;

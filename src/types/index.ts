@@ -8,6 +8,8 @@ export interface ModelParamSettings {
   thinking_enabled: boolean | null;
   /** e.g. low / medium / high / max — forwarded as OpenAI `reasoning_effort` or Claude `output_config.effort`. */
   thinking_effort: string | null;
+  /** Echo only: name of the writer the model imitates (sent as `persona`). */
+  persona?: string | null;
 }
 
 /** Per-1M-token rates for cost estimates (same unit as usage pricing). */
@@ -124,6 +126,8 @@ export interface Settings {
   quick_model_provider_id: string;
   /** Model id of the quick model. */
   quick_model: string;
+  /** System prompt the quick model uses to name sessions (built-in default when never customized). */
+  quick_model_prompt: string;
   default_aspect_ratio: string;
   default_image_size: string;
   /** Global default for the composer thinking toggle (reasoning models only). */
@@ -171,6 +175,10 @@ export interface Settings {
   edit_replace_all_default: boolean;
   /** When true, Read prefixes each returned line with `[P001]`. */
   read_paragraph_labels: boolean;
+  /** Reader toolbar: two full-width spaces at the start of each prose paragraph. */
+  reader_first_line_indent: boolean;
+  /** Reader toolbar: a blank line between adjacent prose paragraphs. */
+  reader_paragraph_spacing: boolean;
   /** Master switch for the outbound HTTP/SOCKS proxy. */
   http_proxy_enabled: boolean;
   /** Proxy URL, e.g. `http://127.0.0.1:7890` or `socks5://127.0.0.1:7891`. */
@@ -262,6 +270,8 @@ export interface SettingsPatch {
   model_services?: ModelProvider[];
   quick_model_provider_id?: string;
   quick_model?: string;
+  /** Empty string restores the built-in prompt. */
+  quick_model_prompt?: string;
   default_aspect_ratio?: string;
   default_image_size?: string;
   default_thinking_enabled?: boolean;
@@ -290,6 +300,8 @@ export interface SettingsPatch {
   create_doc_echo_content?: boolean;
   edit_replace_all_default?: boolean;
   read_paragraph_labels?: boolean;
+  reader_first_line_indent?: boolean;
+  reader_paragraph_spacing?: boolean;
   http_proxy_enabled?: boolean;
   http_proxy_url?: string;
   novelai?: NovelAiSettings;

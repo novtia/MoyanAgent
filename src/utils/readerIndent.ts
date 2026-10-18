@@ -3,6 +3,19 @@ import type { KeyboardEvent } from "react";
 /** Two full-width spaces — standard Chinese first-line paragraph indent. */
 export const PARAGRAPH_INDENT = "　　";
 
+/** What the reader toolbar's format action is allowed to change. */
+export interface DocumentFormatOptions {
+  /** Two full-width spaces at the start of each prose paragraph. */
+  firstLineIndent: boolean;
+  /** A blank line between adjacent prose paragraphs. */
+  paragraphSpacing: boolean;
+}
+
+export const DEFAULT_DOCUMENT_FORMAT: DocumentFormatOptions = {
+  firstLineIndent: true,
+  paragraphSpacing: true,
+};
+
 const INDENT_LEN = PARAGRAPH_INDENT.length;
 
 export interface ParagraphIndentChange {
@@ -138,6 +151,49 @@ function adjacentProseBlankAfterIndices(lines: string[], markdown: boolean): num
   return after;
 }
 
+/**
+ * Blank-line runs that sit between two prose lines, as half-open line ranges
+ * `[firstBlank, nextProse)`. This is the inverse of
+ * {@link adjacentProseBlankAfterIndices}: Markdown structure breaks the run, so
+ * blank lines around headings, lists, fences, etc. are never touched.
+ */
+function proseBlankRuns(lines: string[], markdown: boolean): Array<[number, number]> {
+  const runs: Array<[number, number]> = [];
+  let inFence = false;
+  let prevProse = -1;
+  let blankStart = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    if (markdown) {
+      const structure = skipMarkdownStructure(line, inFence);
+      inFence = structure.inFence;
+      if (structure.skip) {
+        prevProse = -1;
+        blankStart = -1;
+        continue;
+      }
+    }
+    if (!line.trim()) {
+      if (prevProse >= 0 && blankStart < 0) blankStart = i;
+      continue;
+    }
+    if (prevProse >= 0 && blankStart >= 0) runs.push([blankStart, i]);
+    prevProse = i;
+    blankStart = -1;
+  }
+  return runs;
+}
+
+/** Map an offset through a set of deleted `[start, end)` character ranges. */
+function mapOffsetThroughDeletions(pos: number, deletions: Array<[number, number]>): number {
+  let removed = 0;
+  for (const [s, e] of deletions) {
+    if (pos >= e) removed += e - s;
+    else if (pos > s) removed += pos - s;
+  }
+  return pos - removed;
+}
+
 function shiftSelectionPastInserts(
   selectionStart: number,
   selectionEnd: number,
@@ -156,8 +212,9 @@ function shiftSelectionPastInserts(
 /**
  * Toolbar action: first-line indent every prose paragraph, and insert a blank
  * line between adjacent paragraphs that currently sit on consecutive lines.
- * Skips blank lines; in Markdown also skips headings, lists, quotes, tables, and fences.
- * Outdent only removes the indent — existing blank lines are left in place.
+ * Each half is optional. Skips blank lines; in Markdown also skips headings,
+ * lists, quotes, tables, and fences.
+ * Outdent is the inverse for whichever halves are enabled.
  */
 export function applyDocumentFirstLineIndent(
   text: string,
@@ -165,11 +222,20 @@ export function applyDocumentFirstLineIndent(
   markdown: boolean,
   selectionStart = 0,
   selectionEnd = 0,
+  options: DocumentFormatOptions = DEFAULT_DOCUMENT_FORMAT,
 ): { text: string; selectionStart: number; selectionEnd: number } | null {
+  if (!options.firstLineIndent && !options.paragraphSpacing) return null;
+
   const lines = text.split("\n");
   if (lines.length === 0) return null;
 
   const starts = lineStartOffsets(text);
+  const blankRuns =
+    outdent && options.paragraphSpacing ? proseBlankRuns(lines, markdown) : [];
+  const removedBlank = new Set<number>();
+  for (const [a, b] of blankRuns) {
+    for (let k = a; k < b; k += 1) removedBlank.add(k);
+  }
   let changed = false;
   let newStart = selectionStart;
   let newEnd = selectionEnd;
@@ -184,7 +250,10 @@ export function applyDocumentFirstLineIndent(
       inFence = structure.inFence;
       if (structure.skip) continue;
     }
+    if (!options.firstLineIndent) continue;
     if (!outdent && !line.trim()) continue;
+    // Blank lines are deleted below; don't bother stripping their indent.
+    if (outdent && removedBlank.has(i)) continue;
 
     if (outdent) {
       if (!line.startsWith(PARAGRAPH_INDENT)) continue;
@@ -210,7 +279,23 @@ export function applyDocumentFirstLineIndent(
     if (selectionEnd >= lineStart) newEnd += INDENT_LEN;
   }
 
-  if (!outdent) {
+  if (outdent && blankRuns.length > 0) {
+    // Offsets here are in the post-indent-removal text, matching newStart/newEnd.
+    const currentStarts = lineStartOffsets(lines.join("\n"));
+    const textLen = lines.join("\n").length;
+    const deletions: Array<[number, number]> = blankRuns.map(([a, b]) => [
+      currentStarts[a] ?? textLen,
+      currentStarts[b] ?? textLen,
+    ]);
+    newStart = mapOffsetThroughDeletions(newStart, deletions);
+    newEnd = mapOffsetThroughDeletions(newEnd, deletions);
+    const kept = lines.filter((_, i) => !removedBlank.has(i));
+    lines.length = 0;
+    lines.push(...kept);
+    changed = true;
+  }
+
+  if (!outdent && options.paragraphSpacing) {
     const blankAfter = adjacentProseBlankAfterIndices(lines, markdown);
     if (blankAfter.length > 0) {
       const indented = lines.join("\n");
@@ -247,6 +332,7 @@ export function buildDocumentFirstLineIndentChanges(
   markdown: boolean,
   selectionStart = 0,
   selectionEnd = 0,
+  options: DocumentFormatOptions = DEFAULT_DOCUMENT_FORMAT,
 ): {
   changes: ParagraphIndentChange[];
   selectionStart: number;
@@ -258,12 +344,19 @@ export function buildDocumentFirstLineIndentChanges(
     markdown,
     selectionStart,
     selectionEnd,
+    options,
   );
   if (!result) return null;
 
   const oldLines = text.split("\n");
   const starts = lineStartOffsets(text);
   const changes: ParagraphIndentChange[] = [];
+  const blankRuns =
+    outdent && options.paragraphSpacing ? proseBlankRuns(oldLines, markdown) : [];
+  const removedBlank = new Set<number>();
+  for (const [a, b] of blankRuns) {
+    for (let k = a; k < b; k += 1) removedBlank.add(k);
+  }
   let inFence = false;
 
   for (let i = 0; i < oldLines.length; i += 1) {
@@ -273,7 +366,9 @@ export function buildDocumentFirstLineIndentChanges(
       inFence = structure.inFence;
       if (structure.skip) continue;
     }
+    if (!options.firstLineIndent) continue;
     if (!outdent && !line.trim()) continue;
+    if (outdent && removedBlank.has(i)) continue;
 
     const lineStart = starts[i] ?? 0;
     if (outdent) {
@@ -284,7 +379,15 @@ export function buildDocumentFirstLineIndentChanges(
     }
   }
 
-  if (!outdent) {
+  if (outdent && options.paragraphSpacing) {
+    for (const [a, b] of blankRuns) {
+      changes.push({
+        from: starts[a] ?? text.length,
+        to: starts[b] ?? text.length,
+        insert: "",
+      });
+    }
+  } else if (!outdent && options.paragraphSpacing) {
     for (const i of adjacentProseBlankAfterIndices(oldLines, markdown)) {
       const line = oldLines[i] ?? "";
       const insertAt = (starts[i] ?? 0) + line.length;

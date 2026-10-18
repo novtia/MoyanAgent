@@ -133,8 +133,18 @@ fn extract_tool_metadata(tool_name: &str, input: &Value) -> Option<Value> {
     match tool_name {
         "Read" | "Edit" | "Write" => {
             let mut m = Map::new();
-            if let Some(p) = input.get("path").and_then(Value::as_str) {
-                m.insert("path".into(), json!(p));
+            match input.get("path") {
+                Some(Value::String(p)) => {
+                    m.insert("path".into(), json!(p));
+                }
+                // `Read` takes a list of paths; record every one.
+                Some(Value::Array(items)) => {
+                    let paths: Vec<&str> = items.iter().filter_map(Value::as_str).collect();
+                    if !paths.is_empty() {
+                        m.insert("path".into(), json!(paths));
+                    }
+                }
+                _ => {}
             }
             if let Some(n) = input.get("paragraph_number").and_then(Value::as_i64) {
                 m.insert("paragraph_number".into(), json!(n));

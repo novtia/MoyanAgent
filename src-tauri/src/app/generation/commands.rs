@@ -17,6 +17,7 @@ use crate::app::state::AppState;
 
 use super::engine::{generation_abort_lock, run_agent_chain, run_cancellable_generation};
 use super::params::{effective_agent_chain, resolve_session_generation};
+use super::title;
 use super::streaming::{
     new_stream_blocks, persist_streamed_assistant_snapshot, snapshot_stream_blocks,
     stream_text_callback, tool_event_callback,
@@ -474,7 +475,11 @@ pub async fn generate_image(
     // ensure session title reflects first prompt
     {
         let conn = state.conn()?;
-        if session_title_is_default(&conn, &req.session_id)? {
+        if title::session_title_is_default(&conn, &req.session_id)? {
+            // Never feed the raw message to the title model or the fallback:
+            // it may open with a serialized `@"C:\\…\\大纲.md"` file mention,
+            // and that path is what ended up as the session title.
+            let title_source = title::title_source_text(&req.prompt);
             match settings::quick_model_target(&settings_snapshot) {
                 Some((provider, model_id)) => {
                     // Generate a concise title with the configured quick model
@@ -488,17 +493,18 @@ pub async fn generate_image(
                         context_cache_enabled: false,
                         safety_threshold: None,
                     };
-                    tokio::spawn(generate_title_with_quick_model(
+                    tokio::spawn(title::generate_title_with_quick_model(
                         app.clone(),
                         state.inner().clone(),
                         req.session_id.clone(),
-                        req.prompt.clone(),
+                        title_source,
                         provider_cfg,
                         model_id,
+                        title::title_system_prompt(&settings_snapshot),
                     ));
                 }
                 None => {
-                    update_session_title_if_default(&conn, &req.session_id, &req.prompt)?;
+                    title::apply_fallback_title(&conn, &req.session_id, &title_source)?;
                 }
             }
         }
@@ -1091,137 +1097,4 @@ pub async fn regenerate_image(
             })
         }
     }
-}
-
-/// True when the session still carries the placeholder title, i.e. it has not
-/// been renamed (manually or automatically) yet.
-pub(crate) fn session_title_is_default(conn: &db::DbConn, id: &str) -> AppResult<bool> {
-    let cur: Option<String> = conn
-        .query_row(
-            "SELECT title FROM sessions WHERE id=?1",
-            rusqlite::params![id],
-            |r| r.get(0),
-        )
-        .ok();
-    Ok(match cur {
-        Some(t) => t == "New session" || t.trim().is_empty(),
-        None => false,
-    })
-}
-
-/// Normalise raw LLM output into a usable session title: keep the first line,
-/// strip surrounding quotes/punctuation, and cap the length.
-pub(crate) fn sanitize_generated_title(raw: &str) -> String {
-    let first_line = raw.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
-    let trimmed = first_line.trim().trim_matches(|c: char| {
-        c.is_whitespace()
-            || matches!(
-                c,
-                '"' | '\''
-                    | '`'
-                    | '「'
-                    | '」'
-                    | '『'
-                    | '』'
-                    | '《'
-                    | '》'
-                    | '。'
-                    | '.'
-                    | '：'
-                    | ':'
-            )
-    });
-    trimmed.chars().take(40).collect()
-}
-
-/// Generate a session title with the configured quick model and persist it.
-/// Best-effort: any failure (no response, provider error, concurrent rename)
-/// silently leaves the existing title untouched.
-pub(crate) async fn generate_title_with_quick_model(
-    app: AppHandle,
-    state: Arc<AppState>,
-    session_id: String,
-    prompt: String,
-    provider: chat::ProviderConfig,
-    model: String,
-) {
-    let system_prompt = "你是一个会话标题助手。请用不超过 12 个汉字（或 6 个英文单词）概括用户这条消息的主题，作为简短的会话标题。只输出标题本身，不要添加引号、标点、前缀或任何解释。".to_string();
-    let request = chat::ChatRequest {
-        provider,
-        model,
-        prompt,
-        attachments: Vec::new(),
-        system_prompt,
-        history: Vec::new(),
-        parameters: parameters::factory().build(
-            "auto".into(),
-            "auto".into(),
-            settings::ModelParamSettings::default(),
-        ),
-        tools: Vec::new(),
-        tool_chain: Vec::new(),
-        tool_results: Vec::new(),
-        pending_assistant_turn: None,
-        previous_response_id: None,
-        context_cache_enabled: false,
-        context_window: None,
-        todo_snapshot: None,
-        route_providers: Vec::new(),
-        forced_tools: Vec::new(),
-    };
-
-    let factory = crate::ai::providers::ProviderFactory::default();
-    let title = match factory.chat(request).await {
-        Ok(resp) => sanitize_generated_title(&resp.text.unwrap_or_default()),
-        Err(err) => {
-            eprintln!("[atelier] quick-model title generation failed: {err}");
-            String::new()
-        }
-    };
-    if title.is_empty() {
-        return;
-    }
-
-    let Ok(conn) = state.conn() else {
-        return;
-    };
-    // The user (or a fallback) may have renamed the session while we waited.
-    if !session_title_is_default(&conn, &session_id).unwrap_or(false) {
-        return;
-    }
-    if session::rename(&conn, &session_id, &title).is_ok() {
-        let _ = app.emit(
-            "session://title",
-            serde_json::json!({ "session_id": session_id, "title": title }),
-        );
-    }
-}
-
-pub(crate) fn update_session_title_if_default(
-    conn: &db::DbConn,
-    id: &str,
-    prompt: &str,
-) -> AppResult<()> {
-    let cur: Option<String> = conn
-        .query_row(
-            "SELECT title FROM sessions WHERE id=?1",
-            rusqlite::params![id],
-            |r| r.get(0),
-        )
-        .ok();
-    if let Some(t) = cur {
-        if t == "New session" || t.trim().is_empty() {
-            let snippet: String = prompt.chars().take(28).collect();
-            let title = if snippet.is_empty() {
-                "New session".to_string()
-            } else {
-                snippet
-            };
-            conn.execute(
-                "UPDATE sessions SET title=?1 WHERE id=?2",
-                rusqlite::params![title, id],
-            )?;
-        }
-    }
-    Ok(())
 }

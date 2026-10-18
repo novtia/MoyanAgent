@@ -196,6 +196,7 @@ pub fn run() {
             shell::open_url,
             shell::toggle_devtools,
             clipboard::clipboard_write_text,
+            clipboard::clipboard_write_rich,
             sessions::list_sessions,
             sessions::search_sessions,
             sessions::search_session_hits,

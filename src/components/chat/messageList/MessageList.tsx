@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { useSession } from "../../../store/session";
 import { useChatFind } from "../../../store/chatFind";
 import type { MessageListProps } from "./types";
+import { trailingComposerError } from "../ComposerErrorBanner";
 import { DevelopingRow } from "./DevelopingRow";
 import { MessageRow } from "./MessageRow";
 import { MessageTimeline } from "./MessageTimeline";
@@ -85,7 +86,12 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null);
   const [scrollActiveId, setScrollActiveId] = useState<string | null>(null);
-  const messages = active?.messages || [];
+  const allMessages = active?.messages || [];
+  const hoistedError = trailingComposerError(allMessages);
+  const messages =
+    hoistedError && hoistedError.id !== chatFindActiveId
+      ? allMessages.slice(0, -1)
+      : allMessages;
   const lastMessageId = messages[messages.length - 1]?.id ?? "";
   const lastMessageTextLength =
     messages.length > 0 ? messages[messages.length - 1].text?.length ?? 0 : 0;
@@ -367,7 +373,7 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
       window.removeEventListener("atelier:focus-message", onFocusMessage);
   }, [ensureMessageLoaded, resetHeights, scrollToIndex, virtualEnabled]);
 
-  const isEmpty = messages.length === 0 && !busy;
+  const isEmpty = allMessages.length === 0 && !busy;
   const showTimeline = !isEmpty && outline.length > 0 && !isMobileShell;
 
   const start = virtualEnabled ? range.start : 0;

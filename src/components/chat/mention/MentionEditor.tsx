@@ -5,8 +5,11 @@ import {
   useImperativeHandle,
   useRef,
 } from "react";
+import { useFileExplorer } from "../../../store/fileExplorer";
 import {
   isMultiLineReaderSelection,
+  isPathInProject,
+  isReaderSelectionForProject,
   matchRememberedReaderSelection,
   parseReaderSelectionHtml,
   READER_SELECTION_MIME,
@@ -286,6 +289,15 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     const tryInsertReaderSelection = useCallback(
       (payload: ReaderSelectionPayload): boolean => {
         if (!isMultiLineReaderSelection(payload)) return false;
+        // Never turn another project's file into a card; paste as plain text.
+        if (
+          !isReaderSelectionForProject(
+            payload,
+            useFileExplorer.getState().projectRoot,
+          )
+        ) {
+          return false;
+        }
         const range = normalizeMentionRange({
           from: payload.paragraphFrom,
           to: payload.paragraphTo,
@@ -601,7 +613,11 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
               parsed &&
               parsed.length === trimmed.length &&
               parsed.range &&
-              parsed.range.to > parsed.range.from
+              parsed.range.to > parsed.range.from &&
+              isPathInProject(
+                parsed.path,
+                useFileExplorer.getState().projectRoot,
+              )
             ) {
               insertMentionAtSelection(
                 parsed.path,

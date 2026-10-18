@@ -32,6 +32,69 @@ pub fn clipboard_write_text(app: AppHandle, window: WebviewWindow, text: String)
         .map_err(|e| AppError::Invalid(format!("clipboard write: {e}")))
 }
 
+/// Write plain text and HTML to the clipboard in one open/close, like native
+/// Windows apps do: external apps and Win+V see the text, while in-app paste
+/// can read the HTML (which carries structured metadata).
+#[tauri::command]
+pub fn clipboard_write_rich(
+    app: AppHandle,
+    window: WebviewWindow,
+    text: String,
+    html: String,
+) -> AppResult<()> {
+    if text.is_empty() {
+        return Ok(());
+    }
+
+    #[cfg(windows)]
+    {
+        if write_rich_with_window_owner(&window, &text, &html)? {
+            return Ok(());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (&window, &html);
+    }
+
+    app.clipboard()
+        .write_text(text)
+        .map_err(|e| AppError::Invalid(format!("clipboard write: {e}")))
+}
+
+#[cfg(windows)]
+fn write_rich_with_window_owner(
+    window: &WebviewWindow,
+    text: &str,
+    html: &str,
+) -> AppResult<bool> {
+    use clipboard_win::{formats, Clipboard, Setter};
+
+    let hwnd = match window.hwnd() {
+        Ok(h) => h,
+        Err(_) => return Ok(false),
+    };
+    let owner = hwnd.0 as clipboard_win::types::HWND;
+
+    let _clip = match Clipboard::new_attempts_for(owner, 10) {
+        Ok(c) => c,
+        Err(_) => return Ok(false),
+    };
+
+    // Unicode text first: this empties the clipboard, later formats are added.
+    formats::Unicode
+        .write_clipboard(&text)
+        .map_err(|e| AppError::Invalid(format!("clipboard write: {e}")))?;
+
+    if !html.is_empty() {
+        if let Some(fmt) = formats::Html::new() {
+            // Best effort: plain text is already on the clipboard.
+            let _ = fmt.write_clipboard(&html);
+        }
+    }
+    Ok(true)
+}
+
 #[cfg(windows)]
 fn write_text_with_window_owner(window: &WebviewWindow, text: &str) -> AppResult<bool> {
     use clipboard_win::{formats, Clipboard, Setter};

@@ -6,7 +6,7 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::ai::providers::{normalize_sdk, CLAUDE_SDK, GEMINI_SDK, VERTEX_SDK};
+use crate::ai::providers::{gemini_model, normalize_sdk, CLAUDE_SDK, GEMINI_SDK, VERTEX_SDK};
 use crate::data::settings::ModelPricing;
 use crate::error::{AppError, AppResult};
 
@@ -476,7 +476,7 @@ fn derive_capabilities(
     output_modalities: &Option<Vec<String>>,
 ) -> Vec<String> {
     let mut caps = std::collections::BTreeSet::new();
-    if gemini_id_implies_reasoning(model_id) {
+    if gemini_model::implies_reasoning(model_id) {
         caps.insert("reasoning".into());
     }
 
@@ -560,14 +560,6 @@ fn derive_capabilities(
         caps.insert("text".into());
     }
     caps.into_iter().collect()
-}
-
-fn gemini_id_implies_reasoning(id: &str) -> bool {
-    let id = id.to_ascii_lowercase();
-    !id.contains("image")
-        && !id.contains("imagen")
-        && !id.contains("veo")
-        && (id.contains("gemini-2.5") || id.contains("gemini-3"))
 }
 
 fn parse_model_endpoints(v: &Value) -> Vec<RemoteModelEndpoint> {
