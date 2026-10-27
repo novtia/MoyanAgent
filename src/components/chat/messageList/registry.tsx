@@ -5,6 +5,7 @@ import { AskUserChip } from "./AskUserChip";
 import { BashToolCard } from "./BashToolCard";
 import { ConsultRolesChip } from "./ConsultRolesChip";
 import { DeleteDocCard } from "./DeleteDocCard";
+import { FixToolCallCard } from "./FixToolCallCard";
 import { GrepToolCard } from "./GrepToolCard";
 import { ListFilesCard } from "./ListFilesCard";
 import { NovelAIToolCard } from "./NovelAIToolCard";
@@ -22,6 +23,7 @@ type ToolCardProps = { block: ToolBlock };
 
 const TOOL_REGISTRY: Record<string, ComponentType<ToolCardProps>> = {
   CreateDoc: StreamingDocCard,
+  FixToolCall: FixToolCallCard,
   Edit: StreamingDocCard,
   Write: StreamingDocCard,
   Read: ReadToolCard,

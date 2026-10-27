@@ -22,6 +22,7 @@ mod history;
 mod local_server;
 mod media_cmds;
 mod messages;
+mod project_export;
 mod project_fs;
 mod project_io;
 mod project_rules;
@@ -85,6 +86,7 @@ pub fn run() {
                 crate::ai::agent::tools::rename::RenameTool::new(file_snapshots.clone())
                     .with_pool(Arc::new(pool.clone())),
             );
+            tools.register(crate::ai::agent::tools::fix_tool_call::FixToolCallTool::new());
             // Android/iOS has no usable programming shell (and is not PowerShell).
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             tools.register(crate::ai::agent::tools::bash::BashTool::new());
@@ -292,6 +294,7 @@ pub fn run() {
             project_fs::import_external_path_to_project,
             project_fs::write_project_file_bytes,
             project_fs::delete_project_path,
+            project_export::export_project_texts,
             project_rules::list_project_rules,
             project_rules::set_project_rule_enabled,
             skills::list_skills,

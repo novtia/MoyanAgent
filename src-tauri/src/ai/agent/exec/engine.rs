@@ -422,34 +422,64 @@ impl QueryEngine for ProviderQueryEngine {
                     fire_tool_event(&on_tool_event, &use_event);
                     events.push(use_event);
 
-                    let invocation = ToolInvocation {
-                        id: req.id.clone(),
-                        input: req.input.clone(),
-                        context: context.as_ref(),
+                    let amendment =
+                        if req.tool_name == crate::ai::agent::tools::fix_tool_call::TOOL_NAME {
+                            let prior = collect_prior_calls(&chat);
+                            Some(crate::ai::agent::tools::fix_tool_call::resolve_amendment(
+                                &prior, &req.input,
+                            ))
+                        } else {
+                            None
+                        };
+                    let (exec_name, exec_input) = match &amendment {
+                        Some(Ok(resolved)) => (resolved.tool_name.as_str(), &resolved.input),
+                        _ => (req.tool_name.as_str(), &req.input),
                     };
-                    let perm = PermissionRequest {
-                        agent_id: &context.agent_id,
-                        tool_name: &req.tool_name,
-                        input: &req.input,
-                        mode: context.permission_mode,
-                        is_async: matches!(
-                            context.query_source,
-                            crate::ai::agent::types::QuerySource::Forked
-                        ),
-                        is_coordinator_worker: false,
-                    };
-
-                    let result = tokio::select! {
-                        r = tools.execute(
-                            &req.tool_name,
-                            invocation,
-                            perm,
+                    let mut result = if let Some(Err(message)) = &amendment {
+                        ToolResult::error(message.clone())
+                    } else {
+                        execute_tool_call(
+                            tools.as_ref(),
                             self.resolver.as_ref(),
-                        ) => r.unwrap_or_else(|e| ToolResult::error(e.to_string())),
-                        _ = context.abort.wait_aborted() => {
-                            ToolResult::error("generation cancelled")
-                        }
+                            context.as_ref(),
+                            req.id.clone(),
+                            exec_name,
+                            exec_input,
+                        )
+                        .await
                     };
+                    if result.content.get("error").and_then(|v| v.as_str())
+                        != Some("generation cancelled")
+                    {
+                        if let Some(Ok(resolved)) = &amendment {
+                            crate::ai::agent::tools::fix_tool_call::stamp_amendment(
+                                &mut result.content,
+                                &resolved.tool_name,
+                                &resolved.call_id,
+                            );
+                            if result.is_error {
+                                if let Some(tool) = tools.get(&resolved.tool_name) {
+                                    crate::ai::agent::tools::fix_tool_call::annotate_failure(
+                                        &mut result.content,
+                                        &resolved.tool_name,
+                                        &resolved.call_id,
+                                        &resolved.input,
+                                        Some(&tool.spec().schema),
+                                    );
+                                }
+                            }
+                        } else if amendment.is_none() && result.is_error {
+                            if let Some(tool) = tools.get(&req.tool_name) {
+                                crate::ai::agent::tools::fix_tool_call::annotate_failure(
+                                    &mut result.content,
+                                    &req.tool_name,
+                                    &req.id.0,
+                                    &req.input,
+                                    Some(&tool.spec().schema),
+                                );
+                            }
+                        }
+                    }
 
                     chat.tool_results.push(crate::ai::chat::ToolResultMessage {
                         tool_call_id: req.id.0.clone(),
@@ -691,6 +721,98 @@ fn accumulate_usage(
     }
 }
 
+/// Finished tool calls the model can amend, oldest first.
+///
+/// History from earlier user turns comes first, then this turn's committed
+/// rounds, then calls already executed in the current round.
+fn collect_prior_calls(
+    chat: &ChatRequest,
+) -> Vec<crate::ai::agent::tools::fix_tool_call::PriorToolCall> {
+    use crate::ai::agent::tools::fix_tool_call::PriorToolCall;
+    use crate::ai::chat::TimelineSegment;
+
+    let mut out = Vec::new();
+    for turn in &chat.history {
+        for segment in &turn.timeline {
+            let TimelineSegment::ToolRound { calls, results, .. } = segment else {
+                continue;
+            };
+            for call in calls {
+                let Some(result) = results.iter().find(|item| item.tool_call_id == call.id) else {
+                    continue;
+                };
+                out.push(PriorToolCall {
+                    id: call.id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                    is_error: result.is_error,
+                    result: result.content.clone(),
+                });
+            }
+        }
+    }
+    for round in &chat.tool_chain {
+        push_provider_calls(&mut out, &round.assistant.tool_calls, &round.results);
+    }
+    if let Some(pending) = &chat.pending_assistant_turn {
+        push_provider_calls(&mut out, &pending.tool_calls, &chat.tool_results);
+    }
+    out
+}
+
+fn push_provider_calls(
+    out: &mut Vec<crate::ai::agent::tools::fix_tool_call::PriorToolCall>,
+    calls: &[crate::ai::chat::ProviderToolCall],
+    results: &[crate::ai::chat::ToolResultMessage],
+) {
+    use crate::ai::agent::tools::fix_tool_call::PriorToolCall;
+
+    for call in calls {
+        let Some(result) = results.iter().find(|item| item.tool_call_id == call.id) else {
+            continue;
+        };
+        out.push(PriorToolCall {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+            is_error: result.is_error,
+            result: result.content.clone(),
+        });
+    }
+}
+
+async fn execute_tool_call(
+    tools: &ToolPool,
+    resolver: &dyn PermissionResolver,
+    context: &ToolUseContext,
+    id: MessageId,
+    tool_name: &str,
+    input: &serde_json::Value,
+) -> ToolResult {
+    let invocation = ToolInvocation {
+        id,
+        input: input.clone(),
+        context,
+    };
+    let perm = PermissionRequest {
+        agent_id: &context.agent_id,
+        tool_name,
+        input,
+        mode: context.permission_mode,
+        is_async: matches!(
+            context.query_source,
+            crate::ai::agent::types::QuerySource::Forked
+        ),
+        is_coordinator_worker: false,
+    };
+    tokio::select! {
+        r = tools.execute(tool_name, invocation, perm, resolver) => {
+            r.unwrap_or_else(|e| ToolResult::error(e.to_string()))
+        }
+        _ = context.abort.wait_aborted() => ToolResult::error("generation cancelled"),
+    }
+}
+
 /// Move the in-flight assistant/tool-result pair into `tool_chain`.
 fn commit_tool_round(chat: &mut ChatRequest) {
     let Some(pending) = chat.pending_assistant_turn.take() else {
@@ -809,6 +931,7 @@ mod tool_anchor_tests {
         "CreateDoc",
         "Delete",
         "Edit",
+        "FixToolCall",
         "Grep",
         "ListFiles",
         "NovelAI",

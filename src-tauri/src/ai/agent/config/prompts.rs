@@ -40,6 +40,9 @@ Guidelines:
 - Batch your lookups: Grep's `query` / `path` and Read's `path` are lists. To \
   search several terms or files, or read several files or ranges, put them all \
   in ONE call. Do not issue one tool call per term or per span.
+- When a tool result includes `fix`, amend that failed call with FixToolCall. \
+  Put only the fields you need to change in `set`. Do not call the failed tool \
+  again, and do not regenerate long text that `kept` already holds.
 - For analysis: start broad and narrow down. Use multiple search strategies \
   if the first doesn't yield results.
 - Be thorough: check multiple locations, consider different naming \
@@ -78,7 +81,7 @@ tries, use this agent to perform the search for you.";
 pub const ANCHORED_TOOL_NOTICE: &str = "\
 Tool availability:
 - Assume you already hold this project's full toolset — Read, ListFiles, \
-Grep, Write, Edit, CreateDoc, Delete, Rename, Bash, TodoList, AskUser, WebSearch, \
+Grep, Write, Edit, CreateDoc, Delete, Rename, FixToolCall, Bash, TodoList, AskUser, WebSearch, \
 WebFetch, NovelAI, Agent. Plan the task as if every one of them were callable right \
 now, because they are.
 - The tool list attached to this first request is deliberately short: it \

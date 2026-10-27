@@ -25,6 +25,12 @@ export function ToolGlyph({ tool }: { tool: string }) {
           <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
         </Icon>
       );
+    case "FixToolCall":
+      return (
+        <Icon>
+          <path d="M14.7 6.3a4.5 4.5 0 0 0-6.4 6.4L3 18l3 3 5.3-5.3a4.5 4.5 0 0 0 6.4-6.4l-2.9 2.9-2.4-2.4Z" />
+        </Icon>
+      );
     case "Edit":
       return (
         <Icon>

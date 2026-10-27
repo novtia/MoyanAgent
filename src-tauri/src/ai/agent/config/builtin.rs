@@ -34,6 +34,9 @@ pub const AGENT_TRPG_CHARACTER: &str = "trpg-character";
 /// Tool names that are unsafe for read-only agents (Explore / Plan /
 /// Verification). Kept in one place so adding a write-tool only needs a
 /// single edit.
+///
+/// `FixToolCall` is not listed. It does not write by itself; the original
+/// tool is checked again when the amendment runs.
 const WRITE_TOOLS: &[&str] = &[
     "Edit",
     "Write",
@@ -110,6 +113,7 @@ fn chat() -> AgentDefinition {
         "WebSearch".into(),
         "WebFetch".into(),
         "NovelAI".into(),
+        "FixToolCall".into(),
     ];
     d
 }
@@ -147,6 +151,7 @@ fn guide() -> AgentDefinition {
         "Glob".into(),
         "WebFetch".into(),
         "WebSearch".into(),
+        "FixToolCall".into(),
     ];
     d
 }
@@ -159,6 +164,7 @@ fn verification() -> AgentDefinition {
         "Grep".into(),
         "Glob".into(),
         "Bash".into(),
+        "FixToolCall".into(),
     ];
     d.background = true;
     d.disallowed_tools = read_only_deny();
@@ -169,11 +175,12 @@ fn verification() -> AgentDefinition {
 fn role_state() -> AgentDefinition {
     // Character state-machine stage. Designed to sit AFTER the main writer
     // in an agent flow chain: it reads the upstream prose and mutates the
-    // structured role board through the `RoleState` tool only. The upstream
+    // structured role board through `RoleState`. `FixToolCall` can amend a
+    // failed RoleState call. The upstream
     // prose passes through unchanged (`passthrough_output`).
     let mut d = AgentDefinition::builtin(AGENT_ROLE_STATE, prompts::ROLE_STATE_PROMPT);
     d.when_to_use = prompts::ROLE_STATE_WHEN_TO_USE.into();
-    d.tools = vec!["RoleState".into()];
+    d.tools = vec!["RoleState".into(), "FixToolCall".into()];
     d.passthrough_output = true;
     d
 }
@@ -181,12 +188,13 @@ fn role_state() -> AgentDefinition {
 fn rpg() -> AgentDefinition {
     // Option-generator stage. Designed to sit AFTER the main writer in an
     // agent flow chain: it reads the upstream prose and asks the player for
-    // the next branching action via `AskUser` ONLY. It writes NO story text
+    // the next branching action via `AskUser`. `FixToolCall` can amend a
+    // failed AskUser call. It writes NO story text
     // of its own — the upstream prose passes through unchanged
     // (`passthrough_output`).
     let mut d = AgentDefinition::builtin(AGENT_RPG, prompts::RPG_PROMPT);
     d.when_to_use = prompts::RPG_WHEN_TO_USE.into();
-    d.tools = vec!["AskUser".into()];
+    d.tools = vec!["AskUser".into(), "FixToolCall".into()];
     d.passthrough_output = true;
     d
 }
@@ -207,7 +215,12 @@ fn trpg_director() -> AgentDefinition {
     // Narrow director: narrate + ConsultRoles + AskUser + limited RoleState.
     let mut d = AgentDefinition::builtin(AGENT_TRPG_DIRECTOR, prompts::TRPG_DIRECTOR_PROMPT);
     d.when_to_use = prompts::TRPG_DIRECTOR_WHEN_TO_USE.into();
-    d.tools = vec!["ConsultRoles".into(), "AskUser".into(), "RoleState".into()];
+    d.tools = vec![
+        "ConsultRoles".into(),
+        "AskUser".into(),
+        "RoleState".into(),
+        "FixToolCall".into(),
+    ];
     d
 }
 
@@ -216,6 +229,11 @@ fn trpg_character() -> AgentDefinition {
     // Memory path is locked by the ConsultRoles host; tools are narrow.
     let mut d = AgentDefinition::builtin(AGENT_TRPG_CHARACTER, prompts::TRPG_CHARACTER_PROMPT);
     d.when_to_use = prompts::TRPG_CHARACTER_WHEN_TO_USE.into();
-    d.tools = vec!["FileRead".into(), "Write".into(), "Edit".into()];
+    d.tools = vec![
+        "FileRead".into(),
+        "Write".into(),
+        "Edit".into(),
+        "FixToolCall".into(),
+    ];
     d
 }

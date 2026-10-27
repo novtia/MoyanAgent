@@ -206,8 +206,10 @@ fn collect_tree(dir: &Path, depth: usize, state: &mut WalkState) -> AppResult<Ve
     }
 
     rows.sort_by(|a, b| {
-        b.2.cmp(&a.2)
-            .then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase()))
+        b.2.cmp(&a.2).then_with(|| {
+            crate::ai::agent::tools::natural_name::cmp_natural_name(&a.0, &b.0)
+                .then_with(|| a.1.cmp(&b.1))
+        })
     });
 
     let mut out = Vec::with_capacity(rows.len());

@@ -10,6 +10,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../../../../../api/tauri";
 import { usePePlatform } from "../../../../../hooks/useMobileShell";
 import { copyText } from "../../../../../utils/clipboard";
@@ -41,6 +42,7 @@ import type { ProjectDirEntry } from "../../../../../types";
 import type { ReaderFileTreeProps } from "../types";
 import { TreeContext, useTree, type TreeCtx } from "./context";
 import { ChevronIcon, NewFileIcon, NewFolderIcon, RefreshIcon } from "./icons";
+import { compareNaturalName, txtStem } from "./naturalName";
 import { pasteInto, toggleRule } from "./ops";
 import {
   getVisibleTreeEntries,
@@ -611,6 +613,39 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
     }
   }, [entry.path, t, tree]);
 
+  const exportSelected = useCallback(
+    async (format: "txt" | "docx") => {
+      const files = resolveBulkPaths(entry.path, useFileExplorer.getState().selectedPaths).filter(
+        (path) => /\.txt$/i.test(path),
+      );
+      if (files.length === 0) return;
+      const ordered = [...files].sort((a, b) => {
+        const byName = compareNaturalName(baseName(a), baseName(b));
+        return byName !== 0 ? byName : a.localeCompare(b);
+      });
+      const ext = format === "docx" ? "docx" : "txt";
+      const first = txtStem(baseName(ordered[0]));
+      const last = txtStem(baseName(ordered[ordered.length - 1]));
+      const title = ordered.length === 1 || first === last ? first : `${first}-${last}`;
+      const dest = await save({
+        defaultPath: `${title}.${ext}`,
+        filters: [
+          format === "docx"
+            ? { name: "Word", extensions: ["docx"] }
+            : { name: "Text", extensions: ["txt"] },
+        ],
+      });
+      if (!dest) return;
+      try {
+        await api.exportProjectTexts(tree.sessionId, ordered, dest, format);
+        toast.success(t("fileExplorer.exported"));
+      } catch (err) {
+        toast.error(t("fileExplorer.exportFailed"), { description: String(err) });
+      }
+    },
+    [entry.path, t, tree.sessionId],
+  );
+
   const openMenu = useCallback(
     (e: ReactMouseEvent) => {
       e.preventDefault();
@@ -620,6 +655,7 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
         setSelection(entry.path);
       }
       const bulk = resolveBulkPaths(entry.path, useFileExplorer.getState().selectedPaths);
+      const txtCount = bulk.filter((path) => /\.txt$/i.test(path)).length;
       const pasteDir = entry.isDir ? entry.path : parentDir(entry.path) ?? entry.path;
       openContextMenu(e, [
         {
@@ -672,6 +708,18 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
         { id: "duplicate", label: t("fileExplorer.duplicate"), onSelect: () => void duplicate() },
         { type: "separator" },
         {
+          id: "export-txt",
+          label: t("fileExplorer.exportTxt"),
+          disabled: txtCount === 0,
+          onSelect: () => void exportSelected("txt"),
+        },
+        {
+          id: "export-word",
+          label: t("fileExplorer.exportWord"),
+          disabled: txtCount === 0,
+          onSelect: () => void exportSelected("docx"),
+        },
+        {
           id: "copy-path",
           label: t("fileExplorer.copyPath"),
           onSelect: () => {
@@ -699,6 +747,7 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
       clipboard,
       del,
       duplicate,
+      exportSelected,
       entry.isDir,
       entry.path,
       rename,

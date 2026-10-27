@@ -437,6 +437,19 @@ export const api = {
       accept,
     }),
 
+  exportProjectTexts: (
+    sessionId: string,
+    paths: string[],
+    destPath: string,
+    format: "txt" | "docx",
+  ) =>
+    invoke<void>("export_project_texts", {
+      sessionId,
+      paths,
+      destPath,
+      format,
+    }),
+
   listProjectDir: (sessionId: string, path?: string | null) =>
     invoke<ProjectDirEntry[]>("list_project_dir", {
       sessionId,

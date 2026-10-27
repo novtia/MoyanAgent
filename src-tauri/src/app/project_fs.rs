@@ -76,9 +76,9 @@ fn list_dir_entries(dir: &Path) -> AppResult<Vec<ProjectDirEntry>> {
         });
     }
     entries.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        crate::ai::agent::tools::natural_name::cmp_listing(
+            a.is_dir, &a.name, &a.path, b.is_dir, &b.name, &b.path,
+        )
     });
     Ok(entries)
 }

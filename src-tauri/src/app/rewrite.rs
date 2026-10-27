@@ -485,9 +485,7 @@ fn rewrite_failure(err: AppError) -> AppError {
         || lower.contains("error trying to connect")
         || lower.contains("tcp connect");
     if raw.contains("输入太短了") {
-        return AppError::Other(
-            "原文不到 400 字，北陵拒收了。再短模型容易复读。".into(),
-        );
+        return AppError::Other("原文不到 400 字，北陵拒收了。再短模型容易复读。".into());
     }
     if refused {
         AppError::Other(
