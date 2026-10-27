@@ -14,8 +14,9 @@ pub type DbConn = r2d2::PooledConnection<SqliteConnectionManager>;
 /// Squashed baseline is 28; 29 adds message/session FTS search indexes;
 /// 30 makes file snapshots persist at write time; 31 stores OpenRouter
 /// per-model route provider pins; 32 seeds Vertex AI Gemini catalog;
-/// 33 marks Gemini 2.5 Flash as reasoning-capable.
-const SCHEMA_VERSION: i64 = 33;
+/// 33 marks Gemini 2.5 Flash as reasoning-capable;
+/// 34 seeds the local llama-server SDK and the rewrite model.
+const SCHEMA_VERSION: i64 = 34;
 
 const MIGRATION_001: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -35,6 +36,11 @@ const MIGRATION_032: &str = include_str!(concat!(
 const MIGRATION_033: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/migrations/033_gemini_flash_reasoning.sql"
+));
+
+const MIGRATION_034: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/migrations/034_local_rewrite.sql"
 ));
 
 pub fn open_pool(db_path: &Path) -> AppResult<DbPool> {
@@ -189,6 +195,11 @@ fn ensure_gemini_flash_reasoning(conn: &rusqlite::Connection) -> AppResult<()> {
     Ok(())
 }
 
+fn ensure_local_rewrite_catalog(conn: &rusqlite::Connection) -> AppResult<()> {
+    conn.execute_batch(MIGRATION_034)?;
+    Ok(())
+}
+
 fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)",
@@ -263,6 +274,14 @@ fn run_migrations(conn: &rusqlite::Connection) -> AppResult<()> {
 
     ensure_gemini_flash_reasoning(conn)?;
     if cur < 33 {
+        conn.execute(
+            "INSERT INTO schema_version(version) VALUES (?1)",
+            params![33],
+        )?;
+    }
+
+    ensure_local_rewrite_catalog(conn)?;
+    if cur < 34 {
         conn.execute(
             "INSERT INTO schema_version(version) VALUES (?1)",
             params![SCHEMA_VERSION],

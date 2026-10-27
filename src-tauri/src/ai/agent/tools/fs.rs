@@ -333,7 +333,8 @@ impl FileReadTool {
             concurrency_safe: true,
         };
         let mut spec_labeled = spec_plain.clone();
-        spec_labeled.description = "Read text files from the local filesystem. `path` is a list: put \
+        spec_labeled.description =
+            "Read text files from the local filesystem. `path` is a list: put \
             every file / range you need into ONE call (one item is fine too) instead of \
             one Read per span. Give each item its own range as `file.md#P003-P007`; \
             with several items the result is `results`, in order, and one bad item does \
@@ -368,7 +369,7 @@ impl FileReadTool {
             `next_paragraph_from` is where the following page starts. Continue from \
             there only if you actually need the rest — prefer a targeted range over \
             paging through a whole manuscript."
-            .to_string();
+                .to_string();
         Self {
             spec_plain,
             spec_labeled,
@@ -499,9 +500,8 @@ impl Tool for FileReadTool {
                     }
                     Err(e) => {
                         failed += 1;
-                        results.push(
-                            serde_json::json!({ "path": req.path, "error": e.to_string() }),
-                        );
+                        results
+                            .push(serde_json::json!({ "path": req.path, "error": e.to_string() }));
                     }
                 }
             }
@@ -761,7 +761,10 @@ mod read_range_tests {
         }))
         .unwrap();
         assert_eq!(many.len(), 3);
-        assert_eq!((many[0].paragraph_from, many[0].paragraph_to), (Some(1), Some(2)));
+        assert_eq!(
+            (many[0].paragraph_from, many[0].paragraph_to),
+            (Some(1), Some(2))
+        );
         assert_eq!((many[1].paragraph_from, many[1].paragraph_to), (None, None));
         assert!(many[1].path.ends_with("#P003-P005"));
 
@@ -779,7 +782,10 @@ mod read_range_tests {
             std::env::temp_dir().join(format!("moyan-read-batch-{}-{}", std::process::id(), n));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.txt"), "a1\na2\na3").unwrap();
-        let long: String = (1..=60).map(|i| format!("b{i}")).collect::<Vec<_>>().join("\n");
+        let long: String = (1..=60)
+            .map(|i| format!("b{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         std::fs::write(dir.join("b.txt"), &long).unwrap();
         let ctx = ToolUseContextBuilder::new(AgentId::new(), dir.clone())
             .build()
@@ -999,11 +1005,8 @@ mod read_range_tests {
         )
         .unwrap();
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!(
-            "moyan-read-labels-{}-{}",
-            std::process::id(),
-            n
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("moyan-read-labels-{}-{}", std::process::id(), n));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("notes.txt"), "hello\nworld").unwrap();
         let ctx = ToolUseContextBuilder::new(AgentId::new(), dir.clone())

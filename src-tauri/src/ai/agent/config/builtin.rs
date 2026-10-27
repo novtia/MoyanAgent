@@ -39,6 +39,7 @@ const WRITE_TOOLS: &[&str] = &[
     "Write",
     "CreateDoc",
     "Delete",
+    "Rename",
     "NotebookEdit",
     "ExitPlanMode",
     "TodoList",

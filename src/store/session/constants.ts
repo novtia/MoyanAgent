@@ -16,4 +16,4 @@ export const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
 export const STREAMING_INPUT_TOOLS = new Set(["CreateDoc", "Edit", "Write"]);
 
 /** File-tree tools that should bump the explorer on completion. */
-export const FS_TREE_TOOLS = new Set(["CreateDoc", "Write", "Edit", "Delete", "Bash"]);
+export const FS_TREE_TOOLS = new Set(["CreateDoc", "Write", "Edit", "Delete", "Rename", "Bash"]);

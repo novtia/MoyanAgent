@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../../../../api/tauri";
 import { copyText } from "../../../../utils/clipboard";
 import { openContextMenu } from "../../../context-menu";
+import { dialog } from "../../../ui/Dialog";
 import { toast } from "../../../ui/Toast";
 import {
   isMediaFileType,
@@ -20,10 +21,19 @@ import {
 } from "../../../../store/reader";
 import { useReaderFind } from "../../../../store/readerFind";
 import { useSession } from "../../../../store/session";
+import {
+  ensureRewriteEvents,
+  rewriteModelKey,
+  rewriteModelOptions,
+  useReaderRewrite,
+  type RewriteMode,
+} from "../../../../store/readerRewrite";
 import { useSettings } from "../../../../store/settings";
 import { usePanelTab } from "../context/PanelTabContext";
 import { DEFAULT_RATIO } from "./constants";
 import { ReaderFilePane } from "./components/ReaderFilePane";
+import { ReaderRewritePane } from "./components/ReaderRewritePane";
+import { DEFAULT_REWRITE_SETTINGS } from "../../../settings/rewrite/RewriteSection";
 import { ReaderToolbar } from "./components/ReaderToolbar";
 import { ReaderFileTree } from "./fileTree/ReaderFileTree";
 import { ReaderFindBar, useReaderFindShortcuts } from "./find/ReaderFindBar";
@@ -35,6 +45,25 @@ import { indentReaderView } from "./readerCodeMirror/indentKeymap";
 import type { ReaderWorkspaceProps } from "./types";
 
 export type { ReaderWorkspaceProps } from "./types";
+
+/** Text the user highlighted in the visible reader layer, source or preview. */
+function selectedReaderText(root: HTMLElement | null, view: EditorView | null): string {
+  if (!root) return "";
+  const layer = root.querySelector(".reader-pane-layer.is-visible");
+  const scope = layer ?? root;
+  if (view && scope.contains(view.dom)) {
+    const sel = view.state.selection.main;
+    if (!sel.empty) {
+      const text = view.state.sliceDoc(sel.from, sel.to).replace(/\u00a0/g, " ").trim();
+      if (text) return text;
+    }
+  }
+  const dom = window.getSelection();
+  if (!dom || dom.isCollapsed) return "";
+  const node = dom.anchorNode;
+  if (!node || !scope.contains(node)) return "";
+  return dom.toString().replace(/\u00a0/g, " ").trim();
+}
 
 export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
   const { t } = useTranslation();
@@ -101,6 +130,7 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
   const formatEnabled = firstLineIndent || paragraphSpacing;
   const canIndent = !!tab && !isMedia && !hasPendingDiff && formatEnabled;
   const editorViewRef = useRef<EditorView | null>(null);
+  const editorRootRef = useRef<HTMLDivElement | null>(null);
 
   const onIndent = useCallback(
     (e: ReactMouseEvent) => {
@@ -146,15 +176,156 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
     [path, t, canIndent, isMarkdown, formatOptions],
   );
 
-  const bothPanes = hasFile && showTree;
-  // The find bar is a single shared surface bound to the active tab; a hidden
-  // pane falls back to its file tree and restores the search on re-activation.
+  const settings = useSettings((s) => s.settings);
+  const updateSettings = useSettings((s) => s.update);
+  const autoChunk = settings?.rewrite?.auto_chunk ?? true;
+  const rewriteMode = useReaderRewrite((s) => s.mode);
+  const setRewriteMode = useReaderRewrite((s) => s.setMode);
+  const storedModelKey = useReaderRewrite((s) => s.modelKey);
+  const setRewriteModelKey = useReaderRewrite((s) => s.setModelKey);
+  const beginRewrite = useReaderRewrite((s) => s.begin);
+  const failRewrite = useReaderRewrite((s) => s.fail);
+  const setRewriteView = useReaderRewrite((s) => s.setView);
+  const rewriteRun = useReaderRewrite((s) =>
+    path ? s.byPath[normalizeReaderPath(path)] : undefined,
+  );
+
+  useEffect(() => {
+    ensureRewriteEvents();
+  }, []);
+
+  const rewriteModels = useMemo(
+    () =>
+      rewriteModelOptions(settings?.model_services ?? []).map((model) => ({
+        key: rewriteModelKey(model.providerId, model.modelId),
+        name: model.name,
+        sdk: model.sdk,
+        providerId: model.providerId,
+        modelId: model.modelId,
+      })),
+    [settings?.model_services],
+  );
+
+  useEffect(() => {
+    if (rewriteModels.length === 0) return;
+    if (rewriteModels.some((model) => model.key === storedModelKey)) return;
+    const preferred = rewriteModels.find((model) => model.sdk === "local") ?? rewriteModels[0];
+    setRewriteModelKey(preferred.key);
+  }, [rewriteModels, storedModelKey, setRewriteModelKey]);
+
+  const selectedRewriteModel =
+    rewriteModels.find((model) => model.key === storedModelKey) ?? rewriteModels[0];
   const showFindPane = rightView === "search" && isActive;
+  const rewriteVisible =
+    !!rewriteRun &&
+    rewriteRun.view === "rewrite" &&
+    (rewriteRun.running || rewriteRun.text.length > 0 || !!rewriteRun.error);
+  const showRewritePane = hasFile && !isMedia && rewriteVisible && !showFindPane;
+
+  const startRewrite = useCallback(
+    async (mode: RewriteMode, source: string) => {
+      if (!path) return;
+      if (rewriteRun?.running) {
+        toast.warning(t("reader.rewriteBusy"));
+        return;
+      }
+      if (!selectedRewriteModel) {
+        toast.warning(t("reader.noRewriteModel"));
+        return;
+      }
+      const text = source.trim();
+      if (!text) {
+        toast.warning(t("reader.rewriteEmptySource"));
+        return;
+      }
+      if (rewriteRun?.text) {
+        const ok = await dialog.confirm(t("reader.rewriteConfirm"));
+        if (!ok) return;
+      }
+      setRewriteMode(mode);
+      const token = beginRewrite(path, mode);
+      try {
+        await api.startReaderRewrite({
+          path,
+          text,
+          mode,
+          providerId: selectedRewriteModel.providerId,
+          modelId: selectedRewriteModel.modelId,
+          clientToken: token,
+        });
+      } catch (err) {
+        failRewrite(path, token, String(err));
+      }
+    },
+    [
+      path,
+      rewriteRun?.running,
+      rewriteRun?.text,
+      selectedRewriteModel,
+      setRewriteMode,
+      beginRewrite,
+      failRewrite,
+      t,
+    ],
+  );
+
+  const onRewriteRun = useCallback(async () => {
+    if (!path) return;
+    if (rewriteRun?.running) {
+      try {
+        await api.cancelReaderRewrite();
+      } catch (err) {
+        toast.error(t("reader.stopRewrite"), { description: String(err) });
+      }
+      return;
+    }
+    const selected = selectedReaderText(editorRootRef.current, editorViewRef.current);
+    await startRewrite(rewriteMode, selected || tab?.text || "");
+  }, [path, rewriteRun?.running, rewriteMode, startRewrite, tab?.text, t]);
+
+  const onEditorContextMenu = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      const selected = selectedReaderText(event.currentTarget, editorViewRef.current);
+      if (!selected || isMedia) return;
+      openContextMenu(event, [
+        {
+          id: "copy-selection",
+          label: t("common.copy"),
+          onSelect: () =>
+            void copyText(selected).then(() => toast.success(t("common.copied"))),
+        },
+        { type: "separator", id: "rewrite-selection-sep" },
+        {
+          id: "rewrite-selection",
+          label: t("reader.rewriteMode"),
+          disabled: !!rewriteRun?.running,
+          onSelect: () => void startRewrite("rewrite", selected),
+        },
+        {
+          id: "expand-selection",
+          label: t("reader.expandMode"),
+          disabled: !!rewriteRun?.running,
+          onSelect: () => void startRewrite("expand", selected),
+        },
+        {
+          id: "pipeline-selection",
+          label: t("reader.pipelineMode"),
+          disabled: !!rewriteRun?.running,
+          onSelect: () => void startRewrite("pipeline", selected),
+        },
+      ]);
+    },
+    [isMedia, rewriteRun?.running, startRewrite, t],
+  );
+
+  const bothPanes = hasFile && (showRewritePane || showTree);
 
   const editorNode = (
     <div
+      ref={editorRootRef}
       className="reader-split-editor"
       style={bothPanes ? { flex: `0 0 ${ratio * 100}%` } : undefined}
+      onContextMenu={onEditorContextMenu}
     >
       {tab ? (
         <ReaderFilePane tab={tab} preview={preview} />
@@ -170,7 +341,9 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
 
   const rightNode = (
     <div className="reader-split-tree" style={bothPanes ? { flex: "1 1 0" } : undefined}>
-      {showFindPane ? (
+      {showRewritePane && rewriteRun ? (
+        <ReaderRewritePane run={rewriteRun} />
+      ) : showFindPane ? (
         <div className="reader-search-pane">
           <ReaderFindBar
             disabled={hasPendingDiff}
@@ -200,7 +373,7 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
           hasFile={hasFile}
           findOpen={findOpen}
           showTree={showTree}
-          rightViewIsTree={rightView === "tree"}
+          rightViewIsTree={rightView === "tree" && !showRewritePane}
           canIndent={canIndent}
         indentTitle={
           hasPendingDiff
@@ -217,8 +390,40 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
           onSource={() => setPreview(false)}
           onIndent={onIndent}
           onMore={onMore}
-          onToggleSearch={toggleSearch}
-          onToggleFileTree={toggleFileTree}
+          onToggleSearch={() => {
+            if (path && rewriteVisible) setRewriteView(path, "files");
+            toggleSearch();
+          }}
+          onToggleFileTree={() => {
+            if (path && rewriteVisible) {
+              setRewriteView(path, "files");
+              if (!showTree) toggleFileTree();
+              return;
+            }
+            toggleFileTree();
+          }}
+          showRewrite={hasFile && !isMedia}
+          rewriteMode={rewriteMode}
+          rewriteRunning={!!rewriteRun?.running}
+          rewriteModels={rewriteModels}
+          rewriteModelKey={selectedRewriteModel?.key ?? ""}
+          canRewrite={!!selectedRewriteModel && !!(tab?.text ?? "").trim()}
+          rewriteRunTitle={
+            selectedRewriteModel ? t("reader.regenerate") : t("reader.noRewriteModel")
+          }
+          onRewriteMode={setRewriteMode}
+          onRewriteModel={setRewriteModelKey}
+          autoChunk={autoChunk}
+          onToggleAutoChunk={() => {
+            void updateSettings({
+              rewrite: {
+                ...DEFAULT_REWRITE_SETTINGS,
+                ...settings?.rewrite,
+                auto_chunk: !autoChunk,
+              },
+            });
+          }}
+          onRewriteRun={() => void onRewriteRun()}
         />
         <div ref={containerRef} className="reader-workspace">
           {hasFile ? (

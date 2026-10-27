@@ -10,6 +10,21 @@ use super::error::{
 };
 
 pub(crate) const MAX_ATTEMPTS: usize = 3;
+
+/// llama-server rejects an empty `Authorization: Bearer ` header. Omit it
+/// when the provider has no key.
+pub(crate) fn with_optional_bearer(
+    builder: reqwest::RequestBuilder,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
+    let key = api_key.trim();
+    if key.is_empty() {
+        builder
+    } else {
+        builder.bearer_auth(key)
+    }
+}
+
 pub(crate) async fn post_with_retries(
     client: &reqwest::Client,
     request: &ChatRequest,
@@ -20,13 +35,15 @@ pub(crate) async fn post_with_retries(
         if attempt == 1 {
             debug_log_upstream_request(provider_label, &request.provider.endpoint, body);
         }
-        let resp = client
-            .post(&request.provider.endpoint)
-            .bearer_auth(&request.provider.api_key)
-            .header("Content-Type", "application/json")
-            .json(body)
-            .send()
-            .await;
+        let resp = with_optional_bearer(
+            client
+                .post(&request.provider.endpoint)
+                .header("Content-Type", "application/json"),
+            &request.provider.api_key,
+        )
+        .json(body)
+        .send()
+        .await;
 
         let resp = match resp {
             Ok(r) => r,

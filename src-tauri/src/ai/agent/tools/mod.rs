@@ -33,6 +33,7 @@ pub mod pe_docs;
 pub mod project_path;
 pub mod prompt_registry;
 pub mod read_receipt;
+pub mod rename;
 pub mod role_state;
 pub mod text_decode;
 pub mod todo;

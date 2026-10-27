@@ -48,6 +48,7 @@ type AppRoute =
 const SETTINGS_TABS: SettingsTab[] = [
   "appearance",
   "llm",
+  "rewrite",
   "default",
   "search",
   "tools",

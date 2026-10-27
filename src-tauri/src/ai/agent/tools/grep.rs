@@ -257,7 +257,9 @@ impl Tool for GrepTool {
                     Some(e) => Ok(ToolResult::error(format!(
                         "{TOOL_NAME}: none of the paths could be searched: {e}"
                     ))),
-                    None => Ok(ToolResult::error(format!("{TOOL_NAME}: no paths to search"))),
+                    None => Ok(ToolResult::error(format!(
+                        "{TOOL_NAME}: no paths to search"
+                    ))),
                 };
             }
 
@@ -706,7 +708,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("moyan-grep-multi-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("a.txt"), "alpha one\nbeta two\nalpha beta\nnothing").unwrap();
+        std::fs::write(
+            dir.join("a.txt"),
+            "alpha one\nbeta two\nalpha beta\nnothing",
+        )
+        .unwrap();
         std::fs::write(dir.join("b.txt"), "gamma\nBETA again").unwrap();
 
         let ctx = ToolUseContextBuilder::new(AgentId::new(), dir.clone())
@@ -737,7 +743,10 @@ mod tests {
         let per_query = res.content["per_query"].as_array().unwrap();
         assert_eq!(per_query[0]["paragraphs"], 2);
         assert_eq!(per_query[1]["paragraphs"], 3);
-        assert_eq!(per_query[2]["paragraphs"], 0, "a miss is reported, not hidden");
+        assert_eq!(
+            per_query[2]["paragraphs"], 0,
+            "a miss is reported, not hidden"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

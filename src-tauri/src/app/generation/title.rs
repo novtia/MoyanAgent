@@ -74,7 +74,18 @@ fn clean_title(raw: &str) -> String {
             c.is_whitespace()
                 || matches!(
                     c,
-                    '"' | '\'' | '`' | '「' | '」' | '『' | '』' | '《' | '》' | '。' | '.' | '：' | ':'
+                    '"' | '\''
+                        | '`'
+                        | '「'
+                        | '」'
+                        | '『'
+                        | '』'
+                        | '《'
+                        | '》'
+                        | '。'
+                        | '.'
+                        | '：'
+                        | ':'
                 )
         })
         .chars()
@@ -85,7 +96,8 @@ fn clean_title(raw: &str) -> String {
 /// True for text that is a file reference rather than a title.
 fn looks_like_path(s: &str) -> bool {
     let t = s.trim();
-    let drive = t.chars().nth(1) == Some(':') && t.chars().next().is_some_and(|c| c.is_ascii_alphabetic());
+    let drive =
+        t.chars().nth(1) == Some(':') && t.chars().next().is_some_and(|c| c.is_ascii_alphabetic());
     t.starts_with('@') || t.contains('\\') || t.contains("://") || t.contains(":/") || drive
 }
 
@@ -195,7 +207,12 @@ pub(crate) fn session_title_is_default(conn: &db::DbConn, id: &str) -> AppResult
 /// Title taken from the start of the (already cleaned) message. Used when no
 /// quick model is configured, or when the model did not set a usable title.
 pub(crate) fn fallback_title(source: &str) -> String {
-    let title = clean_title(&source.chars().take(FALLBACK_TITLE_CHARS).collect::<String>());
+    let title = clean_title(
+        &source
+            .chars()
+            .take(FALLBACK_TITLE_CHARS)
+            .collect::<String>(),
+    );
     if looks_like_path(&title) {
         String::new()
     } else {

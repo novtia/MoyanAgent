@@ -108,6 +108,8 @@ export function useModelService() {
       avatar: selectedProvider.avatar ?? "",
       endpoint: selectedProvider.endpoint,
       api_key: selectedProvider.api_key,
+      local_server_exe: selectedProvider.local_server_exe ?? "",
+      local_model_path: selectedProvider.local_model_path ?? "",
     });
   }, [
     selectedProvider?.id,
@@ -116,6 +118,8 @@ export function useModelService() {
     selectedProvider?.avatar,
     selectedProvider?.endpoint,
     selectedProvider?.api_key,
+    selectedProvider?.local_server_exe,
+    selectedProvider?.local_model_path,
   ]);
 
   useEffect(() => {
@@ -146,7 +150,9 @@ export function useModelService() {
       draftSdk !== normalizeProviderSdk(selectedProvider.sdk) ||
       providerDraft.avatar !== (selectedProvider.avatar ?? "") ||
       providerDraft.endpoint !== selectedProvider.endpoint ||
-      providerDraft.api_key !== selectedProvider.api_key;
+      providerDraft.api_key !== selectedProvider.api_key ||
+      (providerDraft.local_server_exe ?? "") !== (selectedProvider.local_server_exe ?? "") ||
+      (providerDraft.local_model_path ?? "") !== (selectedProvider.local_model_path ?? "");
     if (!dirty) return;
 
     const id = selectedProvider.id;
@@ -156,6 +162,8 @@ export function useModelService() {
       avatar: providerDraft.avatar,
       endpoint: providerDraft.endpoint,
       api_key: providerDraft.api_key,
+      local_server_exe: providerDraft.local_server_exe ?? "",
+      local_model_path: providerDraft.local_model_path ?? "",
     };
 
     const timer = window.setTimeout(() => {
@@ -170,7 +178,9 @@ export function useModelService() {
           draftSnap.sdk === normalizeProviderSdk(prov.sdk) &&
           draftSnap.avatar === (prov.avatar ?? "") &&
           draftSnap.endpoint === prov.endpoint &&
-          draftSnap.api_key === prov.api_key
+          draftSnap.api_key === prov.api_key &&
+          draftSnap.local_server_exe === (prov.local_server_exe ?? "") &&
+          draftSnap.local_model_path === (prov.local_model_path ?? "")
         ) {
           return;
         }
@@ -186,6 +196,8 @@ export function useModelService() {
                 }),
                 endpoint: draftSnap.endpoint.trim(),
                 api_key: draftSnap.api_key,
+                local_server_exe: draftSnap.local_server_exe.trim(),
+                local_model_path: draftSnap.local_model_path.trim(),
               }
             : provider,
         );
@@ -202,6 +214,8 @@ export function useModelService() {
     providerDraft.avatar,
     providerDraft.endpoint,
     providerDraft.api_key,
+    providerDraft.local_server_exe,
+    providerDraft.local_model_path,
     selectedProvider,
   ]);
 

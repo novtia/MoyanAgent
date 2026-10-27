@@ -62,8 +62,9 @@ impl CreateDocTool {
                     or `chapters > 01`. \
                     `doc_type` is `md` (Markdown) or `txt` (plain text). \
                     Fails if a document with that title already exists — pick a \
-                    different title, use Edit to change part of it, or pass \
-                    `overwrite: true` to replace the whole file on purpose. \
+                    different title, use Rename to change the file name, use Edit \
+                    to change part of it, or pass `overwrite: true` to replace \
+                    the whole file on purpose. \
                     Prefer this over Write for authoring new documents — you only \
                     supply the title, the content, the type, and optionally a folder. \
                     After success, Read the target paragraphs before Edit and copy \
@@ -203,8 +204,8 @@ impl Tool for CreateDocTool {
             if !created && !overwrite {
                 return Ok(ToolResult::error(format!(
                     "{TOOL_NAME}: `{}` already exists. Use Edit to change part of it, \
-                     choose a different title, or pass `overwrite: true` to replace \
-                     the whole file.",
+                     Rename to change its file name, choose a different title, or \
+                     pass `overwrite: true` to replace the whole file.",
                     display_path(&path)
                 )));
             }

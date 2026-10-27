@@ -1149,6 +1149,43 @@ button.doc-row-head:disabled {
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--rose-500) 60%, transparent);
 }
+.rename-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin: 4px 0;
+  color: var(--ink-mute);
+  font-size: 12.5px;
+  min-width: 0;
+}
+.rename-line .ti {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--ink-2);
+  flex: none;
+}
+.rename-line .ti svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.rename-line .fname {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rename-line .arrow {
+  flex: none;
+  opacity: 0.55;
+}
+.rename-line.is-error .kv {
+  color: var(--rose-500);
+}
 .tree {
   font-family: "JetBrains Mono", monospace;
   font-size: 11.5px;

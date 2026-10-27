@@ -326,6 +326,16 @@ async function handleReaderToolComplete(
     return;
   }
 
+  if (tool === "Rename") {
+    const from = typeof o.from === "string" ? o.from.trim() : "";
+    const to = typeof o.path === "string" ? o.path.trim() : "";
+    if (from && to) {
+      useReader.getState().remapPath(from, to);
+      useFileExplorer.getState().noteRename(from, to);
+    }
+    return;
+  }
+
   if (!path) return;
   const reader = useReader.getState();
   let existing = reader.getTabByPath(path);

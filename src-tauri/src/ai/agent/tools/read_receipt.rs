@@ -77,6 +77,26 @@ pub fn clear_receipt(state: &Mutex<HashMap<PathBuf, FileReceipt>>, path: &Path) 
     }
 }
 
+/// Canonical key [`record_receipt`] would use. Capture this *before* a rename
+/// moves the file; afterwards the old path no longer canonicalizes to the
+/// stored key.
+pub fn take_receipt_key(path: &Path) -> PathBuf {
+    receipt_key(path)
+}
+
+/// Move a receipt captured under `from_key` onto `to` (canonicalized now).
+pub fn rekey_receipt(state: &Mutex<HashMap<PathBuf, FileReceipt>>, from_key: &Path, to: &Path) {
+    let to_key = receipt_key(to);
+    if from_key == to_key.as_path() {
+        return;
+    }
+    if let Ok(mut s) = state.lock() {
+        if let Some(receipt) = s.remove(from_key) {
+            s.insert(to_key, receipt);
+        }
+    }
+}
+
 /// True when this path was last written by the agent and `text` still matches.
 pub fn is_fresh_write(
     state: &Mutex<HashMap<PathBuf, FileReceipt>>,

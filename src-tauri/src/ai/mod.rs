@@ -5,6 +5,8 @@ pub(crate) mod http_proxy;
 pub(crate) mod nai;
 pub(crate) mod parameters;
 pub(crate) mod providers;
+pub(crate) mod rewrite_config;
+pub(crate) mod rewrite_cot;
 pub(crate) mod router;
 pub(crate) mod search;
 pub(crate) mod session_log;

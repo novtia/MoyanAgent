@@ -54,6 +54,13 @@ export function ToolGlyph({ tool }: { tool: string }) {
           <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
         </Icon>
       );
+    case "Rename":
+      return (
+        <Icon>
+          <path d="M5 12h14" />
+          <path d="m13 6 6 6-6 6" />
+        </Icon>
+      );
     case "ListFiles":
       return (
         <Icon>

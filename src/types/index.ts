@@ -70,7 +70,8 @@ export type ModelProviderSdk =
   | "claude"
   | "grok"
   | "ark-images"
-  | "ark-video";
+  | "ark-video"
+  | "local";
 
 export interface ModelProvider {
   id: string;
@@ -92,6 +93,10 @@ export interface ModelProvider {
    * `medium` / `low`. Empty / omitted uses Vertex's own default.
    */
   safety_threshold?: string | null;
+  /** llama-server executable. Only used by the local SDK. */
+  local_server_exe?: string;
+  /** GGUF path the local start button loads. */
+  local_model_path?: string;
   models: ModelServiceModel[];
 }
 
@@ -185,6 +190,8 @@ export interface Settings {
   http_proxy_url: string;
   /** NovelAI image-generation tool credentials and default parameters. */
   novelai: NovelAiSettings;
+  /** Reader rewrite / expand prompts and sampling parameters. */
+  rewrite: RewriteSettings;
 }
 
 /** Persisted NovelAI tool settings (Settings → Tools → NovelAI). */
@@ -305,6 +312,24 @@ export interface SettingsPatch {
   http_proxy_enabled?: boolean;
   http_proxy_url?: string;
   novelai?: NovelAiSettings;
+  rewrite?: RewriteSettings;
+}
+
+/** Reader rewrite / expand prompts and the local rewrite model's sampling. */
+export interface RewriteSettings {
+  rewrite_prompt_enabled: boolean;
+  expand_prompt_enabled: boolean;
+  rewrite_instruction: string;
+  expand_instruction: string;
+  temperature: number;
+  top_p: number;
+  top_k: number;
+  rewrite_max_tokens: number;
+  expand_max_tokens: number;
+  repeat_penalty: number;
+  chunk_chars: number;
+  /** When false, the whole passage is sent in one request. */
+  auto_chunk: boolean;
 }
 
 /** Static description of a registered agent tool. */

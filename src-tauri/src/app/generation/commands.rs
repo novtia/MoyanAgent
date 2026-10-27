@@ -17,11 +17,11 @@ use crate::app::state::AppState;
 
 use super::engine::{generation_abort_lock, run_agent_chain, run_cancellable_generation};
 use super::params::{effective_agent_chain, resolve_session_generation};
-use super::title;
 use super::streaming::{
     new_stream_blocks, persist_streamed_assistant_snapshot, snapshot_stream_blocks,
     stream_text_callback, tool_event_callback,
 };
+use super::title;
 
 #[tauri::command]
 pub fn cancel_generation(

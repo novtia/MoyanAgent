@@ -556,6 +556,28 @@ export const api = {
     invoke<SkillInfo>("import_skill", { args: { path } }),
   uninstallSkill: (id: string) => invoke<void>("uninstall_skill", { id }),
   getSkillsDir: () => invoke<string>("get_skills_dir"),
+
+  localLlamaServerStatus: (providerId: string) =>
+    invoke<{ healthy: boolean; owned: boolean }>("local_llama_server_status", {
+      providerId,
+    }),
+  startLocalLlamaServer: (providerId: string) =>
+    invoke<{ healthy: boolean; owned: boolean }>("start_local_llama_server", {
+      providerId,
+    }),
+  stopLocalLlamaServer: (providerId: string) =>
+    invoke<{ healthy: boolean; owned: boolean }>("stop_local_llama_server", {
+      providerId,
+    }),
+  startReaderRewrite: (args: {
+    path: string;
+    text: string;
+    mode: "rewrite" | "expand" | "pipeline";
+    providerId: string;
+    modelId: string;
+    clientToken: string;
+  }) => invoke<void>("start_reader_rewrite", { args }),
+  cancelReaderRewrite: () => invoke<void>("cancel_reader_rewrite"),
 };
 
 export function srcOf(absPath: string | null | undefined): string {

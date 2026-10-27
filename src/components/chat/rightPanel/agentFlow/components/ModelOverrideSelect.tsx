@@ -1,4 +1,5 @@
 import type { ModelProvider } from "../../../../../types";
+import { isChatPickerModel } from "../../../../settings/llm/modelServices";
 
 export function ModelOverrideSelect({
   value,
@@ -23,15 +24,19 @@ export function ModelOverrideSelect({
     >
       <option value="">{t("agentFlow.formModelDefault")}</option>
       {value && !known && <option value={value}>{value}</option>}
-      {providers.map((p) => (
-        <optgroup key={p.id} label={p.name}>
-          {p.models.map((m) => (
-            <option key={`${p.id}:${m.id}`} value={m.id}>
-              {m.name}
-            </option>
-          ))}
-        </optgroup>
-      ))}
+      {providers.map((p) => {
+        const models = p.models.filter(isChatPickerModel);
+        if (models.length === 0) return null;
+        return (
+          <optgroup key={p.id} label={p.name}>
+            {models.map((m) => (
+              <option key={`${p.id}:${m.id}`} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </optgroup>
+        );
+      })}
     </select>
   );
 }

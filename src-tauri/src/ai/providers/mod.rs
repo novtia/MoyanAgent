@@ -18,12 +18,12 @@ use crate::error::{AppError, AppResult};
 
 /// Time we wait for the TCP/TLS connection to be established. Connecting is
 /// bounded regardless of how long the model then thinks.
-const CONNECT_TIMEOUT_SECS: u64 = 60;
+pub(crate) const CONNECT_TIMEOUT_SECS: u64 = 60;
 
 /// Idle time before the OS starts sending TCP keepalive probes on an
 /// otherwise-silent connection. This is how we detect a dead server without
 /// imposing any limit on legitimate work.
-const TCP_KEEPALIVE_SECS: u64 = 30;
+pub(crate) const TCP_KEEPALIVE_SECS: u64 = 30;
 
 /// Shared HTTP client for chat/text providers (openai, claude, gemini, ...).
 ///
@@ -52,6 +52,10 @@ pub const CLAUDE_SDK: &str = "claude";
 pub const GROK_SDK: &str = "grok";
 pub const ARK_IMAGES_SDK: &str = "ark-images";
 pub const ARK_VIDEO_SDK: &str = "ark-video";
+/// OpenAI Chat Completions against a local server (llama.cpp llama-server).
+/// Kept distinct from [`OPENAI_SDK`] so an empty API key and the start-server
+/// controls are not collapsed away on settings load.
+pub const LOCAL_SDK: &str = "local";
 pub const SUPPORTED_SDKS: &[&str] = &[
     OPENAI_SDK,
     OPENAI_RESPONSES_SDK,
@@ -61,6 +65,7 @@ pub const SUPPORTED_SDKS: &[&str] = &[
     GROK_SDK,
     ARK_IMAGES_SDK,
     ARK_VIDEO_SDK,
+    LOCAL_SDK,
 ];
 
 pub type ProviderFuture<'a> =
@@ -137,6 +142,7 @@ impl Default for ProviderFactory {
             .register(grok::GrokProvider::new())
             .register(ark_images::ArkImagesProvider::new())
             .register(ark_video::ArkVideoProvider::new())
+            .register(openai::LocalProvider::new())
     }
 }
 
@@ -171,5 +177,12 @@ mod tests {
         assert!(is_supported_sdk("vertex"));
         assert!(is_supported_sdk("vertex-ai"));
         assert!(SUPPORTED_SDKS.contains(&VERTEX_SDK));
+    }
+
+    #[test]
+    fn normalize_sdk_keeps_local() {
+        assert_eq!(normalize_sdk("local"), LOCAL_SDK);
+        assert_eq!(normalize_sdk("Local"), LOCAL_SDK);
+        assert!(is_supported_sdk("local"));
     }
 }

@@ -18,7 +18,7 @@ use super::super::common::{
     merge_usage, post_with_retries, should_retry_failed_stream_attempt, should_retry_http_error,
     should_retry_transport, sleep_for_attempt, sse_data_payload, stream_read_error,
     top_level_error_message, upstream_debug, upstream_error_message, upstream_rejects_streaming,
-    without_streaming, PendingStreamToolCall, MAX_ATTEMPTS,
+    with_optional_bearer, without_streaming, PendingStreamToolCall, MAX_ATTEMPTS,
 };
 use super::parse::parse_openai_like_response;
 
@@ -33,13 +33,15 @@ pub(crate) async fn post_stream_with_retries(
         if attempt == 1 {
             debug_log_upstream_request(provider_label, &request.provider.endpoint, body);
         }
-        let resp = client
-            .post(&request.provider.endpoint)
-            .bearer_auth(&request.provider.api_key)
-            .header("Content-Type", "application/json")
-            .json(body)
-            .send()
-            .await;
+        let resp = with_optional_bearer(
+            client
+                .post(&request.provider.endpoint)
+                .header("Content-Type", "application/json"),
+            &request.provider.api_key,
+        )
+        .json(body)
+        .send()
+        .await;
 
         let resp = match resp {
             Ok(r) => r,
@@ -146,6 +148,7 @@ pub(crate) async fn consume_openai_chat_stream(
     let mut buffer = Vec::new();
     let mut text = String::new();
     let mut thinking = String::new();
+    let mut think_stream = crate::ai::rewrite_cot::ThinkStream::default();
     let mut images = Vec::new();
     let mut usage = TokenUsage::default();
     let mut tool_calls: Vec<PendingStreamToolCall> = Vec::new();
@@ -162,6 +165,7 @@ pub(crate) async fn consume_openai_chat_stream(
                 &event,
                 &mut text,
                 &mut thinking,
+                &mut think_stream,
                 &mut images,
                 &mut usage,
                 &mut tool_calls,
@@ -179,6 +183,7 @@ pub(crate) async fn consume_openai_chat_stream(
             &event,
             &mut text,
             &mut thinking,
+            &mut think_stream,
             &mut images,
             &mut usage,
             &mut tool_calls,
@@ -205,6 +210,7 @@ pub(crate) fn handle_openai_chat_sse_event(
     event: &str,
     text: &mut String,
     thinking: &mut String,
+    think_stream: &mut crate::ai::rewrite_cot::ThinkStream,
     images: &mut Vec<ImageResult>,
     usage: &mut TokenUsage,
     tool_calls: &mut Vec<PendingStreamToolCall>,
@@ -231,18 +237,46 @@ pub(crate) fn handle_openai_chat_sse_event(
     }
 
     let (delta, mut new_images, think_delta) = extract_openai_chat_stream_update(&v);
+    let (body_delta, tag_thinking) = think_stream.push(&delta);
+    let mut think_delta = think_delta;
+    if !tag_thinking.is_empty() {
+        think_delta.push_str(&tag_thinking);
+    }
     if !think_delta.is_empty() {
         thinking.push_str(&think_delta);
         emit_thinking_deltas(on_text_delta, &think_delta);
     }
-    if !delta.is_empty() {
-        text.push_str(&delta);
-        (on_text_delta)(StreamDelta::text(delta));
+    if !body_delta.is_empty() {
+        text.push_str(&body_delta);
+        (on_text_delta)(StreamDelta::text(body_delta));
     }
     images.append(&mut new_images);
     merge_tool_call_deltas(&v, tool_calls, on_text_delta);
     merge_usage(usage, tokens::extract_usage(&v));
+    apply_revnovel_final(&v, text, thinking);
     Ok(false)
+}
+
+/// The final Beileng chunk carries the separated prose and analysis. Replace
+/// the assembled strings so a `<think>` wrapper cannot leak into the body.
+fn apply_revnovel_final(v: &Value, text: &mut String, thinking: &mut String) {
+    let Some(node) = v.get("revnovel") else {
+        return;
+    };
+    if let Some(cot) = node.get("cot").and_then(Value::as_str) {
+        let cot = cot.trim();
+        if !cot.is_empty() {
+            thinking.clear();
+            thinking.push_str(cot);
+        }
+    }
+    if let Some(body) = node.get("body").and_then(Value::as_str) {
+        let body = body.trim();
+        if !body.is_empty() {
+            text.clear();
+            text.push_str(body);
+        }
+    }
 }
 pub(crate) fn extract_openai_chat_stream_update(v: &Value) -> (String, Vec<ImageResult>, String) {
     let mut text_parts = Vec::new();

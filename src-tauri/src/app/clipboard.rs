@@ -63,11 +63,7 @@ pub fn clipboard_write_rich(
 }
 
 #[cfg(windows)]
-fn write_rich_with_window_owner(
-    window: &WebviewWindow,
-    text: &str,
-    html: &str,
-) -> AppResult<bool> {
+fn write_rich_with_window_owner(window: &WebviewWindow, text: &str, html: &str) -> AppResult<bool> {
     use clipboard_win::{formats, Clipboard, Setter};
 
     let hwnd = match window.hwnd() {

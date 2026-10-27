@@ -213,6 +213,221 @@
   cursor: default;
 }
 
+.reader-toolbar-stack {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.reader-rewrite-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-side);
+}
+
+.reader-rewrite-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  margin-right: 4px;
+}
+
+.reader-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 8%, var(--bg));
+}
+
+.reader-mode-switch button {
+  height: 24px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-mute);
+  font-size: 12px;
+  line-height: 24px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.reader-mode-switch button.is-active {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.reader-mode-switch button:disabled {
+  cursor: default;
+}
+
+.reader-rewrite-model {
+  height: 26px;
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 12px;
+  padding: 0 8px;
+}
+
+.reader-chunk-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  flex: 0 0 auto;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink-mute);
+  font-size: 12px;
+  line-height: 24px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.reader-chunk-switch.is-on {
+  color: var(--ink);
+}
+
+.reader-chunk-switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.reader-chunk-switch-track {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 16%, var(--bg));
+}
+
+.reader-chunk-switch.is-on .reader-chunk-switch-track {
+  background: color-mix(in srgb, var(--ink) 72%, var(--bg));
+}
+
+.reader-chunk-switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+  transition: transform 0.16s ease;
+}
+
+.reader-chunk-switch.is-on .reader-chunk-switch-thumb {
+  transform: translateX(12px);
+}
+
+.reader-rewrite-run {
+  height: 26px;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 24px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.reader-rewrite-run:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.reader-rewrite-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.reader-rewrite-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.reader-rewrite-progress {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+
+.reader-rewrite-copy {
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-mute);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.reader-rewrite-copy:hover:not(:disabled) {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+.reader-rewrite-copy:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.reader-rewrite-error {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  color: var(--danger, #b42318);
+  font-size: 12px;
+  line-height: 1.5;
+  border-bottom: 1px solid var(--line);
+}
+
+.reader-rewrite-pane .msg-thinking {
+  flex: 0 0 auto;
+  margin: 8px 12px 0;
+}
+.reader-rewrite-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px 28px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--chat-font-family, inherit);
+  font-size: var(--chat-font-size, 14px);
+  line-height: 1.75;
+  color: var(--chat-font-color, var(--ink));
+}
+
 .reader-workspace {
   display: flex;
   flex-direction: row;

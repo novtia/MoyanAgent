@@ -1,7 +1,10 @@
 import type { ModelProvider } from "../../../../types";
 import { DEFAULT_PROVIDER_SDK } from "../modelServices";
 
-export type ProviderDraft = Pick<ModelProvider, "name" | "endpoint" | "api_key"> & {
+export type ProviderDraft = Pick<
+  ModelProvider,
+  "name" | "endpoint" | "api_key" | "local_server_exe" | "local_model_path"
+> & {
   sdk: string;
   avatar: string;
 };
@@ -12,6 +15,8 @@ export const EMPTY_PROVIDER_DRAFT: ProviderDraft = {
   avatar: "",
   endpoint: "",
   api_key: "",
+  local_server_exe: "",
+  local_model_path: "",
 };
 
 export type PricingDraft = {

@@ -28,6 +28,8 @@ interface FileExplorerStore {
   /** Bumped when project files change so file trees re-list. */
   treeVersion: number;
   bumpTree: () => void;
+  /** Keep the selection on a file after an in-place rename. */
+  noteRename: (from: string, to: string) => void;
   bindSession: (sessionId: string | null, projectRoot: string | null) => void;
   setSelection: (path: string | null) => void;
   setSelectedPaths: (paths: string[]) => void;
@@ -140,6 +142,15 @@ export const useFileExplorer = create<FileExplorerStore>((set, get) => ({
   treeVersion: 0,
 
   bumpTree: () => set((s) => ({ treeVersion: s.treeVersion + 1 })),
+
+  noteRename: (from, to) => {
+    if (!from || !to || isSamePath(from, to)) return;
+    const { selectedPath, selectedPaths } = get();
+    set({
+      selectedPath: isSamePath(selectedPath, from) ? to : selectedPath,
+      selectedPaths: selectedPaths.map((p) => (isSamePath(p, from) ? to : p)),
+    });
+  },
 
   bindSession: (sessionId, projectRoot) => {
     const root = projectRoot?.trim() ? projectRoot.trim() : null;

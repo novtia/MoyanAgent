@@ -1,5 +1,7 @@
 use crate::ai::chat::{ChatRequest, TextDeltaCallback};
-use crate::ai::providers::{ChatProvider, ProviderFuture, OPENAI_RESPONSES_SDK, OPENAI_SDK};
+use crate::ai::providers::{
+    ChatProvider, ProviderFuture, LOCAL_SDK, OPENAI_RESPONSES_SDK, OPENAI_SDK,
+};
 
 use super::chat::{generate_chat, generate_chat_stream};
 use super::responses::{generate_responses, generate_responses_stream};
@@ -53,5 +55,33 @@ impl ChatProvider for OpenAiResponsesProvider {
         on_text_delta: TextDeltaCallback,
     ) -> ProviderFuture<'a> {
         Box::pin(async move { generate_responses_stream(request, on_text_delta).await })
+    }
+}
+
+/// Same wire protocol as [`OpenAiProvider`], addressed as the `local` SDK so
+/// settings can keep an empty API key and the llama-server controls.
+pub struct LocalProvider;
+
+impl LocalProvider {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl ChatProvider for LocalProvider {
+    fn sdk(&self) -> &'static str {
+        LOCAL_SDK
+    }
+
+    fn chat<'a>(&'a self, request: ChatRequest) -> ProviderFuture<'a> {
+        Box::pin(async move { generate_chat(request, true).await })
+    }
+
+    fn chat_stream<'a>(
+        &'a self,
+        request: ChatRequest,
+        on_text_delta: TextDeltaCallback,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move { generate_chat_stream(request, true, on_text_delta).await })
     }
 }

@@ -19,6 +19,7 @@ mod clipboard;
 mod dto;
 mod generation;
 mod history;
+mod local_server;
 mod media_cmds;
 mod messages;
 mod project_fs;
@@ -26,6 +27,7 @@ mod project_io;
 mod project_rules;
 mod projects;
 mod reader_paths;
+mod rewrite;
 mod role_state;
 mod sessions;
 mod settings;
@@ -79,6 +81,10 @@ pub fn run() {
             tools.register(crate::ai::agent::tools::delete::DeleteTool::new(
                 file_snapshots.clone(),
             ));
+            tools.register(
+                crate::ai::agent::tools::rename::RenameTool::new(file_snapshots.clone())
+                    .with_pool(Arc::new(pool.clone())),
+            );
             // Android/iOS has no usable programming shell (and is not PowerShell).
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             tools.register(crate::ai::agent::tools::bash::BashTool::new());
@@ -166,6 +172,8 @@ pub fn run() {
             app.manage(Arc::new(AppState {
                 pool,
                 generation_abort: Mutex::new(HashMap::new()),
+                rewrite_abort: Mutex::new(None),
+                local_llama: state::LocalLlamaProcess::default(),
                 agent_registry: registry,
                 task_store,
                 notifications: Arc::new(NotificationQueue::new()),
@@ -187,6 +195,11 @@ pub fn run() {
             settings::get_settings,
             settings::update_settings,
             settings::get_llm_model_catalog,
+            local_server::local_llama_server_status,
+            local_server::start_local_llama_server,
+            local_server::stop_local_llama_server,
+            rewrite::start_reader_rewrite,
+            rewrite::cancel_reader_rewrite,
             settings::fetch_provider_models,
             settings::fetch_model_endpoints,
             settings::web_search,

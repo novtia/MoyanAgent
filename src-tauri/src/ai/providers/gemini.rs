@@ -10,13 +10,13 @@ use crate::ai::chat::{
     emit_thinking_deltas, AttachmentBytes, ChatRequest, GenerateResponse, HistoryTurn, ImageResult,
     PendingAssistantTurn, StreamDelta, TextDeltaCallback, ToolResultMessage,
 };
+use crate::ai::providers::gemini_model;
 use crate::ai::providers::openai::common::{
     debug_log_sse_event, debug_log_upstream_request, emit_tool_arg_deltas, find_sse_event_end,
     is_json_response, message_rejects_gemini_arg_streaming, should_retry_failed_stream_attempt,
     should_retry_http_error, should_retry_transport, sleep_for_attempt, sse_data_payload,
     stream_read_error, MAX_ATTEMPTS,
 };
-use crate::ai::providers::gemini_model;
 use crate::ai::providers::{ChatProvider, ProviderFuture, GEMINI_SDK, VERTEX_SDK};
 use crate::ai::tokens::TokenUsage;
 use crate::error::{AppError, AppResult};
@@ -553,7 +553,10 @@ fn gemini_thinking_budget(effort: &str) -> i64 {
 /// Vertex opening turns may force a user-configured tool allow-list.
 /// Studio Gemini is unchanged (no `mode`). Argument streaming is
 /// orthogonal and may sit on the same `functionCallingConfig` object.
-fn vertex_or_stream_tool_config(request: &ChatRequest, stream_function_args: bool) -> Option<Value> {
+fn vertex_or_stream_tool_config(
+    request: &ChatRequest,
+    stream_function_args: bool,
+) -> Option<Value> {
     let forced = vertex_opening_forced_names(request);
     if forced.is_empty() && !stream_function_args {
         return None;
@@ -584,9 +587,9 @@ fn vertex_opening_forced_names(request: &ChatRequest) -> Vec<String> {
         return Vec::new();
     }
     if request.history.iter().any(|turn| {
-        turn.timeline.iter().any(|seg| {
-            matches!(seg, crate::ai::chat::TimelineSegment::ToolRound { .. })
-        })
+        turn.timeline
+            .iter()
+            .any(|seg| matches!(seg, crate::ai::chat::TimelineSegment::ToolRound { .. }))
     }) {
         return Vec::new();
     }
@@ -614,8 +617,10 @@ fn strip_stream_function_call_config(body: &mut Value) {
             }
         }
         let empty = config.iter().all(|(k, v)| {
-            matches!(k.as_str(), "functionCallingConfig" | "function_calling_config")
-                && v.as_object().map(|m| m.is_empty()).unwrap_or(false)
+            matches!(
+                k.as_str(),
+                "functionCallingConfig" | "function_calling_config"
+            ) && v.as_object().map(|m| m.is_empty()).unwrap_or(false)
         });
         if empty {
             drop_keys.push(key.to_string());
@@ -1800,7 +1805,10 @@ mod tests {
             true
         );
         strip_stream_function_call_config(&mut streamed);
-        assert_eq!(streamed["toolConfig"]["functionCallingConfig"]["mode"], "ANY");
+        assert_eq!(
+            streamed["toolConfig"]["functionCallingConfig"]["mode"],
+            "ANY"
+        );
         assert_eq!(
             streamed["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"],
             json!(["Read", "CreateDoc"])
@@ -2237,7 +2245,10 @@ mod tests {
         let mut req = sample_request(false);
         req.provider.sdk = VERTEX_SDK.into();
         req.prompt = "你好".into();
-        let contents = build_body(&req, false)["contents"].as_array().unwrap().clone();
+        let contents = build_body(&req, false)["contents"]
+            .as_array()
+            .unwrap()
+            .clone();
         assert_eq!(contents.len(), 5);
         assert_eq!(contents[0]["role"], "user");
         assert_eq!(contents[0]["parts"][0]["text"], "你好");
@@ -2251,7 +2262,10 @@ mod tests {
         assert_eq!(contents[4]["parts"][0]["text"], " ");
 
         let studio = sample_request(false);
-        let studio_contents = build_body(&studio, false)["contents"].as_array().unwrap().clone();
+        let studio_contents = build_body(&studio, false)["contents"]
+            .as_array()
+            .unwrap()
+            .clone();
         assert_eq!(studio_contents.len(), 1);
         assert_eq!(studio_contents[0]["parts"][0]["text"], "hi");
     }
@@ -2276,13 +2290,20 @@ mod tests {
                 is_error: false,
             }],
         });
-        let contents = build_body(&req, false)["contents"].as_array().unwrap().clone();
+        let contents = build_body(&req, false)["contents"]
+            .as_array()
+            .unwrap()
+            .clone();
         assert_eq!(contents[0]["parts"][0]["text"], "你好");
         assert!(contents.iter().all(|c| c["parts"]
             .as_array()
-            .map(|p| p.iter().all(|part| part.get("text") != Some(&json!("继续"))))
+            .map(|p| p
+                .iter()
+                .all(|part| part.get("text") != Some(&json!("继续"))))
             .unwrap_or(true)));
         assert_eq!(contents.last().unwrap()["role"], "user");
-        assert!(contents.last().unwrap()["parts"][0].get("functionResponse").is_some());
+        assert!(contents.last().unwrap()["parts"][0]
+            .get("functionResponse")
+            .is_some());
     }
 }

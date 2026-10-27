@@ -22,6 +22,7 @@ import {
 } from "../modelServices";
 import { ProviderAvatarDisplay, ProviderBrandIcon } from "../ProviderBrandIcon";
 import { ChevronIcon, GearIcon, ListIcon, MinusIcon, PlusIcon } from "./icons";
+import { LocalServerCard } from "./LocalServerCard";
 import { ProviderEnableSwitch } from "./ProviderEnableSwitch";
 import type { ProviderDraft } from "./types";
 
@@ -263,6 +264,22 @@ export function ProviderDetail({
                   {t("settings.llm.contextCacheHint")}
                 </div>
               </div>
+            )}
+            {normalizeProviderSdk(selectedProvider.sdk) === "local" && (
+              <LocalServerCard
+                providerId={selectedProvider.id}
+                serverExe={providerDraft.local_server_exe ?? ""}
+                modelPath={providerDraft.local_model_path ?? ""}
+                onServerExe={(value) => onDraftChange({ local_server_exe: value })}
+                onModelPath={(value) => onDraftChange({ local_model_path: value })}
+                onBeforeStart={() =>
+                  onPatchProvider(selectedProvider.id, {
+                    local_server_exe: providerDraft.local_server_exe ?? "",
+                    local_model_path: providerDraft.local_model_path ?? "",
+                    endpoint: providerDraft.endpoint,
+                  })
+                }
+              />
             )}
           </div>
         </div>

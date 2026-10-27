@@ -285,7 +285,17 @@ export const CAPABILITY_OPTIONS = [
   { id: "multimodal-ref", label: "多模态参考" },
   { id: "tools", label: "工具" },
   { id: "text", label: "文本" },
+  { id: "rewrite", label: "改文" },
 ] as const;
+
+export const DEFAULT_LOCAL_SERVER_EXE = String.raw`D:\AI\llama.cpp\b11853\llama-server.exe`;
+export const DEFAULT_LOCAL_MODEL_PATH = String.raw`D:\AI\models\rewrite2-27b-iq4xs\rewrite2-27b-IQ4_XS.gguf`;
+
+/** Chat pickers hide models that are only the reader rewrite type. */
+export function isChatPickerModel(model: { capabilities?: string[] | null }) {
+  const caps = model.capabilities ?? [];
+  return !(caps.includes("rewrite") && !caps.includes("text"));
+}
 
 export function capabilityLabel(capability: string) {
   return (
@@ -434,6 +444,7 @@ export function inferCapabilities(model: string) {
       caps.add("multimodal-ref");
     }
   }
+  if (id.includes("rewrite")) caps.add("rewrite");
   if (caps.size === 0) caps.add("text");
   return Array.from(caps);
 }
@@ -721,7 +732,11 @@ export function validateProviderConfig(
     }
   }
 
-  if (required && !provider.api_key.trim()) {
+  if (
+    required &&
+    !provider.api_key.trim() &&
+    normalizeProviderSdk(provider.sdk) !== "local"
+  ) {
     errors.api_key = "API 密钥不能为空。";
   }
 
@@ -745,6 +760,12 @@ export function makeProvider(
     enabled: patch.enabled !== false,
     context_cache_enabled: patch.context_cache_enabled === true,
     safety_threshold: normalizeVertexSafetyThreshold(patch.safety_threshold) ?? null,
+    local_server_exe:
+      patch.local_server_exe ??
+      (sdk === "local" ? DEFAULT_LOCAL_SERVER_EXE : ""),
+    local_model_path:
+      patch.local_model_path ??
+      (sdk === "local" ? DEFAULT_LOCAL_MODEL_PATH : ""),
     models: patch.models ?? [],
   };
 }
@@ -761,6 +782,12 @@ export function normalizeProviders(providers: ModelProvider[]) {
     avatar: providerAvatar(provider),
     endpoint: provider.endpoint ?? "",
     api_key: provider.api_key ?? "",
+    local_server_exe:
+      provider.local_server_exe?.trim() ||
+      (normalizeProviderSdk(provider.sdk) === "local" ? DEFAULT_LOCAL_SERVER_EXE : ""),
+    local_model_path:
+      provider.local_model_path?.trim() ||
+      (normalizeProviderSdk(provider.sdk) === "local" ? DEFAULT_LOCAL_MODEL_PATH : ""),
     models: provider.models.map((model) => makeModel(model.id, model)),
   }));
 }

@@ -1,6 +1,7 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { ReaderFileTab } from "../../../../../store/reader";
+import type { RewriteMode } from "../../../../../store/readerRewrite";
 import {
   BackIcon,
   EyeIcon,
@@ -36,6 +37,18 @@ export interface ReaderToolbarProps {
   onMore: (e: ReactMouseEvent) => void;
   onToggleSearch: () => void;
   onToggleFileTree: () => void;
+  showRewrite: boolean;
+  rewriteMode: RewriteMode;
+  rewriteRunning: boolean;
+  rewriteModels: { key: string; name: string }[];
+  rewriteModelKey: string;
+  canRewrite: boolean;
+  rewriteRunTitle: string;
+  autoChunk: boolean;
+  onToggleAutoChunk: () => void;
+  onRewriteMode: (mode: RewriteMode) => void;
+  onRewriteModel: (key: string) => void;
+  onRewriteRun: () => void;
 }
 
 export function ReaderToolbar({
@@ -61,10 +74,87 @@ export function ReaderToolbar({
   onMore,
   onToggleSearch,
   onToggleFileTree,
+  showRewrite,
+  rewriteMode,
+  rewriteRunning,
+  rewriteModels,
+  rewriteModelKey,
+  canRewrite,
+  rewriteRunTitle,
+  autoChunk,
+  onToggleAutoChunk,
+  onRewriteMode,
+  onRewriteModel,
+  onRewriteRun,
 }: ReaderToolbarProps) {
   const { t } = useTranslation();
 
+  const rewriteBar = showRewrite ? (
+    <div className="reader-rewrite-bar">
+      <div className="reader-mode-switch" role="radiogroup" aria-label={t("reader.rewriteMode")}>
+        {(
+          [
+            ["rewrite", t("reader.rewriteMode")],
+            ["expand", t("reader.expandMode")],
+            ["pipeline", t("reader.pipelineMode")],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="radio"
+            aria-checked={rewriteMode === id}
+            className={rewriteMode === id ? "is-active" : ""}
+            disabled={rewriteRunning}
+            onClick={() => onRewriteMode(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {rewriteModels.length > 1 && (
+        <select
+          className="reader-rewrite-model"
+          value={rewriteModelKey}
+          disabled={rewriteRunning}
+          title={rewriteModels.find((model) => model.key === rewriteModelKey)?.name}
+          onChange={(e) => onRewriteModel(e.target.value)}
+        >
+          {rewriteModels.map((model) => (
+            <option key={model.key} value={model.key}>
+              {model.name}
+            </option>
+          ))}
+        </select>
+      )}
+      <button
+        type="button"
+        role="switch"
+        aria-checked={autoChunk}
+        className={`reader-chunk-switch${autoChunk ? " is-on" : ""}`}
+        title={t("reader.autoChunkHint")}
+        disabled={rewriteRunning}
+        onClick={onToggleAutoChunk}
+      >
+        <span className="reader-chunk-switch-label">{t("reader.autoChunk")}</span>
+        <span className="reader-chunk-switch-track" aria-hidden>
+          <span className="reader-chunk-switch-thumb" />
+        </span>
+      </button>
+      <button
+        type="button"
+        className="reader-rewrite-run"
+        title={rewriteRunTitle}
+        disabled={!rewriteRunning && !canRewrite}
+        onClick={onRewriteRun}
+      >
+        {rewriteRunning ? t("reader.stopRewrite") : t("reader.regenerate")}
+      </button>
+    </div>
+  ) : null;
+
   return (
+    <div className="reader-toolbar-stack">
     <div className="reader-toolbar">
       <div className="reader-toolbar-nav">
         <button
@@ -161,6 +251,8 @@ export function ReaderToolbar({
           <FilesIcon />
         </button>
       </div>
+    </div>
+    {rewriteBar}
     </div>
   );
 }

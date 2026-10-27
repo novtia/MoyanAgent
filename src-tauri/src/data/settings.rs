@@ -46,6 +46,7 @@ pub const KEY_READER_PARAGRAPH_SPACING: &str = "reader_paragraph_spacing";
 pub const KEY_HTTP_PROXY_ENABLED: &str = "http_proxy_enabled";
 pub const KEY_HTTP_PROXY_URL: &str = "http_proxy_url";
 pub const KEY_NOVELAI: &str = "novelai";
+pub const KEY_REWRITE: &str = "rewrite";
 
 /// Built-in system prompt for the quick model when it names a session.
 ///
@@ -232,8 +233,18 @@ pub struct ModelProvider {
     /// `medium` / `low`. `None` omits the field so Vertex uses its default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safety_threshold: Option<String>,
+    /// llama-server executable. Used by the local SDK start button.
+    #[serde(default)]
+    pub local_server_exe: String,
+    /// GGUF file the local start button loads.
+    #[serde(default)]
+    pub local_model_path: String,
     pub models: Vec<ModelServiceModel>,
 }
+
+pub const DEFAULT_LOCAL_SERVER_EXE: &str = r"D:\AI\llama.cpp\b11853\llama-server.exe";
+pub const DEFAULT_LOCAL_MODEL_PATH: &str =
+    r"D:\AI\models\rewrite2-27b-iq4xs\rewrite2-27b-IQ4_XS.gguf";
 
 impl ModelProvider {
     /// OpenRouter routing slugs configured for `model_id`. Empty ⇒ auto.
@@ -454,6 +465,9 @@ pub struct Settings {
     /// NovelAI image-generation tool credentials and default parameters.
     #[serde(default)]
     pub novelai: crate::ai::nai::NovelAiSettings,
+    /// Reader rewrite / expand prompts and sampling parameters.
+    #[serde(default)]
+    pub rewrite: crate::ai::rewrite_config::RewriteSettings,
 }
 
 fn default_web_search_enabled() -> bool {
@@ -532,6 +546,7 @@ impl Default for Settings {
             http_proxy_enabled: false,
             http_proxy_url: String::new(),
             novelai: crate::ai::nai::NovelAiSettings::default(),
+            rewrite: crate::ai::rewrite_config::RewriteSettings::default(),
         }
     }
 }
@@ -637,6 +652,8 @@ pub struct SettingsPatch {
     pub http_proxy_url: Option<String>,
     #[serde(default)]
     pub novelai: Option<crate::ai::nai::NovelAiSettings>,
+    #[serde(default)]
+    pub rewrite: Option<crate::ai::rewrite_config::RewriteSettings>,
 }
 
 pub fn read(conn: &DbConn) -> AppResult<Settings> {
@@ -751,15 +768,19 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             KEY_CREATE_DOC_ECHO_CONTENT => s.create_doc_echo_content = v == "true" || v == "1",
             KEY_EDIT_REPLACE_ALL_DEFAULT => s.edit_replace_all_default = v == "true" || v == "1",
             KEY_READ_PARAGRAPH_LABELS => s.read_paragraph_labels = v == "true" || v == "1",
-            KEY_READER_FIRST_LINE_INDENT => {
-                s.reader_first_line_indent = v == "true" || v == "1"
-            }
+            KEY_READER_FIRST_LINE_INDENT => s.reader_first_line_indent = v == "true" || v == "1",
             KEY_READER_PARAGRAPH_SPACING => s.reader_paragraph_spacing = v == "true" || v == "1",
             KEY_HTTP_PROXY_ENABLED => s.http_proxy_enabled = v == "true" || v == "1",
             KEY_HTTP_PROXY_URL => s.http_proxy_url = v,
             KEY_NOVELAI => {
                 if let Ok(cfg) = serde_json::from_str::<crate::ai::nai::NovelAiSettings>(&v) {
                     s.novelai = crate::ai::nai::normalize_settings(cfg);
+                }
+            }
+            KEY_REWRITE => {
+                if let Ok(cfg) = serde_json::from_str::<crate::ai::rewrite_config::RewriteSettings>(&v)
+                {
+                    s.rewrite = crate::ai::rewrite_config::normalize_settings(cfg);
                 }
             }
             _ => {}
@@ -961,8 +982,26 @@ fn normalize_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {
         }
         provider.safety_threshold =
             normalize_vertex_safety_threshold(provider.safety_threshold.as_deref());
+        apply_local_server_defaults(provider);
     }
     services
+}
+
+fn apply_local_server_defaults(provider: &mut ModelProvider) {
+    if crate::ai::providers::normalize_sdk(&provider.sdk) != crate::ai::providers::LOCAL_SDK {
+        return;
+    }
+    if provider.local_server_exe.trim().is_empty() {
+        provider.local_server_exe = DEFAULT_LOCAL_SERVER_EXE.to_string();
+    }
+    if provider.local_model_path.trim().is_empty() {
+        provider.local_model_path = DEFAULT_LOCAL_MODEL_PATH.to_string();
+    }
+    for model in &mut provider.models {
+        if model.id == "rewrite2-27b" && matches!(model.context_window, None | Some(32768)) {
+            model.context_window = Some(4096);
+        }
+    }
 }
 
 fn avatar_is_image(avatar: &str) -> bool {
@@ -1049,6 +1088,9 @@ fn infer_capabilities(id: &str) -> Vec<String> {
         if id.contains("seedance-2") || id.contains("seedance_2") || id.contains("seedance2") {
             out.push("multimodal-ref".into());
         }
+    }
+    if id.contains("rewrite") {
+        out.push("rewrite".into());
     }
     if out.is_empty() {
         out.push("text".into());
@@ -1247,9 +1289,13 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
     }
     if let Some(v) = patch.novelai {
         let cleaned = crate::ai::nai::normalize_settings(v);
-        let json =
-            serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
+        let json = serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
         write_kv(conn, KEY_NOVELAI, &json)?;
+    }
+    if let Some(v) = patch.rewrite {
+        let cleaned = crate::ai::rewrite_config::normalize_settings(v);
+        let json = serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
+        write_kv(conn, KEY_REWRITE, &json)?;
     }
     read(conn)
 }

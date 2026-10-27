@@ -177,8 +177,31 @@
 }
 
 /* ───── cards & rows ───── */
-.settings-card {
-  background: var(--bg);
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.rewrite-param-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.rewrite-param-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+.rewrite-param-field input {
+  width: 100%;
+}
+.rewrite-reset {
+  margin-top: 10px;
+}
+.settings-card {  background: var(--bg);
   border: 1px solid var(--line);
   border-radius: calc(var(--radius) + 2px);
   box-shadow: var(--shadow-1);
@@ -1351,6 +1374,19 @@
   margin-bottom: 0;
   font-size: 13px;
   font-weight: 600;
+  color: var(--ink);
+}
+.local-server-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.local-server-status {
+  font-size: 12px;
+  color: var(--ink-mute);
+}
+.local-server-status.is-on {
   color: var(--ink);
 }
 .model-provider-config .hint {

@@ -72,71 +72,61 @@ pub(crate) fn extract_openai_chat_tool_calls(v: &Value) -> Vec<crate::ai::chat::
 }
 
 pub(crate) fn extract_openai_chat_text(v: &Value) -> Option<String> {
-    let msg = v.pointer("/choices/0/message")?;
-
-    if let Some(s) = msg.get("content").and_then(Value::as_str) {
-        let trimmed = s.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
+    let split = split_openai_chat_message(v);
+    let body = split.body.trim();
+    if body.is_empty() {
+        None
+    } else {
+        Some(body.to_string())
     }
-
-    if let Some(arr) = msg.get("content").and_then(Value::as_array) {
-        let mut parts: Vec<String> = Vec::new();
-        for it in arr {
-            let typ = it.get("type").and_then(Value::as_str).unwrap_or("");
-            if typ == "reasoning" {
-                continue;
-            }
-            if let Some(s) = it.get("text").and_then(Value::as_str) {
-                if !s.trim().is_empty() {
-                    parts.push(s.trim().to_string());
-                }
-            }
-        }
-        if !parts.is_empty() {
-            return Some(parts.join("\n\n"));
-        }
-    }
-
-    None
 }
 
 pub(crate) fn extract_openai_chat_thinking(v: &Value) -> Option<String> {
-    let msg = v.pointer("/choices/0/message")?;
-    let mut parts: Vec<String> = Vec::new();
-    if let Some(s) = msg.get("reasoning").and_then(Value::as_str) {
-        let trimmed = s.trim();
-        if !trimmed.is_empty() {
-            parts.push(trimmed.to_string());
-        }
-    }
-    if let Some(s) = msg.get("reasoning_content").and_then(Value::as_str) {
-        let trimmed = s.trim();
-        if !trimmed.is_empty() {
-            parts.push(trimmed.to_string());
-        }
-    }
-    if let Some(arr) = msg.get("content").and_then(Value::as_array) {
-        for it in arr {
-            if it.get("type").and_then(Value::as_str) != Some("reasoning") {
-                continue;
-            }
-            if let Some(s) = it
-                .get("text")
-                .or_else(|| it.get("reasoning"))
-                .and_then(Value::as_str)
-            {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    parts.push(trimmed.to_string());
-                }
-            }
-        }
-    }
-    if parts.is_empty() {
+    let split = split_openai_chat_message(v);
+    let thinking = split.thinking.trim();
+    if thinking.is_empty() {
         None
     } else {
-        Some(parts.join("\n\n"))
+        Some(thinking.to_string())
+    }
+}
+
+fn split_openai_chat_message(v: &Value) -> crate::ai::rewrite_cot::CotSplit {
+    let msg = v.pointer("/choices/0/message");
+    let content = msg
+        .and_then(|msg| msg.get("content"))
+        .and_then(message_content_text);
+    crate::ai::rewrite_cot::split_gateway_message(
+        content.as_deref(),
+        msg.and_then(|msg| msg.get("reasoning")).and_then(Value::as_str),
+        msg.and_then(|msg| msg.get("reasoning_content"))
+            .and_then(Value::as_str),
+        v.pointer("/revnovel/cot").and_then(Value::as_str),
+        v.pointer("/revnovel/body").and_then(Value::as_str),
+    )
+}
+
+fn message_content_text(content: &Value) -> Option<String> {
+    match content {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(parts) => {
+            let mut out = Vec::new();
+            for part in parts {
+                if part.get("type").and_then(Value::as_str) == Some("reasoning") {
+                    continue;
+                }
+                if let Some(text) = part.get("text").and_then(Value::as_str) {
+                    if !text.trim().is_empty() {
+                        out.push(text.trim().to_string());
+                    }
+                }
+            }
+            if out.is_empty() {
+                None
+            } else {
+                Some(out.join("\n\n"))
+            }
+        }
+        _ => None,
     }
 }

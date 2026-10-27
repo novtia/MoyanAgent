@@ -9,6 +9,7 @@ import { GrepToolCard } from "./GrepToolCard";
 import { ListFilesCard } from "./ListFilesCard";
 import { NovelAIToolCard } from "./NovelAIToolCard";
 import { ReadToolCard } from "./ReadToolCard";
+import { RenameDocCard } from "./RenameDocCard";
 import { RoleStateChip } from "./RoleStateChip";
 import { StreamingDocCard } from "./StreamingDocCard";
 import { ToolCallBlock } from "./ToolCallBlock";
@@ -25,6 +26,7 @@ const TOOL_REGISTRY: Record<string, ComponentType<ToolCardProps>> = {
   Write: StreamingDocCard,
   Read: ReadToolCard,
   Delete: DeleteDocCard,
+  Rename: RenameDocCard,
   ListFiles: ListFilesCard,
   Bash: BashToolCard,
   Grep: GrepToolCard,

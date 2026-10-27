@@ -813,6 +813,7 @@ mod tool_anchor_tests {
         "ListFiles",
         "NovelAI",
         "Read",
+        "Rename",
         "RoleState",
         "TodoList",
         "WebFetch",

@@ -103,7 +103,10 @@ pub async fn novelai_status(
     state: tauri::State<'_, Arc<AppState>>,
     token: Option<String>,
 ) -> Result<crate::ai::nai::NovelAiStatus, AppError> {
-    let token = match token.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+    let token = match token
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
         Some(t) => t,
         None => {
             let conn = state.conn()?;

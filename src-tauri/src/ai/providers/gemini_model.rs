@@ -83,7 +83,12 @@ mod tests {
 
     #[test]
     fn thinking_style_follows_version() {
-        for id in ["gemini-3-flash-preview", "gemini-3.8-flash", "gemini-4-argon", "gemini-10-x"] {
+        for id in [
+            "gemini-3-flash-preview",
+            "gemini-3.8-flash",
+            "gemini-4-argon",
+            "gemini-10-x",
+        ] {
             assert!(uses_thinking_level(id), "{id}");
             assert!(implies_reasoning(id), "{id}");
         }

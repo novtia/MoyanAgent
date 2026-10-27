@@ -776,11 +776,12 @@ mod tests {
         // A same-named file deeper down must not make the root copy ambiguous.
         std::fs::write(root.join("第一卷").join("大纲.md"), "volume outline").expect("seed");
 
-        let found = resolve_project_file(&root, "杂文/我真没想到重生啊/大纲.md", "Read")
-            .expect("resolve");
+        let found =
+            resolve_project_file(&root, "杂文/我真没想到重生啊/大纲.md", "Read").expect("resolve");
         assert_eq!(std::fs::read_to_string(&found).unwrap(), "outline");
 
-        let found = resolve_project_file(&root, "我真没想到重生啊/大纲.md", "Read").expect("resolve");
+        let found =
+            resolve_project_file(&root, "我真没想到重生啊/大纲.md", "Read").expect("resolve");
         assert_eq!(std::fs::read_to_string(&found).unwrap(), "outline");
 
         let dir = resolve_project_dir(&root, Some("杂文/我真没想到重生啊/第一卷"), "ListFiles")
@@ -805,15 +806,17 @@ mod tests {
 
         // Two files share the name; the breadcrumb's folder decides.
         let found = resolve_project_file(&root, "草稿/设定/人物.md", "Read").expect("resolve");
-        assert!(found.ends_with(Path::new("设定").join("人物.md")), "{found:?}");
+        assert!(
+            found.ends_with(Path::new("设定").join("人物.md")),
+            "{found:?}"
+        );
 
         // Nothing in the breadcrumb tells them apart → list the candidates.
         let err = resolve_project_file(&root, "草稿/人物.md", "Read").expect_err("ambiguous");
         assert!(err.to_string().contains("matches 2 files"), "{err}");
 
         // Writes never retarget.
-        let strict =
-            resolve_project_file_strict(&root, "草稿/人物.md", "Write").expect("strict");
+        let strict = resolve_project_file_strict(&root, "草稿/人物.md", "Write").expect("strict");
         assert!(!strict.is_file());
 
         let _ = std::fs::remove_dir_all(&root);
@@ -827,11 +830,18 @@ mod tests {
         std::fs::create_dir_all(root.join("杂文")).expect("mkdir");
         std::fs::write(root.join("杂文").join("大纲.md"), "x").expect("seed");
 
-        let stale = Path::new(if cfg!(windows) { r"Z:\old\box" } else { "/old/box" })
-            .join("杂文")
-            .join("大纲.md");
+        let stale = Path::new(if cfg!(windows) {
+            r"Z:\old\box"
+        } else {
+            "/old/box"
+        })
+        .join("杂文")
+        .join("大纲.md");
         let found = resolve_project_file(&root, stale.to_str().unwrap(), "Read").expect("resolve");
-        assert!(found.ends_with(Path::new("杂文").join("大纲.md")), "{found:?}");
+        assert!(
+            found.ends_with(Path::new("杂文").join("大纲.md")),
+            "{found:?}"
+        );
 
         let wrong_parent = Path::new(if cfg!(windows) { r"Z:\old" } else { "/old" })
             .join("别处")

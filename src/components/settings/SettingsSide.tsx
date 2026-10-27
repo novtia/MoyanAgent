@@ -44,6 +44,12 @@ export function SettingsSide({
           onClick={() => onTabChange("llm")}
         />
         <SettingsNavItem
+          icon={<SparkIcon />}
+          label={t("settings.tabRewrite")}
+          active={activeTab === "rewrite"}
+          onClick={() => onTabChange("rewrite")}
+        />
+        <SettingsNavItem
           icon={<BoltIcon />}
           label={t("settings.tabDefault")}
           active={activeTab === "default"}

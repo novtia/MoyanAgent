@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "../../../store/settings";
-import { normalizeProviders } from "../llm/modelServices";
+import { isChatPickerModel, normalizeProviders } from "../llm/modelServices";
 import {
   QuickModelDropdown,
   type QuickModelOption,
@@ -22,7 +22,7 @@ export function DefaultModelSection() {
       providers
         .filter((provider) => provider.enabled !== false)
         .flatMap((provider) =>
-          provider.models.map((model) => ({
+          provider.models.filter(isChatPickerModel).map((model) => ({
             providerId: provider.id,
             providerName: provider.name,
             modelId: model.id,

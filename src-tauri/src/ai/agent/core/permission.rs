@@ -127,6 +127,7 @@ pub const WRITE_TOOLS: &[&str] = &[
     "FileEdit",
     "CreateDoc",
     "Delete",
+    "Rename",
     "NovelAI",
 ];
 
@@ -459,7 +460,15 @@ mod tests {
 
     #[test]
     fn plan_mode_refuses_write_tools_case_insensitively() {
-        for tool in ["Write", "edit", "CreateDoc", "DELETE", "Patch", "NovelAI"] {
+        for tool in [
+            "Write",
+            "edit",
+            "CreateDoc",
+            "DELETE",
+            "Rename",
+            "Patch",
+            "NovelAI",
+        ] {
             assert!(denied(PermissionMode::Plan, tool, ""));
         }
     }
@@ -475,7 +484,7 @@ mod tests {
     /// destruction is refused outside plan-mode.
     #[test]
     fn default_mode_allows_in_project_work() {
-        for tool in ["Write", "Edit", "CreateDoc", "Delete", "Read"] {
+        for tool in ["Write", "Edit", "CreateDoc", "Delete", "Rename", "Read"] {
             assert!(!denied(PermissionMode::Default, tool, ""));
         }
         for cmd in [

@@ -3,6 +3,7 @@ import { TAB_TITLE_KEYS } from "./constants";
 import { AppearanceSection } from "./appearance/AppearanceSection";
 import { DefaultModelSection } from "./default/DefaultModelSection";
 import { LlmSection } from "./llm/LlmSection";
+import { RewriteSection } from "./rewrite/RewriteSection";
 import { WebSearchSection } from "./search/WebSearchSection";
 import { SettingsSide } from "./SettingsSide";
 import { SystemSection } from "./system/SystemSection";
@@ -44,6 +45,7 @@ export function SettingsView({
             />
           )}
           {activeTab === "llm" && <LlmSection />}
+          {activeTab === "rewrite" && <RewriteSection />}
           {activeTab === "default" && <DefaultModelSection />}
           {activeTab === "search" && <WebSearchSection />}
           {activeTab === "tools" && <ToolsSection />}

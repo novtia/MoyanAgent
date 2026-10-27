@@ -46,7 +46,8 @@ pub const UC_NONE: &str = "none";
 pub const UC_CUSTOM: &str = "custom";
 
 const QUALITY_OFFICIAL_TAGS: &str = "very aesthetic, masterpiece, no text";
-const QUALITY_GALLERY_TAGS: &str = "ultra complexity, very aesthetic, best quality, amazing quality, absurdres";
+const QUALITY_GALLERY_TAGS: &str =
+    "ultra complexity, very aesthetic, best quality, amazing quality, absurdres";
 const UC_HEAVY_TEXT: &str = "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page";
 const UC_COMIC_TEXT: &str = "worst quality, bad quality, blurry, watermark, bad anatomy, extra fingers, ugly, fused face, cropped, jpeg artifacts, mutation, extra legs, missing fingers, poorly drawn hands, extra arms";
 
@@ -364,7 +365,10 @@ pub fn assemble_prompt(settings: &NovelAiSettings, user_prompt: &str) -> AppResu
         ""
     };
     let mut quality = quality_tags(&settings.quality).to_string();
-    if !quality.is_empty() && prompt.to_ascii_lowercase().contains(&quality.to_ascii_lowercase())
+    if !quality.is_empty()
+        && prompt
+            .to_ascii_lowercase()
+            .contains(&quality.to_ascii_lowercase())
     {
         quality.clear();
     }
@@ -463,7 +467,9 @@ pub fn build_payload(
             c
         })
         .collect();
-    let use_coords = characters.iter().any(|c| (c.x - 0.5).abs() > f64::EPSILON || (c.y - 0.5).abs() > f64::EPSILON);
+    let use_coords = characters
+        .iter()
+        .any(|c| (c.x - 0.5).abs() > f64::EPSILON || (c.y - 0.5).abs() > f64::EPSILON);
 
     let char_captions: Vec<Value> = characters
         .iter()
@@ -800,18 +806,17 @@ fn parse_subscription(raw: &[u8]) -> AppResult<NovelAiSubscription> {
         .unwrap_or(fallback_name)
         .to_string();
     let usage = data.get("usage").cloned().unwrap_or(Value::Null);
-    let usage_percent = usage
-        .get("percent")
-        .and_then(Value::as_f64)
-        .or_else(|| usage.get("percent").and_then(Value::as_i64).map(|n| n as f64));
+    let usage_percent = usage.get("percent").and_then(Value::as_f64).or_else(|| {
+        usage
+            .get("percent")
+            .and_then(Value::as_i64)
+            .map(|n| n as f64)
+    });
     Ok(NovelAiSubscription {
         tier,
         opus: tier >= 3 || tier_name.eq_ignore_ascii_case("opus"),
         tier_name,
-        active: data
-            .get("active")
-            .and_then(Value::as_bool)
-            .unwrap_or(true),
+        active: data.get("active").and_then(Value::as_bool).unwrap_or(true),
         anlas: (fixed + purchased).max(0),
         anlas_fixed: fixed.max(0),
         anlas_purchased: purchased.max(0),

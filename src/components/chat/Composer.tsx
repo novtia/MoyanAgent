@@ -13,6 +13,7 @@ import { useSettings } from "../../store/settings";
 import { useProject } from "../../store/project";
 import { api, srcOf } from "../../api/tauri";
 import { toast } from "../ui/Toast";
+import { isChatPickerModel } from "../settings/llm/modelServices";
 import {
   ASPECT_RATIOS,
   IMAGE_SIZES,
@@ -1474,11 +1475,14 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                       <div className="model-popover-empty">{t("composer.modelPickerEmpty")}</div>
                     ) : (
                       <div className="model-popover-body">
-                        {enabledProviders.map((provider) => (
+                        {enabledProviders.map((provider) => {
+                          const chatModels = provider.models.filter(isChatPickerModel);
+                          if (chatModels.length === 0) return null;
+                          return (
                           <div key={provider.id} className="model-popover-group">
                             <div className="model-popover-group-title">{provider.name}</div>
                             <div className="model-popover-list">
-                              {provider.models.map((modelRow) => {
+                              {chatModels.map((modelRow) => {
                                 const m = modelRow.id;
                                 const sessionProviderId =
                                   session?.provider_id ??
@@ -1504,7 +1508,8 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                               })}
                             </div>
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::process::Child;
 use std::sync::{Arc, Mutex};
 
 use crate::ai::agent::core::context::AbortHandle;
@@ -14,6 +15,10 @@ pub struct AppState {
     pub pool: DbPool,
     /// Per-session abort controllers for in-flight `generate_image` runs.
     pub(crate) generation_abort: Mutex<HashMap<String, AbortHandle>>,
+    /// The one in-flight reader rewrite. `Some` means a run is active.
+    pub(crate) rewrite_abort: Mutex<Option<AbortHandle>>,
+    /// llama-server process spawned from settings. Dropped with the app.
+    pub(crate) local_llama: LocalLlamaProcess,
 
     /// Agent subsystem services. Kept on `AppState` so that any Tauri
     /// command can register tasks, fan out notifications, or pick up a
@@ -44,5 +49,32 @@ pub struct AppState {
 impl AppState {
     pub(crate) fn conn(&self) -> AppResult<db::DbConn> {
         Ok(self.pool.get()?)
+    }
+}
+
+/// Process this app launched. Killing it on drop stops the server when the
+/// app exits. A server that was already listening is not stored here.
+pub struct LocalLlamaProcess {
+    pub child: Mutex<Option<Child>>,
+    pub starting: Mutex<bool>,
+}
+
+impl Default for LocalLlamaProcess {
+    fn default() -> Self {
+        Self {
+            child: Mutex::new(None),
+            starting: Mutex::new(false),
+        }
+    }
+}
+
+impl Drop for LocalLlamaProcess {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.child.lock() {
+            if let Some(mut child) = slot.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
     }
 }

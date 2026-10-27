@@ -10,6 +10,8 @@
 //! merely retired — two writers would fight, and this one cannot express
 //! "delete the file" at all.
 
+use std::path::Path;
+
 use rusqlite::params;
 use serde::Serialize;
 use ulid::Ulid;
@@ -288,6 +290,28 @@ pub fn reject_all(
 /// canonicalize against, so the file name keeps whatever case it was written
 /// with. Match the raw and normalized spellings, case-insensitively where the
 /// filesystem itself is.
+/// Point review rows for `from` at `to` after a rename.
+///
+/// Undo writes `text_before` back to the row's path. Leaving the old path
+/// would recreate the previous file name beside the renamed one.
+pub fn remap_path(conn: &DbConn, session_id: &str, from: &Path, to: &Path) -> AppResult<usize> {
+    let from_key = crate::data::paths::normalized_path_key(from);
+    let to_key = crate::data::paths::normalized_path_key(to);
+    if from_key == to_key {
+        return Ok(0);
+    }
+    let from_raw = crate::data::paths::display_path(from);
+    #[cfg(windows)]
+    const SQL: &str = "UPDATE pending_diffs SET path = ?1
+                       WHERE session_id = ?2
+                         AND (path COLLATE NOCASE = ?3 OR path COLLATE NOCASE = ?4)";
+    #[cfg(not(windows))]
+    const SQL: &str = "UPDATE pending_diffs SET path = ?1
+                       WHERE session_id = ?2 AND (path = ?3 OR path = ?4)";
+    let n = conn.execute(SQL, params![to_key, session_id, from_raw, from_key])?;
+    Ok(n)
+}
+
 pub fn clear_path(conn: &DbConn, session_id: &str, path: &str) -> AppResult<()> {
     let normalized = crate::data::paths::normalized_path_key(std::path::Path::new(path));
     #[cfg(windows)]

@@ -382,6 +382,8 @@ pub fn supplier_presets_as_providers(conn: &DbConn) -> AppResult<Vec<ModelProvid
             enabled,
             context_cache_enabled: false,
             safety_threshold: None,
+            local_server_exe: String::new(),
+            local_model_path: String::new(),
             models,
         });
     }
@@ -468,6 +470,8 @@ mod overlay_tests {
             enabled: true,
             context_cache_enabled: false,
             safety_threshold: None,
+            local_server_exe: String::new(),
+            local_model_path: String::new(),
             models: vec![ModelServiceModel {
                 id: "qwen/qwen3.7-max".into(),
                 name: "qwen3.7-max".into(),

@@ -207,9 +207,8 @@ impl Tool for NovelAITool {
                 Ok(d) => d,
                 Err(e) => return Ok(ToolResult::error(e.to_string())),
             };
-            std::fs::create_dir_all(&dir).map_err(|e| {
-                AppError::Other(format!("{TOOL_NAME}: mkdir {:?}: {e}", dir))
-            })?;
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| AppError::Other(format!("{TOOL_NAME}: mkdir {:?}: {e}", dir)))?;
 
             let request = GenerateRequest {
                 prompt,
@@ -251,9 +250,8 @@ impl Tool for NovelAITool {
                     &path,
                     FileOp::Create,
                 )?;
-                std::fs::write(&path, bytes).map_err(|e| {
-                    AppError::Other(format!("{TOOL_NAME}: write {:?}: {e}", path))
-                })?;
+                std::fs::write(&path, bytes)
+                    .map_err(|e| AppError::Other(format!("{TOOL_NAME}: write {:?}: {e}", path)))?;
                 let (w, h) = nai::png_size(bytes).unwrap_or((meta.width, meta.height));
                 saved.push(json!({
                     "path": display_path(&path),
