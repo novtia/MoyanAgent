@@ -7,6 +7,8 @@ import type { PendingDiffLineRange } from "../../../../utils/inlineDiff";
 interface ReaderDiffActionBarProps {
   tab: ReaderFileTab;
   range: PendingDiffLineRange;
+  /** Every Edit merged into this hunk (chronological); defaults to just `range`. */
+  blockIds?: string[];
   hunkIndex: number;
   hunkTotal: number;
   onNavigate: (direction: -1 | 1) => void;
@@ -17,6 +19,7 @@ interface ReaderDiffActionBarProps {
 export function ReaderDiffActionBar({
   tab,
   range,
+  blockIds,
   hunkIndex,
   hunkTotal,
   onNavigate,
@@ -31,11 +34,16 @@ export function ReaderDiffActionBar({
     onMouseLeave();
     if (!sessionId) return;
     try {
-      const revert = await api.confirmPendingDiff(sessionId, range.blockId, accept);
       if (accept) {
-        confirmDiffBlock(tab.path, range.blockId, true);
+        // A merged hunk stands for several Edits: keeping it keeps all of them.
+        for (const id of blockIds ?? [range.blockId]) {
+          await api.confirmPendingDiff(sessionId, id, true);
+          confirmDiffBlock(tab.path, id, true);
+        }
         return;
       }
+      // Undo rewinds to before the earliest Edit of the hunk (`range.blockId`).
+      const revert = await api.confirmPendingDiff(sessionId, range.blockId, false);
       if (!revert) return;
       const result = confirmDiffBlock(tab.path, range.blockId, false);
       if (result?.revertText !== revert.text) {

@@ -3,7 +3,12 @@ import { DEFAULT_PROVIDER_SDK } from "../modelServices";
 
 export type ProviderDraft = Pick<
   ModelProvider,
-  "name" | "endpoint" | "api_key" | "local_server_exe" | "local_model_path"
+  | "name"
+  | "endpoint"
+  | "api_key"
+  | "local_server_exe"
+  | "local_model_path"
+  | "local_context_size"
 > & {
   sdk: string;
   avatar: string;
@@ -17,6 +22,7 @@ export const EMPTY_PROVIDER_DRAFT: ProviderDraft = {
   api_key: "",
   local_server_exe: "",
   local_model_path: "",
+  local_context_size: 0,
 };
 
 export type PricingDraft = {

@@ -1,0 +1,1012 @@
+/* Phone reader window: transparent stage, device bezel, in-screen reader app. */
+
+html.phone-reader-root,
+html.phone-reader-root body,
+html.phone-reader-root #root {
+  background: transparent;
+  height: 100%;
+  min-height: 100%;
+  overflow: clip;
+}
+
+.phone-stage {
+  box-sizing: border-box;
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  padding: 10px 6px 12px 14px;
+  gap: 8px;
+  background: transparent;
+}
+
+.phone-device {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 11px 16px;
+  border-radius: 42px;
+  background:
+    linear-gradient(165deg, #3a3a40 0%, #1c1c20 18%, #0c0c0e 55%, #242428 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.28),
+    inset 0 0 0 2px #050506,
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 16px 32px rgba(0, 0, 0, 0.38);
+}
+
+.phone-side {
+  position: absolute;
+  width: 3px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #4a4a50, #1a1a1e 70%);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+
+.phone-side-silent {
+  left: -2px;
+  top: 92px;
+  height: 22px;
+}
+
+.phone-side-volume-up {
+  left: -3px;
+  top: 132px;
+  height: 42px;
+}
+
+.phone-side-volume-down {
+  left: -3px;
+  top: 184px;
+  height: 42px;
+}
+
+.phone-side-power {
+  right: -3px;
+  top: 148px;
+  height: 64px;
+}
+
+.phone-screen {
+  --phone-bg: #d7c094;
+  --phone-paper: #d7c094;
+  --phone-ink: #3c2a14;
+  --phone-ink-soft: #6d5432;
+  --phone-line: rgba(92, 62, 24, 0.22);
+  --phone-chip: rgba(255, 248, 232, 0.38);
+  --phone-accent: #a56b2a;
+  --phone-track: rgba(92, 62, 24, 0.22);
+  --phone-pop: #ead7ae;
+  --phone-sheet: rgba(226, 205, 160, 0.97);
+  --phone-scrollbar: rgba(92, 62, 24, 0.35);
+  --phone-home: rgba(60, 42, 20, 0.35);
+  --phone-status: #5c431e;
+  --phone-dim: 0;
+
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: clip;
+  border-radius: 30px;
+  background: var(--phone-paper);
+  color: var(--phone-ink);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
+  transition: background 180ms ease, color 180ms ease;
+}
+
+.phone-screen[data-theme="parchment"] {
+  --phone-paper: linear-gradient(180deg, #e6d3a4 0%, #d8bf8c 46%, #d0b27c 100%);
+  --phone-sheet: rgba(226, 205, 160, 0.97);
+  --phone-pop: #f0e0b8;
+}
+
+.phone-screen[data-theme="white"] {
+  --phone-bg: #ffffff;
+  --phone-paper: #ffffff;
+  --phone-ink: #1c1c1c;
+  --phone-ink-soft: #5e5e5e;
+  --phone-line: rgba(0, 0, 0, 0.1);
+  --phone-chip: #f3f3f3;
+  --phone-accent: #c58a2a;
+  --phone-track: rgba(0, 0, 0, 0.12);
+  --phone-pop: #ffffff;
+  --phone-sheet: rgba(255, 255, 255, 0.98);
+  --phone-scrollbar: rgba(0, 0, 0, 0.28);
+  --phone-home: rgba(0, 0, 0, 0.28);
+  --phone-status: #8a8a8a;
+}
+
+.phone-screen[data-theme="dark"] {
+  --phone-bg: #141414;
+  --phone-paper: #161616;
+  --phone-ink: #ece6dc;
+  --phone-ink-soft: #b3a89a;
+  --phone-line: rgba(255, 255, 255, 0.12);
+  --phone-chip: rgba(255, 255, 255, 0.06);
+  --phone-accent: #e0b15a;
+  --phone-track: rgba(255, 255, 255, 0.16);
+  --phone-pop: #2c2c2c;
+  --phone-sheet: rgba(28, 28, 28, 0.97);
+  --phone-scrollbar: rgba(255, 255, 255, 0.28);
+  --phone-home: rgba(255, 255, 255, 0.38);
+  --phone-status: #b7ab9a;
+}
+
+.phone-screen[data-theme="warm"] {
+  --phone-bg: #e7d7be;
+  --phone-paper: linear-gradient(180deg, #f4e7d2 0%, #e7d5b6 100%);
+  --phone-ink: #3f3326;
+  --phone-ink-soft: #756656;
+  --phone-line: rgba(80, 58, 36, 0.16);
+  --phone-chip: rgba(255, 250, 242, 0.62);
+  --phone-accent: #b07a32;
+  --phone-track: rgba(80, 58, 36, 0.18);
+  --phone-pop: #f7ecda;
+  --phone-sheet: rgba(236, 220, 196, 0.97);
+  --phone-scrollbar: rgba(80, 58, 36, 0.32);
+  --phone-home: rgba(63, 51, 38, 0.32);
+  --phone-status: #7a6550;
+}
+
+.phone-screen[data-theme="green"] {
+  --phone-bg: #d7ead4;
+  --phone-paper: linear-gradient(180deg, #e7f4e3 0%, #d2e6cc 100%);
+  --phone-ink: #243226;
+  --phone-ink-soft: #516454;
+  --phone-line: rgba(36, 70, 40, 0.16);
+  --phone-chip: rgba(255, 255, 255, 0.45);
+  --phone-accent: #3f7a48;
+  --phone-track: rgba(36, 70, 40, 0.18);
+  --phone-pop: #f3faf1;
+  --phone-sheet: rgba(214, 232, 210, 0.97);
+  --phone-scrollbar: rgba(36, 70, 40, 0.32);
+  --phone-home: rgba(36, 50, 38, 0.32);
+  --phone-status: #4e6552;
+}
+
+.phone-screen[data-theme="pink"] {
+  --phone-bg: #f6e4e6;
+  --phone-paper: linear-gradient(180deg, #fbeff0 0%, #f3dde0 100%);
+  --phone-ink: #3d2a2e;
+  --phone-ink-soft: #7a5c62;
+  --phone-line: rgba(120, 60, 70, 0.14);
+  --phone-chip: rgba(255, 255, 255, 0.5);
+  --phone-accent: #c46b78;
+  --phone-track: rgba(120, 60, 70, 0.16);
+  --phone-pop: #fff6f7;
+  --phone-sheet: rgba(246, 226, 228, 0.97);
+  --phone-scrollbar: rgba(120, 60, 70, 0.3);
+  --phone-home: rgba(61, 42, 46, 0.28);
+  --phone-status: #8a6670;
+}
+
+.phone-screen[data-font="serif"] .phone-reader-body {
+  font-family: "Songti SC", "Noto Serif SC", "Source Han Serif SC", SimSun, PMingLiU, serif;
+}
+
+.phone-screen[data-font="sans"] .phone-reader-body {
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}
+
+.phone-screen[data-font="kai"] .phone-reader-body {
+  font-family: KaiTi, STKaiti, "Kaiti SC", "KaiTi_GB2312", serif;
+}
+
+.phone-dock-btn {
+  font-family: inherit;
+}
+
+.phone-screen :where(button) {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.phone-screen :where(button:disabled) {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.phone-speaker {
+  position: relative;
+  z-index: 4;
+  flex: none;
+  width: 54px;
+  height: 5px;
+  margin: 8px auto 2px;
+  border-radius: 999px;
+  background: #1a1a1e;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  cursor: grab;
+}
+
+.phone-status,
+.phone-appbar,
+.phone-reader-body,
+.phone-home {
+  position: relative;
+  z-index: 3;
+}
+
+.phone-status {
+  flex: none;
+  padding: 4px 14px 2px;
+  color: var(--phone-status);
+  font-size: 12px;
+}
+
+.phone-readbar,
+.phone-sys {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 22px;
+}
+
+.phone-status-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+
+.phone-status-meta,
+.phone-sys-left,
+.phone-sys-right {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.phone-battery-num {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.phone-appbar {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 8px 0 4px;
+  animation: phone-drop 180ms ease;
+}
+
+.phone-appbar-gap {
+  flex: 1 1 auto;
+}
+
+.phone-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: var(--phone-ink);
+}
+
+.phone-icon-btn:hover {
+  background: var(--phone-chip);
+}
+
+.phone-app-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--phone-line);
+  border-radius: 999px;
+  background: var(--phone-chip);
+  color: var(--phone-ink);
+  font-size: 12px;
+}
+
+.phone-app-pill:hover {
+  background: color-mix(in srgb, var(--phone-ink) 8%, var(--phone-chip));
+}
+
+.phone-badge {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #e23b3b;
+  color: #fff;
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+}
+
+.phone-more-wrap {
+  position: relative;
+}
+
+.phone-more-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 12;
+  min-width: 132px;
+  padding: 6px;
+  border: 1px solid var(--phone-line);
+  border-radius: 12px;
+  background: var(--phone-pop);
+  box-shadow: 0 10px 24px rgba(40, 24, 8, 0.16);
+}
+
+.phone-more-pop button {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--phone-ink);
+  font-size: 13px;
+  text-align: left;
+}
+
+.phone-more-pop button:hover {
+  background: var(--phone-chip);
+}
+
+.phone-reader-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 8px 18px 28px;
+  font-size: 18px;
+  line-height: 1.9;
+  scrollbar-width: thin;
+  scrollbar-color: var(--phone-scrollbar) transparent;
+  cursor: default;
+}
+
+.phone-reader-body::-webkit-scrollbar {
+  width: 4px;
+}
+
+.phone-reader-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--phone-scrollbar);
+}
+
+.phone-reader-p {
+  margin: 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  user-select: text;
+}
+
+.phone-reader-p:not(.is-blank) {
+  text-align: justify;
+  text-justify: inter-character;
+}
+
+.phone-reader-p.is-indent {
+  text-indent: 2em;
+}
+
+.phone-reader-p.is-spaced {
+  margin-bottom: 0.85em;
+}
+
+.phone-reader-p.is-blank {
+  min-height: 1em;
+}
+
+.phone-reader-empty {
+  margin: 48px 0 0;
+  color: var(--phone-ink-soft);
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.phone-home {
+  flex: none;
+  width: 108px;
+  height: 4px;
+  margin: 6px auto 8px;
+  border-radius: 999px;
+  background: var(--phone-home);
+}
+
+.phone-grain,
+.phone-eye,
+.phone-dim {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.phone-grain {
+  z-index: 1;
+  opacity: 0.22;
+  background-image: radial-gradient(rgba(90, 55, 20, 0.45) 0.55px, transparent 0.55px);
+  background-size: 3px 3px;
+  mix-blend-mode: multiply;
+}
+
+.phone-screen[data-theme="white"] .phone-grain,
+.phone-screen[data-theme="dark"] .phone-grain {
+  opacity: 0.05;
+}
+
+.phone-screen[data-theme="dark"] .phone-grain {
+  mix-blend-mode: screen;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.4) 0.5px, transparent 0.5px);
+}
+
+.phone-eye {
+  z-index: 19;
+  background: rgba(255, 176, 72, 0.16);
+  mix-blend-mode: multiply;
+  opacity: 0;
+}
+
+.phone-screen.is-eye .phone-eye {
+  opacity: 1;
+}
+
+.phone-screen[data-theme="dark"].is-eye .phone-eye {
+  background: rgba(255, 168, 64, 0.22);
+  mix-blend-mode: soft-light;
+}
+
+.phone-dim {
+  z-index: 20;
+  background: #000;
+  opacity: var(--phone-dim, 0);
+}
+
+.phone-listen {
+  position: absolute;
+  right: 14px;
+  bottom: 22px;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--phone-line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--phone-pop) 88%, transparent);
+  color: var(--phone-accent);
+  font-size: 13px;
+  box-shadow: 0 6px 16px rgba(40, 24, 8, 0.12);
+}
+
+.phone-menu-sheet .phone-listen {
+  top: 0;
+  right: 14px;
+  bottom: auto;
+  transform: translateY(calc(-100% - 10px));
+}
+
+.phone-listen.is-on {
+  background: var(--phone-accent);
+  color: #fff;
+  border-color: transparent;
+}
+
+.phone-sheet {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 8;
+  padding: 14px 14px 18px;
+  border-radius: 18px 18px 28px 28px;
+  background: var(--phone-sheet);
+  box-shadow: 0 -10px 28px rgba(40, 24, 8, 0.12);
+  transform: translateY(110%);
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    transform 240ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    visibility 0s linear 240ms;
+}
+
+.phone-screen.is-menu .phone-menu-sheet,
+.phone-screen.is-settings .phone-settings-sheet {
+  transform: translateY(0);
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    transform 240ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    visibility 0s linear 0s;
+}
+
+.phone-settings-sheet {
+  max-height: 78%;
+  overflow: auto;
+}
+
+.phone-chips {
+  display: flex;
+  gap: 8px;
+}
+
+.phone-chip {
+  position: relative;
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 36px;
+  border: 1px solid var(--phone-line);
+  border-radius: 999px;
+  background: var(--phone-chip);
+  color: var(--phone-ink);
+  font-size: 13px;
+}
+
+.phone-chip:hover,
+.phone-edge:hover,
+.phone-nav-btn:hover,
+.phone-tool:hover,
+.phone-step:hover:not(:disabled),
+.phone-font-btn:hover,
+.phone-check:hover {
+  background: color-mix(in srgb, var(--phone-ink) 8%, var(--phone-chip));
+}
+
+.phone-dot {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #e23b3b;
+}
+
+.phone-progress {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.phone-edge {
+  color: var(--phone-ink-soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.phone-slider {
+  --fill: 0%;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.phone-slider:disabled {
+  cursor: default;
+}
+
+.phone-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--phone-accent) var(--fill), var(--phone-track) var(--fill));
+}
+
+.phone-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -8px;
+  border: 2px solid var(--phone-accent);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.phone-slider::-moz-range-track {
+  height: 3px;
+  border: none;
+  border-radius: 999px;
+  background: var(--phone-track);
+}
+
+.phone-slider::-moz-range-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--phone-accent);
+}
+
+.phone-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--phone-accent);
+  border-radius: 50%;
+  background: #fff;
+}
+
+.phone-nav {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
+.phone-nav-btn,
+.phone-tool {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0 2px;
+  color: var(--phone-ink-soft);
+  font-size: 11px;
+}
+
+.phone-nav-btn.is-on,
+.phone-tool.is-on {
+  color: var(--phone-accent);
+}
+
+.phone-nav-icon,
+.phone-tool-icon {
+  position: relative;
+  display: inline-flex;
+}
+
+.phone-count {
+  position: absolute;
+  top: -6px;
+  right: -16px;
+  color: var(--phone-accent);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.phone-tool .phone-dot {
+  top: -2px;
+  right: -6px;
+}
+
+.phone-setting-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+}
+
+.phone-setting-label {
+  min-width: 2.5em;
+  color: var(--phone-ink-soft);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.phone-setting-control,
+.phone-swatches {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.phone-setting-control .phone-slider {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.phone-step,
+.phone-font-btn,
+.phone-check,
+.phone-format button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  border: 1px solid var(--phone-line);
+  border-radius: 16px;
+  background: var(--phone-chip);
+  color: var(--phone-ink);
+  font-size: 14px;
+}
+
+.phone-step {
+  min-width: 44px;
+  padding: 0 8px;
+}
+
+.phone-step-value {
+  min-width: 24px;
+  color: var(--phone-ink);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.phone-font-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px;
+  padding: 0 8px 0 10px;
+  overflow: hidden;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.phone-check {
+  flex: none;
+  gap: 4px;
+  padding: 0 8px 0 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.phone-check-dot {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--phone-accent);
+  border-radius: 50%;
+}
+
+.phone-check.is-on .phone-check-dot {
+  background: var(--phone-accent);
+  box-shadow: inset 0 0 0 2px var(--phone-sheet);
+}
+
+.phone-swatches {
+  gap: 10px;
+}
+
+.phone-swatch {
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.phone-swatch[data-swatch="white"] { background: #fff; }
+.phone-swatch[data-swatch="dark"] { background: #1a1a1a; }
+.phone-swatch[data-swatch="warm"] { background: #e7d3b0; }
+.phone-swatch[data-swatch="green"] { background: #d5ead0; }
+.phone-swatch[data-swatch="pink"] { background: #f6dfe3; }
+.phone-swatch[data-swatch="parchment"] {
+  background: radial-gradient(circle at 30% 30%, #f0ddb0, #c9a56c);
+}
+
+.phone-swatch.is-on {
+  box-shadow:
+    0 0 0 2px var(--phone-sheet),
+    0 0 0 4px #c9963a;
+}
+
+.phone-format {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 2px;
+}
+
+.phone-format button {
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.phone-format button.is-on,
+.phone-tool.is-on {
+  color: var(--phone-accent);
+  border-color: color-mix(in srgb, var(--phone-accent) 55%, var(--phone-line));
+}
+
+.phone-tools {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
+.phone-toc-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  background: rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+
+.phone-screen.is-toc .phone-toc-backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.phone-toc {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  width: min(78%, 280px);
+  background: var(--phone-sheet);
+  box-shadow: 8px 0 24px rgba(40, 24, 8, 0.16);
+  transform: translateX(-105%);
+  visibility: hidden;
+  transition:
+    transform 240ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    visibility 0s linear 240ms;
+}
+
+.phone-screen.is-toc .phone-toc {
+  transform: translateX(0);
+  visibility: visible;
+  transition:
+    transform 240ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    visibility 0s linear 0s;
+}
+
+.phone-toc-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 8px 8px 16px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.phone-toc-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0 8px 16px;
+  overflow: auto;
+  list-style: none;
+}
+
+.phone-toc-item {
+  display: block;
+  width: 100%;
+  padding: 10px 8px;
+  border-radius: 8px;
+  color: var(--phone-ink);
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.phone-toc-item:hover {
+  background: var(--phone-chip);
+}
+
+.phone-toc-empty {
+  margin: 24px 16px;
+  color: var(--phone-ink-soft);
+  font-size: 13px;
+}
+
+.phone-hint {
+  position: absolute;
+  top: 46%;
+  left: 50%;
+  z-index: 30;
+  max-width: 78%;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(40, 28, 14, 0.88);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: center;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.phone-side-dock {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  align-self: stretch;
+  justify-content: center;
+  gap: 10px;
+  width: 42px;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.phone-stage:hover .phone-side-dock,
+.phone-stage:focus-within .phone-side-dock {
+  opacity: 1;
+}
+
+.phone-dock-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(28, 28, 32, 0.82);
+  color: #f4f1ea;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+
+.phone-dock-btn.is-drag {
+  cursor: grab;
+}
+
+.phone-dock-btn:hover {
+  background: rgba(48, 48, 54, 0.88);
+}
+
+.phone-dock-btn.is-on {
+  color: #e8c27a;
+  border-color: rgba(232, 194, 122, 0.85);
+}
+
+.phone-dock-btn.is-close:hover {
+  color: #ffd0d0;
+  border-color: rgba(255, 140, 140, 0.7);
+}
+
+.phone-dock-btn:focus-visible,
+.phone-screen button:focus-visible {
+  outline: 2px solid var(--phone-accent, #c9963a);
+  outline-offset: 2px;
+}
+
+@keyframes phone-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phone-sheet,
+  .phone-toc,
+  .phone-toc-backdrop,
+  .phone-side-dock,
+  .phone-appbar,
+  .phone-screen {
+    transition: none;
+    animation: none;
+  }
+}

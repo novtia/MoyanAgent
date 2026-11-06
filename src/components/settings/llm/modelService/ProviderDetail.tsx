@@ -25,6 +25,7 @@ import { ChevronIcon, GearIcon, ListIcon, MinusIcon, PlusIcon } from "./icons";
 import { LocalServerCard } from "./LocalServerCard";
 import { ProviderEnableSwitch } from "./ProviderEnableSwitch";
 import type { ProviderDraft } from "./types";
+import { VertexCredentialFields } from "./VertexCredentialFields";
 
 export function ProviderDetail({
   selectedProvider,
@@ -125,38 +126,49 @@ export function ProviderDetail({
 
         <div className="model-provider-config">
           <div className="model-provider-fields">
-            <div className="row">
-              <label className="field-label">API 密钥</label>
-              <div className="input-affix">
-                <input
-                  type={showKey ? "text" : "password"}
-                  value={providerDraft.api_key}
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder={selectedSdkConfig.apiKeyPlaceholder}
-                  onChange={(e) => onDraftChange({ api_key: e.target.value })}
-                />
-                <button
-                  type="button"
-                  className="affix-btn"
-                  onClick={onToggleShowKey}
+            {isVertexSdk(selectedProvider.sdk) ? (
+              <VertexCredentialFields
+                providerId={selectedProvider.id}
+                apiKey={providerDraft.api_key}
+                endpoint={providerDraft.endpoint}
+                showKey={showKey}
+                apiKeyPlaceholder={selectedSdkConfig.apiKeyPlaceholder}
+                validationError={selectedProviderValidation.api_key}
+                onDraftChange={onDraftChange}
+                onToggleShowKey={onToggleShowKey}
+              />
+            ) : (
+              <div className="row">
+                <label className="field-label">API 密钥</label>
+                <div className="input-affix">
+                  <input
+                    type={showKey ? "text" : "password"}
+                    value={providerDraft.api_key}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={selectedSdkConfig.apiKeyPlaceholder}
+                    onChange={(e) => onDraftChange({ api_key: e.target.value })}
+                  />
+                  <button
+                    type="button"
+                    className="affix-btn"
+                    onClick={onToggleShowKey}
+                  >
+                    {showKey
+                      ? t("settings.llm.keyHide")
+                      : t("settings.llm.keyShow")}
+                  </button>
+                </div>
+                <div
+                  className={`hint ${
+                    selectedProviderValidation.api_key ? "is-error" : ""
+                  }`}
                 >
-                  {showKey
-                    ? t("settings.llm.keyHide")
-                    : t("settings.llm.keyShow")}
-                </button>
+                  {selectedProviderValidation.api_key ??
+                    selectedSdkConfig.apiKeyHint}
+                </div>
               </div>
-              <div
-                className={`hint ${
-                  selectedProviderValidation.api_key ? "is-error" : ""
-                }`}
-              >
-                {selectedProviderValidation.api_key ??
-                  (isVertexSdk(selectedProvider.sdk)
-                    ? t("settings.llm.vertexKeyHint")
-                    : selectedSdkConfig.apiKeyHint)}
-              </div>
-            </div>
+            )}
             {isVertexSdk(selectedProvider.sdk) && (
               <>
                 <div className="row">
@@ -272,10 +284,13 @@ export function ProviderDetail({
                 modelPath={providerDraft.local_model_path ?? ""}
                 onServerExe={(value) => onDraftChange({ local_server_exe: value })}
                 onModelPath={(value) => onDraftChange({ local_model_path: value })}
+                contextSize={providerDraft.local_context_size ?? 0}
+                onContextSize={(value) => onDraftChange({ local_context_size: value })}
                 onBeforeStart={() =>
                   onPatchProvider(selectedProvider.id, {
                     local_server_exe: providerDraft.local_server_exe ?? "",
                     local_model_path: providerDraft.local_model_path ?? "",
+                    local_context_size: providerDraft.local_context_size ?? 0,
                     endpoint: providerDraft.endpoint,
                   })
                 }

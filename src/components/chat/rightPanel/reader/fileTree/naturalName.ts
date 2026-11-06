@@ -148,6 +148,14 @@ export function compareNaturalName(a: string, b: string): number {
   return cmpText(a, b);
 }
 
-export function txtStem(name: string): string {
-  return name.replace(/\.txt$/i, "");
+/** Project documents the file tree can concatenate into one TXT or Word file. */
+const EXPORT_DOC_EXT = /\.(txt|md|markdown)$/i;
+
+export function isExportableDoc(path: string): boolean {
+  return EXPORT_DOC_EXT.test(path);
+}
+
+/** Filename without a document extension, for the export dialog's default name. */
+export function docStem(name: string): string {
+  return name.replace(EXPORT_DOC_EXT, "");
 }

@@ -82,7 +82,10 @@ export function ToolsPane({
                 className="model-provider-item-body settings-tool-item-body"
                 onClick={() => onSelect(tool)}
               >
-                <span className="model-provider-avatar settings-tool-avatar">
+                <span
+                  className="model-provider-avatar settings-tool-avatar"
+                  data-tool={tool.name}
+                >
                   <ToolGlyph tool={tool.name} />
                 </span>
                 <span className="model-provider-name settings-tool-name">

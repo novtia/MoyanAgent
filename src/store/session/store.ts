@@ -1101,6 +1101,21 @@ export const useSession = create<SessionStore>((set, get) => {
     }
   },
 
+  summarizeContext: async (messageId) => {
+    const a = get().active;
+    if (!a) return;
+    const sid = a.session.id;
+    if (get().busyBySession[sid]) return;
+    setSessionBusy(sid, true);
+    try {
+      await api.summarizeContext(sid, messageId);
+      await reloadActiveSessionIfViewing(sid);
+      await get().refreshList().catch((err) => console.warn(err));
+    } finally {
+      if (get().busyBySession[sid]) setSessionBusy(sid, false);
+    }
+  },
+
   deleteMessage: async (messageId) => {
     const a = get().active;
     if (!a) return;

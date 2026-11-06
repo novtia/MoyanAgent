@@ -4,14 +4,16 @@ use std::sync::Arc;
 use reqwest::StatusCode;
 use serde_json::{json, Map, Value};
 
-use crate::ai::chat::{ChatRequest, GenerateResponse, TextDeltaCallback};
+use crate::ai::chat::{ChatRequest, GenerateResponse, ImageResult, TextDeltaCallback};
+use crate::ai::tokens::extract_usage;
 use crate::error::{AppError, AppResult};
 
 use super::chat::parse::parse_openai_like_response;
 use super::chat::stream::parse_openai_chat_success;
 use super::common::{
-    debug_log_upstream_request, debug_log_upstream_response_text, emit_final_text_if_needed,
-    is_empty_stream_upstream_error, is_idle_timeout_message, message_rejects_gemini_arg_streaming,
+    data_url, debug_log_upstream_request, debug_log_upstream_response_text,
+    emit_final_text_if_needed, is_empty_stream_upstream_error, is_idle_timeout_message,
+    message_rejects_gemini_arg_streaming, parse_b64_image, parse_data_url,
     retryable_error_in_json_body, should_retry_failed_stream_attempt, should_retry_http_error,
     should_retry_transport, sleep_for_attempt, upstream_error_message,
     upstream_rejects_gemini_arg_streaming, upstream_rejects_streaming, without_streaming,
@@ -431,4 +433,201 @@ pub(crate) fn is_image_only_model(model: &str) -> bool {
         || m.starts_with("bytedance-seed/")
         || m.starts_with("sourceful/")
         || m.starts_with("recraft/")
+}
+
+/// Dedicated image models that OpenRouter rejects on `chat/completions`.
+///
+/// `openai/gpt-5-image` still draws through chat completions. `gpt-image-*`
+/// (and other Image-API-only slugs) must use `POST /api/v1/images`.
+pub(crate) fn uses_openrouter_images_api(model: &str) -> bool {
+    let m = model.trim().to_ascii_lowercase();
+    m.contains("gpt-image") || m.contains("qwen-image") || m.contains("muse-image")
+}
+
+/// OpenRouter 404: `"… is an image generation model and cannot be used with
+/// the chat/completions endpoint. Use the /api/v1/images endpoint instead."`
+pub(crate) fn message_requires_openrouter_images_api(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.contains("image generation model") && m.contains("chat/completions") && m.contains("/images")
+}
+
+pub(crate) fn openrouter_images_url(endpoint: &str) -> String {
+    let e = endpoint.trim().trim_end_matches('/');
+    if let Some(base) = e.strip_suffix("/chat/completions") {
+        return format!("{base}/images");
+    }
+    if e.ends_with("/images") {
+        return e.to_string();
+    }
+    format!("{e}/images")
+}
+
+const MAX_IMAGE_REFERENCES: usize = 16;
+
+pub(crate) fn build_openrouter_images_body(request: &ChatRequest) -> AppResult<Value> {
+    let prompt = request.prompt.trim();
+    if prompt.is_empty() {
+        return Err(AppError::Config(
+            "OpenRouter image generation requires a non-empty prompt".into(),
+        ));
+    }
+    if request.attachments.len() > MAX_IMAGE_REFERENCES {
+        return Err(AppError::Config(format!(
+            "OpenRouter image generation accepts at most {MAX_IMAGE_REFERENCES} reference images"
+        )));
+    }
+    let mut body = json!({
+        "model": request.model,
+        "prompt": prompt,
+    });
+    let Some(map) = body.as_object_mut() else {
+        return Err(AppError::Other(
+            "openrouter images body was not an object".into(),
+        ));
+    };
+    let ratio = request.parameters.aspect_ratio.trim();
+    if !ratio.is_empty() {
+        map.insert("aspect_ratio".into(), json!(ratio));
+    }
+    let size = request.parameters.image_size.trim();
+    if !size.is_empty() && !size.eq_ignore_ascii_case("auto") {
+        map.insert("resolution".into(), json!(size));
+    }
+    if !request.attachments.is_empty() {
+        let refs: Vec<Value> = request
+            .attachments
+            .iter()
+            .map(|att| {
+                json!({
+                    "type": "image_url",
+                    "image_url": { "url": data_url(att) }
+                })
+            })
+            .collect();
+        map.insert("input_references".into(), Value::Array(refs));
+    }
+    apply_openrouter_provider_routing(map, request);
+    Ok(body)
+}
+
+pub(crate) fn parse_openrouter_images_response(txt: &str) -> AppResult<GenerateResponse> {
+    let v: Value = serde_json::from_str(txt).map_err(|err| {
+        AppError::Upstream(format!(
+            "failed to parse OpenRouter images response: {err}; body_bytes={}",
+            txt.len()
+        ))
+    })?;
+    if v.get("error").is_some() {
+        return Err(AppError::Upstream(upstream_error_message(txt)));
+    }
+    let Some(data) = v.get("data").and_then(Value::as_array) else {
+        return Err(AppError::Upstream(format!(
+            "OpenRouter images response missing data[]: {}",
+            txt.chars().take(400).collect::<String>()
+        )));
+    };
+    let mut images = Vec::new();
+    for item in data {
+        if let Some(image) = image_from_openrouter_item(item) {
+            images.push(image);
+        }
+    }
+    if images.is_empty() {
+        return Err(AppError::Upstream(
+            "OpenRouter images response contained no image bytes".into(),
+        ));
+    }
+    Ok(GenerateResponse {
+        images,
+        usage: extract_usage(&v),
+        ..GenerateResponse::default()
+    })
+}
+
+fn image_from_openrouter_item(item: &Value) -> Option<ImageResult> {
+    let mime = item
+        .get("media_type")
+        .or_else(|| item.get("mime_type"))
+        .or_else(|| item.get("mimeType"))
+        .and_then(Value::as_str);
+    if let Some(payload) = item.get("b64_json").and_then(Value::as_str) {
+        if let Some(image) = parse_b64_image(payload, mime) {
+            return Some(image);
+        }
+    }
+    item.get("url")
+        .and_then(Value::as_str)
+        .and_then(parse_data_url)
+}
+
+pub(crate) async fn generate_openrouter_images(
+    client: &reqwest::Client,
+    request: &ChatRequest,
+    provider_label: &str,
+) -> AppResult<GenerateResponse> {
+    let url = openrouter_images_url(&request.provider.endpoint);
+    let body = build_openrouter_images_body(request)?;
+    let txt = post_openrouter_images(client, request, &url, &body, provider_label).await?;
+    parse_openrouter_images_response(&txt)
+}
+
+async fn post_openrouter_images(
+    client: &reqwest::Client,
+    request: &ChatRequest,
+    url: &str,
+    body: &Value,
+    provider_label: &str,
+) -> AppResult<String> {
+    for attempt in 1..=MAX_ATTEMPTS {
+        if attempt == 1 {
+            debug_log_upstream_request(provider_label, url, body);
+        }
+        let resp = client
+            .post(url)
+            .bearer_auth(&request.provider.api_key)
+            .header("Content-Type", "application/json")
+            .json(body)
+            .send()
+            .await;
+
+        let resp = match resp {
+            Ok(r) => r,
+            Err(err) => {
+                if attempt < MAX_ATTEMPTS && should_retry_transport(&err) {
+                    sleep_for_attempt(attempt).await;
+                    continue;
+                }
+                return Err(err.into());
+            }
+        };
+
+        let status = resp.status();
+        let txt = match resp.text().await {
+            Ok(txt) => txt,
+            Err(err) => {
+                if attempt < MAX_ATTEMPTS && should_retry_transport(&err) {
+                    sleep_for_attempt(attempt).await;
+                    continue;
+                }
+                return Err(err.into());
+            }
+        };
+        if status.is_success() {
+            if attempt < MAX_ATTEMPTS && retryable_error_in_json_body(&txt) {
+                sleep_for_attempt(attempt).await;
+                continue;
+            }
+            debug_log_upstream_response_text(provider_label, &txt);
+            return Ok(txt);
+        }
+        let msg = upstream_error_message(&txt);
+        if attempt < MAX_ATTEMPTS && should_retry_http_error(status, &msg) {
+            sleep_for_attempt(attempt).await;
+            continue;
+        }
+        return Err(AppError::Upstream(format!(
+            "{provider_label} HTTP {status}: {msg}"
+        )));
+    }
+    unreachable!("OpenRouter images attempts should return before completing the loop");
 }

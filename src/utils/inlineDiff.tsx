@@ -20,6 +20,9 @@ export function normalizeDiffLine(s: string): string {
 
 /** Normalize multi-line diff text for semantic equality. */
 export function normalizeDiffText(s: string): string {
+  // Fast path: no CR and no `[P…]` label means per-line work reduces to a
+  // single NFC pass (newlines never compose with neighbours).
+  if (s.indexOf("\r") < 0 && s.indexOf("[P") < 0) return s.normalize("NFC");
   return s
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
@@ -156,12 +159,40 @@ function findLineSubsequence(haystack: string[], needle: string[]): number {
   return -1;
 }
 
+/**
+ * Bounded cache of normalized long documents. Pending-diff snapshots
+ * (`textBefore` / `textAfter`) are re-searched many times per layout pass and
+ * stay identical between keystrokes, so normalizing them once is a big win.
+ */
+const NORM_CACHE_MAX_CHARS = 8_000_000;
+const NORM_CACHE_MIN_LEN = 512;
+const normCache = new Map<string, string>();
+let normCacheChars = 0;
+
+function normalizeDiffTextCached(s: string): string {
+  if (s.length < NORM_CACHE_MIN_LEN) return normalizeDiffText(s);
+  const hit = normCache.get(s);
+  if (hit !== undefined) return hit;
+  const out = normalizeDiffText(s);
+  if (normCacheChars + s.length > NORM_CACHE_MAX_CHARS) {
+    normCache.clear();
+    normCacheChars = 0;
+  }
+  normCache.set(s, out);
+  normCacheChars += s.length;
+  return out;
+}
+
 /** Character index of `needle` in `haystack` (exact, then NFC-normalized). */
-function findSnippetCharIndex(haystack: string, needle: string): number {
+function findSnippetCharIndex(
+  haystack: string,
+  needle: string,
+  getNormHay: () => string = () => normalizeDiffTextCached(haystack),
+): number {
   if (!needle) return -1;
   const exact = haystack.indexOf(needle);
   if (exact >= 0) return exact;
-  const normHay = normalizeDiffText(haystack);
+  const normHay = getNormHay();
   const normNeedle = normalizeDiffText(needle);
   if (!normNeedle) return -1;
   const nIdx = normHay.indexOf(normNeedle);
@@ -175,17 +206,45 @@ function findSnippetCharIndex(haystack: string, needle: string): number {
   return nIdx;
 }
 
+/** Positions of every "\n" in `text`; single-entry cache (one layout pass = one text). */
+let nlCache: { text: string; positions: number[] } | null = null;
+
+function newlinePositions(text: string): number[] {
+  if (nlCache && nlCache.text === text) return nlCache.positions;
+  const positions: number[] = [];
+  let i = text.indexOf("\n");
+  while (i >= 0) {
+    positions.push(i);
+    i = text.indexOf("\n", i + 1);
+  }
+  nlCache = { text, positions };
+  return positions;
+}
+
+/** Number of newlines located strictly before `pos`. */
+function newlinesBefore(positions: number[], pos: number): number {
+  let lo = 0;
+  let hi = positions.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (positions[mid] < pos) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 function charRangeToLines(
   text: string,
   start: number,
   end: number,
 ): { startLine: number; endLine: number } {
+  const nl = newlinePositions(text);
   const safeStart = Math.max(0, Math.min(start, text.length));
   const safeEnd = Math.max(safeStart, Math.min(end, text.length));
-  const startLine = text.slice(0, safeStart).split("\n").length - 1;
+  const startLine = newlinesBefore(nl, safeStart);
   // A range ending exactly on a newline belongs to the previous line.
   const endPos = safeEnd > safeStart && text[safeEnd - 1] === "\n" ? safeEnd - 1 : safeEnd;
-  const endLine = text.slice(0, endPos).split("\n").length - 1;
+  const endLine = newlinesBefore(nl, endPos);
   return { startLine, endLine: Math.max(startLine, endLine) };
 }
 
@@ -245,13 +304,75 @@ function mapCharRangeThroughLaterEdits(
  * Uses character-level snippet search (Edit old/new_string need not be full lines)
  * and maps earlier hunks through later edits when their `after` was superseded.
  */
+/**
+ * Steps 2 + 3 of placement depend only on the pending blocks (never on the
+ * live document), so their char ranges are cached per `blocks` array. That
+ * keeps keystrokes from re-running the O(blocks²) forward mapping.
+ */
+type MappedRange = { start: number; end: number } | null;
+const mappedRangeCache = new WeakMap<DocumentDiffBlockInput[], Map<number, MappedRange>>();
+
+function mappedRangeFromBlocks(
+  blocks: DocumentDiffBlockInput[],
+  index: number,
+): MappedRange {
+  let perBlocks = mappedRangeCache.get(blocks);
+  if (!perBlocks) {
+    perBlocks = new Map();
+    mappedRangeCache.set(blocks, perBlocks);
+  }
+  if (perBlocks.has(index)) return perBlocks.get(index) ?? null;
+
+  const block = blocks[index];
+  let result: MappedRange = null;
+
+  // 2) Find `after` in this edit's textAfter, then map through later edits.
+  if (block.after.trim() && block.textAfter) {
+    const afterIdx = findSnippetCharIndex(block.textAfter, block.after);
+    if (afterIdx >= 0) {
+      result = mapCharRangeThroughLaterEdits(
+        afterIdx,
+        afterIdx + block.after.length,
+        index,
+        blocks,
+      );
+    }
+  }
+
+  // 3) `before` in textBefore → locate the matching `after` start, map forward.
+  if (!result && block.before.trim() && block.textBefore && block.textAfter) {
+    const beforeIdx = findSnippetCharIndex(block.textBefore, block.before);
+    if (beforeIdx >= 0) {
+      // In a successful Edit, `after` starts at the same offset as `before`.
+      const afterStart = Math.min(beforeIdx, block.textAfter.length);
+      const afterEnd = Math.min(
+        afterStart + block.after.length,
+        block.textAfter.length,
+      );
+      result = mapCharRangeThroughLaterEdits(afterStart, afterEnd, index, blocks);
+    }
+  }
+
+  perBlocks.set(index, result);
+  return result;
+}
+
+/** Lazily normalized live document, shared by every block of one layout pass. */
+let normTabCache: { text: string; norm: string } | null = null;
+
+function normalizedTab(tabText: string): string {
+  if (normTabCache && normTabCache.text === tabText) return normTabCache.norm;
+  const norm = normalizeDiffText(tabText);
+  normTabCache = { text: tabText, norm };
+  return norm;
+}
+
 function placePendingBlockInTab(
   tabText: string,
   blocks: DocumentDiffBlockInput[],
   index: number,
 ): { startLine: number; endLine: number } {
   const block = blocks[index];
-  const tabLines = tabText.split("\n");
 
   const clampToTab = (start: number, end: number) =>
     charRangeToLines(
@@ -262,47 +383,20 @@ function placePendingBlockInTab(
 
   // 1) `after` still present in the live document (common for the latest edit).
   if (block.after.trim()) {
-    const liveIdx = findSnippetCharIndex(tabText, block.after);
+    const liveIdx = findSnippetCharIndex(tabText, block.after, () =>
+      normalizedTab(tabText),
+    );
     if (liveIdx >= 0) {
       return clampToTab(liveIdx, liveIdx + block.after.length);
     }
   }
 
-  // 2) Find `after` in this edit's textAfter, then map through later edits.
-  if (block.after.trim() && block.textAfter) {
-    const afterIdx = findSnippetCharIndex(block.textAfter, block.after);
-    if (afterIdx >= 0) {
-      const mapped = mapCharRangeThroughLaterEdits(
-        afterIdx,
-        afterIdx + block.after.length,
-        index,
-        blocks,
-      );
-      return clampToTab(mapped.start, mapped.end);
-    }
-  }
-
-  // 3) `before` in textBefore → locate the matching `after` start, map forward.
-  if (block.before.trim() && block.textBefore && block.textAfter) {
-    const beforeIdx = findSnippetCharIndex(block.textBefore, block.before);
-    if (beforeIdx >= 0) {
-      // In a successful Edit, `after` starts at the same offset as `before`.
-      const afterStart = Math.min(beforeIdx, block.textAfter.length);
-      const afterEnd = Math.min(
-        afterStart + block.after.length,
-        block.textAfter.length,
-      );
-      const mapped = mapCharRangeThroughLaterEdits(
-        afterStart,
-        afterEnd,
-        index,
-        blocks,
-      );
-      return clampToTab(mapped.start, mapped.end);
-    }
-  }
+  // 2 + 3) Map through later edits (cached per blocks array).
+  const mapped = mappedRangeFromBlocks(blocks, index);
+  if (mapped) return clampToTab(mapped.start, mapped.end);
 
   // 4) Full-line subsequence / paragraph fallbacks (legacy).
+  const tabLines = tabText.split("\n");
   const newLines = block.after.split("\n");
   const oldLines = block.before.split("\n");
   let start = -1;
@@ -463,7 +557,10 @@ export type EditorDisplaySegment =
   | { kind: "context"; tabStart: number; tabEnd: number }
   | {
       kind: "hunk";
+      /** Earliest Edit of the hunk (stable id for keys / undo). */
       blockId: string;
+      /** Every Edit merged into this hunk, chronological (length 1 when not merged). */
+      blockIds: string[];
       before: string;
       after: string;
       tabStart: number;
@@ -475,8 +572,9 @@ export type EditorDisplaySegment =
 export function buildEditorDisplaySegments(
   tabText: string,
   blocks: DocumentDiffBlockInput[],
+  precomputedRanges?: PendingDiffLineRange[],
 ): EditorDisplaySegment[] {
-  const ranges = buildPendingDiffLineRanges(tabText, blocks);
+  const ranges = precomputedRanges ?? buildPendingDiffLineRanges(tabText, blocks);
   if (ranges.length === 0) {
     const n = tabText.split("\n").length;
     return n > 0 ? [{ kind: "context", tabStart: 0, tabEnd: n - 1 }] : [];
@@ -485,6 +583,7 @@ export function buildEditorDisplaySegments(
   // Preserve chronological order within the same start line so sequential
   // edits on one region stack in application order.
   const order = new Map(blocks.map((b, i) => [b.id, i]));
+  const blockById = new Map(blocks.map((b) => [b.id, b]));
   const sorted = [...ranges].sort((a, b) => {
     if (a.startLine !== b.startLine) return a.startLine - b.startLine;
     return (order.get(a.blockId) ?? 0) - (order.get(b.blockId) ?? 0);
@@ -515,16 +614,36 @@ export function buildEditorDisplaySegments(
       });
     }
 
-    for (const range of group) {
-      const block = blocks.find((b) => b.id === range.blockId);
+    if (group.length === 1) {
+      const range = group[0];
       segments.push({
         kind: "hunk",
         blockId: range.blockId,
+        blockIds: [range.blockId],
         before: range.before,
         after: range.after,
         tabStart: range.startLine,
         tabEnd: range.endLine,
-        paragraphNumber: block?.paragraphNumber,
+        paragraphNumber: blockById.get(range.blockId)?.paragraphNumber,
+      });
+    } else {
+      // Only legacy rows (recorded before the backend merged overlapping
+      // Edits) can still overlap. Show them as one hunk over the union of
+      // their lines; no text is recomputed here.
+      const members = [...group].sort(
+        (a, b) => (order.get(a.blockId) ?? 0) - (order.get(b.blockId) ?? 0),
+      );
+      const earliest = members[0];
+      const latest = members[members.length - 1];
+      segments.push({
+        kind: "hunk",
+        blockId: earliest.blockId,
+        blockIds: members.map((m) => m.blockId),
+        before: members.map((m) => m.before).find((x) => x.trim()) ?? earliest.before,
+        after: latest.after || earliest.after,
+        tabStart: groupStart,
+        tabEnd: groupEnd,
+        paragraphNumber: blockById.get(earliest.blockId)?.paragraphNumber,
       });
     }
 

@@ -289,6 +289,7 @@ export const CAPABILITY_OPTIONS = [
 ] as const;
 
 export const DEFAULT_LOCAL_SERVER_EXE = String.raw`D:\AI\llama.cpp\b11853\llama-server.exe`;
+export const DEFAULT_LOCAL_CONTEXT_SIZE = 16384;
 export const DEFAULT_LOCAL_MODEL_PATH = String.raw`D:\AI\models\rewrite2-27b-iq4xs\rewrite2-27b-IQ4_XS.gguf`;
 
 /** Chat pickers hide models that are only the reader rewrite type. */
@@ -670,6 +671,80 @@ export function parseVertexEndpoint(endpoint?: string | null): {
   };
 }
 
+const VERTEX_TOKEN_URI = "https://oauth2.googleapis.com/token";
+
+export type VertexServiceAccountParse =
+  | { ok: true; clientEmail: string; projectId: string; json: string }
+  | { ok: false; error: string };
+
+function normalizeVertexSecret(raw: string): string {
+  return raw.replace(/^\uFEFF/, "").trim();
+}
+
+/** True when the credential field is being edited as JSON, including a partial paste. */
+export function looksLikeVertexServiceAccountDraft(raw: string): boolean {
+  return normalizeVertexSecret(raw).startsWith("{");
+}
+
+/** Parse a Google Cloud service-account key file. Invalid JSON is not a credential. */
+export function parseVertexServiceAccount(raw: string): VertexServiceAccountParse {
+  const trimmed = normalizeVertexSecret(raw);
+  if (!trimmed.startsWith("{")) {
+    return { ok: false, error: "Vertex 服务账号 JSON 无法解析。" };
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(trimmed);
+  } catch {
+    return { ok: false, error: "Vertex 服务账号 JSON 无法解析。" };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, error: "Vertex 服务账号 JSON 无法解析。" };
+  }
+  const record = value as Record<string, unknown>;
+  if (record.type !== "service_account") {
+    return {
+      ok: false,
+      error: "Vertex 密钥不是服务账号 JSON（type 须为 service_account）。",
+    };
+  }
+  const clientEmail =
+    typeof record.client_email === "string" ? record.client_email.trim() : "";
+  if (!clientEmail) {
+    return { ok: false, error: "Vertex 服务账号 JSON 缺少 client_email。" };
+  }
+  const privateKey = typeof record.private_key === "string" ? record.private_key : "";
+  if (
+    !privateKey.includes("BEGIN PRIVATE KEY") &&
+    !privateKey.includes("BEGIN RSA PRIVATE KEY")
+  ) {
+    return { ok: false, error: "Vertex 服务账号 JSON 缺少 private_key。" };
+  }
+  if (typeof record.token_uri === "string" && record.token_uri.trim()) {
+    if (record.token_uri.trim() !== VERTEX_TOKEN_URI) {
+      return {
+        ok: false,
+        error: "Vertex 服务账号 token_uri 仅支持 https://oauth2.googleapis.com/token。",
+      };
+    }
+  }
+  const projectId =
+    typeof record.project_id === "string" ? record.project_id.trim() : "";
+  return { ok: true, clientEmail, projectId, json: trimmed };
+}
+
+/** Fill an empty Vertex project from the service account. A chosen project is left as-is. */
+export function endpointWithVertexServiceAccountProject(
+  endpoint: string,
+  projectId: string,
+): string {
+  const project = projectId.trim();
+  if (!project) return endpoint;
+  const parsed = parseVertexEndpoint(endpoint);
+  if (parsed.project) return endpoint;
+  return composeVertexEndpoint(project, parsed.location);
+}
+
 export function isKnownProviderSdk(
   sdk: string | null | undefined,
   sdkOptions: readonly ProviderSdkConfig[],
@@ -732,12 +807,12 @@ export function validateProviderConfig(
     }
   }
 
-  if (
-    required &&
-    !provider.api_key.trim() &&
-    normalizeProviderSdk(provider.sdk) !== "local"
-  ) {
+  const apiKey = normalizeVertexSecret(provider.api_key);
+  if (required && !apiKey && sdk !== "local") {
     errors.api_key = "API 密钥不能为空。";
+  } else if (sdk === "vertex" && apiKey.startsWith("{")) {
+    const parsed = parseVertexServiceAccount(provider.api_key);
+    if (!parsed.ok) errors.api_key = parsed.error;
   }
 
   return errors;
@@ -766,6 +841,8 @@ export function makeProvider(
     local_model_path:
       patch.local_model_path ??
       (sdk === "local" ? DEFAULT_LOCAL_MODEL_PATH : ""),
+    local_context_size:
+      patch.local_context_size ?? (sdk === "local" ? DEFAULT_LOCAL_CONTEXT_SIZE : 0),
     models: patch.models ?? [],
   };
 }
@@ -788,6 +865,12 @@ export function normalizeProviders(providers: ModelProvider[]) {
     local_model_path:
       provider.local_model_path?.trim() ||
       (normalizeProviderSdk(provider.sdk) === "local" ? DEFAULT_LOCAL_MODEL_PATH : ""),
+    local_context_size:
+      provider.local_context_size && provider.local_context_size > 0
+        ? provider.local_context_size
+        : normalizeProviderSdk(provider.sdk) === "local"
+          ? DEFAULT_LOCAL_CONTEXT_SIZE
+          : 0,
     models: provider.models.map((model) => makeModel(model.id, model)),
   }));
 }

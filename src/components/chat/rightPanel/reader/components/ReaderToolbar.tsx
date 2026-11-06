@@ -9,6 +9,7 @@ import {
   ForwardIcon,
   IndentIcon,
   MoreIcon,
+  PhoneIcon,
   SearchIcon,
   SourceIcon,
 } from "../icons";
@@ -35,6 +36,9 @@ export interface ReaderToolbarProps {
   onSource: () => void;
   onIndent: (e: ReactMouseEvent) => void;
   onMore: (e: ReactMouseEvent) => void;
+  phoneOpen: boolean;
+  canPhone: boolean;
+  onPhone: () => void;
   onToggleSearch: () => void;
   onToggleFileTree: () => void;
   showRewrite: boolean;
@@ -72,6 +76,9 @@ export function ReaderToolbar({
   onSource,
   onIndent,
   onMore,
+  phoneOpen,
+  canPhone,
+  onPhone,
   onToggleSearch,
   onToggleFileTree,
   showRewrite,
@@ -206,6 +213,16 @@ export function ReaderToolbar({
               onClick={onSource}
             >
               <SourceIcon />
+            </button>
+            <button
+              type="button"
+              className={`reader-toolbar-btn${phoneOpen ? " is-active" : ""}`}
+              title={t("reader.phone")}
+              aria-pressed={phoneOpen}
+              disabled={!canPhone}
+              onClick={onPhone}
+            >
+              <PhoneIcon />
             </button>
           </>
         )}

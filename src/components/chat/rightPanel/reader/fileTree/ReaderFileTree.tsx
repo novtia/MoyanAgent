@@ -9,14 +9,16 @@ import {
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../../../../../api/tauri";
 import { usePePlatform } from "../../../../../hooks/useMobileShell";
 import { copyText } from "../../../../../utils/clipboard";
+import { sanitizeFsPath } from "../../../../../utils/sanitizePath";
 import { READER_FILE_DRAG_TYPE } from "../../../../../utils/readerDrag";
 import { FileTypeIcon } from "../../../../../utils/fileIcons";
-import { openContextMenu } from "../../../../context-menu";
+import { openContextMenu, pinToTopLayer } from "../../../../context-menu";
 import { dialog } from "../../../../ui/Dialog";
 import { toast } from "../../../../ui/Toast";
 import { useProject } from "../../../../../store/project";
@@ -42,7 +44,7 @@ import type { ProjectDirEntry } from "../../../../../types";
 import type { ReaderFileTreeProps } from "../types";
 import { TreeContext, useTree, type TreeCtx } from "./context";
 import { ChevronIcon, NewFileIcon, NewFolderIcon, RefreshIcon } from "./icons";
-import { compareNaturalName, txtStem } from "./naturalName";
+import { compareNaturalName, docStem, isExportableDoc } from "./naturalName";
 import { pasteInto, toggleRule } from "./ops";
 import {
   getVisibleTreeEntries,
@@ -225,6 +227,16 @@ function ReaderFileTreeShell({
   });
   const { marquee, marqueeHandlers } = useTreeMarquee(bodyRef);
   const { isActive } = usePanelTab();
+  const [pathTip, setPathTip] = useState<PathTipAnchor | null>(null);
+  const pathTipTimer = useRef(0);
+  const pathTipRow = useRef<HTMLElement | null>(null);
+  const hidePathTip = useCallback(() => {
+    window.clearTimeout(pathTipTimer.current);
+    pathTipRow.current = null;
+    setPathTip(null);
+  }, []);
+  const hidePathTipRef = useRef(hidePathTip);
+  hidePathTipRef.current = hidePathTip;
 
   // One scroll position per project, handed from tab to tab: a hidden pane
   // loses its offset, so the tab being activated restores the shared one.
@@ -243,7 +255,10 @@ function ReaderFileTreeShell({
       }
     };
     restore();
-    const onScroll = () => setTreeScroll(projectId, el.scrollTop);
+    const onScroll = () => {
+      setTreeScroll(projectId, el.scrollTop);
+      hidePathTipRef.current();
+    };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       cancelAnimationFrame(frame);
@@ -251,10 +266,54 @@ function ReaderFileTreeShell({
     };
   }, [projectId, isActive]);
 
+  useEffect(() => {
+    if (marquee) hidePathTip();
+  }, [marquee, hidePathTip]);
+
+  useEffect(() => () => window.clearTimeout(pathTipTimer.current), []);
+
+  const schedulePathTip = useCallback((row: HTMLElement) => {
+    if (document.documentElement.dataset.contextMenu === "open") return;
+    if (pathTipRow.current === row) return;
+    pathTipRow.current = row;
+    window.clearTimeout(pathTipTimer.current);
+    pathTipTimer.current = window.setTimeout(() => {
+      const current = pathTipRow.current;
+      if (!current?.isConnected) return;
+      if (document.documentElement.dataset.contextMenu === "open") return;
+      const path = current.getAttribute(TREE_PATH_ATTR);
+      if (!path) return;
+      const rect = current.getBoundingClientRect();
+      setPathTip({
+        text: sanitizeFsPath(path),
+        left: rect.left,
+        top: rect.top,
+        bottom: rect.bottom,
+      });
+    }, 500);
+  }, []);
+
+  const onTreeMouseOver = (event: ReactMouseEvent) => {
+    const row = (event.target as HTMLElement).closest<HTMLElement>(".reader-file-row");
+    if (!row || !bodyRef.current?.contains(row)) return;
+    schedulePathTip(row);
+  };
+
+  const onTreeMouseOut = (event: ReactMouseEvent) => {
+    const row = (event.target as HTMLElement).closest<HTMLElement>(".reader-file-row");
+    if (!row || pathTipRow.current !== row) return;
+    const next = event.relatedTarget;
+    if (next instanceof Node && row.contains(next)) return;
+    hidePathTip();
+  };
+
   return (
+      <>
       <div
         className={`reader-file-tree${isDropTarget ? " is-drop-target" : ""}`}
         {...dropHandlers}
+        onContextMenuCapture={hidePathTip}
+        onDragStartCapture={hidePathTip}
         onContextMenu={(e) => {
           e.preventDefault();
           openContextMenu(e, [
@@ -303,6 +362,8 @@ function ReaderFileTreeShell({
           ref={bodyRef}
           className="reader-file-tree-body"
           {...marqueeHandlers}
+          onMouseOver={onTreeMouseOver}
+          onMouseOut={onTreeMouseOut}
           onClick={(e) => {
             if (e.target === e.currentTarget) clearSelection();
           }}
@@ -321,6 +382,58 @@ function ReaderFileTreeShell({
           )}
         </div>
       </div>
+      {pathTip && (
+        <FilePathTip
+          text={pathTip.text}
+          left={pathTip.left}
+          top={pathTip.top}
+          bottom={pathTip.bottom}
+        />
+      )}
+      </>
+  );
+}
+
+interface PathTipAnchor {
+  text: string;
+  left: number;
+  top: number;
+  bottom: number;
+}
+
+function FilePathTip({ text, left, top, bottom }: PathTipAnchor) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left, top: bottom + 4 });
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    pinToTopLayer(el);
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
+    const gutter = 8;
+    let x = left;
+    let y = bottom + 4;
+    const maxX = window.innerWidth - rect.width - gutter;
+    if (x > maxX) x = maxX;
+    if (x < gutter) x = gutter;
+    if (y + rect.height > window.innerHeight - gutter) {
+      y = top - rect.height - 4;
+    }
+    if (y < gutter) y = gutter;
+    setPos((current) => (current.left === x && current.top === y ? current : { left: x, top: y }));
+  }, [text, left, top, bottom]);
+
+  return createPortal(
+    <div
+      ref={ref}
+      className="reader-file-path-tip"
+      style={{ left: pos.left, top: pos.top }}
+      role="tooltip"
+    >
+      {text}
+    </div>,
+    document.body,
   );
 }
 
@@ -616,7 +729,7 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
   const exportSelected = useCallback(
     async (format: "txt" | "docx") => {
       const files = resolveBulkPaths(entry.path, useFileExplorer.getState().selectedPaths).filter(
-        (path) => /\.txt$/i.test(path),
+        (path) => isExportableDoc(path),
       );
       if (files.length === 0) return;
       const ordered = [...files].sort((a, b) => {
@@ -624,8 +737,8 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
         return byName !== 0 ? byName : a.localeCompare(b);
       });
       const ext = format === "docx" ? "docx" : "txt";
-      const first = txtStem(baseName(ordered[0]));
-      const last = txtStem(baseName(ordered[ordered.length - 1]));
+      const first = docStem(baseName(ordered[0]));
+      const last = docStem(baseName(ordered[ordered.length - 1]));
       const title = ordered.length === 1 || first === last ? first : `${first}-${last}`;
       const dest = await save({
         defaultPath: `${title}.${ext}`,
@@ -655,7 +768,7 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
         setSelection(entry.path);
       }
       const bulk = resolveBulkPaths(entry.path, useFileExplorer.getState().selectedPaths);
-      const txtCount = bulk.filter((path) => /\.txt$/i.test(path)).length;
+      const docCount = bulk.filter((path) => isExportableDoc(path)).length;
       const pasteDir = entry.isDir ? entry.path : parentDir(entry.path) ?? entry.path;
       openContextMenu(e, [
         {
@@ -710,13 +823,13 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
         {
           id: "export-txt",
           label: t("fileExplorer.exportTxt"),
-          disabled: txtCount === 0,
+          disabled: docCount === 0,
           onSelect: () => void exportSelected("txt"),
         },
         {
           id: "export-word",
           label: t("fileExplorer.exportWord"),
-          disabled: txtCount === 0,
+          disabled: docCount === 0,
           onSelect: () => void exportSelected("docx"),
         },
         {
@@ -765,7 +878,6 @@ function TreeNode({ entry, depth, expanded, setExpanded, rulesDir, ruleEnabled }
     onContextMenu: openMenu,
     draggable: true as const,
     onDragStart,
-    title: entry.path,
     [TREE_PATH_ATTR]: entry.path,
     [TREE_IS_DIR_ATTR]: entry.isDir ? "1" : "0",
     "aria-selected": isSelected as boolean | "true" | "false",

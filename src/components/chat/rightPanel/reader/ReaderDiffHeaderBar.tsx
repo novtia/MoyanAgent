@@ -39,7 +39,10 @@ export function ReaderDiffHeaderBar({
 
   const hunkTotal = tab.pendingDiffs.length;
 
-  const safeIndex = hunkTotal > 0 ? Math.min(Math.max(activeIndex, 0), hunkTotal - 1) : 0;
+  // -1 is the "not jumped yet" slot, displayed as 0. Clamping it up to 0 made a
+  // single hunk read 1/1 with both arrows disabled, so it could not be reached.
+  const safeIndex =
+    hunkTotal > 0 ? Math.min(Math.max(activeIndex, -1), hunkTotal - 1) : -1;
 
   const handleAcceptAll = async () => {
     if (!sessionId) return;

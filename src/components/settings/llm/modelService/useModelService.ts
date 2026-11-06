@@ -110,6 +110,7 @@ export function useModelService() {
       api_key: selectedProvider.api_key,
       local_server_exe: selectedProvider.local_server_exe ?? "",
       local_model_path: selectedProvider.local_model_path ?? "",
+      local_context_size: selectedProvider.local_context_size ?? 0,
     });
   }, [
     selectedProvider?.id,
@@ -120,6 +121,7 @@ export function useModelService() {
     selectedProvider?.api_key,
     selectedProvider?.local_server_exe,
     selectedProvider?.local_model_path,
+    selectedProvider?.local_context_size,
   ]);
 
   useEffect(() => {
@@ -152,7 +154,8 @@ export function useModelService() {
       providerDraft.endpoint !== selectedProvider.endpoint ||
       providerDraft.api_key !== selectedProvider.api_key ||
       (providerDraft.local_server_exe ?? "") !== (selectedProvider.local_server_exe ?? "") ||
-      (providerDraft.local_model_path ?? "") !== (selectedProvider.local_model_path ?? "");
+      (providerDraft.local_model_path ?? "") !== (selectedProvider.local_model_path ?? "") ||
+      (providerDraft.local_context_size ?? 0) !== (selectedProvider.local_context_size ?? 0);
     if (!dirty) return;
 
     const id = selectedProvider.id;
@@ -164,6 +167,7 @@ export function useModelService() {
       api_key: providerDraft.api_key,
       local_server_exe: providerDraft.local_server_exe ?? "",
       local_model_path: providerDraft.local_model_path ?? "",
+      local_context_size: providerDraft.local_context_size ?? 0,
     };
 
     const timer = window.setTimeout(() => {
@@ -180,7 +184,8 @@ export function useModelService() {
           draftSnap.endpoint === prov.endpoint &&
           draftSnap.api_key === prov.api_key &&
           draftSnap.local_server_exe === (prov.local_server_exe ?? "") &&
-          draftSnap.local_model_path === (prov.local_model_path ?? "")
+          draftSnap.local_model_path === (prov.local_model_path ?? "") &&
+          draftSnap.local_context_size === (prov.local_context_size ?? 0)
         ) {
           return;
         }
@@ -198,6 +203,7 @@ export function useModelService() {
                 api_key: draftSnap.api_key,
                 local_server_exe: draftSnap.local_server_exe.trim(),
                 local_model_path: draftSnap.local_model_path.trim(),
+                local_context_size: draftSnap.local_context_size,
               }
             : provider,
         );
@@ -216,6 +222,7 @@ export function useModelService() {
     providerDraft.api_key,
     providerDraft.local_server_exe,
     providerDraft.local_model_path,
+    providerDraft.local_context_size,
     selectedProvider,
   ]);
 

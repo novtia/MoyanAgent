@@ -253,7 +253,7 @@ pub(crate) async fn run_cancellable_generation(
     session_id: &str,
     agent_type: &str,
     prompt: String,
-    mut request: chat::ChatRequest,
+    request: chat::ChatRequest,
     on_text_delta: Option<chat::TextDeltaCallback>,
     on_tool_event: Option<ToolEventCallback>,
     project_cwd: Option<std::path::PathBuf>,
@@ -262,7 +262,40 @@ pub(crate) async fn run_cancellable_generation(
 ) -> AppResult<chat::GenerateResponse> {
     let abort_guard = register_generation_abort(state, session_id)?;
     let abort_signal = abort_guard.signal().clone();
+    let result = run_generation_with_signal(
+        state,
+        session_id,
+        agent_type,
+        prompt,
+        request,
+        on_text_delta,
+        on_tool_event,
+        project_cwd,
+        overrides,
+        correlation_id,
+        abort_signal,
+    )
+    .await;
+    drop(abort_guard);
+    result
+}
 
+/// [`run_cancellable_generation`] minus the abort registration: the caller owns
+/// the slot and passes the signal in, so one signal can cover several session
+/// ids (the summary command shares it between the parent and its child).
+pub(crate) async fn run_generation_with_signal(
+    state: &AppState,
+    session_id: &str,
+    agent_type: &str,
+    prompt: String,
+    mut request: chat::ChatRequest,
+    on_text_delta: Option<chat::TextDeltaCallback>,
+    on_tool_event: Option<ToolEventCallback>,
+    project_cwd: Option<std::path::PathBuf>,
+    overrides: Option<&session::NodeOverrides>,
+    correlation_id: Option<&str>,
+    abort_signal: AbortSignal,
+) -> AppResult<chat::GenerateResponse> {
     // Drain any pending task-notifications addressed to the main loop and
     // append them to the chat history as hidden user-meta turns. This
     // mirrors how `query.ts` injects `<task-notification>` at turn

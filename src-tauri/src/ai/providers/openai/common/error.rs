@@ -89,12 +89,16 @@ pub(crate) fn is_idle_timeout_message(msg: &str) -> bool {
 
 /// Gemini 3+ can stream function-call arguments, but only when the request
 /// sets `toolConfig.functionCallingConfig.streamFunctionCallArguments`.
-/// Google AI Studio and some OpenRouter upstreams reject that field; the
-/// caller strips it and retries rather than dropping tools entirely.
+/// Google AI Studio, some Vertex models (for example Gemini Nano), and some
+/// OpenRouter upstreams reject that field. Vertex phrases the 400 as
+/// "Streaming function call arguments is not enabled for this model" rather
+/// than naming the JSON field. The caller strips the flag and retries
+/// rather than dropping tools entirely.
 pub(crate) fn message_rejects_gemini_arg_streaming(msg: &str) -> bool {
     let m = msg.to_ascii_lowercase();
     m.contains("streamfunctioncallarguments")
         || m.contains("stream_function_call_arguments")
+        || m.contains("function call arguments")
         || ((m.contains("toolconfig") || m.contains("tool_config"))
             && (m.contains("unknown")
                 || m.contains("invalid")

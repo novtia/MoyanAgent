@@ -14,9 +14,11 @@ use super::common::{
     upstream_rejects_streaming, without_streaming,
 };
 use super::openrouter::{
-    apply_openrouter_gemini_arg_streaming, is_gemini_model, prepare_openrouter_retry,
-    relax_openrouter_provider_routing, step_down_openrouter_reasoning,
-    strip_gemini_stream_function_call_config, upstream_rejects_tools,
+    apply_openrouter_gemini_arg_streaming, build_openrouter_images_body, is_gemini_model,
+    message_requires_openrouter_images_api, openrouter_images_url,
+    parse_openrouter_images_response, prepare_openrouter_retry, relax_openrouter_provider_routing,
+    step_down_openrouter_reasoning, strip_gemini_stream_function_call_config,
+    upstream_rejects_tools, uses_openrouter_images_api,
 };
 use super::responses::body::build_responses_body;
 use super::responses::cache::responses_object_url;
@@ -996,4 +998,82 @@ fn stream_function_call_arguments_reject_does_not_strip_tools() {
         StatusCode::BAD_REQUEST,
         msg
     ));
+}
+
+#[test]
+fn vertex_disabled_arg_streaming_retries_without_dropping_tools() {
+    let msg = "Streaming function call arguments is not enabled for this model";
+    assert!(super::common::message_rejects_gemini_arg_streaming(msg));
+    assert!(super::common::upstream_rejects_gemini_arg_streaming(
+        StatusCode::BAD_REQUEST,
+        msg
+    ));
+    assert!(!upstream_rejects_tools(StatusCode::BAD_REQUEST, msg));
+}
+
+#[test]
+fn gpt_image_models_use_the_openrouter_images_api() {
+    assert!(uses_openrouter_images_api("openai/gpt-image-2.5-sunburst"));
+    assert!(uses_openrouter_images_api("OpenAI/GPT-Image-1"));
+    assert!(uses_openrouter_images_api("qwen/qwen-image-3"));
+    assert!(uses_openrouter_images_api("meta/muse-image"));
+    assert!(!uses_openrouter_images_api("openai/gpt-5-image"));
+    assert!(!uses_openrouter_images_api("openai/gpt-5.4-image-2"));
+    assert!(!uses_openrouter_images_api("black-forest-labs/flux.2-pro"));
+}
+
+#[test]
+fn chat_completions_image_model_error_switches_to_images_api() {
+    let msg = "openai/gpt-image-2.5-sunburst is an image generation model and cannot be used with the chat/completions endpoint. Use the /api/v1/images endpoint instead.";
+    assert!(message_requires_openrouter_images_api(msg));
+    assert!(!message_requires_openrouter_images_api(
+        "No endpoints found that support tool use."
+    ));
+    assert_eq!(
+        openrouter_images_url("https://openrouter.ai/api/v1/chat/completions"),
+        "https://openrouter.ai/api/v1/images"
+    );
+    assert_eq!(
+        openrouter_images_url("https://openrouter.ai/api/v1/chat/completions/"),
+        "https://openrouter.ai/api/v1/images"
+    );
+}
+
+#[test]
+fn openrouter_images_body_carries_ratio_resolution_and_references() {
+    let mut request = openrouter_chat_request("openai/gpt-image-2.5-sunburst", true);
+    request.prompt = "a red door".into();
+    request.parameters.aspect_ratio = "auto".into();
+    request.parameters.image_size = "2K".into();
+    request.attachments.push(crate::ai::chat::AttachmentBytes {
+        bytes: b"png".to_vec(),
+        mime: "image/png".into(),
+        media_role: None,
+        source_url: None,
+    });
+    let body = build_openrouter_images_body(&request).unwrap();
+    assert_eq!(body["model"], "openai/gpt-image-2.5-sunburst");
+    assert_eq!(body["prompt"], "a red door");
+    assert_eq!(body["aspect_ratio"], "auto");
+    assert_eq!(body["resolution"], "2K");
+    assert!(body.get("tools").is_none());
+    let url = body["input_references"][0]["image_url"]["url"]
+        .as_str()
+        .unwrap();
+    assert!(url.starts_with("data:image/png;base64,"));
+
+    request.prompt = "   ".into();
+    assert!(build_openrouter_images_body(&request).is_err());
+}
+
+#[test]
+fn openrouter_images_response_decodes_media_type() {
+    let txt = r#"{"data":[{"b64_json":"aGk=","media_type":"image/webp"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}"#;
+    let resp = parse_openrouter_images_response(txt).unwrap();
+    assert_eq!(resp.images.len(), 1);
+    assert_eq!(resp.images[0].mime, "image/webp");
+    assert_eq!(resp.images[0].bytes, b"hi");
+    assert_eq!(resp.usage.total_tokens, Some(3));
+    assert!(resp.tool_calls.is_empty());
+    assert!(resp.text.is_none());
 }

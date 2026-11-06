@@ -4,7 +4,8 @@
 //! §4) and exposes a merged, priority-resolved view. Higher-priority sources
 //! overwrite lower-priority ones at the same `agentType`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::RwLock;
 
 use crate::ai::agent::config::builtin::builtin_definitions;
 use crate::ai::agent::config::definition::{AgentDefinition, AgentSource};
@@ -14,6 +15,10 @@ pub struct AgentRegistry {
     /// Ordered by source ascending. Each entry shadows the previous one
     /// for the same `agentType`.
     layers: Vec<(AgentSource, Vec<AgentDefinition>)>,
+    /// Runtime-editable user agents (from settings). Layered above `layers`.
+    custom: RwLock<Vec<AgentDefinition>>,
+    /// Agent types the `Agent` tool must refuse to dispatch.
+    disabled: RwLock<HashSet<String>>,
 }
 
 impl AgentRegistry {
@@ -41,7 +46,29 @@ impl AgentRegistry {
                 out.insert(d.agent_type.clone(), d.clone());
             }
         }
+        if let Ok(custom) = self.custom.read() {
+            for d in custom.iter() {
+                out.insert(d.agent_type.clone(), d.clone());
+            }
+        }
         out
+    }
+
+    /// Replace the user-defined agents and the disabled set (settings sync).
+    pub fn set_user_config(&self, custom: Vec<AgentDefinition>, disabled: Vec<String>) {
+        if let Ok(mut g) = self.custom.write() {
+            *g = custom;
+        }
+        if let Ok(mut g) = self.disabled.write() {
+            *g = disabled.into_iter().collect();
+        }
+    }
+
+    pub fn is_disabled(&self, agent_type: &str) -> bool {
+        self.disabled
+            .read()
+            .map(|g| g.contains(agent_type))
+            .unwrap_or(false)
     }
 
     pub fn get(&self, agent_type: &str) -> Option<AgentDefinition> {

@@ -66,21 +66,42 @@ export function installClipboardHistoryFix(): void {
         "";
       if (!text) return;
       // Reader copy: keep text + HTML (with project-scoped metadata) together.
-      const write = readerPayload
-        ? copyRich(text, encodeReaderSelectionHtml(readerPayload))
-        : invoke("clipboard_write_text", { text });
-      void write.catch((err) => {
-        console.warn("[clipboard] history fix failed", err);
-      });
+      scheduleClipboardHistoryRewrite(() =>
+        readerPayload
+          ? copyRich(text, encodeReaderSelectionHtml(readerPayload))
+          : copyText(text),
+      );
       return;
     }
     const text = window.getSelection()?.toString();
     if (!text) return;
     e.preventDefault();
-    // Keep event clipboard filled for immediate paste; then re-write via host HWND.
+    // Keep event clipboard filled for immediate paste. The host-HWND rewrite
+    // waits until this event has committed that write; doing it here races
+    // WebView2 and Win+V, which still hold the clipboard.
     e.clipboardData?.setData("text/plain", text);
-    void invoke("clipboard_write_text", { text }).catch((err) => {
-      console.warn("[clipboard] history fix failed", err);
-    });
+    scheduleClipboardHistoryRewrite(() => copyText(text));
   });
+}
+
+/** Latest copy wins so an older rewrite cannot clobber a newer selection. */
+let historyRewriteSeq = 0;
+/** One native write at a time so two copies don't fight over OpenClipboard. */
+let historyRewriteChain: Promise<void> = Promise.resolve();
+
+function scheduleClipboardHistoryRewrite(write: () => Promise<unknown>): void {
+  const seq = ++historyRewriteSeq;
+  window.setTimeout(() => {
+    historyRewriteChain = historyRewriteChain
+      .catch(() => undefined)
+      .then(async () => {
+        if (seq !== historyRewriteSeq) return;
+        try {
+          await write();
+        } catch (err) {
+          if (seq !== historyRewriteSeq) return;
+          console.warn("[clipboard] history fix failed", err);
+        }
+      });
+  }, 32);
 }

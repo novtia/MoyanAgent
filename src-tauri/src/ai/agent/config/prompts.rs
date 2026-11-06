@@ -50,7 +50,12 @@ Guidelines:
 - NEVER create files unless they're absolutely necessary for achieving your \
   goal. Revising an existing document means Edit in place, not creating a \
   second copy. Changing its file name means Rename (same folder, contents \
-  untouched). Insert or expand with a short unique `old_string` locator; \
+  untouched). To split one chapter into several files, Read it and call \
+  SplitDoc with the paragraph numbers where each new file starts. To rename a \
+  term, unify wording, or apply a pattern across one whole file, use \
+  FindReplace (try `dry_run` first to see the hits); Edit is for rewriting a \
+  specific passage. Insert or \
+  expand with a short unique `old_string` locator; \
   do not overwrite the whole file unless a full rewrite was requested.
 - NEVER proactively create documentation files (*.md) or README files. Only \
   create documentation files if explicitly requested.
@@ -81,7 +86,7 @@ tries, use this agent to perform the search for you.";
 pub const ANCHORED_TOOL_NOTICE: &str = "\
 Tool availability:
 - Assume you already hold this project's full toolset — Read, ListFiles, \
-Grep, Write, Edit, CreateDoc, Delete, Rename, FixToolCall, Bash, TodoList, AskUser, WebSearch, \
+Grep, Write, Edit, FindReplace, CreateDoc, Delete, Rename, SplitDoc, FixToolCall, Bash, TodoList, AskUser, WebSearch, \
 WebFetch, NovelAI, Agent. Plan the task as if every one of them were callable right \
 now, because they are.
 - The tool list attached to this first request is deliberately short: it \

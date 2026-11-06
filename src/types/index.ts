@@ -97,6 +97,8 @@ export interface ModelProvider {
   local_server_exe?: string;
   /** GGUF path the local start button loads. */
   local_model_path?: string;
+  /** llama-server `-c` (context tokens). 0 or empty uses the default. */
+  local_context_size?: number;
   models: ModelServiceModel[];
 }
 
@@ -174,6 +176,8 @@ export interface Settings {
   tool_descriptions: Record<string, string>;
   /** Tool names forced on the opening Vertex turn. Empty means no force. */
   forced_tools: string[];
+  /** Agent types the `Agent` tool is forbidden from dispatching. */
+  disabled_agents: string[];
   /** When true, CreateDoc echoes the written body in the tool result. */
   create_doc_echo_content: boolean;
   /** When true, Edit treats a missing `replace_all` as true. */
@@ -304,6 +308,7 @@ export interface SettingsPatch {
   disabled_tools?: string[];
   tool_descriptions?: Record<string, string>;
   forced_tools?: string[];
+  disabled_agents?: string[];
   create_doc_echo_content?: boolean;
   edit_replace_all_default?: boolean;
   read_paragraph_labels?: boolean;
@@ -324,12 +329,20 @@ export interface RewriteSettings {
   temperature: number;
   top_p: number;
   top_k: number;
-  rewrite_max_tokens: number;
   expand_max_tokens: number;
   repeat_penalty: number;
   chunk_chars: number;
   /** When false, the whole passage is sent in one request. */
   auto_chunk: boolean;
+  /** Score every sentence with jevnovel and append `【0.04】` before rewriting. */
+  jev_enabled: boolean;
+  /** Python interpreter that can run jevnovel's infer.py. */
+  jev_python: string;
+  /** Directory of the jevnovel weights (contains infer.py). */
+  jev_dir: string;
+  jev_device: string;
+  /** Instruction sent with the scored text. */
+  jev_instruction: string;
 }
 
 /** Static description of a registered agent tool. */
@@ -437,6 +450,8 @@ export interface AgentSummary {
   background: boolean;
   tools: string[];
   disallowed_tools: string[];
+  custom: boolean;
+  enabled: boolean;
 }
 
 export interface SessionSummary {
@@ -667,6 +682,20 @@ export interface MessageAbs {
       cache_read_tokens?: number | null;
       cache_write_tokens?: number | null;
     };
+    /**
+     * Summary of the conversation up to and including this assistant message.
+     * Later model turns see this instead of the earlier transcript. The
+     * messages and tool calls themselves stay in the session.
+     */
+    context_summary?: {
+      text: string;
+      created_at: number;
+      /** Rough size of the summary, used by the context ring. */
+      tokens?: number;
+      /** Temporary session that holds the summarisation dialogue. */
+      child_session_id?: string;
+      status?: "running" | "completed" | "failed";
+    } | null;
   } | null;
   created_at: number;
   images: ImageRefAbs[];

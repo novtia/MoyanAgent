@@ -22,7 +22,7 @@ export function PlainReader({
   const findMatches = useReaderFind((s) => s.matches);
 
   const { ranges: findRanges, activeIndex: findActiveIndex } = useMemo(() => {
-    if (!findOpen || !findQuery.trim() || tab.pendingDiffs.length > 0) {
+    if (!findOpen || !findQuery.trim()) {
       return { ranges: [], activeIndex: -1 };
     }
     const ranges = findInText(tab.text, findQuery, matchCase);
@@ -55,7 +55,6 @@ export function PlainReader({
     matchCase,
     tab.text,
     tab.path,
-    tab.pendingDiffs.length,
     findMatches,
     matchIndex,
   ]);
@@ -64,7 +63,7 @@ export function PlainReader({
     findOpen && findQuery.trim().length > 0 && findRanges.length > 0;
 
   const scrollToIndex = useMemo(() => {
-    if (!findOpen || matchIndex < 0 || tab.pendingDiffs.length > 0) return null;
+    if (!findOpen || matchIndex < 0) return null;
     const activeMatch = findMatches[matchIndex] ?? null;
     if (
       !activeMatch ||
@@ -87,7 +86,6 @@ export function PlainReader({
     matchIndex,
     tab.path,
     tab.text,
-    tab.pendingDiffs.length,
     findQuery,
     matchCase,
     findMatches,

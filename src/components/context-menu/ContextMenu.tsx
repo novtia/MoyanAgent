@@ -7,6 +7,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 
 const OPEN_EVENT = "atelier:context-menu-open";
 const CLOSE_EVENT = "atelier:context-menu-close";
@@ -125,6 +126,17 @@ export function closeContextMenu() {
   window.dispatchEvent(new CustomEvent(CLOSE_EVENT));
 }
 
+/** Move an overlay into the top layer so panel overflow cannot clip it. */
+export function pinToTopLayer(el: HTMLElement | null) {
+  if (!el || typeof el.showPopover !== "function") return;
+  try {
+    if (el.getAttribute("popover") !== "manual") el.setAttribute("popover", "manual");
+    if (!el.matches(":popover-open")) el.showPopover();
+  } catch {
+    if (!el.matches(":popover-open")) el.removeAttribute("popover");
+  }
+}
+
 export function ContextMenuHost() {
   const [menu, setMenu] = useState<OpenMenuState | null>(null);
   const [position, setPosition] = useState({ left: 0, top: 0 });
@@ -177,9 +189,12 @@ export function ContextMenuHost() {
   }, [menu]);
 
   useLayoutEffect(() => {
-    if (!menu || !menuRef.current) return;
+    const el = menuRef.current;
+    if (!menu || !el) return;
+    pinToTopLayer(el);
 
-    const rect = menuRef.current.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
     const maxLeft = window.innerWidth - rect.width - VIEWPORT_GUTTER;
     const maxTop = window.innerHeight - rect.height - VIEWPORT_GUTTER;
     const left = Math.max(VIEWPORT_GUTTER, Math.min(menu.x, maxLeft));
@@ -188,6 +203,14 @@ export function ContextMenuHost() {
     setPosition((current) =>
       current.left === left && current.top === top ? current : { left, top },
     );
+  }, [menu]);
+
+  useLayoutEffect(() => {
+    if (!menu) return;
+    document.documentElement.dataset.contextMenu = "open";
+    return () => {
+      delete document.documentElement.dataset.contextMenu;
+    };
   }, [menu]);
 
   useEffect(() => {
@@ -261,7 +284,7 @@ export function ContextMenuHost() {
 
   let actionIndex = -1;
 
-  return (
+  return createPortal(
     <div
       ref={menuRef}
       className="context-menu"
@@ -302,7 +325,8 @@ export function ContextMenuHost() {
           </button>
         );
       })}
-    </div>
+    </div>,
+    document.body,
   );
 }
 

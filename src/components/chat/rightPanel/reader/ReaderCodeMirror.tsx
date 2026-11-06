@@ -1,5 +1,5 @@
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import {
   EditorView,
   drawSelection,
@@ -59,6 +59,17 @@ export interface ReaderCodeMirrorProps {
   scrollTrigger?: number;
 }
 
+function buildLineNumbers(labels: (number | null)[] | undefined) {
+  return lineNumbers({
+    formatNumber: labels
+      ? (n: number) => {
+          const label = labels[n - 1];
+          return label != null ? formatParagraphNumber(label) : "";
+        }
+      : (n: number) => formatParagraphNumber(n),
+  });
+}
+
 function selectionLineRange(
   view: EditorView,
 ): { fromLine: number; toLine: number; text: string } | null {
@@ -106,6 +117,7 @@ export function ReaderCodeMirror({
   const filePathRef = useRef(filePath);
   const paragraphBaseRef = useRef(paragraphBase);
   const syncingRef = useRef(false);
+  const lastEmittedRef = useRef<string | null>(null);
   const scrollToIndexRef = useRef(scrollToIndex);
   scrollToIndexRef.current = scrollToIndex;
   filePathRef.current = filePath;
@@ -117,25 +129,27 @@ export function ReaderCodeMirror({
     () => (lineLabels ? lineLabels.map((l) => l ?? "·").join(",") : ""),
     [lineLabels],
   );
+  const lineLabelsRef = useRef(lineLabels);
+  lineLabelsRef.current = lineLabels;
+  const lineNumbersCompartmentRef = useRef<Compartment | null>(null);
+  const appliedLabelsKeyRef = useRef(lineLabelsKey);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
-    const labels = lineLabels;
-    const formatLineNumber = labels
-      ? (n: number) => {
-          const label = labels[n - 1];
-          return label != null ? formatParagraphNumber(label) : "";
-        }
-      : (n: number) => formatParagraphNumber(n);
+    const lineNumbersCompartment = new Compartment();
+    lineNumbersCompartmentRef.current = lineNumbersCompartment;
+    appliedLabelsKeyRef.current = lineLabelsKey;
 
     const editable = !readOnly && onChange != null;
     const showActiveLine = diffVariant !== "delete";
 
     const updateListener = EditorView.updateListener.of((update) => {
       if (!update.docChanged || syncingRef.current || !onChangeRef.current) return;
-      onChangeRef.current(update.state.doc.toString());
+      const next = update.state.doc.toString();
+      lastEmittedRef.current = next;
+      onChangeRef.current(next);
     });
 
     const copyHandler = EditorView.domEventHandlers({
@@ -143,7 +157,16 @@ export function ReaderCodeMirror({
         const path = filePathRef.current?.trim();
         if (!path) return false;
         const picked = selectionLineRange(view);
-        if (!picked || picked.toLine <= picked.fromLine) return false;
+        if (!picked) return false;
+        // Paragraphs here are whole (often very long) lines, so selecting one
+        // paragraph is "one line". Only a selection that covers that entire
+        // line becomes a card; a few words inside it stay plain text.
+        if (picked.toLine <= picked.fromLine) {
+          const sel = view.state.selection.main;
+          const line = view.state.doc.lineAt(sel.from);
+          const covers = sel.from <= line.from && sel.to >= line.to;
+          if (!covers) return false;
+        }
         const base = Math.max(0, paragraphBaseRef.current);
         const payload: ReaderSelectionPayload = {
           path,
@@ -169,13 +192,13 @@ export function ReaderCodeMirror({
     const state = EditorState.create({
       doc: value,
       extensions: [
-        lineNumbers({ formatNumber: formatLineNumber }),
+        lineNumbersCompartment.of(buildLineNumbers(lineLabelsRef.current)),
         diffSignGutterExtension(diffSign, diffSignFirstLineOnly),
         EditorView.lineWrapping,
         ...(showActiveLine ? [highlightActiveLineGutter(), highlightActiveLine()] : []),
         drawSelection(),
         ...(editable ? [history()] : []),
-        ...(layout === "document" ? [findHighlightField] : []),
+        findHighlightField,
         createReaderCodeMirrorTheme(layout),
         updateListener,
         copyHandler,
@@ -235,15 +258,37 @@ export function ReaderCodeMirror({
     diffVariant,
     diffSign,
     diffSignFirstLineOnly,
-    lineLabelsKey,
     onChange != null,
   ]);
+
+  // Paragraph labels shift whenever lines are added/removed above this segment.
+  // Reconfigure the gutter in place instead of tearing the whole editor down.
+  useEffect(() => {
+    if (appliedLabelsKeyRef.current === lineLabelsKey) return;
+    appliedLabelsKeyRef.current = lineLabelsKey;
+    const view = viewRef.current;
+    const compartment = lineNumbersCompartmentRef.current;
+    if (!view || !compartment) return;
+    view.dispatch({
+      effects: compartment.reconfigure(buildLineNumbers(lineLabelsRef.current)),
+    });
+  }, [lineLabelsKey]);
 
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     const current = view.state.doc.toString();
-    if (current === value) return;
+    if (current === value) {
+      lastEmittedRef.current = null;
+      return;
+    }
+    // Segment editors: while the user is typing here, the editor is the source of
+    // truth. A parent that momentarily derives a different slice (e.g. line range
+    // drift after Enter) must not overwrite it — that would drop the new line and
+    // the caret.
+    if (layout === "segment" && view.hasFocus && current === lastEmittedRef.current) {
+      return;
+    }
     const top = view.scrollDOM.scrollTop;
     syncingRef.current = true;
     view.dispatch({
@@ -257,11 +302,10 @@ export function ReaderCodeMirror({
   }, [value, layout, filePath]);
 
   useEffect(() => {
-    if (layout !== "document") return;
     const view = viewRef.current;
     if (!view) return;
     applyFindHighlights(view, findRanges, findActiveIndex);
-  }, [layout, findRanges, findActiveIndex]);
+  }, [findRanges, findActiveIndex]);
 
   // Scroll only when the user navigates find matches (scrollTrigger), not on every
   // edit that shifts match offsets in the live document.

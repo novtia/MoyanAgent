@@ -29,8 +29,12 @@ function normalizeRootForCompare(p: string): string {
 export function isReaderSelectionForProject(
   payload: ReaderSelectionPayload,
   currentRoot: string | null | undefined,
+  currentSessionId?: string | null,
 ): boolean {
-  if (!currentRoot?.trim()) return false;
+  if (!currentRoot?.trim()) {
+    // Explorer not bound yet: the same session is still the same project.
+    return !!currentSessionId && payload.sessionId === currentSessionId;
+  }
   const current = normalizeRootForCompare(currentRoot);
   if (payload.projectRoot?.trim()) {
     return normalizeRootForCompare(payload.projectRoot) === current;
@@ -123,8 +127,9 @@ export function parseReaderSelectionHtml(html: string): ReaderSelectionPayload |
 export function isMultiLineReaderSelection(
   payload: ReaderSelectionPayload,
 ): boolean {
+  // A single whole paragraph (from === to) is a valid card too.
   return (
     payload.paragraphFrom >= 1 &&
-    payload.paragraphTo > payload.paragraphFrom
+    payload.paragraphTo >= payload.paragraphFrom
   );
 }

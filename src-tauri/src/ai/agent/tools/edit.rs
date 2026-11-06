@@ -367,7 +367,15 @@ impl Tool for FileEditTool {
             if let (Some(pool), Some(sid)) = (&self.pool, invocation.context.session_id.as_deref())
             {
                 if let Ok(conn) = pool.get() {
-                    match pending_diff::insert(
+                    // A single-spot Edit over lines an earlier Edit of this turn
+                    // already changed folds into that hunk; `replace_all` touches
+                    // several places so it always gets its own row.
+                    let record = if replaced_count == 1 && !replace_all {
+                        pending_diff::insert_merging
+                    } else {
+                        pending_diff::insert
+                    };
+                    match record(
                         &conn,
                         sid,
                         &path_str,

@@ -17,6 +17,7 @@ import {
   messageMatchesVideoMode,
   useSession,
 } from "../../../store/session";
+import { isGenerationCancelled } from "../../../store/session/generation";
 import { useChatFind } from "../../../store/chatFind";
 import { highlightQuery } from "../../../utils/highlightQuery";
 import { ATELIER_DRAG_TYPE } from "../rightPanel/gallery";
@@ -40,6 +41,7 @@ import {
 import type { AssistantBlock, AttachmentDraft, ImageRefAbs, SkillInfo } from "../../../types";
 import { AssistantContent } from "./AssistantContent";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { ContextSummaryBar } from "./ContextSummaryBar";
 import { MessageTokenUsage } from "./MessageTokenUsage";
 import { PlateActions } from "./PlateActions";
 import { ThinkingBlock } from "./ThinkingBlock";
@@ -57,10 +59,11 @@ import {
   PlusIcon,
   QuoteIcon,
   ResendIcon,
+  SummarizeIcon,
   TrashIcon,
 } from "./icons";
 
-function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
+function MessageRowImpl({ m, onPreviewImage, focused, contextUnused }: MessageRowProps) {
   const { t } = useTranslation();
   const inputs = useMemo(() => m.images.filter((i) => i.role === "input"), [m.images]);
   const inputMediaByPath = useMemo(() => {
@@ -82,10 +85,12 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
   }, [inputs]);
   const outputs = m.images.filter((i) => i.role === "output");
   const hasVideoOutput = outputs.some((item) => item.mime.startsWith("video/"));
+  const hasImageOutput = outputs.some((item) => item.mime.startsWith("image/"));
   const resendMessage = useSession((s) => s.resendMessage);
   const deleteMessage = useSession((s) => s.deleteMessage);
   const editMessage = useSession((s) => s.editMessage);
   const quoteMessage = useSession((s) => s.quoteMessage);
+  const summarizeContext = useSession((s) => s.summarizeContext);
   const busy = useSession((s) => s.busy);
   const active = useSession((s) => s.active);
 
@@ -135,6 +140,17 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     typeof m.params?.thinking_content === "string"
       ? m.params.thinking_content.trim()
       : "";
+  const summary = isAssistant ? m.params?.context_summary : undefined;
+  const summaryText = summary?.text?.trim() ?? "";
+  const summaryChildId = summary?.child_session_id?.trim() || "";
+  const summaryStatus = summary?.status;
+  const bubbleEmpty =
+    isAssistant &&
+    !hasText &&
+    !useBlocksRendering &&
+    !thinkingContent &&
+    inputs.length === 0 &&
+    outputs.length === 0;
 
   const MAX_EDIT_MEDIA =
     m.params?.video_mode === "text"
@@ -148,6 +164,7 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
             : 8;
 
   const [editing, setEditing] = useState(false);
+  const [summarizing, setSummarizing] = useState(false);
   const [draft, setDraft] = useState(m.text || "");
   const [draftMentions, setDraftMentions] = useState<string[]>([]);
   const [draftMedia, setDraftMedia] = useState<ImageRefAbs[]>(inputs);
@@ -673,6 +690,25 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
     if (!ok) return;
     await deleteMessage(m.id);
   };
+  const onSummarize = async () => {
+    if (busy || summarizing) return;
+    const ok = await dialog.confirm(t("message.summarizeConfirm"), {
+      type: "warning",
+      confirmLabel: t("message.actionSummarize"),
+    });
+    if (!ok) return;
+    setSummarizing(true);
+    try {
+      await summarizeContext(m.id);
+    } catch (err) {
+      console.error(err);
+      if (!isGenerationCancelled(err)) {
+        toast.error(t("message.summarizeFailed"));
+      }
+    } finally {
+      setSummarizing(false);
+    }
+  };
   const onCopy = () => {
     copyText(m.text || "");
   };
@@ -710,18 +746,34 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
       data-message-id={m.id}
     >
       <div className="msg-col">
-        <div className="bubble">
-          {!isUser && !(editing && isAssistant) && (
-            <span className="stamp">
-              {isStreamingDraft
-                ? t("message.stampGenerating", { time: nowStamp(m.created_at) })
-                : isAssistant
-                ? t(hasVideoOutput ? "message.stampVideo" : "message.stampImage", {
-                    time: nowStamp(m.created_at),
-                  })
-                : t("message.stampFailure", { time: nowStamp(m.created_at) })}
-            </span>
-          )}
+        <div className={`bubble${bubbleEmpty && !editing ? " is-empty" : ""}`}>
+          {(!isUser && !(editing && isAssistant)) || (contextUnused && !editing) ? (
+            <div className="msg-meta">
+              {!isUser && !(editing && isAssistant) && (
+                <span className="stamp">
+                  {isStreamingDraft
+                    ? t("message.stampGenerating", { time: nowStamp(m.created_at) })
+                    : isError
+                    ? t("message.stampFailure", { time: nowStamp(m.created_at) })
+                    : isAssistant
+                    ? t(
+                        hasVideoOutput
+                          ? "message.stampVideo"
+                          : hasImageOutput
+                            ? "message.stampImage"
+                            : "message.stampAgent",
+                        { time: nowStamp(m.created_at) },
+                      )
+                    : t("message.stampFailure", { time: nowStamp(m.created_at) })}
+                </span>
+              )}
+              {contextUnused && !editing && (
+                <span className="context-unused-mark" title={t("message.contextUnusedHint")}>
+                  {t("message.contextUnused")}
+                </span>
+              )}
+            </div>
+          ) : null}
 
           {!editing && !useBlocksRendering && thinkingContent ? (
             <ThinkingBlock
@@ -1082,6 +1134,14 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
           )}
         </div>
 
+        {(summaryText || summaryChildId) && !editing ? (
+          <ContextSummaryBar
+            text={summaryText}
+            childSessionId={summaryChildId || undefined}
+            status={summaryStatus}
+          />
+        ) : null}
+
         {!editing && !isTempDraft && (
           <div className="msg-action-bar">
             {outputs.map((img, i) => (
@@ -1141,6 +1201,22 @@ function MessageRowImpl({ m, onPreviewImage, focused }: MessageRowProps) {
               >
                 <QuoteIcon />
                 <span>{t("message.actionQuote")}</span>
+              </button>
+            )}
+            {isAssistant && !isTempDraft && !isTempSession && (
+              <button
+                type="button"
+                className="msg-action"
+                onClick={() => void onSummarize()}
+                disabled={busy || summarizing}
+                title={t("message.summarizeTitle")}
+              >
+                <SummarizeIcon />
+                <span>
+                  {summarizing
+                    ? t("message.summarizing")
+                    : t("message.actionSummarize")}
+                </span>
               </button>
             )}
             {!isSpawnedPrompt && (
@@ -1221,6 +1297,7 @@ export const MessageRow = memo(MessageRowImpl, (prev, next) => {
   return (
     prev.m === next.m &&
     prev.focused === next.focused &&
+    prev.contextUnused === next.contextUnused &&
     prev.onPreviewImage === next.onPreviewImage
   );
 });

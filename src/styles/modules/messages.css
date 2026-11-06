@@ -731,6 +731,26 @@ mark.chat-find-mark,
   text-transform: uppercase;
   margin-bottom: 6px;
 }
+.msg-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.msg-meta > .stamp {
+  margin-bottom: 0;
+}
+.context-unused-mark {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  line-height: 16px;
+  color: var(--ink-mute);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 6px;
+}
 .msg-token-usage {
   display: block;
   margin-top: 8px;
@@ -740,6 +760,35 @@ mark.chat-find-mark,
   color: var(--ink-mute);
   line-height: 1.4;
   user-select: none;
+}
+.bubble.is-empty {
+  display: none;
+}
+.summary-card {
+  width: 100%;
+  margin-top: 8px;
+}
+.summary-card > .agent-card {
+  margin: 0;
+}
+.summary-card.is-open > .agent-card {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.summary-card.is-open .agent-card-hint {
+  opacity: 1;
+}
+.summary-card-detail {
+  border: 1px solid var(--line);
+  border-top: none;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  background: var(--bg-soft);
+  padding: 2px 14px 14px 58px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 /* ───── reasoning / thinking block ─────
    A minimalistic and elegant block that expands to show thinking processes. */
@@ -1186,6 +1235,13 @@ button.doc-row-head:disabled {
 .rename-line.is-error .kv {
   color: var(--rose-500);
 }
+.rename-line.split-line {
+  flex-wrap: wrap;
+}
+.rename-line.split-line .fname {
+  flex: none;
+  max-width: 100%;
+}
 .tree {
   font-family: "JetBrains Mono", monospace;
   font-size: 11.5px;
@@ -1415,6 +1471,17 @@ button.flow-head:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.agent-card-type {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--ink-mute);
+  background: rgba(127, 127, 127, 0.16);
+}
 .agent-card-status {
   font-size: 12px;
   color: var(--ink-mute);
@@ -1432,7 +1499,8 @@ button.flow-head:disabled {
   opacity: 0;
   transition: opacity 0.15s;
 }
-.agent-card:hover:not(:disabled) .agent-card-hint {
+.agent-card:hover:not(:disabled) .agent-card-hint,
+.agent-card[aria-expanded="true"] .agent-card-hint {
   opacity: 1;
 }
 

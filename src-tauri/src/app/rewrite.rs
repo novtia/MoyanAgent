@@ -16,6 +16,7 @@ use crate::ai::rewrite_config::RewriteSettings;
 use crate::data::settings::{self, ModelParamSettings, ModelProvider};
 use crate::error::{AppError, AppResult};
 
+use super::jev::{self, Parsed};
 use super::state::AppState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,10 +54,12 @@ impl Stage {
         }
     }
 
-    fn max_tokens(self, cfg: &RewriteSettings) -> i64 {
+    /// Output cap for one request. The rewrite stage has none: rewrite3 writes
+    /// a long analysis first, and a cap would be used up before the body starts.
+    fn max_tokens(self, cfg: &RewriteSettings) -> Option<i64> {
         match self {
-            Stage::Rewrite => cfg.rewrite_max_tokens,
-            Stage::Expand => cfg.expand_max_tokens,
+            Stage::Rewrite => None,
+            Stage::Expand => Some(cfg.expand_max_tokens),
         }
     }
 }
@@ -147,6 +150,20 @@ pub async fn start_reader_rewrite(
         slot: &state.rewrite_abort,
     };
 
+    // rewrite3 wants a jevnovel score after every sentence. Score the whole
+    // batch in one Python run, then hand each chunk its marked-up text.
+    let scored_chunks = if rewrite_cfg.jev_enabled && stages(mode).contains(&Stage::Rewrite) {
+        match score_chunks(&rewrite_cfg, &chunks, &signal).await? {
+            Some(scored) => Some(scored),
+            None => {
+                emit_cancelled(&app, &args);
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
+
     let factory = ProviderFactory::default();
     let total = chunks.len();
     let mut visible = String::new();
@@ -157,7 +174,11 @@ pub async fn start_reader_rewrite(
             return Ok(());
         }
         let index = offset + 1;
-        let mut carried = chunk.clone();
+        let mut carried = scored_chunks
+            .as_ref()
+            .and_then(|scored| scored.get(offset))
+            .unwrap_or(chunk)
+            .clone();
         for stage in stages(mode) {
             let stage = *stage;
             if signal.aborted() {
@@ -260,6 +281,30 @@ pub fn cancel_reader_rewrite(state: State<'_, Arc<AppState>>) -> Result<(), AppE
     Ok(())
 }
 
+/// Marks every sentence of every chunk with its jevnovel score. `Ok(None)`
+/// means the run was cancelled while scoring.
+async fn score_chunks(
+    cfg: &RewriteSettings,
+    chunks: &[String],
+    signal: &AbortSignal,
+) -> AppResult<Option<Vec<String>>> {
+    let parsed: Vec<Parsed> = chunks.iter().map(|chunk| Parsed::parse(chunk)).collect();
+    let sentences: Vec<String> = parsed
+        .iter()
+        .flat_map(|chunk| chunk.sentences().map(str::to_string))
+        .collect();
+    let Some(scores) = jev::score_sentences(cfg, &sentences, signal).await? else {
+        return Ok(None);
+    };
+    let mut scores = scores.into_iter();
+    Ok(Some(
+        parsed
+            .iter()
+            .map(|chunk| chunk.render(&mut scores))
+            .collect(),
+    ))
+}
+
 fn parse_mode(raw: &str) -> AppResult<RewriteMode> {
     match raw.trim() {
         "rewrite" => Ok(RewriteMode::Rewrite),
@@ -340,7 +385,12 @@ async fn complete_stage(
 ) -> AppResult<Step> {
     let body = chunk.trim();
     let prompt = if stage.prompt_enabled(cfg) {
-        format!("{}\n{}", stage.instruction(cfg).trim_end(), body)
+        if stage == Stage::Rewrite && cfg.jev_enabled {
+            // rewrite3 prompt: instruction, blank line, then the marked-up text.
+            format!("{}\n\n{}", cfg.jev_instruction.trim_end(), body)
+        } else {
+            format!("{}\n{}", stage.instruction(cfg).trim_end(), body)
+        }
     } else {
         body.to_string()
     };
@@ -461,7 +511,7 @@ fn rewrite_parameters(
             top_p: Some(cfg.top_p),
             // A per-chunk cap would cut a single full-passage request short.
             max_tokens: if auto_chunk {
-                Some(stage.max_tokens(cfg))
+                stage.max_tokens(cfg)
             } else {
                 None
             },

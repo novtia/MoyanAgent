@@ -1,11 +1,6 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  type MouseEvent as ReactMouseEvent,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { EditorView } from "@codemirror/view";
+import { emit, listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../../api/tauri";
 import { copyText } from "../../../../utils/clipboard";
@@ -38,6 +33,12 @@ import { ReaderToolbar } from "./components/ReaderToolbar";
 import { ReaderFileTree } from "./fileTree/ReaderFileTree";
 import { ReaderFindBar, useReaderFindShortcuts } from "./find/ReaderFindBar";
 import { useLazyLoadFile } from "./hooks/useLazyLoadFile";
+import { openPhoneReader, phoneReaderIsOpen } from "../../../../phoneReader/openPhoneReader";
+import {
+  PHONE_READER_EVENT,
+  PHONE_READER_READY,
+  type PhoneReaderPayload,
+} from "../../../../phoneReader/sync";
 import { useReaderNavHistory } from "./hooks/useReaderNavHistory";
 import { useReaderSplit } from "./hooks/useReaderSplit";
 import { ReaderEditorViewContext } from "./readerCodeMirror/editorViewContext";
@@ -127,6 +128,68 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
     () => ({ firstLineIndent, paragraphSpacing }),
     [firstLineIndent, paragraphSpacing],
   );
+  const [phoneOpen, setPhoneOpen] = useState(false);
+  const phoneSnapshot = useCallback((): PhoneReaderPayload | null => {
+    if (!tab || isMedia || !path) return null;
+    return {
+      path,
+      title: fileName,
+      text: tab.text,
+      firstLineIndent,
+      paragraphSpacing,
+    };
+  }, [tab, isMedia, path, fileName, firstLineIndent, paragraphSpacing]);
+  const phoneSnapshotRef = useRef(phoneSnapshot);
+  phoneSnapshotRef.current = phoneSnapshot;
+
+  const publishPhone = useCallback(() => {
+    const snap = phoneSnapshotRef.current();
+    if (!snap) return;
+    void emit(PHONE_READER_EVENT, snap);
+  }, []);
+
+  useEffect(() => {
+    if (!isActive) return;
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    void listen(PHONE_READER_READY, () => {
+      publishPhone();
+    }).then((unlisten) => {
+      if (cancelled) unlisten();
+      else stop = unlisten;
+    });
+    void phoneReaderIsOpen().then((open) => {
+      if (!cancelled && open) setPhoneOpen(true);
+    });
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, [isActive, publishPhone]);
+
+  useEffect(() => {
+    if (!phoneOpen || !isActive) return;
+    const timer = window.setTimeout(() => publishPhone(), 200);
+    return () => window.clearTimeout(timer);
+  }, [
+    phoneOpen,
+    publishPhone,
+    tab?.text,
+    tab?.path,
+    fileName,
+    firstLineIndent,
+    paragraphSpacing,
+    isActive,
+  ]);
+
+  const onPhone = useCallback(() => {
+    void openPhoneReader(() => setPhoneOpen(false))
+      .then(() => setPhoneOpen(true))
+      .catch((err) => {
+        setPhoneOpen(false);
+        toast.error(t("reader.phone"), { description: String(err) });
+      });
+  }, [t]);
   const formatEnabled = firstLineIndent || paragraphSpacing;
   const canIndent = !!tab && !isMedia && !hasPendingDiff && formatEnabled;
   const editorViewRef = useRef<EditorView | null>(null);
@@ -345,10 +408,7 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
         <ReaderRewritePane run={rewriteRun} />
       ) : showFindPane ? (
         <div className="reader-search-pane">
-          <ReaderFindBar
-            disabled={hasPendingDiff}
-            disabledReason={hasPendingDiff ? t("readerFind.diffBlocked") : undefined}
-          />
+          <ReaderFindBar />
         </div>
       ) : (
         <ReaderFileTree activePath={path ?? null} onOpenFile={onOpenFile} />
@@ -390,6 +450,9 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
           onSource={() => setPreview(false)}
           onIndent={onIndent}
           onMore={onMore}
+          phoneOpen={phoneOpen}
+          canPhone={hasFile && !isMedia}
+          onPhone={onPhone}
           onToggleSearch={() => {
             if (path && rewriteVisible) setRewriteView(path, "files");
             toggleSearch();

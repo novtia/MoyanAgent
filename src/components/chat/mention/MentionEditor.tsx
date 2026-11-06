@@ -294,6 +294,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
           !isReaderSelectionForProject(
             payload,
             useFileExplorer.getState().projectRoot,
+            useFileExplorer.getState().sessionId,
           )
         ) {
           return false;

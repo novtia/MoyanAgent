@@ -116,7 +116,7 @@ pub(crate) fn rollback_workspace_from_message(
         }
     };
 
-    let mut restored_paths: Vec<String> = Vec::new();
+    let mut restored_paths: Vec<(String, Option<String>)> = Vec::new();
     if let Some(plan) = plan {
         let mut failures: Vec<(i64, String)> = plan.unrestorable.clone();
         for (_, reason) in &plan.unrestorable {
@@ -124,7 +124,10 @@ pub(crate) fn rollback_workspace_from_message(
         }
         for restore in &plan.restores {
             match apply_file_restore(conn, session_id, restore) {
-                Ok(()) => restored_paths.push(restore.path.clone()),
+                Ok(()) => restored_paths.push((
+                    restore.path.clone(),
+                    if restore.delete { None } else { restore.content.clone() },
+                )),
                 Err(e) => {
                     eprintln!("rollback_workspace: {} failed: {e}", restore.path);
                     failures.push((restore.row_id, e.to_string()));
@@ -143,7 +146,15 @@ pub(crate) fn rollback_workspace_from_message(
     }
     restored_paths.sort();
     restored_paths.dedup();
-    let _ = crate::data::pending_diff::clear_paths(conn, session_id, &restored_paths);
+    // Earlier turns' review rows stay when they still match the restored file.
+    for (path, content) in &restored_paths {
+        let _ = crate::data::pending_diff::retain_path_if_consistent(
+            conn,
+            session_id,
+            path,
+            content.as_deref(),
+        );
+    }
 }
 
 /// Apply a single file-snapshot rollback action to disk: delete a file that

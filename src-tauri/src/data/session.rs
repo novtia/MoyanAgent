@@ -636,6 +636,10 @@ pub fn recompute_context_window_used(conn: &DbConn, session_id: &str) -> AppResu
             continue;
         }
         if let Some(ref p) = msg.params {
+            if let Some(summary_tokens) = context_summary_tokens(p) {
+                used = summary_tokens;
+                break;
+            }
             let u = tokens::extract_usage(p);
             let t = u
                 .last_prompt_tokens
@@ -654,6 +658,24 @@ pub fn recompute_context_window_used(conn: &DbConn, session_id: &str) -> AppResu
         params![used, updated, session_id],
     )?;
     Ok(())
+}
+
+/// Token estimate stored on a context-summary anchor.
+///
+/// When this assistant message is the latest turn, the ring should follow the
+/// summary that later requests actually send, not the pre-summary prompt size
+/// still recorded in `usage`.
+fn context_summary_tokens(params: &serde_json::Value) -> Option<i64> {
+    let summary = params.get("context_summary")?;
+    let text = summary.get("text")?.as_str()?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    summary
+        .get("tokens")
+        .and_then(|v| v.as_i64())
+        .filter(|n| *n > 0)
+        .or_else(|| Some(((text.chars().count() as i64) / 2).max(1)))
 }
 
 /// Fold a manual edit back into a message's block list.

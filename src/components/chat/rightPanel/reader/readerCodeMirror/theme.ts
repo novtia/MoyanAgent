@@ -1,8 +1,23 @@
+import type { Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
 export type ReaderCodeMirrorLayout = "document" | "segment";
 
-export function createReaderCodeMirrorTheme(layout: ReaderCodeMirrorLayout) {
+// EditorView.theme() mints a new style module (and injects a new <style> rule
+// set) on every call. Diff mode mounts hundreds of editors, so build each
+// layout's theme exactly once and share it.
+const themeCache = new Map<ReaderCodeMirrorLayout, Extension>();
+
+export function createReaderCodeMirrorTheme(layout: ReaderCodeMirrorLayout): Extension {
+  let theme = themeCache.get(layout);
+  if (!theme) {
+    theme = buildReaderCodeMirrorTheme(layout);
+    themeCache.set(layout, theme);
+  }
+  return theme;
+}
+
+function buildReaderCodeMirrorTheme(layout: ReaderCodeMirrorLayout): Extension {
   const segment = layout === "segment";
   return EditorView.theme({
     "&": {
@@ -85,4 +100,4 @@ export function createReaderCodeMirrorTheme(layout: ReaderCodeMirrorLayout) {
 }
 
 /** Full-viewport reader editor (plain mode). */
-export const readerCodeMirrorTheme = createReaderCodeMirrorTheme("document");
+export const readerCodeMirrorTheme: Extension = createReaderCodeMirrorTheme("document");

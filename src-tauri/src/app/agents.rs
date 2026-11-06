@@ -88,6 +88,31 @@ pub(crate) struct AgentSummary {
     pub(crate) background: bool,
     pub(crate) tools: Vec<String>,
     pub(crate) disallowed_tools: Vec<String>,
+    /// `true` for user-defined (`custom:`) agents.
+    pub(crate) custom: bool,
+    /// `false` when the `Agent` tool is forbidden from dispatching it.
+    pub(crate) enabled: bool,
+}
+
+/// Push the DB custom agents + `disabled_agents` setting into the registry so
+/// the `Agent` tool sees them. Call after any change to either.
+pub(crate) fn sync_agent_registry(
+    registry: &agent::AgentRegistry,
+    conn: &crate::data::db::DbConn,
+) -> Result<(), AppError> {
+    let custom: Vec<_> = custom_agents::list(conn)?
+        .iter()
+        .map(|c| {
+            let mut d = c.to_definition();
+            // Surface the display name to the model's `action: "list"` output.
+            d.when_to_use = format!("{}: {}", c.name, c.when_to_use);
+            d
+        })
+        .collect();
+    let disabled = crate::data::settings::read(conn)?.disabled_agents;
+    registry.set_user_config(custom, disabled);
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -132,6 +157,8 @@ pub fn list_agents(state: tauri::State<Arc<AppState>>) -> Result<Vec<AgentSummar
         .active()
         .into_values()
         .map(|d| AgentSummary {
+            custom: d.agent_type.starts_with(custom_agents::CUSTOM_AGENT_PREFIX),
+            enabled: !state.agent_registry.is_disabled(&d.agent_type),
             agent_type: d.agent_type,
             when_to_use: d.when_to_use,
             background: d.background,
@@ -204,14 +231,16 @@ pub fn create_custom_agent(
     args: CreateCustomAgentArgs,
 ) -> Result<custom_agents::CustomAgent, AppError> {
     let conn = state.conn()?;
-    custom_agents::create(
+    let created = custom_agents::create(
         &conn,
         &args.name,
         &args.when_to_use,
         &args.system_prompt,
         args.model.as_deref(),
         &args.tools,
-    )
+    )?;
+    sync_agent_registry(&state.agent_registry, &conn)?;
+    Ok(created)
 }
 
 #[derive(Debug, Deserialize)]
@@ -235,7 +264,7 @@ pub fn update_custom_agent(
     args: UpdateCustomAgentArgs,
 ) -> Result<custom_agents::CustomAgent, AppError> {
     let conn = state.conn()?;
-    custom_agents::update(
+    let updated = custom_agents::update(
         &conn,
         &args.agent_type,
         &args.name,
@@ -243,7 +272,9 @@ pub fn update_custom_agent(
         &args.system_prompt,
         args.model.as_deref(),
         &args.tools,
-    )
+    )?;
+    sync_agent_registry(&state.agent_registry, &conn)?;
+    Ok(updated)
 }
 
 #[derive(Debug, Deserialize)]
@@ -258,5 +289,6 @@ pub fn delete_custom_agent(
     args: DeleteCustomAgentArgs,
 ) -> Result<(), AppError> {
     let conn = state.conn()?;
-    custom_agents::delete(&conn, &args.agent_type)
+    custom_agents::delete(&conn, &args.agent_type)?;
+    sync_agent_registry(&state.agent_registry, &conn)
 }

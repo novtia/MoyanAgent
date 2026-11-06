@@ -9,17 +9,23 @@ INSERT OR IGNORE INTO llm_sdk_option (
 ) VALUES (
   'vertex',
   'Vertex AI',
-  'Google Cloud Vertex AI 的 Gemini generateContent 接口。填写 GCP 项目 ID 和区域后会自动拼 URL；密钥支持 API Key 或 gcloud access token。',
+  'Google Cloud Vertex AI 的 Gemini generateContent 接口。填写 GCP 项目 ID 和区域后会自动拼 URL；密钥支持 API Key、gcloud access token，或服务账号 JSON。',
   'Vertex AI',
   'https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent',
   'https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent',
   '用设置里的项目 ID 和区域拼好地址，并保留 {model}；后端会替换为当前模型 ID，流式时改为 streamGenerateContent。',
-  'AIza... 或 ya29...',
-  '填写 Google Cloud API Key，或 gcloud auth print-access-token 得到的 access token。',
+  'AIza...、ya29... 或服务账号 JSON',
+  '对话可用 API Key。拉模型列表需要 OAuth access token，或改用服务账号 JSON。',
   'gemini-2.5-flash',
   '填写 Vertex 上的 Gemini 模型 ID（不含 google/ 前缀）。',
   7
 );
+
+UPDATE llm_sdk_option
+SET description = 'Google Cloud Vertex AI 的 Gemini generateContent 接口。填写 GCP 项目 ID 和区域后会自动拼 URL；密钥支持 API Key、gcloud access token，或服务账号 JSON。',
+    api_key_placeholder = 'AIza...、ya29... 或服务账号 JSON',
+    api_key_hint = '对话可用 API Key。拉模型列表需要 OAuth access token，或改用服务账号 JSON。'
+WHERE sdk_id = 'vertex';
 
 INSERT OR IGNORE INTO llm_supplier_preset (supplier_id, name, sdk_id, avatar, endpoint, enabled, sort_order) VALUES
 ('vertex', 'Vertex AI', 'vertex', '', 'https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent', 0, 8);

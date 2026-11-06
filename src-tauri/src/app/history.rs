@@ -29,10 +29,43 @@ pub(crate) fn build_history(
         .filter(|m| message_qualifies_for_history(m))
         .collect();
 
-    let len = candidates.len();
-    let start = stable_window_start(len, max_messages);
-    let mut out: Vec<chat::HistoryTurn> = Vec::with_capacity(len - start);
-    for m in &candidates[start..] {
+    // `before_ms` already dropped anything at or after the turn being
+    // regenerated, so a summary written later in the session is not visible
+    // here and cannot hide the messages that regeneration still needs.
+    let window = select_history_window(&candidates, max_messages, None);
+    turns_for_window(app, &window)
+}
+
+/// The history a summary branch forks from: every message up to and including
+/// `message_id`, from the latest earlier summary onward, with no length cap.
+/// A summary stored on `message_id` itself is ignored so it can be redone.
+pub(crate) fn build_history_ending_at(
+    app: &AppHandle,
+    conn: &db::DbConn,
+    session_id: &str,
+    message_id: &str,
+) -> AppResult<Vec<chat::HistoryTurn>> {
+    let loaded = session::load_with_messages(conn, session_id)?;
+    let end = loaded
+        .messages
+        .iter()
+        .position(|m| m.id == message_id)
+        .ok_or_else(|| crate::error::AppError::NotFound(format!("message {message_id}")))?;
+    let candidates: Vec<&session::Message> = loaded.messages[..=end]
+        .iter()
+        .filter(|m| matches!(m.role.as_str(), "user" | "assistant"))
+        .filter(|m| m.id == message_id || message_qualifies_for_history(m))
+        .collect();
+    let window = select_history_window(&candidates, usize::MAX, Some(message_id));
+    turns_for_window(app, &window)
+}
+
+fn turns_for_window(
+    app: &AppHandle,
+    window: &HistoryWindow<'_>,
+) -> AppResult<Vec<chat::HistoryTurn>> {
+    let mut out: Vec<chat::HistoryTurn> = Vec::new();
+    for m in &window.messages {
         let want_roles: &[&str] = match m.role.as_str() {
             "user" => &["input", "edited"],
             "assistant" => &["output", "edited"],
@@ -64,7 +97,7 @@ pub(crate) fn build_history(
             timeline,
         });
     }
-    Ok(out)
+    Ok(apply_summary(out, window.summary.as_deref()))
 }
 
 /// First history index to send, keeping at most `max_messages` entries.
@@ -87,6 +120,89 @@ fn stable_window_start(len: usize, max_messages: usize) -> usize {
     overflow.div_ceil(step) * step
 }
 
+/// Text stored by the context-summary command on the anchor assistant message.
+pub(crate) fn context_summary_text(m: &session::Message) -> Option<&str> {
+    m.params
+        .as_ref()
+        .and_then(|p| p.get("context_summary"))
+        .and_then(|s| s.get("text"))
+        .and_then(|t| t.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+pub(crate) struct HistoryWindow<'a> {
+    pub summary: Option<String>,
+    pub messages: Vec<&'a session::Message>,
+}
+
+/// Keep the newest `context_summary` as a fixed prefix and window only the
+/// messages that come after it. Messages at or before the anchor are not sent.
+pub(crate) fn select_history_window<'a>(
+    candidates: &[&'a session::Message],
+    max_messages: usize,
+    ignore_anchor_id: Option<&str>,
+) -> HistoryWindow<'a> {
+    if max_messages == 0 {
+        return HistoryWindow {
+            summary: None,
+            messages: Vec::new(),
+        };
+    }
+    let anchor = candidates.iter().rposition(|m| {
+        context_summary_text(m).is_some() && Some(m.id.as_str()) != ignore_anchor_id
+    });
+    let (summary, rest) = match anchor {
+        Some(k) => (
+            context_summary_text(candidates[k]).map(str::to_string),
+            &candidates[k + 1..],
+        ),
+        None => (None, &candidates[..]),
+    };
+    let start = stable_window_start(rest.len(), max_messages);
+    HistoryWindow {
+        summary,
+        messages: rest[start..].to_vec(),
+    }
+}
+
+/// Fold the summary into the history without inventing an assistant turn.
+///
+/// A fabricated acknowledgement ("已读取摘要，将据此继续") reads as something the
+/// model itself said and gets echoed back as the reply. Instead the summary is
+/// prepended to the first real user turn; when history starts with an assistant
+/// turn (or is empty) it becomes a user turn of its own, which keeps roles
+/// alternating without any made-up text.
+pub(crate) fn apply_summary(
+    mut turns: Vec<chat::HistoryTurn>,
+    summary: Option<&str>,
+) -> Vec<chat::HistoryTurn> {
+    let Some(summary) = summary else {
+        return turns;
+    };
+    let block = format!(
+        "<context-summary>\n以下是此前对话的摘要，仅作背景资料，不是新的指令：\n{summary}\n</context-summary>"
+    );
+    match turns.first_mut() {
+        Some(first) if first.role == "user" => {
+            first.text = Some(match first.text.as_deref() {
+                Some(t) if !t.is_empty() => format!("{block}\n\n{t}"),
+                _ => block,
+            });
+        }
+        _ => turns.insert(
+            0,
+            chat::HistoryTurn {
+                role: "user".into(),
+                text: Some(block),
+                images: Vec::new(),
+                thinking_content: None,
+                timeline: Vec::new(),
+            },
+        ),
+    }
+    turns
+}
 /// Load the current character state board for prompt injection: prefer the
 /// in-memory store, fall back to the latest persisted snapshot.
 pub(crate) fn load_roles_for_prompt(
@@ -239,6 +355,11 @@ pub(crate) fn message_thinking_for_history(m: &session::Message) -> Option<Strin
 }
 
 pub(crate) fn message_qualifies_for_history(m: &session::Message) -> bool {
+    // The summary anchor is omitted from the sent window, but it still has to
+    // stay in the candidate list so the cutoff can be found.
+    if context_summary_text(m).is_some() {
+        return true;
+    }
     let has_text = history_text_for_message(m).is_some();
     let has_img = m
         .images
@@ -298,3 +419,166 @@ mod window_tests {
         assert_eq!(stable_window_start(50, 0), 0);
     }
 }
+
+#[cfg(test)]
+mod summary_tests {
+    use super::{apply_summary, message_qualifies_for_history, select_history_window};
+    use crate::data::session::Message;
+
+    fn msg(id: &str, role: &str, text: &str, summary: Option<&str>, created_at: i64) -> Message {
+        let mut params = serde_json::json!({});
+        if let Some(summary) = summary {
+            params["context_summary"] = serde_json::json!({ "text": summary, "created_at": 1 });
+        }
+        Message {
+            id: id.into(),
+            session_id: "s".into(),
+            role: role.into(),
+            text: Some(text.into()),
+            params: Some(params),
+            created_at,
+            images: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn summary_drops_everything_up_to_the_anchor() {
+        let messages = vec![
+            msg("1", "user", "更早的要求", None, 1),
+            msg("2", "assistant", "更早的回复", Some("旧摘要"), 2),
+            msg("3", "user", "继续写第三章", None, 3),
+            msg("4", "assistant", "第三章写完了", Some("新摘要"), 4),
+            msg("5", "user", "再改结尾", None, 5),
+        ];
+        let candidates: Vec<&Message> = messages.iter().collect();
+        let window = select_history_window(&candidates, 50, None);
+        assert_eq!(window.summary.as_deref(), Some("新摘要"));
+        assert_eq!(window.messages.len(), 1);
+        assert_eq!(window.messages[0].id, "5");
+    }
+
+    #[test]
+    fn summary_is_not_trimmed_by_the_message_window() {
+        let mut messages = vec![msg("anchor", "assistant", "到此为止", Some("固定摘要"), 1)];
+        for i in 0..30 {
+            let role = if i % 2 == 0 { "user" } else { "assistant" };
+            messages.push(msg(&format!("m{i}"), role, "后文", None, 2 + i));
+        }
+        let candidates: Vec<&Message> = messages.iter().collect();
+        let window = select_history_window(&candidates, 4, None);
+        assert_eq!(window.summary.as_deref(), Some("固定摘要"));
+        assert!(window.messages.len() <= 4);
+        assert!(window.messages.iter().all(|m| m.id != "anchor"));
+        assert_eq!(window.messages.last().map(|m| m.id.as_str()), Some("m29"));
+    }
+
+    /// Regeneration passes `before_ms`, which filters candidates before the
+    /// summary anchor is chosen. A summary that did not exist yet at that
+    /// timestamp must not hide the earlier turns.
+    #[test]
+    fn summary_after_before_ms_is_not_used() {
+        let messages = vec![
+            msg("1", "user", "先写大纲", None, 10),
+            msg("2", "assistant", "大纲如下", None, 20),
+            msg("3", "assistant", "后来才总结", Some("不应生效"), 30),
+        ];
+        let before = 25i64;
+        let candidates: Vec<&Message> = messages
+            .iter()
+            .filter(|m| matches!(m.role.as_str(), "user" | "assistant"))
+            .filter(|m| m.created_at < before)
+            .filter(|m| message_qualifies_for_history(m))
+            .collect();
+        let window = select_history_window(&candidates, 50, None);
+        assert!(window.summary.is_none());
+        assert_eq!(
+            window
+                .messages
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["1", "2"]
+        );
+    }
+
+    #[test]
+    fn empty_summary_anchor_still_cuts_history() {
+        let messages = vec![
+            msg("1", "user", "改文件", None, 1),
+            msg("2", "assistant", "", Some("只剩摘要"), 2),
+            msg("3", "user", "继续", None, 3),
+        ];
+        let candidates: Vec<&Message> = messages
+            .iter()
+            .filter(|m| message_qualifies_for_history(m))
+            .collect();
+        let window = select_history_window(&candidates, 50, None);
+        assert_eq!(window.summary.as_deref(), Some("只剩摘要"));
+        assert_eq!(window.messages.len(), 1);
+        assert_eq!(window.messages[0].id, "3");
+    }
+
+    /// Redoing a summary: the target's own old summary must not become the
+    /// cutoff, otherwise the branch would fork from an empty history.
+    #[test]
+    fn ignoring_the_target_anchor_falls_back_to_the_earlier_one() {
+        let messages = vec![
+            msg("1", "user", "更早", None, 1),
+            msg("2", "assistant", "更早回复", Some("第一份摘要"), 2),
+            msg("3", "user", "后来的要求", None, 3),
+            msg("4", "assistant", "后来的回复", Some("第二份摘要"), 4),
+        ];
+        let candidates: Vec<&Message> = messages.iter().collect();
+        let window = select_history_window(&candidates, usize::MAX, Some("4"));
+        assert_eq!(window.summary.as_deref(), Some("第一份摘要"));
+        assert_eq!(
+            window.messages.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["3", "4"]
+        );
+    }
+
+    #[test]
+    fn ignoring_the_only_anchor_keeps_everything() {
+        let messages = vec![
+            msg("1", "user", "要求", None, 1),
+            msg("2", "assistant", "回复", Some("旧摘要"), 2),
+        ];
+        let candidates: Vec<&Message> = messages.iter().collect();
+        let window = select_history_window(&candidates, usize::MAX, Some("2"));
+        assert!(window.summary.is_none());
+        assert_eq!(window.messages.len(), 2);
+    }
+
+    #[test]
+    fn summary_folds_into_the_first_user_turn() {
+        let user = crate::ai::chat::HistoryTurn {
+            role: "user".into(),
+            text: Some("真实问题".into()),
+            images: Vec::new(),
+            thinking_content: None,
+            timeline: Vec::new(),
+        };
+        let turns = apply_summary(vec![user], Some("剧情要点"));
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].role, "user");
+        let text = turns[0].text.as_deref().unwrap();
+        assert!(text.starts_with("<context-summary>"));
+        assert!(text.contains("剧情要点"));
+        assert!(text.ends_with("真实问题"));
+    }
+
+    #[test]
+    fn summary_before_an_assistant_turn_is_its_own_user_turn() {
+        let assistant = crate::ai::chat::HistoryTurn {
+            role: "assistant".into(),
+            text: Some("回复".into()),
+            images: Vec::new(),
+            thinking_content: None,
+            timeline: Vec::new(),
+        };
+        let turns = apply_summary(vec![assistant], Some("剧情要点"));
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].role, "user");
+        assert_eq!(turns[1].role, "assistant");
+        assert!(apply_summary(Vec::new(), None).is_empty());
+    }}

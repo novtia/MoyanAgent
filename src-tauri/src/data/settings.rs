@@ -38,6 +38,7 @@ pub const KEY_ENABLED_SKILL_IDS: &str = "enabled_skill_ids";
 pub const KEY_DISABLED_TOOLS: &str = "disabled_tools";
 pub const KEY_TOOL_DESCRIPTIONS: &str = "tool_descriptions";
 pub const KEY_FORCED_TOOLS: &str = "forced_tools";
+pub const KEY_DISABLED_AGENTS: &str = "disabled_agents";
 pub const KEY_CREATE_DOC_ECHO_CONTENT: &str = "create_doc_echo_content";
 pub const KEY_EDIT_REPLACE_ALL_DEFAULT: &str = "edit_replace_all_default";
 pub const KEY_READ_PARAGRAPH_LABELS: &str = "read_paragraph_labels";
@@ -239,9 +240,14 @@ pub struct ModelProvider {
     /// GGUF file the local start button loads.
     #[serde(default)]
     pub local_model_path: String,
+    /// llama-server `-c`: tokens of context. 0 or less means the default.
+    #[serde(default)]
+    pub local_context_size: i64,
     pub models: Vec<ModelServiceModel>,
 }
 
+/// Holds the passage, rewrite3's analysis (3-4k tokens) and the rewritten body.
+pub const DEFAULT_LOCAL_CONTEXT_SIZE: i64 = 16384;
 pub const DEFAULT_LOCAL_SERVER_EXE: &str = r"D:\AI\llama.cpp\b11853\llama-server.exe";
 pub const DEFAULT_LOCAL_MODEL_PATH: &str =
     r"D:\AI\models\rewrite2-27b-iq4xs\rewrite2-27b-IQ4_XS.gguf";
@@ -441,6 +447,9 @@ pub struct Settings {
     /// Empty means the model may call any available tool or answer in prose.
     #[serde(default)]
     pub forced_tools: Vec<String>,
+    /// Agent types (built-in or custom) that the `Agent` tool must not dispatch.
+    #[serde(default)]
+    pub disabled_agents: Vec<String>,
     /// When true, CreateDoc echoes the written body in the tool result.
     #[serde(default)]
     pub create_doc_echo_content: bool,
@@ -538,6 +547,7 @@ impl Default for Settings {
             disabled_tools: Vec::new(),
             tool_descriptions: BTreeMap::new(),
             forced_tools: Vec::new(),
+            disabled_agents: Vec::new(),
             create_doc_echo_content: false,
             edit_replace_all_default: false,
             read_paragraph_labels: false,
@@ -636,6 +646,8 @@ pub struct SettingsPatch {
     pub tool_descriptions: Option<BTreeMap<String, String>>,
     #[serde(default)]
     pub forced_tools: Option<Vec<String>>,
+    #[serde(default)]
+    pub disabled_agents: Option<Vec<String>>,
     #[serde(default)]
     pub create_doc_echo_content: Option<bool>,
     #[serde(default)]
@@ -765,6 +777,11 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
                     s.forced_tools = normalize_tool_names(list);
                 }
             }
+            KEY_DISABLED_AGENTS => {
+                if let Ok(list) = serde_json::from_str::<Vec<String>>(&v) {
+                    s.disabled_agents = normalize_tool_names(list);
+                }
+            }
             KEY_CREATE_DOC_ECHO_CONTENT => s.create_doc_echo_content = v == "true" || v == "1",
             KEY_EDIT_REPLACE_ALL_DEFAULT => s.edit_replace_all_default = v == "true" || v == "1",
             KEY_READ_PARAGRAPH_LABELS => s.read_paragraph_labels = v == "true" || v == "1",
@@ -778,7 +795,8 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
                 }
             }
             KEY_REWRITE => {
-                if let Ok(cfg) = serde_json::from_str::<crate::ai::rewrite_config::RewriteSettings>(&v)
+                if let Ok(cfg) =
+                    serde_json::from_str::<crate::ai::rewrite_config::RewriteSettings>(&v)
                 {
                     s.rewrite = crate::ai::rewrite_config::normalize_settings(cfg);
                 }
@@ -996,6 +1014,9 @@ fn apply_local_server_defaults(provider: &mut ModelProvider) {
     }
     if provider.local_model_path.trim().is_empty() {
         provider.local_model_path = DEFAULT_LOCAL_MODEL_PATH.to_string();
+    }
+    if provider.local_context_size <= 0 {
+        provider.local_context_size = DEFAULT_LOCAL_CONTEXT_SIZE;
     }
     for model in &mut provider.models {
         if model.id == "rewrite2-27b" && matches!(model.context_window, None | Some(32768)) {
@@ -1241,6 +1262,11 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
         let cleaned = normalize_tool_names(v);
         let json = serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
         write_kv(conn, KEY_FORCED_TOOLS, &json)?;
+    }
+    if let Some(v) = patch.disabled_agents {
+        let cleaned = normalize_tool_names(v);
+        let json = serde_json::to_string(&cleaned).map_err(|e| AppError::Invalid(e.to_string()))?;
+        write_kv(conn, KEY_DISABLED_AGENTS, &json)?;
     }
     if let Some(v) = patch.create_doc_echo_content {
         write_kv(

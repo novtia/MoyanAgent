@@ -236,6 +236,7 @@ export type AgentCompleted = {
   text?: string;
   tool_calls?: number;
   child_session_id?: string;
+  agent_type?: string;
 };
 
 export type AgentAsyncLaunched = {
@@ -251,7 +252,18 @@ export type AgentRunning = {
   child_session_id: string;
 };
 
-export type AgentOutput = AgentCompleted | AgentAsyncLaunched | AgentRunning;
+export type AgentFailed = {
+  status: "failed";
+  error?: string;
+  child_session_id?: string;
+  agent_type?: string;
+};
+
+export type AgentOutput =
+  | AgentCompleted
+  | AgentAsyncLaunched
+  | AgentRunning
+  | AgentFailed;
 
 export function parseAgentOutput(output: unknown): AgentOutput | null {
   const o = asObj(output);
@@ -269,6 +281,15 @@ export function parseAgentOutput(output: unknown): AgentOutput | null {
       text: asStr(o.text),
       tool_calls: asNum(o.tool_calls),
       child_session_id,
+      agent_type: asStr(o.agent_type),
+    };
+  }
+  if (status === "failed") {
+    return {
+      status: "failed",
+      error: asStr(o.error),
+      child_session_id,
+      agent_type: asStr(o.agent_type),
     };
   }
   if (status === "async_launched") {

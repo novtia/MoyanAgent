@@ -175,6 +175,16 @@ export function ResendIcon() {
     </svg>
   );
 }
+export function SummarizeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="4" y1="6" x2="20" y2="6" />
+      <line x1="4" y1="12" x2="15" y2="12" />
+      <line x1="4" y1="18" x2="11" y2="18" />
+      <polyline points="15 16 18 19 22 14" />
+    </svg>
+  );
+}
 export function TrashIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">

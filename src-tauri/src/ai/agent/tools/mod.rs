@@ -37,6 +37,8 @@ pub mod prompt_registry;
 pub mod read_receipt;
 pub mod rename;
 pub mod role_state;
+pub mod find_replace;
+pub mod split_doc;
 pub mod text_decode;
 pub mod todo;
 pub mod web_fetch;

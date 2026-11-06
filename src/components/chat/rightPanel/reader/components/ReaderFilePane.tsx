@@ -10,7 +10,10 @@ import { MediaReader } from "./MediaReader";
 
 /** Editor pane body: media viewer, markdown preview, or the source/diff editor. */
 export function ReaderFilePane({ tab, preview }: { tab: ReaderFileTab; preview: boolean }) {
-  const [activeHunkIndex, setActiveHunkIndex] = useState(0);
+  // -1 means "not on a hunk yet" (shown as 0/N) so a lone change can still be jumped to.
+  const [activeHunkIndex, setActiveHunkIndex] = useState(() =>
+    tab.pendingDiffs.length > 1 ? 0 : -1,
+  );
   const media = isMediaFileType(tab.fileType);
   const hasPendingDiff = !media && tab.pendingDiffs.length > 0;
   // Keep preview + source mounted together so toggling does not reset scroll.
@@ -21,13 +24,16 @@ export function ReaderFilePane({ tab, preview }: { tab: ReaderFileTab; preview: 
   // Reset only when switching files — not after each confirm (that used to
   // force activeHunkIndex → 0 and scroll the editor back to the top).
   useEffect(() => {
-    setActiveHunkIndex(0);
+    setActiveHunkIndex(tab.pendingDiffs.length > 1 ? 0 : -1);
   }, [tab.id]);
 
   useEffect(() => {
     const total = tab.pendingDiffs.length;
     if (total === 0) return;
-    setActiveHunkIndex((prev) => Math.min(prev, total - 1));
+    setActiveHunkIndex((prev) => {
+      if (total > 1 && prev < 0) return 0;
+      return Math.min(prev, total - 1);
+    });
   }, [tab.pendingDiffs.length]);
 
   const navigateHunk = useCallback(

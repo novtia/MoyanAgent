@@ -7,8 +7,9 @@ use crate::error::{AppError, AppResult};
 
 use super::common::{post_with_retries, provider_label, set_streaming};
 use super::openrouter::{
-    apply_openrouter_gemini_arg_streaming, is_openrouter_endpoint, post_openrouter_chat,
-    post_openrouter_chat_stream,
+    apply_openrouter_gemini_arg_streaming, generate_openrouter_images, is_openrouter_endpoint,
+    message_requires_openrouter_images_api, post_openrouter_chat, post_openrouter_chat_stream,
+    uses_openrouter_images_api,
 };
 use body::build_chat_body;
 use parse::parse_openai_like_response;
@@ -24,19 +25,29 @@ pub(crate) async fn generate_chat(
         ));
     }
 
-    let mut body = build_chat_body(&request, allow_image_parts);
     let provider_label = provider_label(&request);
     let openrouter_compat = is_openrouter_endpoint(&request.provider.endpoint);
-
     let client = chat_http_client(&request.provider.endpoint)?;
+    if openrouter_compat && uses_openrouter_images_api(&request.model) {
+        return generate_openrouter_images(&client, &request, &provider_label).await;
+    }
+
+    let mut body = build_chat_body(&request, allow_image_parts);
 
     let final_txt = if openrouter_compat {
-        post_openrouter_chat(&client, &request, &mut body, &provider_label).await?
+        post_openrouter_chat(&client, &request, &mut body, &provider_label).await
     } else {
-        post_with_retries(&client, &request, &body, &provider_label).await?
+        post_with_retries(&client, &request, &body, &provider_label).await
     };
-
-    parse_openai_like_response(&final_txt)
+    match final_txt {
+        Err(err)
+            if openrouter_compat && message_requires_openrouter_images_api(&err.to_string()) =>
+        {
+            generate_openrouter_images(&client, &request, &provider_label).await
+        }
+        Err(err) => Err(err),
+        Ok(txt) => parse_openai_like_response(&txt),
+    }
 }
 
 pub(crate) async fn generate_chat_stream(
@@ -50,17 +61,32 @@ pub(crate) async fn generate_chat_stream(
         ));
     }
 
+    let provider_label = provider_label(&request);
+    let openrouter_compat = is_openrouter_endpoint(&request.provider.endpoint);
+    let client = chat_http_client(&request.provider.endpoint)?;
+    if openrouter_compat && uses_openrouter_images_api(&request.model) {
+        return generate_openrouter_images(&client, &request, &provider_label).await;
+    }
+
     let mut body = build_chat_body(&request, allow_image_parts);
     set_streaming(&mut body, true);
     apply_openrouter_gemini_arg_streaming(&mut body, &request);
-    let provider_label = provider_label(&request);
-    let openrouter_compat = is_openrouter_endpoint(&request.provider.endpoint);
-
-    let client = chat_http_client(&request.provider.endpoint)?;
 
     if openrouter_compat {
-        post_openrouter_chat_stream(&client, &request, &mut body, &provider_label, on_text_delta)
-            .await
+        match post_openrouter_chat_stream(
+            &client,
+            &request,
+            &mut body,
+            &provider_label,
+            on_text_delta,
+        )
+        .await
+        {
+            Err(err) if message_requires_openrouter_images_api(&err.to_string()) => {
+                generate_openrouter_images(&client, &request, &provider_label).await
+            }
+            other => other,
+        }
     } else {
         post_stream_with_retries(&client, &request, &body, &provider_label, on_text_delta).await
     }

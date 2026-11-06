@@ -29,6 +29,7 @@ ulid = "1"
 thiserror = "1"
 anyhow = "1"
 base64 = "0.22"
+regex = "1"
 futures-util = "0.3"
 zip = { version = "2", features = ["deflate"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -36,6 +37,7 @@ encoding_rs = "0.8"
 chardetng = "0.1"
 scraper = "0.20"
 html-to-markdown-rs = "3"
+jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto", "use_pem"] }
 
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "5"

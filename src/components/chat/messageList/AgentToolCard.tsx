@@ -25,8 +25,19 @@ export function AgentToolCard({
   const title =
     input.description || input.name || input.prompt?.slice(0, 60) || "Agent";
 
+  const agentType =
+    (parsed && "agent_type" in parsed ? parsed.agent_type : undefined) ||
+    input.subagent_type ||
+    "";
+
+  const raw = (block.output ?? null) as { child_session_id?: unknown } | null;
+  const rawChildId =
+    typeof raw?.child_session_id === "string" && raw.child_session_id.trim()
+      ? raw.child_session_id
+      : undefined;
   const childSessionId =
-    parsed && "child_session_id" in parsed ? parsed.child_session_id : undefined;
+    (parsed && "child_session_id" in parsed ? parsed.child_session_id : undefined) ||
+    rawChildId;
 
   const errorMessage =
     status === "error" ? extractToolErrorMessage(block.output) : "";
@@ -63,7 +74,10 @@ export function AgentToolCard({
         <ToolGlyph tool="Agent" />
       </span>
       <span className="agent-card-main">
-        <span className="agent-card-title">{title}</span>
+        <span className="agent-card-title">
+          {agentType && <span className="agent-card-type">{agentType}</span>}
+          {title}
+        </span>
         <span className="agent-card-status">
           {errorMessage || statusLabel}
         </span>

@@ -278,29 +278,41 @@ function formatReadParagraphRange(from: number, to: number): string {
   return `P${pad(from)}–P${pad(to)}`;
 }
 
-/** Chat card title for a `Read` tool call — file name or folder + paragraph range. */
+/** `file.md#P003` / `file.md#P003-P007` glued onto a path by the model. */
+function splitReadPathSuffix(path: string): { path: string; from?: number; to?: number } {
+  const match = path.match(/#P(\d+)(?:-P(\d+))?$/i);
+  if (!match || match.index == null) return { path };
+  const from = parseInt(match[1], 10);
+  const to = match[2] ? parseInt(match[2], 10) : from;
+  if (!Number.isFinite(from) || from < 1) return { path };
+  return {
+    path: path.slice(0, match.index),
+    from,
+    to: Number.isFinite(to) && to >= 1 ? to : from,
+  };
+}
+
+/** Chat card title for a `Read` tool call: file name, plus a paragraph range when one was requested. */
 export function formatReadToolTitle(input: unknown, output: unknown): string {
-  const path = readToolPath(input, output);
-  if (!path) return "";
+  const raw = readToolPath(input, output);
+  if (!raw) return "";
+  const suffix = splitReadPathSuffix(raw);
+  const name = readerFileName(suffix.path);
 
   const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const out = output && typeof output === "object" ? (output as Record<string, unknown>) : {};
-  const ranged =
-    out.ranged === true ||
-    inp.paragraph_from != null ||
-    inp.paragraph_to != null;
-  const from = readToolParagraph(out.paragraph_from) ?? readToolParagraph(inp.paragraph_from);
+  const from = readToolParagraph(out.paragraph_from) ?? readToolParagraph(inp.paragraph_from) ?? suffix.from;
   const to =
     readToolParagraph(out.paragraph_to) ??
     readToolParagraph(inp.paragraph_to) ??
+    suffix.to ??
     from;
 
-  if (ranged && from != null) {
-    const folder = readerFolderLabel(path);
+  if (from != null) {
     const range = formatReadParagraphRange(from, to ?? from);
-    return folder ? `${folder} · ${range}` : range;
+    return name ? `${name} · ${range}` : range;
   }
-  return readerFileName(path);
+  return name;
 }
 
 export type ReadBatchItem = {

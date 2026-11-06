@@ -173,7 +173,13 @@ mod tests {
 
     #[test]
     fn empty_gateway_body_is_incomplete() {
-        let split = split_gateway_message(Some("<think>\n分析"), Some("分析"), None, Some("分析"), Some(""));
+        let split = split_gateway_message(
+            Some("<think>\n分析"),
+            Some("分析"),
+            None,
+            Some("分析"),
+            Some(""),
+        );
         assert!(split.incomplete);
         assert!(split.body.is_empty());
     }

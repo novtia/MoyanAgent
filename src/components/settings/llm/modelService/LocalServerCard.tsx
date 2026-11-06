@@ -8,13 +8,17 @@ export function LocalServerCard({
   modelPath,
   onServerExe,
   onModelPath,
+  contextSize,
+  onContextSize,
   onBeforeStart,
 }: {
   providerId: string;
   serverExe: string;
   modelPath: string;
+  contextSize: number;
   onServerExe: (value: string) => void;
   onModelPath: (value: string) => void;
+  onContextSize: (value: number) => void;
   onBeforeStart?: () => void | Promise<void>;
 }) {
   const [healthy, setHealthy] = useState(false);
@@ -101,6 +105,24 @@ export function LocalServerCard({
           onChange={(e) => onModelPath(e.target.value)}
         />
         <div className="hint">启动日志写到模型文件所在目录。</div>
+      </div>
+      <div className="row">
+        <label className="field-label">上下文长度（-c）</label>
+        <input
+          type="number"
+          min={0}
+          step={1024}
+          value={contextSize > 0 ? contextSize : ""}
+          placeholder="16384"
+          onChange={(e) => {
+            const next = Math.floor(Number(e.target.value));
+            onContextSize(Number.isFinite(next) && next > 0 ? next : 0);
+          }}
+        />
+        <div className="hint">
+          要装得下原文、模型的分析和改写后的正文。rewrite3 的分析常写 3000～4000 token，
+          改动后需要重新点“启动本地服务”。留空使用 16384。
+        </div>
       </div>
       <div className="local-server-actions">
         <span className={`local-server-status${healthy ? " is-on" : ""}`}>{statusText}</span>

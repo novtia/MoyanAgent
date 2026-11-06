@@ -1,6 +1,7 @@
-//! Concatenate selected project `.txt` files into one UTF-8 text file or a
-//! minimal Word document. Each file is introduced by its name, then its body.
-//! Order is the natural filename order, not the order the files were clicked.
+//! Concatenate selected project `.txt` / `.md` / `.markdown` files into one
+//! UTF-8 text file or a minimal Word document. Each file is introduced by its
+//! name, then its body. Order is the natural filename order, not the order
+//! the files were clicked.
 
 use std::fs;
 use std::io::{Cursor, Write};
@@ -58,18 +59,14 @@ pub fn export_project_texts(
         if !resolved.is_file() {
             continue;
         }
-        let is_txt = resolved
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"));
-        if !is_txt {
+        if !is_export_document(&resolved) {
             continue;
         }
         files.push(resolved);
     }
     if files.is_empty() {
         return Err(AppError::Invalid(
-            "export_project_texts: no txt files selected".into(),
+            "export_project_texts: no text files selected".into(),
         ));
     }
     files.sort_by(|a, b| cmp_natural_path(a, b));
@@ -101,6 +98,16 @@ pub fn export_project_texts(
     fs::write(&dest, bytes)
         .map_err(|e| AppError::Other(format!("export_project_texts: write {:?}: {e}", dest)))?;
     Ok(())
+}
+
+fn is_export_document(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("txt")
+                || ext.eq_ignore_ascii_case("md")
+                || ext.eq_ignore_ascii_case("markdown")
+        })
 }
 
 fn docx_bytes(text: &str) -> AppResult<Vec<u8>> {
@@ -193,6 +200,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn markdown_files_are_exportable_documents() {
+        assert!(is_export_document(std::path::Path::new("第一章 选择.md")));
+        assert!(is_export_document(std::path::Path::new("notes.markdown")));
+        assert!(is_export_document(std::path::Path::new("第一章.txt")));
+        assert!(!is_export_document(std::path::Path::new("cover.png")));
+        assert!(!is_export_document(std::path::Path::new("第一卷")));
+    }
+
+    #[test]
     fn documents_are_separated_by_filename() {
         let joined = join_documents(&[
             ("第一章".to_string(), "第一章正文\n".to_string()),
@@ -223,7 +239,10 @@ mod tests {
         let first = xml.find("甲的正文").unwrap();
         let second_title = xml.find("第二章").unwrap();
         let second = xml.find("乙的正文").unwrap();
-        assert!(first_title < first && first < second_title && second_title < second, "{xml}");
+        assert!(
+            first_title < first && first < second_title && second_title < second,
+            "{xml}"
+        );
         assert!(xml.contains("<w:p>"));
     }
 }

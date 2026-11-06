@@ -151,6 +151,9 @@ pub enum AgentToolResult {
         tool_calls: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         child_session_id: Option<String>,
+        /// Resolved agent type actually dispatched (for UI display).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_type: Option<String>,
     },
     /// Background run launched; the parent should expect a
     /// `<task-notification>` later.
@@ -170,6 +173,15 @@ pub enum AgentToolResult {
     /// Mid-run draft written into the pending tool block so the UI can
     /// open the child session before completion.
     Running { child_session_id: String },
+    /// The run failed after a child session was announced. The id stays on
+    /// the payload so the parent card can still open that session.
+    Failed {
+        error: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        child_session_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_type: Option<String>,
+    },
 }
 
 /// The Agent tool itself. Wraps the policy from `AgentTool.call()`.
@@ -310,6 +322,11 @@ impl AgentTool {
         invocation: &AgentInvocation,
     ) -> AppResult<(String, AgentDefinition)> {
         let agent_type = self.resolve_agent_type(invocation)?;
+        if self.registry.is_disabled(&agent_type) {
+            return Err(AppError::Invalid(format!(
+                "agent type `{agent_type}` is disabled in settings"
+            )));
+        }
         let mcp_available = self.mcp.available_servers();
         let active = self.registry.filter_by_mcp(&mcp_available);
         let definition = active
@@ -440,7 +457,7 @@ impl AgentTool {
                         );
                     }
                 }
-                Ok(self.shape_result(run_mode, run, child_session_id))
+                Ok(self.shape_result(run_mode, run, child_session_id, agent_type))
             }
             Err(e) => {
                 // Cancellation and failure both land here, and both have
@@ -458,8 +475,39 @@ impl AgentTool {
                         &e.to_string(),
                     );
                 }
-                Err(e)
+                Ok(AgentToolResult::Failed {
+                    error: e.to_string(),
+                    child_session_id,
+                    agent_type: Some(agent_type),
+                })
             }
+        }
+    }
+
+    /// `action: "list"` result: the agent types the model may dispatch right now.
+    fn list_agents_result(&self) -> ToolResult {
+        let mcp_available = self.mcp.available_servers();
+        let mut defs: Vec<_> = self
+            .registry
+            .filter_by_mcp(&mcp_available)
+            .into_values()
+            .filter(|d| d.agent_type != AGENT_FORK && !self.registry.is_disabled(&d.agent_type))
+            .collect();
+        defs.sort_by(|a, b| a.agent_type.cmp(&b.agent_type));
+        let agents: Vec<serde_json::Value> = defs
+            .into_iter()
+            .map(|d| {
+                serde_json::json!({
+                    "subagent_type": d.agent_type,
+                    "when_to_use": d.when_to_use,
+                    "background": d.background,
+                })
+            })
+            .collect();
+        ToolResult {
+            content: serde_json::json!({ "agents": agents }),
+            is_error: false,
+            metadata: None,
         }
     }
 
@@ -490,8 +538,10 @@ impl AgentTool {
         _mode: AgentRunMode,
         result: RunAgentResult,
         child_session_id: Option<String>,
+        agent_type: String,
     ) -> AgentToolResult {
         AgentToolResult::Completed {
+            agent_type: Some(agent_type),
             agent_id: result.agent_id.0,
             task_id: result.task_id.0,
             text: result.final_text,
@@ -507,6 +557,9 @@ impl Tool for AgentTool {
     }
 
     fn validate(&self, input: &serde_json::Value) -> AppResult<()> {
+        if is_list_action(input) {
+            return Ok(());
+        }
         let prompt = input
             .get("prompt")
             .and_then(serde_json::Value::as_str)
@@ -522,6 +575,9 @@ impl Tool for AgentTool {
 
     fn execute<'a>(&'a self, invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
         Box::pin(async move {
+            if is_list_action(&invocation.input) {
+                return Ok(self.list_agents_result());
+            }
             let factory = match self.chat_factory.as_ref() {
                 Some(f) => f.clone(),
                 None => {
@@ -591,10 +647,15 @@ impl Tool for AgentTool {
                 .await
             {
                 Ok(result) => {
+                    let is_error = matches!(result, AgentToolResult::Failed { .. });
                     let v = serde_json::to_value(&result).unwrap_or_else(
                         |e| serde_json::json!({ "error": format!("serialise: {e}") }),
                     );
-                    Ok(ToolResult::ok(v))
+                    Ok(ToolResult {
+                        content: v,
+                        is_error,
+                        metadata: None,
+                    })
                 }
                 Err(e) => Ok(ToolResult::error(e.to_string())),
             }
@@ -625,19 +686,27 @@ fn build_subagent_pool(
     Arc::new(pool)
 }
 
+/// `true` when the model asked for the agent list instead of a dispatch.
+fn is_list_action(input: &serde_json::Value) -> bool {
+    input.get("action").and_then(serde_json::Value::as_str) == Some("list")
+}
+
 /// Static [`ToolSpec`] for the `Agent` tool.
 fn agent_tool_spec() -> ToolSpec {
     ToolSpec {
         name: AGENT_TOOL_NAME.to_string(),
         description: "Spawn a sub-agent to perform a focused multi-step task. \
             Provide a short `description`, a self-contained `prompt`, and \
-            optionally `subagent_type` (one of the registered agent types). \
+            optionally `subagent_type`. Call with `action: \"list\"` first to get \
+            the available `subagent_type` values and what each is for; omit \
+            `description`/`prompt` for that call. \
             Set `run_in_background: true` for non-blocking execution; \
             results then arrive via task-notification on the next turn."
             .to_string(),
         schema: serde_json::json!({
             "type": "object",
             "properties": {
+                "action": { "type": "string", "enum": ["dispatch", "list"] },
                 "description": { "type": "string" },
                 "prompt": { "type": "string" },
                 "subagent_type": { "type": "string" },
@@ -645,7 +714,7 @@ fn agent_tool_spec() -> ToolSpec {
                 "team_name": { "type": "string" },
                 "name": { "type": "string" }
             },
-            "required": ["description", "prompt"]
+            "required": []
         }),
         read_only: false,
         concurrency_safe: false,

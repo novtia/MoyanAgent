@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../../../api/tauri";
 import { useSettings } from "../../../store/settings";
 import type { AgentToolSpec } from "../../../types";
+import { AgentManager } from "./AgentManager";
 import { ToolDetail } from "./ToolDetail";
 import { ToolsPane } from "./ToolsPane";
 
@@ -131,6 +132,16 @@ export function ToolsSection() {
           onSelect={(tool) => setSelectedName(tool.name)}
           onSetEnabled={setEnabled}
         />
+        {selected?.name === "Agent" ? (
+          <AgentManager
+            toolEnabled={!disabledTools.includes("Agent")}
+            disabledAgents={settings?.disabled_agents ?? []}
+            onSetToolEnabled={(next) => setEnabled("Agent", next)}
+            onSetDisabledAgents={(next) => {
+              void update({ disabled_agents: next });
+            }}
+          />
+        ) : (
         <ToolDetail
           key={selected?.name ?? "none"}
           selected={selected}
@@ -157,6 +168,7 @@ export function ToolsSection() {
             void update({ novelai: next });
           }}
         />
+        )}
       </div>
     </div>
   );

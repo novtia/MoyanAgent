@@ -61,9 +61,10 @@ pub async fn fetch_models(
     let mut req = client.get(&url).header("Content-Type", "application/json");
     if sdk == VERTEX_SDK {
         super::vertex::ensure_vertex_endpoint_ready(endpoint)?;
+        let credential = super::vertex::resolve_vertex_credential(api_key).await?;
         req = super::gemini::apply_google_auth(
             req,
-            api_key,
+            &credential,
             super::gemini::GoogleAuthStyle::AlwaysBearer,
         );
     } else if sdk == GEMINI_SDK {

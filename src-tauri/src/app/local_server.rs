@@ -11,7 +11,9 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::State;
 
-use crate::data::settings::{self, DEFAULT_LOCAL_MODEL_PATH, DEFAULT_LOCAL_SERVER_EXE};
+use crate::data::settings::{
+    self, DEFAULT_LOCAL_CONTEXT_SIZE, DEFAULT_LOCAL_MODEL_PATH, DEFAULT_LOCAL_SERVER_EXE,
+};
 use crate::error::{AppError, AppResult};
 
 use super::state::AppState;
@@ -107,6 +109,13 @@ pub async fn start_local_llama_server(
         .filter(|id| !id.trim().is_empty())
         .unwrap_or_else(|| "rewrite2-27b".to_string());
 
+    let context = if provider.local_context_size > 0 {
+        provider.local_context_size
+    } else {
+        DEFAULT_LOCAL_CONTEXT_SIZE
+    }
+    .to_string();
+
     let mut command = Command::new(&exe);
     if let Some(dir) = Path::new(&exe).parent() {
         command.current_dir(dir);
@@ -117,15 +126,17 @@ pub async fn start_local_llama_server(
             &model,
             "-ngl",
             "99",
+            // Set per provider in settings. rewrite3 writes a 3-4k token
+            // analysis before the body, so it must hold the passage, the
+            // analysis and the body.
             "-c",
-            "4096",
+            &context,
             "--parallel",
             "1",
             "--repeat-penalty",
-            "1.08",
+            "1.05",
+            // Keep reasoning on: the analysis comes back as `reasoning_content`.
             "--jinja",
-            "--reasoning",
-            "off",
             "--no-webui",
             "--host",
             &host,
@@ -134,9 +145,9 @@ pub async fn start_local_llama_server(
             "-a",
             &alias,
             "--temp",
-            "0.7",
-            "--top-p",
             "0.9",
+            "--top-p",
+            "0.95",
             "--top-k",
             "50",
         ])

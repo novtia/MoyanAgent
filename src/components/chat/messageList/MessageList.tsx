@@ -1,6 +1,7 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -106,6 +107,13 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
   const hasStreamingAssistant = messages.some((m) =>
     m.id.startsWith("tmp-assistant-"),
   );
+  const contextUnusedUntil = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const text = messages[i]?.params?.context_summary?.text;
+      if (typeof text === "string" && text.trim()) return i;
+    }
+    return -1;
+  }, [messages]);
 
   const isNearBottomRef = useRef(true);
   const suppressAutoScrollRef = useRef(false);
@@ -435,6 +443,7 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
                       m={m}
                       onPreviewImage={onPreviewImage}
                       focused={isRowFocused(m.id)}
+                      contextUnused={index <= contextUnusedUntil}
                     />
                   );
                   if (!virtualEnabled) return row;
@@ -465,6 +474,7 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
                             m={m}
                             onPreviewImage={onPreviewImage}
                             focused={isRowFocused(m.id)}
+                            contextUnused={index <= contextUnusedUntil}
                           />
                         </VirtualRow>
                       );

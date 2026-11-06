@@ -182,11 +182,13 @@
   flex-direction: column;
   gap: 12px;
 }
+.rewrite-settings .settings-row-desc {
+  max-width: none;
+}
 .rewrite-param-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 12px;
-  margin-top: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 14px;
 }
 .rewrite-param-field {
   display: flex;
@@ -200,6 +202,11 @@
 }
 .rewrite-reset {
   margin-top: 10px;
+}
+.rewrite-jev-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 .settings-card {  background: var(--bg);
   border: 1px solid var(--line);
@@ -977,8 +984,46 @@
   letter-spacing: 0.02em;
   vertical-align: middle;
 }
-.settings-tool-avatar {
+.model-provider-avatar.settings-tool-avatar {
+  background: var(--bg-sunk);
+  border-color: var(--line);
   color: var(--ink-2);
+}
+.model-provider-avatar.settings-tool-avatar svg {
+  width: 16px;
+  height: 16px;
+}
+.model-provider-hero .model-provider-avatar.settings-tool-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+.model-provider-hero .model-provider-avatar.settings-tool-avatar svg {
+  width: 20px;
+  height: 20px;
+}
+.settings-tool-avatar[data-tool="Read"],
+.settings-tool-avatar[data-tool="Grep"],
+.settings-tool-avatar[data-tool="ListFiles"],
+.settings-tool-avatar[data-tool="WebSearch"],
+.settings-tool-avatar[data-tool="WebFetch"],
+.settings-tool-avatar[data-tool="AskUser"] {
+  background: color-mix(in srgb, var(--blue-500) 12%, var(--bg));
+  border-color: color-mix(in srgb, var(--blue-500) 26%, var(--line));
+  color: var(--blue-600);
+}
+.settings-tool-avatar[data-tool="CreateDoc"],
+.settings-tool-avatar[data-tool="Write"],
+.settings-tool-avatar[data-tool="NovelAI"],
+.settings-tool-avatar[data-tool="TodoList"] {
+  background: color-mix(in srgb, var(--green-500) 14%, var(--bg));
+  border-color: color-mix(in srgb, var(--green-500) 28%, var(--line));
+  color: var(--green-600);
+}
+.settings-tool-avatar[data-tool="Delete"] {
+  background: color-mix(in srgb, var(--rose-500) 12%, var(--bg));
+  border-color: color-mix(in srgb, var(--rose-500) 28%, var(--line));
+  color: var(--rose-500);
 }
 .settings-tool-detail-desc {
   margin: 0 0 22px;
@@ -1014,6 +1059,105 @@
   box-sizing: border-box;
   margin-top: 12px;
   min-height: 280px;
+}
+.agent-mgr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.agent-mgr-item {
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.25));
+  border-radius: 10px;
+  overflow: hidden;
+}
+.agent-mgr-item.is-disabled .agent-mgr-main {
+  opacity: 0.5;
+}
+.agent-mgr-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+}
+.agent-mgr-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+}
+.agent-mgr-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.agent-mgr-desc {
+  font-size: 12px;
+  color: var(--ink-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agent-mgr-tag {
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 500;
+  background: rgba(127, 127, 127, 0.16);
+  color: var(--ink-mute);
+}
+.agent-mgr-tag.is-custom {
+  background: rgba(80, 140, 255, 0.18);
+}
+.agent-mgr-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 12px 12px;
+}
+.agent-mgr-text {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.agent-mgr-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.agent-mgr-chip {
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  background: none;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.agent-mgr-chip.is-on {
+  background: rgba(80, 140, 255, 0.18);
+  border-color: rgba(80, 140, 255, 0.5);
+}
+.agent-mgr-chip.is-denied {
+  opacity: 0.6;
+  cursor: default;
+}
+span.agent-mgr-chip {
+  cursor: default;
+}
+.agent-mgr-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }
 .settings-tool-params {
   display: grid;
@@ -1362,6 +1506,15 @@
 }
 .model-provider-fields .row {
   margin-bottom: 0;
+}
+.vertex-json-paste-label {
+  margin-top: 4px;
+}
+.vertex-json-input {
+  min-height: 4.5em;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
 }
 .model-provider-switch-head {
   display: flex;

@@ -43,6 +43,8 @@ const WRITE_TOOLS: &[&str] = &[
     "CreateDoc",
     "Delete",
     "Rename",
+    "SplitDoc",
+    "FindReplace",
     "NotebookEdit",
     "ExitPlanMode",
     "TodoList",

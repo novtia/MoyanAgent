@@ -5,6 +5,7 @@ export {
   openContextMenu,
   openDefinedContextMenu,
   openRegisteredContextMenu,
+  pinToTopLayer,
   registerContextMenu,
   unregisterContextMenu,
 } from "./ContextMenu";

@@ -13,6 +13,7 @@ import { ContextMenuHost } from "./components/context-menu";
 import { ToastHost, DialogHost } from "./components/ui";
 import { SearchDialog } from "./components/search/SearchDialog";
 import { WebSearchDialog } from "./components/search/WebSearchDialog";
+import { PhoneReaderView } from "./components/phoneReader/PhoneReaderView";
 import { TitleBar } from "./components/layout/TitleBar";
 import { useSettings } from "./store/settings";
 import { useSession } from "./store/session";
@@ -43,6 +44,7 @@ type AppRoute =
   | { view: "chat" }
   | { view: "usage" }
   | { view: "plugins" }
+  | { view: "phone-reader" }
   | { view: "settings"; tab: SettingsTab };
 
 const SETTINGS_TABS: SettingsTab[] = [
@@ -57,6 +59,9 @@ const SETTINGS_TABS: SettingsTab[] = [
 
 function parseRoute(): AppRoute {
   const [, view, tab] = window.location.hash.match(/^#\/([^/]+)\/?([^/]*)?/) || [];
+  if (view === "phone-reader") {
+    return { view: "phone-reader" };
+  }
   if (view === "usage") {
     return { view: "usage" };
   }
@@ -91,7 +96,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [webSearchOpen, setWebSearchOpen] = useState(false);
   const isMobile = useMobileShell();
-  useSyncMobileShellAttr(isMobile);
+  useSyncMobileShellAttr(route.view === "phone-reader" ? false : isMobile);
   useAppHeight();
   const { t } = useTranslation();
 
@@ -190,6 +195,10 @@ export default function App() {
     await createNew();
     openChat();
   };
+
+  if (route.view === "phone-reader") {
+    return <PhoneReaderView />;
+  }
 
   return (
     <>

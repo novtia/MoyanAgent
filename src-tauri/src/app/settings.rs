@@ -24,6 +24,7 @@ pub fn update_settings(
     crate::ai::agent::tools::set_tool_description_overrides(updated.tool_descriptions.clone());
     crate::ai::agent::tools::set_forced_tools(updated.forced_tools.clone());
     crate::ai::http_proxy::set_from_settings(&updated);
+    super::agents::sync_agent_registry(&state.agent_registry, &conn)?;
     Ok(updated)
 }
 

@@ -98,7 +98,8 @@ fn split_openai_chat_message(v: &Value) -> crate::ai::rewrite_cot::CotSplit {
         .and_then(message_content_text);
     crate::ai::rewrite_cot::split_gateway_message(
         content.as_deref(),
-        msg.and_then(|msg| msg.get("reasoning")).and_then(Value::as_str),
+        msg.and_then(|msg| msg.get("reasoning"))
+            .and_then(Value::as_str),
         msg.and_then(|msg| msg.get("reasoning_content"))
             .and_then(Value::as_str),
         v.pointer("/revnovel/cot").and_then(Value::as_str),

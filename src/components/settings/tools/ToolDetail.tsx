@@ -103,7 +103,10 @@ export function ToolDetail({
     <section className="model-provider-detail">
       <div className="model-provider-detail-inner">
         <header className="model-provider-hero">
-          <span className="model-provider-avatar settings-tool-avatar">
+          <span
+            className="model-provider-avatar settings-tool-avatar"
+            data-tool={selected.name}
+          >
             <ToolGlyph tool={selected.name} />
           </span>
           <div className="model-provider-hero-text">

@@ -65,6 +65,13 @@ export interface GenerationStatusPayload {
   phase: "request" | "polling" | "response" | string;
 }
 
+export interface SummarySessionPayload {
+  parent_session_id: string;
+  message_id: string;
+  child_session_id: string;
+  status: "running" | "refresh" | "completed" | "failed";
+}
+
 export interface ToolUseEventPayload {
   session_id: string;
   request_message_id?: string;
@@ -182,6 +189,11 @@ export interface SessionStore {
   appendMessages: (msgs: MessageAbs[]) => void;
 
   quoteMessage: (m: MessageAbs) => Promise<void>;
+  /**
+   * Summarise the conversation up to `messageId` and drop tool-call blocks
+   * in that range. Marks the session busy until the model call finishes.
+   */
+  summarizeContext: (messageId: string) => Promise<void>;
 }
 
 export interface ComposerDraft {

@@ -19,6 +19,7 @@ mod clipboard;
 mod dto;
 mod generation;
 mod history;
+mod jev;
 mod local_server;
 mod media_cmds;
 mod messages;
@@ -84,6 +85,14 @@ pub fn run() {
             ));
             tools.register(
                 crate::ai::agent::tools::rename::RenameTool::new(file_snapshots.clone())
+                    .with_pool(Arc::new(pool.clone())),
+            );
+            tools.register(
+                crate::ai::agent::tools::split_doc::SplitDocTool::new(file_snapshots.clone())
+                    .with_pool(Arc::new(pool.clone())),
+            );
+            tools.register(
+                crate::ai::agent::tools::find_replace::FindReplaceTool::new(file_snapshots.clone())
                     .with_pool(Arc::new(pool.clone())),
             );
             tools.register(crate::ai::agent::tools::fix_tool_call::FixToolCallTool::new());
@@ -169,6 +178,7 @@ pub fn run() {
                     crate::ai::agent::tools::set_forced_tools(s.forced_tools.clone());
                     crate::ai::http_proxy::set_from_settings(&s);
                 }
+                let _ = agents::sync_agent_registry(&registry, &conn);
             }
 
             app.manage(Arc::new(AppState {
@@ -192,6 +202,18 @@ pub fn run() {
             let state = app.state::<Arc<AppState>>().inner().clone();
             backup::spawn_scheduler(app.handle().clone(), state);
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // The phone reader is a second window. Closing the main window
+            // must destroy it too, or the process keeps the simulator alive.
+            if window.label() != "main" {
+                return;
+            }
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                if let Some(phone) = window.app_handle().get_webview_window("phone-reader") {
+                    let _ = phone.destroy();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             settings::get_settings,
@@ -269,6 +291,7 @@ pub fn run() {
             generation::commands::generate_image,
             generation::commands::regenerate_image,
             generation::commands::save_cancelled_message,
+            generation::summarize::summarize_context,
             media_cmds::edit_image,
             media_cmds::export_image,
             media_cmds::export_media,

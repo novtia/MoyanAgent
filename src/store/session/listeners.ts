@@ -5,7 +5,9 @@ import {
   appendDelta,
   applyStreamingToolCallDelta,
   applyToolEvent,
+  cancelStreamFlushRaf,
   cancellingSessions,
+  reloadSessionIfViewing,
   scheduleStreamingMessageSync,
   streamingBuffers,
 } from "./streaming";
@@ -13,6 +15,7 @@ import type {
   GenerationStatusPayload,
   GenerationStreamPayload,
   StreamBuffer,
+  SummarySessionPayload,
   ToolEventPayload,
 } from "./types";
 import { useSession } from "./store";
@@ -22,6 +25,7 @@ let generationStatusListenerStarted = false;
 let toolEventListenerStarted = false;
 let roleStateResetListenerStarted = false;
 let sessionTitleListenerStarted = false;
+let summarySessionListenerStarted = false;
 
 export function ensureGenerationStreamListener() {
   if (!generationStatusListenerStarted) {
@@ -172,6 +176,76 @@ export function ensureGenerationStreamListener() {
       }
     }).catch((e) => {
       sessionTitleListenerStarted = false;
+      console.warn(e);
+    });
+  }
+
+  if (!summarySessionListenerStarted) {
+    summarySessionListenerStarted = true;
+    listen<SummarySessionPayload>("summary://session", (event) => {
+      const payload = event.payload;
+      const parentId = payload?.parent_session_id;
+      const messageId = payload?.message_id;
+      const childId = payload?.child_session_id;
+      const status = payload?.status;
+      if (!parentId || !messageId || !childId || !status) return;
+
+      useSession.setState((state) => {
+        const busyBySession = { ...state.busyBySession };
+        const generationPhaseBySession = { ...state.generationPhaseBySession };
+        if (status === "running" || status === "refresh") {
+          busyBySession[childId] = true;
+          generationPhaseBySession[childId] = "request";
+        } else {
+          delete busyBySession[childId];
+          delete generationPhaseBySession[childId];
+        }
+        let active = state.active;
+        if (
+          active &&
+          state.activeId === parentId &&
+          status !== "refresh"
+        ) {
+          const messages = active.messages.map((m) => {
+            if (m.id !== messageId) return m;
+            const prev = m.params?.context_summary;
+            const nextStatus =
+              status === "failed" || status === "completed" || status === "running"
+                ? status
+                : prev?.status;
+            return {
+              ...m,
+              params: {
+                ...(m.params ?? {}),
+                context_summary: {
+                  text: prev?.text ?? "",
+                  created_at: prev?.created_at ?? Date.now(),
+                  tokens: prev?.tokens,
+                  child_session_id: childId,
+                  status: nextStatus,
+                },
+              },
+            };
+          });
+          active = { ...active, messages };
+        }
+        return {
+          busyBySession,
+          generationPhaseBySession,
+          busy: state.activeId ? !!busyBySession[state.activeId] : false,
+          active,
+        };
+      });
+
+      if (status === "refresh" || status === "completed" || status === "failed") {
+        if (useSession.getState().activeId === childId) {
+          cancelStreamFlushRaf(childId);
+          streamingBuffers.delete(childId);
+          void reloadSessionIfViewing(childId);
+        }
+      }
+    }).catch((e) => {
+      summarySessionListenerStarted = false;
       console.warn(e);
     });
   }

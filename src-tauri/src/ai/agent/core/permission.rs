@@ -128,6 +128,8 @@ pub const WRITE_TOOLS: &[&str] = &[
     "CreateDoc",
     "Delete",
     "Rename",
+    "SplitDoc",
+    "FindReplace",
     "NovelAI",
 ];
 
@@ -466,6 +468,8 @@ mod tests {
             "CreateDoc",
             "DELETE",
             "Rename",
+            "SplitDoc",
+            "FindReplace",
             "Patch",
             "NovelAI",
         ] {
@@ -484,7 +488,16 @@ mod tests {
     /// destruction is refused outside plan-mode.
     #[test]
     fn default_mode_allows_in_project_work() {
-        for tool in ["Write", "Edit", "CreateDoc", "Delete", "Rename", "Read"] {
+        for tool in [
+            "Write",
+            "Edit",
+            "CreateDoc",
+            "Delete",
+            "Rename",
+            "SplitDoc",
+            "FindReplace",
+            "Read",
+        ] {
             assert!(!denied(PermissionMode::Default, tool, ""));
         }
         for cmd in [

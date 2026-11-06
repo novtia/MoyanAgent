@@ -1635,6 +1635,27 @@
   user-select: none;
 }
 
+.reader-file-path-tip {
+  position: fixed;
+  inset: auto;
+  z-index: 10040;
+  margin: 0;
+  width: max-content;
+  height: auto;
+  overflow: visible;
+  max-width: min(520px, calc(100vw - 16px));
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: var(--shadow-2);
+  pointer-events: none;
+  overflow-wrap: anywhere;
+}
+
 .reader-tree-marquee {
   position: absolute;
   z-index: 5;

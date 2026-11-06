@@ -1,5 +1,6 @@
 import { startTransition } from "react";
 import { api } from "../../api/tauri";
+import { cancelReaderSave } from "../../components/chat/rightPanel/reader/hooks/useEditorSave";
 import type { AssistantBlock, MessageAbs } from "../../types";
 import {
   type PendingAskUser,
@@ -14,6 +15,7 @@ import {
   resolveToolFilePath,
   revertStringEdit,
   inferFileType,
+  syncPendingDiffsForPath,
 } from "../reader";
 import { useFileExplorer } from "../fileExplorer";
 import { FS_TREE_TOOLS, STREAMING_INPUT_TOOLS } from "./constants";
@@ -274,6 +276,21 @@ async function handleReaderToolComplete(
   sessionId?: string,
 ) {
   if (isError) return;
+  // A later FixToolCall re-runs the failed tool. Its result is that tool's
+  // result, but the card name stays FixToolCall, so the open reader would
+  // keep the pre-edit text and could autosave it back over the write.
+  if (tool === "FixToolCall") {
+    const out =
+      output && typeof output === "object"
+        ? (output as Record<string, unknown>)
+        : {};
+    const amended =
+      typeof out.amended_tool === "string" ? out.amended_tool.trim() : "";
+    if (amended && amended !== "FixToolCall") {
+      await handleReaderToolComplete(amended, input, output, false, sessionId);
+    }
+    return;
+  }
   if (FS_TREE_TOOLS.has(tool) && isEventForActiveProject(sessionId)) {
     useFileExplorer.getState().bumpTree();
   }
@@ -336,6 +353,23 @@ async function handleReaderToolComplete(
     return;
   }
 
+  if (tool === "SplitDoc") {
+    const activeSession = useSession.getState().activeId;
+    if (path && activeSession) {
+      cancelReaderSave(path);
+      try {
+        const disk = await api.readProjectFile(activeSession, path);
+        const reader = useReader.getState();
+        if (reader.getTabByPath(path)) {
+          reader.updateTabText(path, disk.text, { dirty: false });
+        }
+      } catch (e) {
+        console.warn("SplitDoc: failed to refresh reader", e);
+      }
+    }
+    return;
+  }
+
   if (!path) return;
   const reader = useReader.getState();
   let existing = reader.getTabByPath(path);
@@ -355,6 +389,7 @@ async function handleReaderToolComplete(
       // Edit applied but too large (or failed) to record — refresh tab text only.
       const sessionId = useSession.getState().activeId;
       if (sessionId) {
+        cancelReaderSave(path);
         try {
           const disk = await api.readProjectFile(sessionId, path);
           if (!existing) {
@@ -396,6 +431,7 @@ async function handleReaderToolComplete(
 
     const sessionId = useSession.getState().activeId;
     if (!sessionId) return;
+    cancelReaderSave(path);
 
     // The backend already wrote the edit; read the file back so the reader's
     // after-text is authoritative (never a stale in-memory replay that could
@@ -432,13 +468,21 @@ async function handleReaderToolComplete(
       existing = reader.getTabByPath(path);
     }
 
-    reader.appendPendingDiff(path, {
-      id: pendingDiffId,
-      before: normalizeDiffText(oldString),
-      after: normalizeDiffText(newString),
-      textBefore,
-      textAfter,
-    });
+    // Overlapping Edits are merged by the backend (the row set may have been
+    // rewritten), so take the rows from the data layer instead of appending a
+    // locally-built hunk.
+    await syncPendingDiffsForPath(sessionId, path);
+    const synced = useReader.getState().getTabByPath(path);
+    if (!synced?.pendingDiffs.some((d) => d.id === pendingDiffId)) {
+      // Backend listing unavailable: fall back to a local hunk.
+      reader.appendPendingDiff(path, {
+        id: pendingDiffId,
+        before: normalizeDiffText(oldString),
+        after: normalizeDiffText(newString),
+        textBefore,
+        textAfter,
+      });
+    }
     return;
   }
 
@@ -446,6 +490,7 @@ async function handleReaderToolComplete(
     if (!existing) return;
     const activeSession = useSession.getState().activeId;
     if (activeSession) {
+      cancelReaderSave(path);
       try {
         const disk = await api.readProjectFile(activeSession, path);
         reader.updateTabText(path, disk.text, { dirty: false });
@@ -721,7 +766,10 @@ export function applyStreamBufferToMessages(
   buf: StreamBuffer,
 ): MessageAbs[] {
   const messageId = `tmp-assistant-${buf.requestId}`;
-  const idx = messages.findIndex((m) => m.id === messageId);
+  const kept = messages.filter(
+    (m) => m.id === messageId || !m.id.startsWith("tmp-assistant-"),
+  );
+  const idx = kept.findIndex((m) => m.id === messageId);
   const text = buf.blocks
     .filter((b): b is { type: "text"; content: string } => b.type === "text")
     .map((b) => b.content)
@@ -745,11 +793,11 @@ export function applyStreamBufferToMessages(
     images: [],
   };
   if (idx >= 0) {
-    const next = [...messages];
+    const next = [...kept];
     next[idx] = tmpMsg;
     return next;
   }
-  return [...messages, tmpMsg];
+  return [...kept, tmpMsg];
 }
 
 /**

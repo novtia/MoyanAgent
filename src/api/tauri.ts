@@ -197,6 +197,8 @@ export const api = {
       args: { id, systemPrompt, historyTurns, llmParams, contextWindow },
     }),
   deleteMessage: (id: string) => invoke<void>("delete_message", { id }),
+  summarizeContext: (sessionId: string, messageId: string) =>
+    invoke<void>("summarize_context", { sessionId, messageId }),
   updateMessageText: (id: string, text: string) =>
     invoke<void>("update_message_text", { id, text }),
   updateMessageImages: (id: string, imageIds: string[]) =>

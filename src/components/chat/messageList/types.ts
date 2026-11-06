@@ -12,6 +12,8 @@ export interface MessageRowProps {
   m: MessageAbs;
   onPreviewImage: (img: ImageRefAbs) => void;
   focused: boolean;
+  /** At or before the latest context summary: still shown, not sent to the model. */
+  contextUnused: boolean;
 }
 
 export interface PlateActionsProps {
