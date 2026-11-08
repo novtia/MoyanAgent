@@ -218,8 +218,8 @@ impl Tool for CreateDocTool {
                 FileOp::Update
             };
             self.snapshots.record_before(
-                invocation.context.session_id.as_deref(),
-                invocation.context.correlation_id.as_deref(),
+                invocation.context.owner_session_id(),
+                invocation.context.owner_request_id(),
                 &path,
                 op,
             )?;

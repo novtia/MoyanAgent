@@ -2,7 +2,11 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useLayoutEffect, useRef } from "react";
 import {
+  flushReaderProgress,
+  hasReaderViewport,
+  readerSavedProgress,
   readerViewportTop,
+  rememberReaderRatio,
   rememberReaderViewport,
 } from "../../../../utils/readerViewport";
 
@@ -23,11 +27,29 @@ export function ReaderMarkdownPreview({
   useLayoutEffect(() => {
     const el = scrollerRef.current;
     if (!el || !path) return;
-    el.scrollTop = readerViewportTop(path, "preview");
-    const onScroll = () => rememberReaderViewport(path, el.scrollTop, "preview");
+    const maxScroll = () => Math.max(0, el.scrollHeight - el.clientHeight);
+    let touched = false;
+    if (hasReaderViewport(path, "preview")) {
+      el.scrollTop = readerViewportTop(path, "preview");
+    } else {
+      // Fresh start / different layout: restore by reading fraction instead.
+      const saved = readerSavedProgress(path);
+      if (saved && saved.ratio > 0) el.scrollTop = saved.ratio * maxScroll();
+    }
+    const onScroll = () => {
+      touched = true;
+      rememberReaderViewport(path, el.scrollTop, "preview");
+      const max = maxScroll();
+      rememberReaderRatio(path, max > 0 ? el.scrollTop / max : 0);
+    };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => {
-      onScroll();
+      // Never overwrite saved progress with a position the user never set.
+      if (touched) onScroll();
+      else if (hasReaderViewport(path, "preview")) {
+        rememberReaderViewport(path, el.scrollTop, "preview");
+      }
+      flushReaderProgress();
       el.removeEventListener("scroll", onScroll);
     };
   }, [path]);

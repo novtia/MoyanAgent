@@ -28,7 +28,11 @@ import {
   type ReaderCodeMirrorLayout,
 } from "./readerCodeMirror/theme";
 import {
+  flushReaderProgress,
+  hasReaderViewport,
+  readerSavedLine,
   readerViewportTop,
+  rememberReaderLine,
   rememberReaderViewport,
 } from "../../../../utils/readerViewport";
 
@@ -233,16 +237,56 @@ export function ReaderCodeMirror({
 
     const scrollEl = view.scrollDOM;
     if (layout === "document" && filePath) {
-      scrollEl.scrollTop = readerViewportTop(filePath);
-      const onScroll = () => {
+      // Same run + same layout: the exact pixel offset wins. Otherwise (fresh
+      // start, resized, edited) fall back to the persisted reading line.
+      let restoring = false;
+      let touched = false;
+      let raf1 = 0;
+      let raf2 = 0;
+      if (hasReaderViewport(filePath)) {
+        scrollEl.scrollTop = readerViewportTop(filePath);
+      } else {
+        const docLines = view.state.doc.lines;
+        const saved = readerSavedLine(filePath, docLines);
+        if (saved != null) {
+          restoring = true;
+          const jump = () => {
+            const line = view.state.doc.line(Math.min(saved + 1, view.state.doc.lines));
+            view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: "start" }) });
+          };
+          jump();
+          // Line heights are measured lazily; re-aim once layout has settled.
+          raf1 = requestAnimationFrame(() => {
+            jump();
+            raf2 = requestAnimationFrame(() => {
+              jump();
+              restoring = false;
+            });
+          });
+        }
+      }
+      const record = () => {
+        if (restoring) return;
+        touched = true;
         const path = filePathRef.current?.trim() || filePath;
         rememberReaderViewport(path, scrollEl.scrollTop);
+        const block = view.lineBlockAtHeight(scrollEl.scrollTop);
+        const line = view.state.doc.lineAt(block.from).number - 1;
+        rememberReaderLine(path, line, view.state.doc.lines);
       };
+      const onScroll = () => record();
       scrollEl.addEventListener("scroll", onScroll, { passive: true });
       return () => {
+        cancelAnimationFrame(raf1);
+        cancelAnimationFrame(raf2);
         scrollEl.removeEventListener("scroll", onScroll);
         try {
-          onScroll();
+          // Never overwrite saved progress with a position the user never set.
+          if (touched) record();
+          else if (hasReaderViewport(filePath)) {
+            rememberReaderViewport(filePathRef.current?.trim() || filePath, scrollEl.scrollTop);
+          }
+          flushReaderProgress();
         } finally {
           destroy();
         }

@@ -418,6 +418,8 @@ pub(crate) async fn run_generation_with_signal(
         session_id: Some(session_id.to_string()),
         role_state_scope_id: Some(role_state_scope_id),
         correlation_id: correlation_id.map(str::to_string),
+        rollback_session_id: None,
+        rollback_request_id: None,
         token_stats: Some(state.token_stats.clone()),
         session_logger: Some(state.session_logger.clone()),
     })

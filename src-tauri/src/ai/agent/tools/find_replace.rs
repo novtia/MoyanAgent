@@ -356,8 +356,8 @@ impl Tool for FindReplaceTool {
             }
 
             self.snapshots.record(
-                invocation.context.session_id.as_deref(),
-                invocation.context.correlation_id.as_deref(),
+                invocation.context.owner_session_id(),
+                invocation.context.owner_request_id(),
                 &FileChangeRecord::from_read(
                     &path,
                     FileOp::Update,
@@ -372,7 +372,7 @@ impl Tool for FindReplaceTool {
 
             let path_str = crate::data::paths::normalized_path_key(&path);
             let mut pending_diff_id: Option<String> = None;
-            if let (Some(pool), Some(sid)) = (&self.pool, invocation.context.session_id.as_deref())
+            if let (Some(pool), Some(sid)) = (&self.pool, invocation.context.owner_session_id())
             {
                 if let Ok(conn) = pool.get() {
                     let first = &hits[0];
@@ -386,7 +386,7 @@ impl Tool for FindReplaceTool {
                         &updated,
                         Some(decoded.encoding.label()),
                         decoded.had_bom,
-                        invocation.context.correlation_id.as_deref(),
+                        invocation.context.owner_request_id(),
                     ) {
                         Ok(Some(id)) => pending_diff_id = Some(id),
                         Ok(None) => {}

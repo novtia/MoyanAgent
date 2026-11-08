@@ -174,8 +174,8 @@ impl Tool for RenameTool {
             // row would snapshot it as already present and refuse to remove it.
             // An unrestorable source (too large to store) must not be renamed:
             // rolling the destination back would delete the only copy.
-            let session_id = invocation.context.session_id.as_deref();
-            let request_id = invocation.context.correlation_id.as_deref();
+            let session_id = invocation.context.owner_session_id();
+            let request_id = invocation.context.owner_request_id();
             if self.snapshots.is_recording(session_id) {
                 let source = capture_before(&path, FileOp::Delete)?;
                 if !source.restorable {
@@ -199,7 +199,7 @@ impl Tool for RenameTool {
             read_receipt::rekey_receipt(&invocation.context.read_file_state, &from_key, &canonical);
 
             if let Err(e) =
-                self.remap_reviews(invocation.context.session_id.as_deref(), &path, &canonical)
+                self.remap_reviews(invocation.context.owner_session_id(), &path, &canonical)
             {
                 let to_key = take_receipt_key(&canonical);
                 if std::fs::rename(&canonical, &path).is_ok() {

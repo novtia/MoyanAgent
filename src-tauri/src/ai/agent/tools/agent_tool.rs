@@ -440,6 +440,9 @@ impl AgentTool {
             // Role board stays on the parent/project scope, not the temp id.
             role_state_scope_id: parent_ctx.and_then(|c| c.role_state_scope_id.clone()),
             correlation_id,
+            // Writes made by the sub-agent roll back with the parent's turn.
+            rollback_session_id: parent_ctx.and_then(|c| c.owner_session_id().map(str::to_string)),
+            rollback_request_id: parent_ctx.and_then(|c| c.owner_request_id().map(str::to_string)),
             token_stats: parent_ctx.and_then(|c| c.token_stats.clone()),
             session_logger: parent_ctx.and_then(|c| c.session_logger.clone()),
         })

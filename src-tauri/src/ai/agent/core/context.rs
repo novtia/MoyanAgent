@@ -38,6 +38,14 @@ pub struct ToolUseContext {
     /// Correlates all token events within one user send / assistant reply turn.
     pub correlation_id: Option<String>,
 
+    /// Session that owns this run's file mutations for rollback. A sub-agent
+    /// runs in its own temp child session, but undoing the parent message must
+    /// also undo what the sub-agent wrote, so its snapshots and review rows are
+    /// recorded against the parent. `None` means "this run's own session".
+    pub rollback_session_id: Option<String>,
+    /// User turn (in [`Self::rollback_session_id`]) that those mutations belong to.
+    pub rollback_request_id: Option<String>,
+
     /// Agent definition type driving this run (e.g. `general-purpose`).
     pub agent_type: Option<String>,
 
@@ -82,6 +90,20 @@ pub struct FileReceipt {
 }
 
 impl ToolUseContext {
+    /// Session that file snapshots / review rows are recorded under.
+    pub fn owner_session_id(&self) -> Option<&str> {
+        self.rollback_session_id
+            .as_deref()
+            .or(self.session_id.as_deref())
+    }
+
+    /// User turn that file snapshots / review rows are attributed to.
+    pub fn owner_request_id(&self) -> Option<&str> {
+        self.rollback_request_id
+            .as_deref()
+            .or(self.correlation_id.as_deref())
+    }
+
     pub fn builder(agent_id: AgentId, cwd: PathBuf) -> ToolUseContextBuilder {
         ToolUseContextBuilder::new(agent_id, cwd)
     }
@@ -105,6 +127,8 @@ impl ToolUseContext {
             session_id: self.session_id.clone(),
             role_state_scope_id: self.role_state_scope_id.clone(),
             correlation_id: self.correlation_id.clone(),
+            rollback_session_id: self.rollback_session_id.clone(),
+            rollback_request_id: self.rollback_request_id.clone(),
             agent_type: self.agent_type.clone(),
             token_stats: self.token_stats.clone(),
             session_logger: self.session_logger.clone(),
@@ -277,6 +301,8 @@ pub struct ToolUseContextBuilder {
     session_id: Option<String>,
     role_state_scope_id: Option<String>,
     correlation_id: Option<String>,
+    rollback_session_id: Option<String>,
+    rollback_request_id: Option<String>,
     agent_type: Option<String>,
     token_stats: Option<Arc<TokenStatsRecorder>>,
     session_logger: Option<Arc<SessionLogger>>,
@@ -296,6 +322,8 @@ impl ToolUseContextBuilder {
             session_id: None,
             role_state_scope_id: None,
             correlation_id: None,
+            rollback_session_id: None,
+            rollback_request_id: None,
             agent_type: None,
             token_stats: None,
             session_logger: None,
@@ -320,6 +348,16 @@ impl ToolUseContextBuilder {
 
     pub fn correlation_id(mut self, correlation_id: impl Into<String>) -> Self {
         self.correlation_id = Some(correlation_id.into());
+        self
+    }
+
+    pub fn rollback_owner(
+        mut self,
+        session_id: Option<String>,
+        request_id: Option<String>,
+    ) -> Self {
+        self.rollback_session_id = session_id;
+        self.rollback_request_id = request_id;
         self
     }
 
@@ -369,6 +407,8 @@ impl ToolUseContextBuilder {
             session_id: self.session_id,
             role_state_scope_id: self.role_state_scope_id,
             correlation_id: self.correlation_id,
+            rollback_session_id: self.rollback_session_id,
+            rollback_request_id: self.rollback_request_id,
             agent_type: self.agent_type,
             token_stats: self.token_stats,
             session_logger: self.session_logger,

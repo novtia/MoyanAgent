@@ -266,7 +266,119 @@ pub(crate) fn record_tool_use_block(
             );
         }
     }
+    // A live argument stream may already have created this card (see
+    // `upsert_streaming_tool_block`); complete it in place rather than duplicate.
+    if let Some(existing) = blocks.iter_mut().rev().find(|b| {
+        b.get("type").and_then(|v| v.as_str()) == Some("tool_use")
+            && b.get("id").and_then(|v| v.as_str()) == Some(id)
+            && matches!(
+                b.get("status").and_then(|v| v.as_str()),
+                Some("pending") | None
+            )
+    }) {
+        *existing = block;
+        return;
+    }
     blocks.push(block);
+}
+
+/// Tools whose arguments are shown live and must survive an interrupted turn.
+const STREAMING_INPUT_TOOLS: &[&str] = &["CreateDoc", "Edit", "Write"];
+
+/// Decode a string-valued field from a possibly incomplete JSON object text.
+/// Returns the partial value when the closing quote has not arrived yet.
+fn extract_json_string_field(raw: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let mut from = 0;
+    let start = loop {
+        let idx = raw[from..].find(&needle)? + from;
+        let rest = raw[idx + needle.len()..].trim_start();
+        if let Some(r) = rest.strip_prefix(':') {
+            if let Some(r) = r.trim_start().strip_prefix('"') {
+                break raw.len() - r.len();
+            }
+        }
+        from = idx + needle.len();
+    };
+    let mut out = String::new();
+    let mut it = raw[start..].chars();
+    while let Some(ch) = it.next() {
+        match ch {
+            '"' => return Some(out),
+            '\\' => match it.next() {
+                None => break,
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some('b') => out.push('\u{8}'),
+                Some('f') => out.push('\u{c}'),
+                Some('u') => {
+                    let hex: String = it.clone().take(4).collect();
+                    if hex.len() < 4 {
+                        break;
+                    }
+                    for _ in 0..4 {
+                        it.next();
+                    }
+                    if let Some(c) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) {
+                        out.push(c);
+                    }
+                }
+                Some(other) => out.push(other),
+            },
+            c => out.push(c),
+        }
+    }
+    Some(out)
+}
+
+fn partial_tool_input(tool: &str, raw: &str) -> serde_json::Value {
+    let fields: &[&str] = match tool {
+        "CreateDoc" => &["title", "doc_type", "content"],
+        "Edit" => &["path", "old_string", "new_string"],
+        _ => &["path", "content"],
+    };
+    let mut map = serde_json::Map::new();
+    for f in fields {
+        if let Some(v) = extract_json_string_field(raw, f) {
+            map.insert((*f).into(), serde_json::Value::String(v));
+        }
+    }
+    serde_json::Value::Object(map)
+}
+
+/// Mirror a live tool-call argument stream into the persisted block buffer so
+/// a card that was visibly streaming survives an error or Stop. The terminal
+/// `ToolUse` event later completes the same block via `record_tool_use_block`.
+fn upsert_streaming_tool_block(
+    blocks: &mut Vec<serde_json::Value>,
+    id: &str,
+    tool: &str,
+    raw: &str,
+) {
+    let input = partial_tool_input(tool, raw);
+    for b in blocks.iter_mut().rev() {
+        if b.get("type").and_then(|v| v.as_str()) == Some("tool_use")
+            && b.get("id").and_then(|v| v.as_str()) == Some(id)
+        {
+            if matches!(
+                b.get("status").and_then(|v| v.as_str()),
+                Some("pending") | None
+            ) {
+                if let Some(obj) = b.as_object_mut() {
+                    obj.insert("input".into(), input);
+                }
+            }
+            return;
+        }
+    }
+    blocks.push(serde_json::json!({
+        "type": "tool_use",
+        "id": id,
+        "tool": tool,
+        "input": input,
+        "status": "pending",
+    }));
 }
 
 /// Mutate the matching `tool_use` block in place with the tool result.
@@ -312,6 +424,8 @@ pub(crate) fn stream_text_callback(
     let splitter = Arc::new(std::sync::Mutex::new(
         crate::ai::stream_split::StreamContentSplitter::default(),
     ));
+    let tool_args: Arc<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
     Arc::new(move |delta| {
         // Route visible text through the marker cleaner before it reaches
         // either the persisted block buffer or the live UI stream.
@@ -330,10 +444,20 @@ pub(crate) fn stream_text_callback(
                 append_text_delta_block(&mut g, t);
             }
         }
-        // Live tool-call argument fragments are renderer-only: the shared
-        // `blocks` buffer (used for persistence) is populated later by the
-        // engine's terminal `ToolUse` event via `record_tool_use_block`,
-        // so we deliberately don't write the partial input here.
+        // Document tools stream their arguments live; mirror them into the
+        // block buffer so the partial card is persisted if the turn dies.
+        if let Some(tc) = delta.tool_call.as_ref() {
+            if !tc.id.is_empty() && STREAMING_INPUT_TOOLS.contains(&tc.name.as_str()) {
+                let raw = tool_args.lock().ok().map(|mut m| {
+                    let e = m.entry(tc.id.clone()).or_default();
+                    e.push_str(&tc.arguments);
+                    e.clone()
+                });
+                if let (Some(raw), Ok(mut g)) = (raw, blocks.lock()) {
+                    upsert_streaming_tool_block(&mut g, &tc.id, &tc.name, &raw);
+                }
+            }
+        }
         let tool_call_delta = delta.tool_call.as_ref().map(|tc| {
             serde_json::json!({
                 "id": tc.id,

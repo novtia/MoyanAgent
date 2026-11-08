@@ -202,7 +202,7 @@ impl Tool for SplitDocTool {
                 Err(e) => return Ok(ToolResult::error(e)),
             };
 
-            if self.has_pending_review(invocation.context.session_id.as_deref(), &path)? {
+            if self.has_pending_review(invocation.context.owner_session_id(), &path)? {
                 return Ok(ToolResult::error(format!(
                     "{TOOL_NAME}: `{}` has unreviewed edits. Accept or reject them before splitting.",
                     display_path(&path)
@@ -217,8 +217,8 @@ impl Tool for SplitDocTool {
                 }
             }
 
-            let session_id = invocation.context.session_id.as_deref();
-            let request_id = invocation.context.correlation_id.as_deref();
+            let session_id = invocation.context.owner_session_id();
+            let request_id = invocation.context.owner_request_id();
             self.snapshots.record(session_id, request_id, &captured)?;
             for part in parts.iter().skip(1) {
                 self.snapshots

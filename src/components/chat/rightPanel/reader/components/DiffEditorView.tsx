@@ -26,7 +26,11 @@ import { LazyMount } from "./LazyMount";
 import { ReaderCodeMirror } from "../ReaderCodeMirror";
 import { ReaderDiffActionBar } from "../ReaderDiffActionBar";
 import {
+  flushReaderProgress,
+  hasReaderViewport,
+  readerSavedLine,
   readerViewportTop,
+  rememberReaderLine,
   rememberReaderViewport,
 } from "../../../../../utils/readerViewport";
 
@@ -368,17 +372,112 @@ export function DiffEditorView({
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const saved = readerViewportTop(tab.path);
-    el.scrollTop = saved;
+    const total = textLinesCount(findTextRef.current);
+    let restoring = false;
+    let touched = false;
+    let restoreRaf = 0;
+    const stopRestore = () => {
+      restoring = false;
+      if (restoreRaf) cancelAnimationFrame(restoreRaf);
+      restoreRaf = 0;
+    };
+
+    if (hasReaderViewport(tab.path)) {
+      el.scrollTop = readerViewportTop(tab.path);
+    } else {
+      const savedLine = readerSavedLine(tab.path, total);
+      if (savedLine != null) {
+        // Segments mount lazily with estimated heights, so aim at the real row
+        // repeatedly until it exists and has settled, then let go.
+        restoring = true;
+        const until = performance.now() + 1200;
+        const tick = () => {
+          restoreRaf = 0;
+          if (!restoring) return;
+          let host: HTMLElement | null = null;
+          for (const node of Array.from(el.children)) {
+            const child = node as HTMLElement;
+            const s = Number(child.dataset.segStart);
+            const e = Number(child.dataset.segEnd);
+            if (savedLine >= s && savedLine <= e) {
+              host = child;
+              break;
+            }
+          }
+          if (host) {
+            const s = Number(host.dataset.segStart);
+            const rootEl = host.dataset.segKind === "hunk"
+              ? (host.querySelector(".reader-codemirror--insert") ?? host)
+              : host;
+            const row = rootEl.querySelectorAll(".cm-line")[savedLine - s];
+            if (row) {
+              const delta = row.getBoundingClientRect().top - el.getBoundingClientRect().top;
+              if (Math.abs(delta) > 0.5) el.scrollTop += delta;
+            } else {
+              // Placeholder: bring it near the viewport so it mounts.
+              el.scrollTop += host.getBoundingClientRect().top - el.getBoundingClientRect().top;
+            }
+          }
+          if (performance.now() < until) {
+            restoreRaf = requestAnimationFrame(tick);
+          } else {
+            restoring = false;
+            scrollTopRef.current = el.scrollTop;
+          }
+        };
+        tick();
+      }
+    }
     scrollTopRef.current = el.scrollTop;
+
+    const recordLine = () => {
+      if (restoring) return;
+      touched = true;
+      const top = el.getBoundingClientRect().top;
+      for (const node of Array.from(el.children)) {
+        const child = node as HTMLElement;
+        const rect = child.getBoundingClientRect();
+        if (rect.bottom <= top + 1) continue;
+        const start = Number(child.dataset.segStart);
+        if (!Number.isFinite(start)) return;
+        let line = start;
+        const host =
+          child.dataset.segKind === "hunk"
+            ? (child.querySelector(".reader-codemirror--insert") ?? child)
+            : child;
+        const rows = host.querySelectorAll(".cm-line");
+        for (let k = 0; k < rows.length; k += 1) {
+          if (rows[k].getBoundingClientRect().bottom > top + 1) {
+            line = start + k;
+            break;
+          }
+        }
+        rememberReaderLine(tab.path, line, textLinesCount(findTextRef.current));
+        return;
+      }
+    };
+
     const onScroll = () => {
       scrollTopRef.current = el.scrollTop;
+      if (restoring) return;
       rememberReaderViewport(tab.path, el.scrollTop);
+      recordLine();
     };
+    // The user taking over ends any in-flight restore.
+    const onUser = () => stopRestore();
     el.addEventListener("scroll", onScroll, { passive: true });
+    el.addEventListener("wheel", onUser, { passive: true });
+    el.addEventListener("pointerdown", onUser);
     return () => {
-      rememberReaderViewport(tab.path, el.scrollTop);
+      stopRestore();
+      if (touched) {
+        rememberReaderViewport(tab.path, el.scrollTop);
+        recordLine();
+      }
+      flushReaderProgress();
       el.removeEventListener("scroll", onScroll);
+      el.removeEventListener("wheel", onUser);
+      el.removeEventListener("pointerdown", onUser);
     };
   }, [tab.path]);
 

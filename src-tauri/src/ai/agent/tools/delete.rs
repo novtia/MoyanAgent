@@ -108,8 +108,8 @@ impl Tool for DeleteTool {
             // Snapshot the pre-image before unlinking so a rollback can
             // recreate the file with its original content.
             self.snapshots.record_before(
-                invocation.context.session_id.as_deref(),
-                invocation.context.correlation_id.as_deref(),
+                invocation.context.owner_session_id(),
+                invocation.context.owner_request_id(),
                 &path,
                 FileOp::Delete,
             )?;

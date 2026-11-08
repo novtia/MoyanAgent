@@ -78,6 +78,11 @@ pub struct RunAgentParams {
     pub role_state_scope_id: Option<String>,
     /// User message id correlating token events for this generation turn.
     pub correlation_id: Option<String>,
+    /// Session / user turn that owns this run's file mutations for rollback.
+    /// Sub-agents set these to the parent's so undoing the parent message also
+    /// undoes their writes. `None` ⇒ the run's own `session_id` / `correlation_id`.
+    pub rollback_session_id: Option<String>,
+    pub rollback_request_id: Option<String>,
     /// Token usage statistics recorder shared from [`AppState`].
     pub token_stats: Option<Arc<TokenStatsRecorder>>,
     /// Session content logger shared from [`AppState`].
@@ -128,6 +133,8 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
         session_id,
         role_state_scope_id,
         correlation_id,
+        rollback_session_id,
+        rollback_request_id,
         token_stats,
         session_logger,
     } = params;
@@ -218,6 +225,7 @@ pub async fn run_agent(params: RunAgentParams) -> AppResult<RunAgentResult> {
     if let Some(cid) = correlation_id {
         ctx_builder = ctx_builder.correlation_id(cid);
     }
+    ctx_builder = ctx_builder.rollback_owner(rollback_session_id, rollback_request_id);
     ctx_builder = ctx_builder.agent_type(definition.agent_type.clone());
     if let Some(recorder) = token_stats {
         ctx_builder = ctx_builder.token_stats(recorder);

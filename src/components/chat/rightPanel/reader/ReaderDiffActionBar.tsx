@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../../../store/session";
-import { useReader, type ReaderFileTab } from "../../../../store/reader";
+import { useReader, syncPendingDiffsForPath, type ReaderFileTab } from "../../../../store/reader";
 import { api } from "../../../../api/tauri";
 import type { PendingDiffLineRange } from "../../../../utils/inlineDiff";
 
@@ -34,26 +34,29 @@ export function ReaderDiffActionBar({
     onMouseLeave();
     if (!sessionId) return;
     try {
+      // A merged hunk stands for several Edits; Keep/Undo acts on all of them
+      // but never on other hunks. The backend rewrites the remaining rows, so
+      // re-sync from it afterwards.
+      const ids = blockIds ?? [range.blockId];
       if (accept) {
-        // A merged hunk stands for several Edits: keeping it keeps all of them.
-        for (const id of blockIds ?? [range.blockId]) {
+        for (const id of ids) {
           await api.confirmPendingDiff(sessionId, id, true);
           confirmDiffBlock(tab.path, id, true);
         }
-        return;
+      } else {
+        let revert: Awaited<ReturnType<typeof api.confirmPendingDiff>> = null;
+        for (const id of [...ids].reverse()) {
+          revert = (await api.confirmPendingDiff(sessionId, id, false)) ?? revert;
+        }
+        if (revert) {
+          useReader.getState().updateTabText(tab.path, revert.text, { dirty: false });
+        }
       }
-      // Undo rewinds to before the earliest Edit of the hunk (`range.blockId`).
-      const revert = await api.confirmPendingDiff(sessionId, range.blockId, false);
-      if (!revert) return;
-      const result = confirmDiffBlock(tab.path, range.blockId, false);
-      if (result?.revertText !== revert.text) {
-        useReader.getState().updateTabText(tab.path, revert.text, { dirty: false });
-      }
+      await syncPendingDiffsForPath(sessionId, tab.path);
     } catch {
       /* keep UI pending on failure */
     }
   };
-
   return (
     <div
       className="reader-diff-actionbar"

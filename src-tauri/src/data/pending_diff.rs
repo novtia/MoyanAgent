@@ -532,8 +532,126 @@ pub fn get(conn: &DbConn, session_id: &str, id: &str) -> AppResult<Option<Pendin
     }
 }
 
-/// Accept a single hunk: delete that row only.
+/// Changed span between two texts: `(prefix, old_len, new_len)` in bytes, so
+/// `before[prefix..prefix+old_len]` became `after[prefix..prefix+new_len]`.
+fn change_span(before: &str, after: &str) -> (usize, usize, usize) {
+    let mut p = 0;
+    for (x, y) in before.chars().zip(after.chars()) {
+        if x != y {
+            break;
+        }
+        p += x.len_utf8();
+    }
+    let (b, a) = (&before[p..], &after[p..]);
+    let mut s = 0;
+    for (x, y) in b.chars().rev().zip(a.chars().rev()) {
+        if x != y {
+            break;
+        }
+        s += x.len_utf8();
+    }
+    (p, b.len() - s, a.len() - s)
+}
+
+fn splice(text: &str, a: usize, b: usize, rep: &str) -> Option<String> {
+    if a > b || b > text.len() || !text.is_char_boundary(a) || !text.is_char_boundary(b) {
+        return None;
+    }
+    let mut out = String::with_capacity(text.len() + rep.len());
+    out.push_str(&text[..a]);
+    out.push_str(rep);
+    out.push_str(&text[b..]);
+    Some(out)
+}
+
+type RowTexts = (String, String, String);
+
+/// Undo hunk `k` alone. Rows form a chain of full-document texts, so every
+/// later row is rewritten without this hunk's change. Returns the file text
+/// after the undo plus the rewritten rows, or `None` when a later hunk
+/// overlaps this one (the caller then falls back to rewinding).
+fn reject_isolated(rows: &[PendingDiffRow], k: usize) -> Option<(String, Vec<RowTexts>)> {
+    let rk = &rows[k];
+    let (pk, ok, nk) = change_span(&rk.text_before, &rk.text_after);
+    let rep = rk.text_before.get(pk..pk + ok)?;
+    let marker = rk.text_after.get(pk..pk + nk)?;
+    let (mut a, mut b) = (pk, pk + nk);
+    let mut result = splice(&rk.text_after, a, b, rep)?;
+    let mut updates = Vec::new();
+    for r in &rows[k + 1..] {
+        if r.text_before.get(a..b)? != marker {
+            return None;
+        }
+        let (p, o, n) = change_span(&r.text_before, &r.text_after);
+        let new_before = splice(&r.text_before, a, b, rep)?;
+        let (na, nb) = if p + o <= a {
+            let shift = n as isize - o as isize;
+            ((a as isize + shift) as usize, (b as isize + shift) as usize)
+        } else if p >= b {
+            (a, b)
+        } else {
+            return None;
+        };
+        let new_after = splice(&r.text_after, na, nb, rep)?;
+        result = new_after.clone();
+        updates.push((r.id.clone(), new_before, new_after));
+        a = na;
+        b = nb;
+    }
+    Some((result, updates))
+}
+
+/// Keep hunk `k`: fold its change into the earlier rows so the chain stays
+/// gap-free for later independent undos. `None` ⇒ an earlier hunk overlaps.
+fn accept_isolated(rows: &[PendingDiffRow], k: usize) -> Option<Vec<RowTexts>> {
+    let rk = &rows[k];
+    let (pk, ok, nk) = change_span(&rk.text_before, &rk.text_after);
+    let rep = rk.text_after.get(pk..pk + nk)?;
+    let marker = rk.text_before.get(pk..pk + ok)?;
+    let (mut a, mut b) = (pk, pk + ok);
+    let mut updates = Vec::new();
+    for r in rows[..k].iter().rev() {
+        if r.text_after.get(a..b)? != marker {
+            return None;
+        }
+        let (p, o, n) = change_span(&r.text_before, &r.text_after);
+        let new_after = splice(&r.text_after, a, b, rep)?;
+        let (ba, bb) = if p + n <= a {
+            let shift = o as isize - n as isize;
+            ((a as isize + shift) as usize, (b as isize + shift) as usize)
+        } else if p >= b {
+            (a, b)
+        } else {
+            return None;
+        };
+        let new_before = splice(&r.text_before, ba, bb, rep)?;
+        updates.push((r.id.clone(), new_before, new_after));
+        a = ba;
+        b = bb;
+    }
+    Some(updates)
+}
+
+fn apply_row_updates(conn: &DbConn, updates: &[RowTexts]) -> AppResult<()> {
+    for (id, before, after) in updates {
+        conn.execute(
+            "UPDATE pending_diffs SET text_before = ?1, text_after = ?2 WHERE id = ?3",
+            params![before, after, id],
+        )?;
+    }
+    Ok(())
+}
+
+/// Accept a single hunk: delete that row only (earlier rows absorb its change).
 pub fn accept(conn: &DbConn, session_id: &str, id: &str) -> AppResult<bool> {
+    if let Some(row) = get(conn, session_id, id)? {
+        let rows = list_for_path(conn, session_id, &row.path)?;
+        if let Some(k) = rows.iter().position(|r| r.id == id) {
+            if let Some(updates) = accept_isolated(&rows, k) {
+                apply_row_updates(conn, &updates)?;
+            }
+        }
+    }
     let n = conn.execute(
         "DELETE FROM pending_diffs WHERE session_id = ?1 AND id = ?2",
         params![session_id, id],
@@ -541,12 +659,29 @@ pub fn accept(conn: &DbConn, session_id: &str, id: &str) -> AppResult<bool> {
     Ok(n > 0)
 }
 
-/// Reject a hunk: return revert text and delete this row plus every later
-/// hunk on the same path (seq >= this row).
+/// Reject one hunk without touching the others. Only when a later hunk
+/// overlaps it do we fall back to rewinding to before it (dropping every
+/// later hunk on the path).
 pub fn reject(conn: &DbConn, session_id: &str, id: &str) -> AppResult<Option<PendingDiffRevert>> {
     let Some(row) = get(conn, session_id, id)? else {
         return Ok(None);
     };
+    let rows = list_for_path(conn, session_id, &row.path)?;
+    if let Some(k) = rows.iter().position(|r| r.id == id) {
+        if let Some((text, updates)) = reject_isolated(&rows, k) {
+            apply_row_updates(conn, &updates)?;
+            conn.execute(
+                "DELETE FROM pending_diffs WHERE session_id = ?1 AND id = ?2",
+                params![session_id, id],
+            )?;
+            return Ok(Some(PendingDiffRevert {
+                path: row.path,
+                text,
+                encoding: row.encoding,
+                had_bom: row.had_bom,
+            }));
+        }
+    }
     conn.execute(
         "DELETE FROM pending_diffs
          WHERE session_id = ?1 AND path = ?2 AND seq >= ?3",
@@ -559,7 +694,6 @@ pub fn reject(conn: &DbConn, session_id: &str, id: &str) -> AppResult<Option<Pen
         had_bom: row.had_bom,
     }))
 }
-
 pub fn accept_all(conn: &DbConn, session_id: &str, path: &str) -> AppResult<usize> {
     let n = conn.execute(
         "DELETE FROM pending_diffs WHERE session_id = ?1 AND path = ?2",
@@ -699,6 +833,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::canonicalize(&dir).unwrap()
+    }
+
+    #[test]
+    fn rejecting_or_keeping_one_hunk_leaves_the_others() {
+        let db = TempDb::new("diff-isolated");
+        let conn = db.conn();
+        let t0 = "A\nB\nC\n";
+        let t1 = "A1\nB\nC\n";
+        let t2 = "A1\nB2\nC\n";
+        let t3 = "A1\nB2\nC3\n";
+        for (s, b, a) in [("a", t0, t1), ("b", t1, t2), ("c", t2, t3)] {
+            insert(&conn, SID, "f.md", s, s, b, a, None, false, Some("u")).unwrap();
+        }
+        let ids: Vec<String> = list_for_path(&conn, SID, "f.md")
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        // Keep the middle one, then undo the first: only line A reverts.
+        accept(&conn, SID, &ids[1]).unwrap();
+        let revert = reject(&conn, SID, &ids[0]).unwrap().unwrap();
+        assert_eq!(revert.text, "A\nB2\nC3\n");
+        let left = list_for_path(&conn, SID, "f.md").unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].text_before, "A\nB2\nC\n");
+        assert_eq!(left[0].text_after, "A\nB2\nC3\n");
     }
 
     fn seed(conn: &DbConn, path: &str) {
