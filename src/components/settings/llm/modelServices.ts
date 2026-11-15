@@ -288,7 +288,7 @@ export const CAPABILITY_OPTIONS = [
   { id: "rewrite", label: "改文" },
 ] as const;
 
-export const DEFAULT_LOCAL_SERVER_EXE = String.raw`D:\AI\llama.cpp\b11853\llama-server.exe`;
+export const DEFAULT_LOCAL_SERVER_EXE = String.raw`D:\AI\llama.cpp\b12408\llama-server.exe`;
 export const DEFAULT_LOCAL_CONTEXT_SIZE = 16384;
 export const DEFAULT_LOCAL_MODEL_PATH = String.raw`D:\AI\models\rewrite2-27b-iq4xs\rewrite2-27b-IQ4_XS.gguf`;
 

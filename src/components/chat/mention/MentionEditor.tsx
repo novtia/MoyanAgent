@@ -19,6 +19,7 @@ import {
   buildMentionNodes,
   collectMentions,
   createMentionNode,
+  ensureCaretInTextNode,
   mediaMentionDisplayLabel,
   mediaMentionIndex,
   mediaMentionKind,
@@ -554,6 +555,9 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
           updateMentionTrigger();
         }}
         onBlur={rememberSelection}
+        onCompositionStart={() => {
+          if (rootRef.current) ensureCaretInTextNode(rootRef.current);
+        }}
         onKeyUp={() => {
           rememberSelection();
           updateMentionTrigger();
@@ -632,6 +636,16 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
           document.execCommand("insertText", false, text);
         }}
         onKeyDown={(e) => {
+          if (
+            rootRef.current &&
+            !e.ctrlKey &&
+            !e.metaKey &&
+            !e.altKey &&
+            (e.key.length === 1 || e.keyCode === 229) &&
+            !e.nativeEvent.isComposing
+          ) {
+            ensureCaretInTextNode(rootRef.current);
+          }
           if (e.nativeEvent.isComposing || e.keyCode === 229) return;
           if (e.key === "Escape" && triggerRangeRef.current) {
             e.preventDefault();

@@ -380,7 +380,7 @@ export function serializeMentions(root: HTMLElement): string {
   const walk = (node: Node) => {
     node.childNodes.forEach((child) => {
       if (child.nodeType === Node.TEXT_NODE) {
-        out += child.textContent ?? "";
+        out += (child.textContent ?? "").replace(/\u200B/g, "");
         return;
       }
       if (child.nodeType !== Node.ELEMENT_NODE) return;
@@ -492,6 +492,48 @@ export function buildMentionNodes(
   }
   flush();
   return nodes;
+}
+
+function isChipNode(node: Node | null | undefined): boolean {
+  return (
+    !!node &&
+    node.nodeType === Node.ELEMENT_NODE &&
+    (node as HTMLElement).contentEditable === "false"
+  );
+}
+
+/**
+ * When the caret sits directly against a non-editable chip (at the editor root
+ * level, or at the edge of a text node touching a chip), browsers mis-place
+ * typed / IME text. Move the caret into a real text node next to the chip,
+ * creating a zero-width text node (stripped on serialize) when needed.
+ */
+export function ensureCaretInTextNode(root: HTMLElement) {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return;
+  const { anchorNode: node, anchorOffset: offset } = sel;
+  if (!node || !root.contains(node)) return;
+
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = node.textContent ?? "";
+    // Keep a zero-width buffer between the caret and the chip so IME
+    // composition never touches the non-editable neighbour.
+    if (offset === 0 && isChipNode(node.previousSibling)) {
+      if (!text.startsWith("\u200B")) node.textContent = "\u200B" + text;
+      sel.collapse(node, 1);
+    } else if (offset === text.length && isChipNode(node.nextSibling)) {
+      if (!text.endsWith("\u200B")) node.textContent = text + "\u200B";
+      sel.collapse(node, text.length);
+    }
+    return;
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) return;
+  const prev = node.childNodes[offset - 1];
+  const next = node.childNodes[offset];
+  if (!isChipNode(prev) && !isChipNode(next)) return;
+  const guard = document.createTextNode("\u200B");
+  node.insertBefore(guard, next ?? null);
+  sel.collapse(guard, 1);
 }
 
 export function moveCaretToEnd(root: HTMLElement) {

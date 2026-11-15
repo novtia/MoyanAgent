@@ -167,6 +167,10 @@ pub async fn start_reader_rewrite(
     let factory = ProviderFactory::default();
     let total = chunks.len();
     let mut visible = String::new();
+    let think_gap = Arc::new(Mutex::new(ThinkGap {
+        prior: false,
+        stage: false,
+    }));
 
     for (offset, chunk) in chunks.iter().enumerate() {
         if signal.aborted() {
@@ -227,6 +231,7 @@ pub async fn start_reader_rewrite(
                 show,
                 &app,
                 &args,
+                &think_gap,
             )
             .await?
             {
@@ -382,6 +387,7 @@ async fn complete_stage(
     emit_tokens: bool,
     app: &AppHandle,
     args: &ReaderRewriteArgs,
+    think_gap: &Arc<Mutex<ThinkGap>>,
 ) -> AppResult<Step> {
     let body = chunk.trim();
     let prompt = if stage.prompt_enabled(cfg) {
@@ -422,15 +428,37 @@ async fn complete_stage(
         forced_tools: Vec::new(),
     };
 
+    if let Ok(mut gap) = think_gap.lock() {
+        gap.stage = false;
+    }
     let acc = Arc::new(Mutex::new(String::new()));
     let on_delta: TextDeltaCallback = {
         let acc = acc.clone();
+        let app = app.clone();
+        let path = args.path.clone();
+        let token = args.client_token.clone();
+        let think_gap = think_gap.clone();
         Arc::new(move |delta: StreamDelta| {
+            if let Some(piece) = delta.thinking.filter(|piece| !piece.is_empty()) {
+                if emit_tokens {
+                    let prefix = think_gap
+                        .lock()
+                        .ok()
+                        .and_then(|mut gap| thinking_prefix(&mut gap));
+                    if let Some(prefix) = prefix {
+                        emit_piece(&app, &path, &token, "thinking", prefix.to_string());
+                    }
+                    emit_piece(&app, &path, &token, "thinking", piece);
+                }
+            }
             let Some(text) = delta.text.filter(|text| !text.is_empty()) else {
                 return;
             };
             if let Ok(mut buf) = acc.lock() {
                 buf.push_str(&text);
+            }
+            if emit_tokens {
+                emit_piece(&app, &path, &token, "delta", text);
             }
         })
     };
@@ -465,37 +493,40 @@ async fn complete_stage(
         };
         return Err(AppError::Other(message.into()));
     }
-    if emit_tokens && !split.thinking.trim().is_empty() {
-        emit(
-            app,
-            RewriteProgress {
-                path: &args.path,
-                client_token: &args.client_token,
-                kind: "thinking",
-                stage: None,
-                index: None,
-                total: None,
-                text: Some(split.thinking.trim().to_string()),
-                message: None,
-            },
-        );
-    }
-    if emit_tokens {
-        emit(
-            app,
-            RewriteProgress {
-                path: &args.path,
-                client_token: &args.client_token,
-                kind: "delta",
-                stage: None,
-                index: None,
-                total: None,
-                text: Some(split.body.clone()),
-                message: None,
-            },
-        );
-    }
     Ok(Step::Text(split.body))
+}
+
+/// Separates analysis blocks from earlier chunks. Token deltas inside one
+/// stage append directly; the next stage's first delta gets a blank line.
+struct ThinkGap {
+    prior: bool,
+    stage: bool,
+}
+
+fn thinking_prefix(gap: &mut ThinkGap) -> Option<&'static str> {
+    if gap.stage {
+        return None;
+    }
+    gap.stage = true;
+    let prefix = if gap.prior { Some("\n\n") } else { None };
+    gap.prior = true;
+    prefix
+}
+
+fn emit_piece(app: &AppHandle, path: &str, token: &str, kind: &str, text: String) {
+    emit(
+        app,
+        RewriteProgress {
+            path,
+            client_token: token,
+            kind,
+            stage: None,
+            index: None,
+            total: None,
+            text: Some(text),
+            message: None,
+        },
+    );
 }
 
 fn rewrite_parameters(
@@ -725,6 +756,19 @@ mod tests {
 
     fn chars(n: usize, ch: char) -> String {
         std::iter::repeat(ch).take(n).collect()
+    }
+
+    #[test]
+    fn thinking_blocks_are_separated_only_once() {
+        let mut gap = ThinkGap {
+            prior: false,
+            stage: false,
+        };
+        assert_eq!(thinking_prefix(&mut gap), None);
+        assert_eq!(thinking_prefix(&mut gap), None);
+        gap.stage = false;
+        assert_eq!(thinking_prefix(&mut gap), Some("\n\n"));
+        assert_eq!(thinking_prefix(&mut gap), None);
     }
 
     #[test]

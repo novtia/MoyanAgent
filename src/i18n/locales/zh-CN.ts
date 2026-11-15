@@ -565,6 +565,7 @@ const zhCN = {
       SplitDoc: "按段落号把一章拆成多个文件（原文件留前半，其余命名为原名（二）（三）…，可随消息回滚）",
       Edit:
         "只替换文件里插入点的短锚点（插入/续写：选插入位置那一句，不要整章进 old_string）。new_string 为该锚点加新正文。",
+      FindReplace: "在单个文件内批量查找或替换多组文本/正则（支持 replacements 与 dry_run 预览）",
       Read: "读取本地文本；可在工具设置中打开段落编号 [P001]",
       ListFiles: "列出目录下的文件与子目录",
       RoleState: "维护角色属性与状态面板",

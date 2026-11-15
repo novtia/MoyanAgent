@@ -40,7 +40,8 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
     return !!(projects.find((p) => p.id === projectId)?.path?.trim());
   }, [active, projects]);
 
-  const { width, resizing, asideRef, onResizerMouseDown, resetWidth } = usePanelResize(open);
+  const { width, maxWidth, resizing, asideRef, onResizerMouseDown, resetWidth } =
+    usePanelResize(open);
 
   const { tabsScrollRef, tabOverflow, updateTabOverflow, scrollTabs } = useTabScroll(
     tabs,
@@ -96,7 +97,10 @@ export function RightPanel({ open, onClose, onPreviewImage }: RightPanelProps) {
   }, [open, onClose]);
 
   const tabIndex = open ? 0 : -1;
-  const style = { ["--chat-gallery-width" as string]: `${width}px` } as React.CSSProperties;
+  const style = {
+    ["--chat-gallery-width" as string]: `${width}px`,
+    maxWidth: open ? maxWidth : undefined,
+  } as React.CSSProperties;
 
   return (
     <aside

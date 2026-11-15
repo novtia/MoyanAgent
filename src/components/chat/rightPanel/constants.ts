@@ -1,6 +1,9 @@
 export const MIN_WIDTH = 240;
-export const MAX_WIDTH = 640;
+/** Conversation column kept beside the panel. Extra window width becomes drag room. */
+export const CHAT_MAIN_MIN = 420;
 export const DEFAULT_WIDTH = 340;
+/** Used only when the sidebar width variable has not been applied yet. */
+export const SIDEBAR_FALLBACK = 220;
 export const WIDTH_KEY = "atelier:right-panel-width";
 /** Global right-panel open flag. Survives session switches and settings remounts. */
 export const OPEN_KEY = "atelier:right-panel-open";

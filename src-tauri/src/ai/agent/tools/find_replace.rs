@@ -2,12 +2,15 @@
 //!
 //! Where `Edit` swaps one unique span, this tool is for bulk work: renaming a
 //! term everywhere, regex rewrites with capture groups, capped replacement
-//! counts, and a `dry_run` that lists the hits without touching the file.
+//! counts, batch rules (`replacements` or a list of `find` terms) in one pass,
+//! and a `dry_run` that lists the hits without touching the file.
 //!
 //! Literal matching mirrors `Edit`: verbatim first, then quote-folded
 //! (ASCII `"` / `“”` / `「」` are the same glyph) and CRLF/LF swaps, so a model
 //! that cannot see the file's exact quote style still lands. Regex mode matches
-//! as written. Writes snapshot the pre-image, keep the file's encoding and BOM,
+//! as written. Multi-rule calls match simultaneously against the original text
+//! (earlier rules win on overlapping spans) and apply all edits in one pass.
+//! Writes snapshot the pre-image, keep the file's encoding and BOM,
 //! refresh the read receipt and record a pending diff like `Edit` does.
 
 use std::path::{Path, PathBuf};
@@ -28,8 +31,12 @@ use crate::data::pending_diff;
 use crate::error::{AppError, AppResult};
 
 const TOOL_NAME: &str = "FindReplace";
-/// Hits listed in the result; the count still covers all of them.
+/// Hits listed in a single-rule result; the count still covers all of them.
 const MAX_LISTED_MATCHES: usize = 20;
+/// Hits listed in a multi-rule batch result.
+const MAX_BATCH_LISTED_MATCHES: usize = 40;
+/// Most rules accepted in one batched call.
+const MAX_BATCH_RULES: usize = 50;
 /// Characters of surrounding text shown on each side of a listed hit.
 const CONTEXT_CHARS: usize = 20;
 
@@ -49,12 +56,15 @@ impl FindReplaceTool {
                 name: TOOL_NAME.to_string(),
                 description: "Find and replace text in ONE file: every occurrence by default, \
                     literal or regex. Use it for renames, unifying wording, and pattern \
-                    rewrites; use Edit to rewrite one specific passage. Call with \
-                    `dry_run: true` first when unsure what will match — it lists the hits \
-                    (line number plus surrounding text) and writes nothing. With `regex: true`, \
-                    `replace` may reference capture groups as `$1` or `${name}` (write `$$` \
-                    for a literal dollar sign). Literal matching treats ASCII and typographic \
-                    quotes as equivalent. An empty `replace` deletes the matches."
+                    rewrites; use Edit to rewrite one specific passage. To find or replace \
+                    multiple terms/pairs in one call, pass `replacements: [{ find, replace }, ...]` \
+                    (or a list of strings in `find`) instead of issuing multiple calls. Call \
+                    with `dry_run: true` first when unsure what will match — it lists the hits \
+                    (line number plus surrounding text) and writes nothing (and `replace` may \
+                    be omitted during `dry_run`). With `regex: true`, `replace` may reference \
+                    capture groups as `$1` or `${name}` (write `$$` for a literal dollar sign). \
+                    Literal matching treats ASCII and typographic quotes as equivalent. An empty \
+                    `replace` deletes the matches."
                     .to_string(),
                 schema: json!({
                     "type": "object",
@@ -68,31 +78,64 @@ impl FindReplaceTool {
                         },
                         "find": {
                             "type": "string",
-                            "description": "Text to find (a regular expression when `regex` is true). Non-empty."
+                            "description": "Text to find in single-rule mode (or omit when passing `replacements`). A non-empty string (a list of strings is also accepted to match several terms with the same options). Treated as a regular expression when `regex` is true."
                         },
                         "replace": {
                             "type": "string",
-                            "description": "Replacement text. With `regex: true`, `$1` / `${name}` insert capture groups. Empty string deletes the matches."
+                            "description": "Replacement text for `find` (required unless `replacements` is used or `dry_run` is true). With `regex: true`, `$1` / `${name}` insert capture groups. Empty string deletes the matches."
+                        },
+                        "replacements": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": MAX_BATCH_RULES,
+                            "description": "Batch mode: list of `{ find, replace, regex?, case_sensitive?, max_replacements? }` rules applied in one pass against the original text (earlier rules win on overlap). Use this to find/replace multiple items at once.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "find": {
+                                        "type": "string",
+                                        "description": "Text to find (regex when `regex` is true). Non-empty."
+                                    },
+                                    "replace": {
+                                        "type": "string",
+                                        "description": "Replacement text. Required unless `dry_run` is true. Empty string deletes the matches."
+                                    },
+                                    "regex": {
+                                        "type": "boolean",
+                                        "description": "Override top-level `regex` for this rule."
+                                    },
+                                    "case_sensitive": {
+                                        "type": "boolean",
+                                        "description": "Override top-level `case_sensitive` for this rule."
+                                    },
+                                    "max_replacements": {
+                                        "type": "integer",
+                                        "minimum": 1,
+                                        "description": "Override top-level `max_replacements` for this rule."
+                                    }
+                                },
+                                "required": ["find"]
+                            }
                         },
                         "regex": {
                             "type": "boolean",
-                            "description": "Treat `find` as a regular expression. Defaults to false (literal text)."
+                            "description": "Treat `find` as a regular expression (default for all rules). Defaults to false (literal text)."
                         },
                         "case_sensitive": {
                             "type": "boolean",
-                            "description": "Match letter case exactly. Defaults to true."
+                            "description": "Match letter case exactly (default for all rules). Defaults to true."
                         },
                         "max_replacements": {
                             "type": "integer",
                             "minimum": 1,
-                            "description": "Replace only the first N matches (in file order). Omit to replace all."
+                            "description": "Replace only the first N matches per rule (in file order). Omit to replace all."
                         },
                         "dry_run": {
                             "type": "boolean",
                             "description": "List the matches without modifying the file. Defaults to false."
                         }
                     },
-                    "required": ["path", "find", "replace"]
+                    "required": ["path"]
                 }),
                 read_only: false,
                 concurrency_safe: false,
@@ -112,6 +155,16 @@ struct Hit {
     start: usize,
     end: usize,
     new: String,
+    rule_index: usize,
+}
+
+#[derive(Debug, Clone)]
+struct Rule {
+    find: String,
+    replace: String,
+    regex: bool,
+    case_sensitive: bool,
+    max_replacements: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -123,7 +176,7 @@ struct Options<'a> {
 }
 
 /// All hits in file order. Regex errors surface as `Err`.
-fn find_hits(text: &str, opts: &Options<'_>) -> Result<Vec<Hit>, String> {
+fn find_hits(text: &str, opts: &Options<'_>, rule_index: usize) -> Result<Vec<Hit>, String> {
     if opts.regex || !opts.case_sensitive {
         let pattern = if opts.regex {
             opts.find.to_string()
@@ -153,6 +206,7 @@ fn find_hits(text: &str, opts: &Options<'_>) -> Result<Vec<Hit>, String> {
                 start: whole.start(),
                 end: whole.end(),
                 new,
+                rule_index,
             });
         }
         return Ok(hits);
@@ -165,12 +219,13 @@ fn find_hits(text: &str, opts: &Options<'_>) -> Result<Vec<Hit>, String> {
             start: i,
             end: i + m.len(),
             new: opts.replace.to_string(),
+            rule_index,
         })
         .collect();
     if !exact.is_empty() {
         return Ok(exact);
     }
-    let folded = literal_folded_hits(text, opts.find, opts.replace);
+    let folded = literal_folded_hits(text, opts.find, opts.replace, rule_index);
     if !folded.is_empty() {
         return Ok(folded);
     }
@@ -182,23 +237,25 @@ fn find_hits(text: &str, opts: &Options<'_>) -> Result<Vec<Hit>, String> {
                 start: i,
                 end: i + m.len(),
                 new: new.clone(),
+                rule_index,
             })
             .collect();
         if !exact.is_empty() {
             return Ok(exact);
         }
-        return Ok(literal_folded_hits(text, &swapped, &new));
+        return Ok(literal_folded_hits(text, &swapped, &new, rule_index));
     }
     Ok(Vec::new())
 }
 
-fn literal_folded_hits(text: &str, find: &str, replace: &str) -> Vec<Hit> {
+fn literal_folded_hits(text: &str, find: &str, replace: &str, rule_index: usize) -> Vec<Hit> {
     find_quote_folded_ranges(text, find)
         .into_iter()
         .map(|(start, end)| Hit {
             start,
             end,
             new: remap_quotes_to_sample(replace, &text[start..end]),
+            rule_index,
         })
         .collect()
 }
@@ -237,6 +294,62 @@ fn apply_hits(text: &str, hits: &[Hit]) -> String {
     out
 }
 
+fn overlaps_any(sorted_ranges: &[(usize, usize)], start: usize, end: usize) -> bool {
+    let idx = sorted_ranges.partition_point(|&(s, _)| s < end);
+    idx > 0 && sorted_ranges[idx - 1].1 > start
+}
+
+fn insert_sorted_range(sorted_ranges: &mut Vec<(usize, usize)>, start: usize, end: usize) {
+    let idx = sorted_ranges.partition_point(|&(s, _)| s < start);
+    sorted_ranges.insert(idx, (start, end));
+}
+
+#[derive(Debug, Default)]
+struct RuleStats {
+    raw_matches: usize,
+    applied_count: usize,
+    skipped_overlaps: usize,
+}
+
+fn select_listed_hits<'a>(hits: &'a [Hit], num_rules: usize) -> Vec<&'a Hit> {
+    if num_rules <= 1 {
+        return hits.iter().take(MAX_LISTED_MATCHES).collect();
+    }
+    if hits.len() <= MAX_BATCH_LISTED_MATCHES {
+        return hits.iter().collect();
+    }
+
+    let mut chosen = vec![false; hits.len()];
+    let mut picked = Vec::with_capacity(MAX_BATCH_LISTED_MATCHES);
+
+    // Guarantee at least one example from every matching rule before filling in file order.
+    let mut seen_rule = vec![false; num_rules];
+    for (idx, h) in hits.iter().enumerate() {
+        if !seen_rule[h.rule_index] {
+            seen_rule[h.rule_index] = true;
+            chosen[idx] = true;
+            picked.push(idx);
+            if picked.len() >= MAX_BATCH_LISTED_MATCHES {
+                break;
+            }
+        }
+    }
+    if picked.len() < MAX_BATCH_LISTED_MATCHES {
+        for (idx, _) in hits.iter().enumerate() {
+            if chosen[idx] {
+                continue;
+            }
+            chosen[idx] = true;
+            picked.push(idx);
+            if picked.len() >= MAX_BATCH_LISTED_MATCHES {
+                break;
+            }
+        }
+    }
+    picked.sort_unstable();
+    picked.into_iter().map(|i| &hits[i]).collect()
+}
+
 fn line_of(text: &str, byte: usize) -> usize {
     text[..byte].matches('\n').count() + 1
 }
@@ -250,17 +363,20 @@ fn context_after(text: &str, byte: usize) -> String {
     text[byte..].chars().take(CONTEXT_CHARS).collect()
 }
 
-fn describe_hits(text: &str, hits: &[Hit]) -> Vec<Value> {
+fn describe_hits(text: &str, hits: &[&Hit], include_rule_index: bool) -> Vec<Value> {
     hits.iter()
-        .take(MAX_LISTED_MATCHES)
         .map(|h| {
-            json!({
+            let mut item = json!({
                 "line": line_of(text, h.start),
                 "before": context_before(text, h.start),
                 "matched": &text[h.start..h.end],
                 "replacement": h.new,
                 "after": context_after(text, h.end),
-            })
+            });
+            if include_rule_index {
+                item["rule_index"] = json!(h.rule_index);
+            }
+            item
         })
         .collect()
 }
@@ -275,22 +391,7 @@ impl Tool for FindReplaceTool {
         if path.is_empty() {
             return Err(invalid("`path` must be non-empty"));
         }
-        if string_arg(input, "find")?.is_empty() {
-            return Err(invalid("`find` must be non-empty"));
-        }
-        string_arg(input, "replace")?;
-        for key in ["regex", "case_sensitive", "dry_run"] {
-            match input.get(key) {
-                None | Some(Value::Null) => {}
-                Some(v) if v.is_boolean() => {}
-                Some(_) => return Err(invalid(&format!("`{key}` must be a boolean"))),
-            }
-        }
-        match input.get("max_replacements") {
-            None | Some(Value::Null) => {}
-            Some(v) if v.as_u64().is_some_and(|n| n >= 1) => {}
-            Some(_) => return Err(invalid("`max_replacements` must be a positive integer")),
-        }
+        let _ = parse_rules(input)?;
         Ok(())
     }
 
@@ -300,43 +401,111 @@ impl Tool for FindReplaceTool {
             let path = resolve_path(input, &invocation.context.cwd)?;
             crate::ai::agent::tools::pe_docs::refuse_nondoc(TOOL_NAME, &path)?;
 
-            let find = str_of(input, "find");
-            let replace = str_of(input, "replace");
-            let opts = Options {
-                find,
-                replace,
-                regex: bool_of(input, "regex", false),
-                case_sensitive: bool_of(input, "case_sensitive", true),
-            };
             let dry_run = bool_of(input, "dry_run", false);
-            let max = input
-                .get("max_replacements")
-                .and_then(Value::as_u64)
-                .map(|n| n as usize);
+            let rules = parse_rules(input)?;
+            let is_batch = rules.len() > 1;
 
             let decoded = read_text_file(&path)
                 .map_err(|e| AppError::Other(format!("{TOOL_NAME}: read {:?}: {e}", path)))?;
 
-            let mut hits = match find_hits(&decoded.text, &opts) {
-                Ok(h) => h,
-                Err(msg) => return Ok(ToolResult::error(msg)),
-            };
+            let mut all_rule_hits: Vec<Vec<Hit>> = Vec::with_capacity(rules.len());
+            for (idx, rule) in rules.iter().enumerate() {
+                let opts = Options {
+                    find: &rule.find,
+                    replace: &rule.replace,
+                    regex: rule.regex,
+                    case_sensitive: rule.case_sensitive,
+                };
+                let rule_hits = match find_hits(&decoded.text, &opts, idx) {
+                    Ok(h) => h,
+                    Err(msg) => return Ok(ToolResult::error(msg)),
+                };
+                all_rule_hits.push(rule_hits);
+            }
+
+            let mut accepted_ranges: Vec<(usize, usize)> = Vec::new();
+            let mut hits: Vec<Hit> = Vec::new();
+            let mut stats: Vec<RuleStats> = Vec::with_capacity(rules.len());
+
+            for (idx, (rule, rule_hits)) in rules.iter().zip(all_rule_hits).enumerate() {
+                let mut st = RuleStats {
+                    raw_matches: rule_hits.len(),
+                    ..RuleStats::default()
+                };
+                for hit in rule_hits {
+                    if overlaps_any(&accepted_ranges, hit.start, hit.end) {
+                        st.skipped_overlaps += 1;
+                        continue;
+                    }
+                    if rule
+                        .max_replacements
+                        .is_some_and(|max| st.applied_count >= max)
+                    {
+                        break;
+                    }
+                    insert_sorted_range(&mut accepted_ranges, hit.start, hit.end);
+                    st.applied_count += 1;
+                    hits.push(hit);
+                    let _ = idx;
+                }
+                stats.push(st);
+            }
+
             if hits.is_empty() {
                 clear_receipt(&invocation.context.read_file_state, &path);
-                return Ok(ToolResult::error(format!(
-                    "{TOOL_NAME}: `find` matched nothing in {}. Check spelling, letter case \
-                     (`case_sensitive`) and whether `regex` should be set.",
-                    path.display()
-                )));
+                let msg = if is_batch {
+                    format!(
+                        "{TOOL_NAME}: none of the {} rules matched anything in {}. Check \
+                         spelling, letter case (`case_sensitive`) and whether `regex` should be set.",
+                        rules.len(),
+                        path.display()
+                    )
+                } else {
+                    format!(
+                        "{TOOL_NAME}: `find` matched nothing in {}. Check spelling, letter case \
+                         (`case_sensitive`) and whether `regex` should be set.",
+                        path.display()
+                    )
+                };
+                return Ok(ToolResult::error(msg));
             }
-            let total_matches = hits.len();
-            if let Some(max) = max {
-                hits.truncate(max);
-            }
-            let matches = describe_hits(&decoded.text, &hits);
+
+            hits.sort_by_key(|h| h.start);
+            let total_matches: usize = stats.iter().map(|s| s.raw_matches).sum();
+            let selected = select_listed_hits(&hits, rules.len());
+            let matches = describe_hits(&decoded.text, &selected, is_batch);
+
+            let per_rule: Option<Vec<Value>> = if is_batch {
+                Some(
+                    rules
+                        .iter()
+                        .zip(&stats)
+                        .enumerate()
+                        .map(|(i, (rule, st))| {
+                            let mut row = json!({
+                                "index": i,
+                                "find": rule.find,
+                                "replace": rule.replace,
+                                "total_matches": st.raw_matches,
+                            });
+                            if dry_run {
+                                row["would_replace"] = json!(st.applied_count);
+                            } else {
+                                row["replaced_count"] = json!(st.applied_count);
+                            }
+                            if st.skipped_overlaps > 0 {
+                                row["skipped_overlaps"] = json!(st.skipped_overlaps);
+                            }
+                            row
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            };
 
             if dry_run {
-                return Ok(ToolResult::ok(json!({
+                let mut body = json!({
                     "success": true,
                     "dry_run": true,
                     "path": crate::data::paths::normalized_path_key(&path),
@@ -344,7 +513,11 @@ impl Tool for FindReplaceTool {
                     "would_replace": hits.len(),
                     "matches": matches,
                     "listed": matches.len(),
-                })));
+                });
+                if let Some(pr) = per_rule {
+                    body["per_rule"] = json!(pr);
+                }
+                return Ok(ToolResult::ok(body));
             }
 
             let text_before = decoded.text.clone();
@@ -405,11 +578,162 @@ impl Tool for FindReplaceTool {
                 "listed": matches.len(),
                 "chars": updated.chars().filter(|c| !c.is_whitespace()).count(),
             });
+            if let Some(pr) = per_rule {
+                body["per_rule"] = json!(pr);
+            }
             if let Some(id) = pending_diff_id {
                 body["pending_diff_id"] = json!(id);
             }
             Ok(ToolResult::ok(body))
         })
+    }
+}
+
+fn parse_optional_max(val: Option<&Value>, label: &str) -> AppResult<Option<usize>> {
+    match val {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) if v.as_u64().is_some_and(|n| n >= 1) => Ok(Some(v.as_u64().unwrap() as usize)),
+        Some(_) => Err(invalid(&format!("{label} must be a positive integer"))),
+    }
+}
+
+fn parse_optional_bool(val: Option<&Value>, default: bool, label: &str) -> AppResult<bool> {
+    match val {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(_) => Err(invalid(&format!("{label} must be a boolean"))),
+    }
+}
+
+fn parse_replace_arg(val: Option<&Value>, dry_run: bool, label: &str) -> AppResult<String> {
+    match val {
+        Some(Value::String(s)) => Ok(s.clone()),
+        None | Some(Value::Null) if dry_run => Ok(String::new()),
+        _ => Err(invalid(&format!("{label} must be a string"))),
+    }
+}
+
+fn parse_rules(input: &Value) -> AppResult<Vec<Rule>> {
+    let dry_run = parse_optional_bool(input.get("dry_run"), false, "`dry_run`")?;
+    let default_regex = parse_optional_bool(input.get("regex"), false, "`regex`")?;
+    let default_case = parse_optional_bool(input.get("case_sensitive"), true, "`case_sensitive`")?;
+    let default_max = parse_optional_max(input.get("max_replacements"), "`max_replacements`")?;
+
+    let find_val = input.get("find").filter(|v| !v.is_null());
+    let replacements_val = input.get("replacements").filter(|v| !v.is_null());
+
+    match (find_val, replacements_val) {
+        (Some(_), Some(_)) => Err(invalid(
+            "pass either `find` (+ `replace`) or `replacements`, not both",
+        )),
+        (None, None) => Err(invalid(
+            "must provide either `find` (+ `replace`) or `replacements`",
+        )),
+        (Some(f), None) => {
+            let replace = parse_replace_arg(input.get("replace"), dry_run, "`replace`")?;
+            let finds = match f {
+                Value::String(s) => {
+                    if s.is_empty() {
+                        return Err(invalid("`find` must be non-empty"));
+                    }
+                    vec![s.clone()]
+                }
+                Value::Array(items) => {
+                    if items.is_empty() {
+                        return Err(invalid("`find` list must be non-empty"));
+                    }
+                    if items.len() > MAX_BATCH_RULES {
+                        return Err(invalid(&format!(
+                            "`find` supports at most {MAX_BATCH_RULES} items per call (got {})",
+                            items.len()
+                        )));
+                    }
+                    let mut out = Vec::with_capacity(items.len());
+                    for item in items {
+                        let s = item
+                            .as_str()
+                            .ok_or_else(|| invalid("every `find` entry must be a string"))?;
+                        if s.is_empty() {
+                            return Err(invalid("every `find` entry must be non-empty"));
+                        }
+                        out.push(s.to_string());
+                    }
+                    out
+                }
+                _ => return Err(invalid("`find` must be a string or list of strings")),
+            };
+            Ok(finds
+                .into_iter()
+                .map(|find| Rule {
+                    find,
+                    replace: replace.clone(),
+                    regex: default_regex,
+                    case_sensitive: default_case,
+                    max_replacements: default_max,
+                })
+                .collect())
+        }
+        (None, Some(r)) => {
+            let items = r.as_array().ok_or_else(|| {
+                invalid("`replacements` must be an array of { find, replace } objects")
+            })?;
+            if items.is_empty() {
+                return Err(invalid("`replacements` must contain at least one rule"));
+            }
+            if items.len() > MAX_BATCH_RULES {
+                return Err(invalid(&format!(
+                    "`replacements` supports at most {MAX_BATCH_RULES} rules per call (got {})",
+                    items.len()
+                )));
+            }
+            let mut rules = Vec::with_capacity(items.len());
+            for (i, item) in items.iter().enumerate() {
+                let obj = item
+                    .as_object()
+                    .ok_or_else(|| invalid(&format!("`replacements[{i}]` must be an object")))?;
+                let find = obj
+                    .get("find")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| invalid(&format!("`replacements[{i}].find` must be a string")))?;
+                if find.is_empty() {
+                    return Err(invalid(&format!(
+                        "`replacements[{i}].find` must be non-empty"
+                    )));
+                }
+                let replace = parse_replace_arg(
+                    obj.get("replace"),
+                    dry_run,
+                    &format!("`replacements[{i}].replace`"),
+                )?;
+                let regex = parse_optional_bool(
+                    obj.get("regex"),
+                    default_regex,
+                    &format!("`replacements[{i}].regex`"),
+                )?;
+                let case_sensitive = parse_optional_bool(
+                    obj.get("case_sensitive"),
+                    default_case,
+                    &format!("`replacements[{i}].case_sensitive`"),
+                )?;
+                let max_replacements =
+                    if obj.get("max_replacements").is_some_and(|v| !v.is_null()) {
+                        parse_optional_max(
+                            obj.get("max_replacements"),
+                            &format!("`replacements[{i}].max_replacements`"),
+                        )?
+                    } else {
+                        default_max
+                    };
+                rules.push(Rule {
+                    find: find.to_string(),
+                    replace,
+                    regex,
+                    case_sensitive,
+                    max_replacements,
+                });
+            }
+            Ok(rules)
+        }
     }
 }
 
@@ -422,10 +746,6 @@ fn string_arg<'a>(input: &'a Value, key: &str) -> AppResult<&'a str> {
         .get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| invalid(&format!("`{key}` must be a string")))
-}
-
-fn str_of<'a>(input: &'a Value, key: &str) -> &'a str {
-    input.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
 fn bool_of(input: &Value, key: &str, default: bool) -> bool {
@@ -501,10 +821,28 @@ mod tests {
                 "path",
                 "find",
                 "replace",
+                "replacements",
                 "regex",
                 "case_sensitive",
                 "max_replacements",
                 "dry_run"
+            ]
+        );
+        let item_keys: Vec<String> =
+            tool.spec().schema["properties"]["replacements"]["items"]["properties"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect();
+        assert_eq!(
+            item_keys,
+            vec![
+                "find",
+                "replace",
+                "regex",
+                "case_sensitive",
+                "max_replacements",
             ]
         );
     }
@@ -698,8 +1036,235 @@ mod tests {
             regex: true,
             case_sensitive: true,
         };
-        let hits = find_hits("axxb", &opts).unwrap();
+        let hits = find_hits("axxb", &opts, 0).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!((hits[0].start, hits[0].end), (1, 3));
+    }
+
+    #[test]
+    fn validate_batch_rules_checks_errors() {
+        let tool = FindReplaceTool::new(Arc::new(FileSnapshotStore::new()));
+        // Neither `find` nor `replacements`.
+        assert!(tool.validate(&json!({ "path": "a.txt" })).is_err());
+        // Both `find` and `replacements`.
+        assert!(tool
+            .validate(&json!({
+                "path": "a.txt",
+                "find": "a",
+                "replace": "b",
+                "replacements": [{ "find": "a", "replace": "b" }]
+            }))
+            .is_err());
+        // Empty `replacements`.
+        assert!(tool
+            .validate(&json!({ "path": "a.txt", "replacements": [] }))
+            .is_err());
+        // Missing `replace` when `dry_run` is false.
+        assert!(tool
+            .validate(&json!({
+                "path": "a.txt",
+                "replacements": [{ "find": "a" }]
+            }))
+            .is_err());
+        // Missing `replace` is allowed when `dry_run` is true.
+        assert!(tool
+            .validate(&json!({
+                "path": "a.txt",
+                "replacements": [{ "find": "a" }, { "find": "b" }],
+                "dry_run": true
+            }))
+            .is_ok());
+        assert!(tool
+            .validate(&json!({
+                "path": "a.txt",
+                "find": ["a", "b"],
+                "dry_run": true
+            }))
+            .is_ok());
+        // Empty `find` entry in list or item.
+        assert!(tool
+            .validate(&json!({
+                "path": "a.txt",
+                "find": ["a", ""],
+                "replace": "x"
+            }))
+            .is_err());
+        assert!(tool
+            .validate(&json!({
+                "path": "a.txt",
+                "replacements": [{ "find": "", "replace": "x" }]
+            }))
+            .is_err());
+        // Over MAX_BATCH_RULES.
+        let too_many: Vec<Value> = (0..=MAX_BATCH_RULES)
+            .map(|i| json!({ "find": format!("k{i}"), "replace": "v" }))
+            .collect();
+        assert!(tool
+            .validate(&json!({ "path": "a.txt", "replacements": too_many }))
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn batch_replacements_apply_in_one_pass_and_support_swap() {
+        let (ctx, name) = seed("甲和乙，还有甲乙。");
+        let res = run(
+            &ctx,
+            json!({
+                "path": name,
+                "replacements": [
+                    { "find": "甲", "replace": "乙" },
+                    { "find": "乙", "replace": "甲" }
+                ]
+            }),
+        )
+        .await;
+        assert!(!res.is_error, "{:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "乙和甲，还有乙甲。");
+        assert_eq!(res.content["replaced_count"], 4);
+        assert_eq!(res.content["total_matches"], 4);
+        assert_eq!(res.content["per_rule"].as_array().unwrap().len(), 2);
+        assert_eq!(res.content["per_rule"][0]["replaced_count"], 2);
+        assert_eq!(res.content["per_rule"][1]["replaced_count"], 2);
+    }
+
+    #[tokio::test]
+    async fn batch_replacements_earlier_rule_wins_on_overlap() {
+        let (ctx, name) = seed("张三和三一起去见张三");
+        let res = run(
+            &ctx,
+            json!({
+                "path": name,
+                "replacements": [
+                    { "find": "张三", "replace": "李四" },
+                    { "find": "三", "replace": "3" }
+                ]
+            }),
+        )
+        .await;
+        assert!(!res.is_error, "{:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "李四和3一起去见李四");
+        assert_eq!(res.content["replaced_count"], 3);
+        assert_eq!(res.content["per_rule"][0]["replaced_count"], 2);
+        assert_eq!(res.content["per_rule"][1]["total_matches"], 3);
+        assert_eq!(res.content["per_rule"][1]["replaced_count"], 1);
+        assert_eq!(res.content["per_rule"][1]["skipped_overlaps"], 2);
+    }
+
+    #[tokio::test]
+    async fn batch_replacements_with_per_rule_options_and_misses() {
+        let (ctx, name) = seed("Foo foo 第1章 第2章");
+        let res = run(
+            &ctx,
+            json!({
+                "path": name,
+                "replacements": [
+                    { "find": "foo", "replace": "bar", "case_sensitive": false, "max_replacements": 1 },
+                    { "find": r"第(\d+)章", "replace": "Ch.$1", "regex": true },
+                    { "find": "not_here", "replace": "x" }
+                ]
+            }),
+        )
+        .await;
+        assert!(!res.is_error, "{:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "bar foo Ch.1 Ch.2");
+        assert_eq!(res.content["replaced_count"], 3);
+        assert_eq!(res.content["per_rule"][0]["total_matches"], 2);
+        assert_eq!(res.content["per_rule"][0]["replaced_count"], 1);
+        assert_eq!(res.content["per_rule"][1]["replaced_count"], 2);
+        assert_eq!(res.content["per_rule"][2]["total_matches"], 0);
+        assert_eq!(res.content["per_rule"][2]["replaced_count"], 0);
+    }
+
+    #[tokio::test]
+    async fn batch_dry_run_supports_omitted_replace_for_replacements_and_find_list() {
+        let (ctx, name) = seed("第一行 张老三\n第二行 老张\n第三行 路人");
+        let res = run(
+            &ctx,
+            json!({
+                "path": name,
+                "replacements": [
+                    { "find": "张老三" },
+                    { "find": "老张" },
+                    { "find": "王五" }
+                ],
+                "dry_run": true
+            }),
+        )
+        .await;
+        assert!(!res.is_error, "{:?}", res.content);
+        assert_eq!(res.content["dry_run"], true);
+        assert_eq!(res.content["would_replace"], 2);
+        assert_eq!(res.content["matches"][0]["rule_index"], 0);
+        assert_eq!(res.content["matches"][0]["line"], 1);
+        assert_eq!(res.content["matches"][1]["rule_index"], 1);
+        assert_eq!(res.content["matches"][1]["line"], 2);
+        assert_eq!(res.content["per_rule"][2]["would_replace"], 0);
+
+        let res_list = run(
+            &ctx,
+            json!({
+                "path": name,
+                "find": ["张老三", "老张"],
+                "dry_run": true
+            }),
+        )
+        .await;
+        assert!(!res_list.is_error, "{:?}", res_list.content);
+        assert_eq!(res_list.content["would_replace"], 2);
+        // File stays untouched.
+        assert_eq!(disk(&ctx, &name), "第一行 张老三\n第二行 老张\n第三行 路人");
+    }
+
+    #[tokio::test]
+    async fn find_array_matches_multiple_terms_with_shared_replace() {
+        let (ctx, name) = seed("张老三来了，老张走了。");
+        let res = run(
+            &ctx,
+            json!({
+                "path": name,
+                "find": ["张老三", "老张"],
+                "replace": "张三"
+            }),
+        )
+        .await;
+        assert!(!res.is_error, "{:?}", res.content);
+        assert_eq!(disk(&ctx, &name), "张三来了，张三走了。");
+        assert_eq!(res.content["replaced_count"], 2);
+    }
+
+    #[tokio::test]
+    async fn batch_no_matches_returns_error() {
+        let (ctx, name) = seed("abc");
+        let res = run(
+            &ctx,
+            json!({
+                "path": name,
+                "replacements": [
+                    { "find": "xxx", "replace": "1" },
+                    { "find": "yyy", "replace": "2" }
+                ]
+            }),
+        )
+        .await;
+        assert!(res.is_error);
+        assert_eq!(disk(&ctx, &name), "abc");
+    }
+
+    #[tokio::test]
+    async fn batch_invalid_regex_writes_nothing() {
+        let (ctx, name) = seed("abc");
+        let res = run(
+            &ctx,
+            json!({
+                "path": name,
+                "replacements": [
+                    { "find": "a", "replace": "x" },
+                    { "find": "(", "replace": "y", "regex": true }
+                ]
+            }),
+        )
+        .await;
+        assert!(res.is_error);
+        assert_eq!(disk(&ctx, &name), "abc");
     }
 }

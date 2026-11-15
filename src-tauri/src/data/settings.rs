@@ -248,7 +248,7 @@ pub struct ModelProvider {
 
 /// Holds the passage, rewrite3's analysis (3-4k tokens) and the rewritten body.
 pub const DEFAULT_LOCAL_CONTEXT_SIZE: i64 = 16384;
-pub const DEFAULT_LOCAL_SERVER_EXE: &str = r"D:\AI\llama.cpp\b11853\llama-server.exe";
+pub const DEFAULT_LOCAL_SERVER_EXE: &str = r"D:\AI\llama.cpp\b12408\llama-server.exe";
 pub const DEFAULT_LOCAL_MODEL_PATH: &str =
     r"D:\AI\models\rewrite2-27b-iq4xs\rewrite2-27b-IQ4_XS.gguf";
 

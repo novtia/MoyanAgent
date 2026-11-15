@@ -14,8 +14,8 @@ INSERT OR IGNORE INTO llm_sdk_option (
   '本地 llama-server 的完整 chat/completions 地址。',
   '可留空',
   'llama-server 默认不校验密钥，可留空。',
-  'rewrite2-27b',
-  '与 llama-server 的 -a 别名一致，例如 rewrite2-27b。',
+  'rewrite3-27b',
+  '随便填。启动时会把本供应商的全部模型 ID 登记为 llama-server 别名。',
   8
 );
 
@@ -55,3 +55,8 @@ WHERE sdk_id = 'local' AND model_id = 'rewrite2-27b' AND context_window = 32768;
 UPDATE llm_supplier_model
 SET context_window = 4096
 WHERE supplier_id = 'local-rewrite' AND model_id = 'rewrite2-27b' AND context_window = 32768;
+
+UPDATE llm_sdk_option
+SET model_id_placeholder = 'rewrite3-27b',
+    model_id_hint = '随便填。启动时会把本供应商的全部模型 ID 登记为 llama-server 别名。'
+WHERE sdk_id = 'local';

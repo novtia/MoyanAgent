@@ -101,13 +101,9 @@ pub async fn start_local_llama_server(
         .open(&stderr_path)
         .map_err(|err| AppError::Other(format!("无法写入 {}：{err}", stderr_path.display())))?;
 
-    let alias = provider
-        .models
-        .iter()
-        .find(|model| model.capabilities.iter().any(|cap| cap == "rewrite"))
-        .map(|model| model.id.clone())
-        .filter(|id| !id.trim().is_empty())
-        .unwrap_or_else(|| "rewrite2-27b".to_string());
+    // One process loads one GGUF, but the provider can list several names for
+    // it. Register every id so a request for the selected model is accepted.
+    let alias = server_aliases(provider.models.iter().map(|model| model.id.as_str()));
 
     let context = if provider.local_context_size > 0 {
         provider.local_context_size
@@ -406,6 +402,50 @@ async fn is_healthy(host: &str, port: u16) -> bool {
         return false;
     };
     matches!(client.get(url).send().await, Ok(resp) if resp.status().is_success())
+}
+
+/// Comma-separated `--alias` value. llama-server matches the request `model`
+/// against this list. Empty ids are skipped; a comma inside an id would split
+/// the list, so those ids are skipped too.
+fn server_aliases<'a>(ids: impl IntoIterator<Item = &'a str>) -> String {
+    let mut names = Vec::new();
+    for id in ids {
+        let id = id.trim();
+        if id.is_empty() || id.contains(',') || names.iter().any(|name| name == &id) {
+            continue;
+        }
+        names.push(id.to_string());
+    }
+    if names.is_empty() {
+        "local".to_string()
+    } else {
+        names.join(",")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::server_aliases;
+
+    #[test]
+    fn aliases_keep_every_distinct_model_id() {
+        assert_eq!(
+            server_aliases([
+                "rewrite2-27b",
+                " rewrite3-27b-IQ4_XS ",
+                "rewrite2-27b",
+                "",
+                "bad,name",
+                "rewrite3-shorter-4b",
+            ]),
+            "rewrite2-27b,rewrite3-27b-IQ4_XS,rewrite3-shorter-4b"
+        );
+    }
+
+    #[test]
+    fn aliases_fall_back_when_nothing_is_usable() {
+        assert_eq!(server_aliases(["", "  ", "a,b"]), "local");
+    }
 }
 
 fn log_tail(path: &Path) -> String {

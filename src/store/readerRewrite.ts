@@ -154,11 +154,10 @@ export const useReaderRewrite = create<ReaderRewriteState>((set, get) => ({
     if (event.kind === "thinking") {
       const piece = event.text ?? "";
       if (!piece) return;
-      const gap = current.thinking ? "\n\n" : "";
       set({
         byPath: {
           ...get().byPath,
-          [key]: { ...current, thinking: current.thinking + gap + piece },
+          [key]: { ...current, thinking: current.thinking + piece },
         },
       });
       return;

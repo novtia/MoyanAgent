@@ -1,22 +1,42 @@
 import { useEffect, useRef, useState } from "react";
-import { DEFAULT_WIDTH, MAX_WIDTH, MIN_WIDTH } from "../constants";
-import { persistWidth, readStoredWidth } from "../storage/panelWidth";
+import { DEFAULT_WIDTH } from "../constants";
+import {
+  clampPanelWidth,
+  estimatePanelMaxWidth,
+  panelMaxWidth,
+  persistWidth,
+  readStoredWidth,
+} from "../storage/panelWidth";
 
 export function usePanelResize(open: boolean) {
-  const [width, setWidth] = useState<number>(readStoredWidth);
+  const [preferred, setPreferred] = useState<number>(readStoredWidth);
+  const [maxWidth, setMaxWidth] = useState<number>(estimatePanelMaxWidth);
   const [resizing, setResizing] = useState(false);
   const dragRef = useRef<{ rightEdge: number } | null>(null);
   const asideRef = useRef<HTMLElement | null>(null);
+  const maxWidthRef = useRef(maxWidth);
+  maxWidthRef.current = maxWidth;
+  const width = clampPanelWidth(preferred, maxWidth);
+
+  useEffect(() => {
+    const row = asideRef.current?.parentElement;
+    if (!row) return;
+    const apply = () => setMaxWidth(panelMaxWidth(row.clientWidth));
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [open]);
 
   useEffect(() => {
     if (!resizing) return;
     const onMove = (e: MouseEvent) => {
       if (!dragRef.current) return;
-      const next = Math.min(
-        MAX_WIDTH,
-        Math.max(MIN_WIDTH, Math.round(dragRef.current.rightEdge - e.clientX)),
+      const next = clampPanelWidth(
+        Math.round(dragRef.current.rightEdge - e.clientX),
+        maxWidthRef.current,
       );
-      setWidth(next);
+      setPreferred(next);
     };
     const onUp = () => {
       setResizing(false);
@@ -45,8 +65,8 @@ export function usePanelResize(open: boolean) {
 
   useEffect(() => {
     if (resizing) return;
-    persistWidth(width);
-  }, [resizing, width]);
+    persistWidth(preferred);
+  }, [resizing, preferred]);
 
   const onResizerMouseDown = (e: React.MouseEvent) => {
     if (!open) return;
@@ -58,11 +78,12 @@ export function usePanelResize(open: boolean) {
     setResizing(true);
   };
 
-  const resetWidth = () => setWidth(DEFAULT_WIDTH);
+  const resetWidth = () => setPreferred(DEFAULT_WIDTH);
 
   return {
     width,
-    setWidth,
+    maxWidth,
+    setWidth: setPreferred,
     resizing,
     asideRef,
     onResizerMouseDown,

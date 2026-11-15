@@ -577,6 +577,8 @@ const enUS: Resource = {
         "Split a chapter into several files at paragraph numbers (the original keeps the head; later files are named with （二）, （三）, …; rolls back with its message)",
       Edit:
         "Replace a short unique locator in the file (insert/append: the sentence at the insertion point, never the whole chapter). new_string is that locator plus new prose only.",
+      FindReplace:
+        "Find and replace one or more text/regex rules in a single file (supports batch `replacements` and `dry_run` preview)",
       Read: "Read a local text file; optionally prefix each line with [P001] in tool settings",
       ListFiles: "List files and subdirectories under a path",
       RoleState: "Maintain character attribute and state cards",

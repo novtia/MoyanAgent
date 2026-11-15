@@ -1061,6 +1061,7 @@ button.doc-row-head:disabled {
 .doc-row-body {
   /* 14px icon + 6px gap — hang under the label, not under the icon */
   padding: 10px 0 4px 20px;
+  min-width: 0;
   animation: tool-fade-slide 0.22s var(--ease-out);
 }
 .doc-row-footer {
@@ -1248,6 +1249,20 @@ button.doc-row-head:disabled {
   line-height: 1.85;
   color: var(--ink-2);
   padding: 2px 0;
+  max-width: 100%;
+  max-height: min(50vh, 420px);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+.tree::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.tree::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 3px;
 }
 .tree .dir {
   color: var(--ink);
@@ -1262,6 +1277,10 @@ button.doc-row-head:disabled {
   list-style: none;
   padding-left: 18px;
   margin: 0;
+}
+.tree li {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .tool-call-diff-chips {
