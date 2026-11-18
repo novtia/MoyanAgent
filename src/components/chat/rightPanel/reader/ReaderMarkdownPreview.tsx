@@ -9,6 +9,7 @@ import {
   rememberReaderRatio,
   rememberReaderViewport,
 } from "../../../../utils/readerViewport";
+import { markReaderOpenFrontend } from "../../../../utils/readerPerf";
 
 /** Shared markdown renderer (reader preview + skill detail, etc.). */
 export function ReaderMarkdownPreview({
@@ -23,6 +24,14 @@ export function ReaderMarkdownPreview({
   path?: string;
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
+  const renderStartRef = useRef(0);
+  renderStartRef.current = performance.now();
+
+  useLayoutEffect(() => {
+    if (path) {
+      markReaderOpenFrontend(path, "frontendMdPreviewMs", performance.now() - renderStartRef.current);
+    }
+  }, [path, text]);
 
   useLayoutEffect(() => {
     const el = scrollerRef.current;

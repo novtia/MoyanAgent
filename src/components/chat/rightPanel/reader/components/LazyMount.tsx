@@ -2,22 +2,49 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 type VisibleListener = () => void;
 
+const PRELOAD_PX = 900;
+/** Mount a little before a segment scrolls into view so it is ready in time. */
+const PRELOAD_MARGIN = `${PRELOAD_PX}px 0px`;
+
 interface RootObserver {
   io: IntersectionObserver;
   listeners: Map<Element, VisibleListener>;
+  raf: number;
+  cleanupScroll: () => void;
 }
 
-/** One IntersectionObserver per scroll root (hundreds of segments share it). */
+/** One IntersectionObserver + scroll fallback per scroll root (hundreds of segments share it). */
 const rootObservers = new WeakMap<Element, RootObserver>();
 
-/** Mount a little before a segment scrolls into view so it is ready in time. */
-const PRELOAD_MARGIN = "900px 0px";
+function isNearViewport(root: Element, target: Element): boolean {
+  const rootRect = root.getBoundingClientRect();
+  if (rootRect.height <= 0 || rootRect.width <= 0) return false;
+  const rect = target.getBoundingClientRect();
+  return (
+    rect.bottom >= rootRect.top - PRELOAD_PX &&
+    rect.top <= rootRect.bottom + PRELOAD_PX
+  );
+}
+
+function flushVisible(entry: RootObserver, root: Element) {
+  for (const [el, cb] of Array.from(entry.listeners.entries())) {
+    if (!isNearViewport(root, el)) continue;
+    entry.listeners.delete(el);
+    entry.io.unobserve(el);
+    cb();
+  }
+}
 
 function observeNearViewport(
   root: Element,
   target: Element,
   onNear: VisibleListener,
 ): () => void {
+  if (isNearViewport(root, target)) {
+    onNear();
+    return () => {};
+  }
+
   let entry = rootObservers.get(root);
   if (!entry) {
     const listeners = new Map<Element, VisibleListener>();
@@ -34,7 +61,25 @@ function observeNearViewport(
       },
       { root, rootMargin: PRELOAD_MARGIN },
     );
-    entry = { io, listeners };
+    const created: RootObserver = {
+      io,
+      listeners,
+      raf: 0,
+      cleanupScroll: () => {},
+    };
+    const onScrollOrResize = () => {
+      if (created.raf) return;
+      created.raf = requestAnimationFrame(() => {
+        created.raf = 0;
+        flushVisible(created, root);
+      });
+    };
+    root.addEventListener("scroll", onScrollOrResize, { passive: true });
+    created.cleanupScroll = () => {
+      if (created.raf) cancelAnimationFrame(created.raf);
+      root.removeEventListener("scroll", onScrollOrResize);
+    };
+    entry = created;
     rootObservers.set(root, entry);
   }
   const { io, listeners } = entry;
@@ -43,6 +88,11 @@ function observeNearViewport(
   return () => {
     listeners.delete(target);
     io.unobserve(target);
+    if (listeners.size === 0) {
+      entry.cleanupScroll();
+      io.disconnect();
+      rootObservers.delete(root);
+    }
   };
 }
 

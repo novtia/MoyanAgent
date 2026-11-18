@@ -316,6 +316,13 @@ const enUS: Resource = {
     rewriteThinkingLive: "Thinking…",
     rewritePlaceholder: "The rewrite will appear here",
     rewriteStopped: "Stopped",
+    rewriteApply: "Apply to source",
+    rewriteApplied: "Applied to source. Review inline diff on the left.",
+    rewriteNoChange: "Rewritten text matches the original",
+    chunkedView: "Chunked view",
+    chunkGroupTitle: "Group {{index}} · {{range}} · {{chars}} chars",
+    chunkRewrite: "Rewrite",
+    chunkExpand: "Expand",
   },
   readerFind: {
     title: "Find and replace",

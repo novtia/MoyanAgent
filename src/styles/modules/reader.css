@@ -92,6 +92,7 @@
   visibility: hidden;
   pointer-events: none;
   z-index: 0;
+  contain: strict;
 }
 
 .reader-pane-layer.is-visible {
@@ -2482,4 +2483,105 @@
   border: none;
   border-top: 1px solid var(--line);
   margin: 1.4em 0;
+}
+
+/* ───── chunked paragraph reader mode ───── */
+
+.reader-chunk-group {
+  position: relative;
+  margin: 0 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg);
+  overflow: visible;
+}
+
+.reader-chunk-group:last-child {
+  margin-bottom: 8px;
+}
+
+.reader-chunk-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-side);
+  font-size: 12px;
+  line-height: 20px;
+  user-select: none;
+}
+
+.reader-chunk-meta {
+  color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reader-chunk-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.reader-chunk-btn {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs, 4px);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 20px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.reader-chunk-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 7%, var(--bg));
+  border-color: var(--line-strong);
+}
+
+.reader-chunk-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.reader-chunk-group .reader-codemirror--segment .cm-content {
+  padding: 8px 0;
+}
+
+/* ───── inline word/sentence diff inside CodeMirror ───── */
+
+.cm-diff-inline-added {
+  background: color-mix(in srgb, #2da44e 24%, transparent);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.cm-diff-inline-removed {
+  background: color-mix(in srgb, #f85149 22%, transparent);
+  color: color-mix(in srgb, #cf222e 88%, var(--ink));
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  border-radius: 2px;
+  padding: 0 2px;
+  margin-right: 2px;
+  user-select: none;
+}
+
+.reader-rewrite-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.reader-rewrite-apply {
+  color: var(--accent);
+  font-weight: 500;
 }

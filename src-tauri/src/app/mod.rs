@@ -28,6 +28,7 @@ mod project_fs;
 mod project_io;
 mod project_rules;
 mod projects;
+mod reader_compute;
 mod reader_paths;
 mod rewrite;
 mod role_state;
@@ -309,6 +310,8 @@ pub fn run() {
             project_io::list_pending_diffs,
             project_io::confirm_pending_diff,
             project_io::confirm_all_pending_diffs,
+            reader_compute::compute_reader_chunk_layout,
+            reader_compute::compute_inline_word_diff_cmd,
             project_fs::list_project_dir,
             project_fs::create_project_dir,
             project_fs::create_project_file,

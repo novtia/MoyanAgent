@@ -439,6 +439,66 @@ export const api = {
       accept,
     }),
 
+  computeReaderChunkLayout: (args: {
+    text: string;
+    chunkChars: number;
+    blocks: Array<{
+      id: string;
+      before: string;
+      after: string;
+      textBefore?: string;
+      textAfter?: string;
+      paragraphNumber?: number;
+    }>;
+    pinnedRanges?: Array<{ startLine: number; endLine: number }> | null;
+    prevLineCount?: number | null;
+    focusedChunkIdx?: number | null;
+  }) =>
+    invoke<{
+      totalChars: number;
+      lineCount: number;
+      chunks: Array<{
+        index: number;
+        startLine: number;
+        endLine: number;
+        chars: number;
+      }>;
+      lineRanges: Array<{
+        blockId: string;
+        startLine: number;
+        endLine: number;
+        before: string;
+        after: string;
+      }>;
+      chunkDiffs: Array<{
+        chunkIndex: number;
+        inlineDiff: {
+          added: Array<{ from: number; to: number }>;
+          removed: Array<{ pos: number; text: string }>;
+        };
+        pureDeletes: Array<{
+          blockId: string;
+          before: string;
+          tabStart: number;
+        }>;
+        range: {
+          blockId: string;
+          startLine: number;
+          endLine: number;
+          before: string;
+          after: string;
+        } | null;
+        hunkIndex: number;
+        blockIds: string[];
+      }>;
+    }>("compute_reader_chunk_layout", { args }),
+
+  computeInlineWordDiff: (oldText: string, newText: string) =>
+    invoke<{
+      added: Array<{ from: number; to: number }>;
+      removed: Array<{ pos: number; text: string }>;
+    }>("compute_inline_word_diff_cmd", { oldText, newText }),
+
   exportProjectTexts: (
     sessionId: string,
     paths: string[],

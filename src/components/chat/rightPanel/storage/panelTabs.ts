@@ -30,6 +30,7 @@ function parseView(raw: unknown): TabViewState | undefined {
   const view: TabViewState = {};
   if (v.rightView === "tree" || v.rightView === "search") view.rightView = v.rightView;
   if (typeof v.preview === "boolean") view.preview = v.preview;
+  if (typeof v.chunked === "boolean") view.chunked = v.chunked;
 
   const find = v.find && typeof v.find === "object" ? (v.find as Record<string, unknown>) : null;
   if (find) {

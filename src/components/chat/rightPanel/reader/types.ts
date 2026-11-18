@@ -1,4 +1,6 @@
 import type { ReaderFileTab } from "../../../../store/reader";
+import type { RewriteMode } from "../../../../store/readerRewrite";
+import type { ChunkRewriteTarget } from "./components/ChunkedEditorView";
 
 export type RightView = "tree" | "search";
 
@@ -9,6 +11,9 @@ export interface ReaderWorkspaceProps {
 
 export interface ReaderEditorProps {
   tab: ReaderFileTab;
+  chunked?: boolean;
+  rewriteRunning?: boolean;
+  onRewriteChunk?: (mode: RewriteMode, target: ChunkRewriteTarget) => void;
   activeHunkIndex?: number;
   onActiveHunkChange?: (index: number) => void;
 }

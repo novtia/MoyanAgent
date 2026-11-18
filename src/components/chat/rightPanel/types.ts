@@ -29,6 +29,7 @@ export interface TabNavView {
 export interface TabViewState {
   rightView?: ReaderRightView;
   preview?: boolean;
+  chunked?: boolean;
   find?: TabFindView;
   history?: TabNavView;
 }

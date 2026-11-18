@@ -16,6 +16,7 @@ import { useReaderFind } from "../../../../../store/readerFind";
 import { findInText, resolveFindScrollIndex, type TextRange } from "../../../../../utils/readerFind";
 import {
   buildEditorDisplaySegments,
+  buildInlineWordDiff,
   buildPendingDiffLineRanges,
   isDiffTextEqual,
   type EditorDisplaySegment,
@@ -700,6 +701,7 @@ export function DiffEditorView({
 
     const showDelete = !!seg.before.trim();
     const showInsert = !!seg.after;
+    const pureDelete = showDelete && !showInsert;
     // Number every line from where this hunk sits in the current document.
     // Reusing only the first line's label made a multi-line block read 1, 1, 1…
     const firstLineNo = paraLabels[seg.tabStart] ?? seg.tabStart + 1;
@@ -713,14 +715,14 @@ export function DiffEditorView({
     const showBar = hovered != null && range != null && hunkIndex >= 0;
 
     const estimateHunk = () => {
-      let h = 0;
-      if (showDelete) {
+      if (pureDelete) {
+        let h = 0;
         for (const line of seg.before.split("\n")) {
           h += estimateLineHeight(line.length, metrics);
         }
+        return h;
       }
-      if (showInsert) h += estimateLines(seg.tabStart, seg.tabEnd);
-      return h;
+      return estimateLines(seg.tabStart, seg.tabEnd);
     };
 
     return (
@@ -742,7 +744,7 @@ export function DiffEditorView({
         <LazyMount root={scrollEl} estimateHeight={estimateHunk}>
           {() => {
             // Always edit the live line range — not the historical `after`
-            // snapshot. Gating on after===live made the green block flip to
+            // snapshot. Gating on after===live made the block flip to
             // readOnly as soon as the user typed (text diverged from the
             // original Edit payload).
             const liveInsert = textLines.slice(seg.tabStart, seg.tabEnd + 1).join("\n");
@@ -750,13 +752,16 @@ export function DiffEditorView({
             const insertLabels = liveInsert.split("\n").map((_, i) =>
               paraLabels[seg.tabStart + i] ?? firstLineNo + i,
             );
-            // Red lines are the original span, which can be longer or shorter
-            // than the live text, so count forward from the same start.
             const deleteLabels = seg.before.split("\n").map((_, i) => firstLineNo + i);
+            const inlineDiff =
+              showDelete && showInsert
+                ? buildInlineWordDiff(seg.before, liveInsert)
+                : showInsert
+                  ? { added: [{ from: 0, to: liveInsert.length }], removed: [] }
+                  : null;
             return (
               <>
-                {showDelete && (
-                  // One read-only editor for the whole removed block, not one per line.
+                {pureDelete && (
                   <ReaderCodeMirror
                     layout="segment"
                     diffVariant="delete"
@@ -772,11 +777,9 @@ export function DiffEditorView({
                     layout="segment"
                     filePath={tab.path}
                     paragraphBase={seg.tabStart}
-                    diffVariant="insert"
-                    diffSign="+"
-                    diffSignFirstLineOnly
                     lineLabels={insertLabels}
                     value={liveInsert}
+                    inlineDiff={inlineDiff}
                     onChange={(value) =>
                       onSegmentChange(seg.tabStart, seg.tabEnd, value, seg.blockIds)
                     }

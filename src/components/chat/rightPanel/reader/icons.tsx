@@ -76,3 +76,13 @@ export function IndentIcon() {
     </svg>
   );
 }
+
+export function SplitParagraphsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="3.5" width="16" height="7" rx="1.5" />
+      <rect x="4" y="13.5" width="16" height="7" rx="1.5" />
+      <path d="M8 7h8M8 17h5" />
+    </svg>
+  );
+}

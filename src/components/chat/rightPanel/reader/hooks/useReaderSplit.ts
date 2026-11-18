@@ -38,6 +38,7 @@ export function useReaderSplit(isMarkdown: boolean, path: string | null | undefi
   );
   const rightView: RightView = view?.rightView ?? "tree";
   const preview = (view?.preview ?? false) && isMarkdown;
+  const chunked = (view?.chunked ?? false) && !preview;
 
   // Find state belongs to whichever tab it is bound to. A hidden pane (or one
   // whose bind has not landed yet) must not react to it, or it would rewrite
@@ -61,7 +62,14 @@ export function useReaderSplit(isMarkdown: boolean, path: string | null | undefi
   );
 
   const setPreview = useCallback(
-    (next: boolean) => updateTabView(tabId, { preview: next }),
+    (next: boolean) =>
+      updateTabView(tabId, next ? { preview: true, chunked: false } : { preview: false }),
+    [tabId, updateTabView],
+  );
+
+  const setChunked = useCallback(
+    (next: boolean) =>
+      updateTabView(tabId, next ? { chunked: true, preview: false } : { chunked: false }),
     [tabId, updateTabView],
   );
 
@@ -146,6 +154,8 @@ export function useReaderSplit(isMarkdown: boolean, path: string | null | undefi
     rightView,
     preview,
     setPreview,
+    chunked,
+    setChunked,
     containerRef,
     findOpen,
     toggleFileTree,

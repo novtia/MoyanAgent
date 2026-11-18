@@ -127,7 +127,9 @@ export function MessageList({ onPreviewImage }: MessageListProps) {
     setRowHeight,
     scrollToIndex,
     resetHeights,
-  } = useVirtualMessages(ref, messages.length);
+  } = useVirtualMessages(ref, messages.length, {
+    suppressAnchorRef: suppressAutoScrollRef,
+  });
 
   const firstMessageId = messages[0]?.id ?? "";
 

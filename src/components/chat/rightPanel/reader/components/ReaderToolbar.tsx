@@ -12,6 +12,7 @@ import {
   PhoneIcon,
   SearchIcon,
   SourceIcon,
+  SplitParagraphsIcon,
 } from "../icons";
 
 export interface ReaderToolbarProps {
@@ -23,6 +24,7 @@ export interface ReaderToolbarProps {
   onBack: () => void;
   onForward: () => void;
   preview: boolean;
+  chunked: boolean;
   isMarkdown: boolean;
   /** Media tabs hide Preview/Source and disable file-scoped find. */
   isMedia: boolean;
@@ -34,6 +36,7 @@ export interface ReaderToolbarProps {
   indentTitle: string;
   onPreview: () => void;
   onSource: () => void;
+  onChunked: () => void;
   onIndent: (e: ReactMouseEvent) => void;
   onMore: (e: ReactMouseEvent) => void;
   phoneOpen: boolean;
@@ -64,6 +67,7 @@ export function ReaderToolbar({
   onBack,
   onForward,
   preview,
+  chunked,
   isMarkdown,
   isMedia,
   hasFile,
@@ -74,6 +78,7 @@ export function ReaderToolbar({
   indentTitle,
   onPreview,
   onSource,
+  onChunked,
   onIndent,
   onMore,
   phoneOpen,
@@ -207,12 +212,22 @@ export function ReaderToolbar({
             </button>
             <button
               type="button"
-              className={`reader-toolbar-btn${!preview ? " is-active" : ""}`}
+              className={`reader-toolbar-btn${!preview && !chunked ? " is-active" : ""}`}
               title={t("reader.source")}
               disabled={!hasFile}
               onClick={onSource}
             >
               <SourceIcon />
+            </button>
+            <button
+              type="button"
+              className={`reader-toolbar-btn${chunked && !preview ? " is-active" : ""}`}
+              title={t("reader.chunkedView")}
+              aria-pressed={chunked && !preview}
+              disabled={!hasFile}
+              onClick={onChunked}
+            >
+              <SplitParagraphsIcon />
             </button>
             <button
               type="button"

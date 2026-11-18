@@ -310,6 +310,13 @@ const zhCN = {
     rewriteThinkingLive: "思考中",
     rewritePlaceholder: "改文会显示在这里",
     rewriteStopped: "已停止",
+    rewriteApply: "应用到原文",
+    rewriteApplied: "已应用到原文，请在左侧审阅红绿差异",
+    rewriteNoChange: "改文内容与原文相同",
+    chunkedView: "分段显示",
+    chunkGroupTitle: "第 {{index}} 组 · {{range}} · {{chars}} 字",
+    chunkRewrite: "改写",
+    chunkExpand: "扩写",
   },
   readerFind: {
     title: "查找与替换",

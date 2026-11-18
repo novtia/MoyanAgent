@@ -8,6 +8,10 @@ import {
   useReader,
   type ReaderFileTab,
 } from "../../../../../store/reader";
+import {
+  markReaderOpenBackend,
+  markReaderOpenFrontend,
+} from "../../../../../utils/readerPerf";
 
 /**
  * Lazily cache a restored / freshly-selected file whose content isn't loaded
@@ -32,7 +36,9 @@ export function useLazyLoadFile(
       return;
     }
 
-    if (tab) return;
+    if (tab) {
+      return;
+    }
 
     let cancelled = false;
     setLoadError(null);
@@ -43,12 +49,21 @@ export function useLazyLoadFile(
       return;
     }
 
+    const tReadStart = performance.now();
     api
       .readProjectFile(activeId, path)
       .then(async (file) => {
+        const readMs = performance.now() - tReadStart;
         // Drop the result when the session changed while reading from disk:
         // another conversation's reader cache must never receive this doc.
         if (cancelled || useReader.getState().sessionId !== activeId) return;
+        const linesCount = file.text.split("\n").length;
+        markReaderOpenBackend(path, "backendReadMs", readMs, {
+          textChars: file.text.length,
+          textLines: linesCount,
+        });
+
+        const tStoreStart = performance.now();
         openDoc({
           path,
           text: file.text,
@@ -56,9 +71,18 @@ export function useLazyLoadFile(
           encoding: file.encoding,
           hadBom: file.hadBom,
           chars: countWords(file.text),
-          lines: file.text.split("\n").length,
+          lines: linesCount,
         });
+        markReaderOpenFrontend(path, "frontendStoreMs", performance.now() - tStoreStart);
+
+        const tDiffsStart = performance.now();
         await syncPendingDiffsForPath(activeId, path);
+        markReaderOpenBackend(
+          path,
+          "backendDiffsMs",
+          performance.now() - tDiffsStart,
+          { pendingDiffsCount: useReader.getState().getTabByPath(path)?.pendingDiffs.length ?? 0 },
+        );
       })
       .catch((err) => {
         if (!cancelled) setLoadError(String(err));

@@ -38,6 +38,22 @@ export function ReaderDiffActionBar({
       // but never on other hunks. The backend rewrites the remaining rows, so
       // re-sync from it afterwards.
       const ids = blockIds ?? [range.blockId];
+      const hasLocalOnly = ids.some((id) => id.startsWith("local-rewrite-"));
+      if (hasLocalOnly) {
+        if (accept) {
+          for (const id of ids) confirmDiffBlock(tab.path, id, true);
+        } else {
+          let revertText: string | null = null;
+          for (const id of [...ids].reverse()) {
+            const res = confirmDiffBlock(tab.path, id, false);
+            if (res?.revertText != null) revertText = res.revertText;
+          }
+          if (revertText != null) {
+            await api.writeProjectFile(sessionId, tab.path, revertText, tab.encoding, tab.hadBom);
+          }
+        }
+        return;
+      }
       if (accept) {
         for (const id of ids) {
           await api.confirmPendingDiff(sessionId, id, true);

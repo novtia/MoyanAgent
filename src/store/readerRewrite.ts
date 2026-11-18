@@ -6,6 +6,14 @@ import { normalizeReaderPath } from "./reader";
 export type RewriteMode = "rewrite" | "expand" | "pipeline";
 export type RewriteStage = "rewrite" | "expand";
 
+export interface RewriteSourceSpan {
+  /** Original source text sent to the rewrite request. */
+  sourceText: string;
+  /** 0-based inclusive line range when launched from a paragraph chunk; null for full-file or free selection. */
+  startLine?: number;
+  endLine?: number;
+}
+
 export interface RewriteRun {
   view: "rewrite" | "files";
   token: string;
@@ -18,6 +26,7 @@ export interface RewriteRun {
   thinking: string;
   error: string | null;
   cancelled: boolean;
+  sourceSpan?: RewriteSourceSpan;
 }
 
 interface ProgressEvent {
@@ -59,7 +68,11 @@ export function rewriteModelOptions(providers: ModelProvider[]): RewriteModelOpt
   return out;
 }
 
-function blankRun(mode: RewriteMode, token: string): RewriteRun {
+function blankRun(
+  mode: RewriteMode,
+  token: string,
+  sourceSpan?: RewriteSourceSpan,
+): RewriteRun {
   return {
     view: "rewrite",
     token,
@@ -72,6 +85,7 @@ function blankRun(mode: RewriteMode, token: string): RewriteRun {
     thinking: "",
     error: null,
     cancelled: false,
+    sourceSpan,
   };
 }
 
@@ -92,7 +106,7 @@ interface ReaderRewriteState {
   setMode: (mode: RewriteMode) => void;
   setModelKey: (key: string) => void;
   setView: (path: string, view: "rewrite" | "files") => void;
-  begin: (path: string, mode: RewriteMode) => string;
+  begin: (path: string, mode: RewriteMode, sourceSpan?: RewriteSourceSpan) => string;
   apply: (event: ProgressEvent) => void;
   fail: (path: string, token: string, message: string) => void;
 }
@@ -109,10 +123,10 @@ export const useReaderRewrite = create<ReaderRewriteState>((set, get) => ({
     if (!current) return;
     set({ byPath: { ...get().byPath, [key]: { ...current, view } } });
   },
-  begin: (path, mode) => {
+  begin: (path, mode, sourceSpan) => {
     const key = normalizeReaderPath(path);
     const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    set({ byPath: { ...get().byPath, [key]: blankRun(mode, token) } });
+    set({ byPath: { ...get().byPath, [key]: blankRun(mode, token, sourceSpan) } });
     return token;
   },
   fail: (path, token, message) => {

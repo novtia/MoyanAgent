@@ -5,7 +5,13 @@ import { copyText } from "../../../../../utils/clipboard";
 import { toast } from "../../../../ui/Toast";
 import type { RewriteRun } from "../../../../../store/readerRewrite";
 
-export function ReaderRewritePane({ run }: { run: RewriteRun }) {
+export function ReaderRewritePane({
+  run,
+  onApplyToOriginal,
+}: {
+  run: RewriteRun;
+  onApplyToOriginal?: () => void;
+}) {
   const { t } = useTranslation();
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -38,16 +44,28 @@ export function ReaderRewritePane({ run }: { run: RewriteRun }) {
         <span className="reader-rewrite-progress">
           {run.running ? progress : run.cancelled ? t("reader.rewriteStopped") : modeLabel}
         </span>
-        <button
-          type="button"
-          className="reader-rewrite-copy"
-          disabled={!run.text}
-          onClick={() => {
-            void copyText(run.text).then(() => toast.success(t("reader.rewriteCopied")));
-          }}
-        >
-          {t("reader.rewriteCopy")}
-        </button>
+        <div className="reader-rewrite-head-actions">
+          {onApplyToOriginal && (
+            <button
+              type="button"
+              className="reader-rewrite-copy reader-rewrite-apply"
+              disabled={run.running || !run.text.trim()}
+              onClick={onApplyToOriginal}
+            >
+              {t("reader.rewriteApply")}
+            </button>
+          )}
+          <button
+            type="button"
+            className="reader-rewrite-copy"
+            disabled={!run.text}
+            onClick={() => {
+              void copyText(run.text).then(() => toast.success(t("reader.rewriteCopied")));
+            }}
+          >
+            {t("reader.rewriteCopy")}
+          </button>
+        </div>
       </div>
       {run.error && <div className="reader-rewrite-error">{run.error}</div>}
       {run.thinking && (

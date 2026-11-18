@@ -24,19 +24,25 @@ export interface VirtualRange {
 export function useVirtualMessages(
   scrollRef: RefObject<HTMLElement | null>,
   count: number,
-  opts?: { enabled?: boolean; estimate?: number },
+  opts?: {
+    enabled?: boolean;
+    estimate?: number;
+    suppressAnchorRef?: RefObject<boolean>;
+  },
 ) {
   // Low threshold on purpose: cost tracks total DOM, not row count, and a
   // handful of very long replies is as expensive as dozens of short ones.
   const enabled = opts?.enabled ?? count >= 16;
   const estimate = opts?.estimate ?? DEFAULT_ROW;
   const heightsRef = useRef<Map<number, number>>(new Map());
-  const [range, setRange] = useState<VirtualRange>({
+  const rangeRef = useRef<VirtualRange>({
     start: 0,
     end: Math.max(0, count),
     offsetTop: 0,
     totalHeight: count * estimate,
   });
+  const [range, setRange] = useState<VirtualRange>(rangeRef.current);
+  rangeRef.current = range;
   const [, bump] = useState(0);
 
   const totalHeight = useCallback(() => {
@@ -79,19 +85,30 @@ export function useVirtualMessages(
       acc += h;
     }
     let end = start;
-    let used = 0;
+    let used = acc - scrollTop;
     for (; end < count; end++) {
       used += heightsRef.current.get(end) ?? estimate;
       if (used > viewH) break;
     }
     end = Math.min(count, end + 1 + OVERSCAN);
     start = Math.max(0, start - OVERSCAN);
-    setRange({
+    const next: VirtualRange = {
       start,
       end,
       offsetTop: offsetAt(start),
       totalHeight: totalHeight(),
-    });
+    };
+    const prev = rangeRef.current;
+    if (
+      prev.start === next.start &&
+      prev.end === next.end &&
+      Math.abs(prev.offsetTop - next.offsetTop) < 0.5 &&
+      Math.abs(prev.totalHeight - next.totalHeight) < 0.5
+    ) {
+      return;
+    }
+    rangeRef.current = next;
+    setRange(next);
   }, [count, enabled, estimate, offsetAt, scrollRef, totalHeight]);
 
   useLayoutEffect(() => {
@@ -116,11 +133,31 @@ export function useVirtualMessages(
       if (height <= 0) return;
       const prev = heightsRef.current.get(index);
       if (prev != null && Math.abs(prev - height) < 1) return;
+      const effectivePrev = prev ?? estimate;
+      const delta = height - effectivePrev;
+      const rowTopBefore = offsetAt(index);
       heightsRef.current.set(index, height);
+      // Keep the user's reading position stable when an already-above-viewport
+      // row is measured/resized (e.g. scrolling up into unmeasured 120px stubs),
+      // unless they are pinned to the bottom (let MessageList pin to bottom) or
+      // programmatically jumping.
+      const el = scrollRef.current;
+      const curRange = rangeRef.current;
+      if (
+        enabled &&
+        el &&
+        delta !== 0 &&
+        !opts?.suppressAnchorRef?.current &&
+        index < curRange.start + OVERSCAN &&
+        rowTopBefore + effectivePrev <= el.scrollTop + 1 &&
+        el.scrollHeight - el.scrollTop - el.clientHeight > 4
+      ) {
+        el.scrollTop = Math.max(0, el.scrollTop + delta);
+      }
       bump((n) => n + 1);
       recompute();
     },
-    [recompute],
+    [enabled, estimate, offsetAt, opts?.suppressAnchorRef, recompute, scrollRef],
   );
 
   const scrollToIndex = useCallback(

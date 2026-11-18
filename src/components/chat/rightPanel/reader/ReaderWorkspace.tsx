@@ -26,6 +26,7 @@ import {
 import { useSettings } from "../../../../store/settings";
 import { usePanelTab } from "../context/PanelTabContext";
 import { DEFAULT_RATIO } from "./constants";
+import type { ChunkRewriteTarget } from "./components/ChunkedEditorView";
 import { ReaderFilePane } from "./components/ReaderFilePane";
 import { ReaderRewritePane } from "./components/ReaderRewritePane";
 import { DEFAULT_REWRITE_SETTINGS } from "../../../settings/rewrite/RewriteSection";
@@ -44,6 +45,7 @@ import { useReaderSplit } from "./hooks/useReaderSplit";
 import { ReaderEditorViewContext } from "./readerCodeMirror/editorViewContext";
 import { indentReaderView } from "./readerCodeMirror/indentKeymap";
 import type { ReaderWorkspaceProps } from "./types";
+import { startReaderOpenTrace } from "../../../../utils/readerPerf";
 
 export type { ReaderWorkspaceProps } from "./types";
 
@@ -100,6 +102,8 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
     rightView,
     preview,
     setPreview,
+    chunked,
+    setChunked,
     containerRef,
     findOpen,
     toggleFileTree,
@@ -107,6 +111,17 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
   } = useReaderSplit(!!isMarkdown, path);
 
   const { canBack, canForward, goBack, goForward } = useReaderNavHistory(path);
+
+  const tracedPathRef = useRef<string | null>(null);
+  const pathRenderStartRef = useRef<number>(0);
+  if (path && activeId && tracedPathRef.current !== path) {
+    tracedPathRef.current = path;
+    pathRenderStartRef.current = performance.now();
+    startReaderOpenTrace(path, { cachedTab: !!tab });
+  } else if (!path) {
+    tracedPathRef.current = null;
+  }
+
   const loadError = useLazyLoadFile(path, tab, activeId);
 
   // Re-open / switch path: restore Keep/Undo from backend (authoritative).
@@ -286,7 +301,11 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
   const showRewritePane = hasFile && !isMedia && rewriteVisible && !showFindPane;
 
   const startRewrite = useCallback(
-    async (mode: RewriteMode, source: string) => {
+    async (
+      mode: RewriteMode,
+      source: string,
+      span?: { startLine?: number; endLine?: number },
+    ) => {
       if (!path) return;
       if (rewriteRun?.running) {
         toast.warning(t("reader.rewriteBusy"));
@@ -306,7 +325,11 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
         if (!ok) return;
       }
       setRewriteMode(mode);
-      const token = beginRewrite(path, mode);
+      const token = beginRewrite(path, mode, {
+        sourceText: source,
+        startLine: span?.startLine,
+        endLine: span?.endLine,
+      });
       try {
         await api.startReaderRewrite({
           path,
@@ -331,6 +354,77 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
       t,
     ],
   );
+
+  const onRewriteChunk = useCallback(
+    (mode: RewriteMode, target: ChunkRewriteTarget) => {
+      void startRewrite(mode, target.text, {
+        startLine: target.startLine,
+        endLine: target.endLine,
+      });
+    },
+    [startRewrite],
+  );
+
+  const applyRewriteToOriginal = useCallback(async () => {
+    if (!tab || !path || !rewriteRun || rewriteRun.running) return;
+    const rewritten = rewriteRun.text.trim();
+    if (!rewritten) return;
+
+    const eol = tab.text.includes("\r\n") ? "\r\n" : "\n";
+    const lines = tab.text.split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
+    const span = rewriteRun.sourceSpan;
+    const rewrittenLines = rewritten.split(/\r?\n/);
+
+    let beforeSnippet = tab.text;
+    let textAfter = rewrittenLines.join(eol);
+    let paragraphNumber: number | undefined;
+
+    if (
+      span?.startLine != null &&
+      span?.endLine != null &&
+      span.startLine >= 0 &&
+      span.endLine < lines.length &&
+      span.startLine <= span.endLine
+    ) {
+      beforeSnippet = lines.slice(span.startLine, span.endLine + 1).join("\n");
+      const nextLines = lines.slice();
+      nextLines.splice(span.startLine, span.endLine - span.startLine + 1, ...rewrittenLines);
+      textAfter = nextLines.join(eol);
+      paragraphNumber = span.startLine + 1;
+    } else if (span?.sourceText) {
+      const idx = tab.text.indexOf(span.sourceText);
+      if (idx >= 0) {
+        beforeSnippet = span.sourceText;
+        textAfter =
+          tab.text.slice(0, idx) + rewritten + tab.text.slice(idx + span.sourceText.length);
+        paragraphNumber = tab.text.slice(0, idx).split("\n").length;
+      }
+    }
+
+    if (textAfter === tab.text) {
+      toast.info(t("reader.rewriteNoChange"));
+      return;
+    }
+
+    if (activeId) {
+      try {
+        await api.writeProjectFile(activeId, path, textAfter, tab.encoding, tab.hadBom);
+      } catch (err) {
+        toast.error(t("reader.saveFailed"), { description: String(err) });
+        return;
+      }
+    }
+
+    useReader.getState().appendPendingDiff(path, {
+      id: `local-rewrite-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      before: beforeSnippet,
+      after: rewritten,
+      paragraphNumber,
+      textBefore: tab.text,
+      textAfter,
+    });
+    toast.success(t("reader.rewriteApplied"));
+  }, [tab, path, rewriteRun, activeId, t]);
 
   const onRewriteRun = useCallback(async () => {
     if (!path) return;
@@ -391,7 +485,13 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
       onContextMenu={onEditorContextMenu}
     >
       {tab ? (
-        <ReaderFilePane tab={tab} preview={preview} />
+        <ReaderFilePane
+          tab={tab}
+          preview={preview}
+          chunked={chunked}
+          rewriteRunning={!!rewriteRun?.running}
+          onRewriteChunk={onRewriteChunk}
+        />
       ) : (
         <div className="document-reader is-empty reader-file-pane">
           <p className="document-reader-empty">
@@ -405,7 +505,10 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
   const rightNode = (
     <div className="reader-split-tree" style={bothPanes ? { flex: "1 1 0" } : undefined}>
       {showRewritePane && rewriteRun ? (
-        <ReaderRewritePane run={rewriteRun} />
+        <ReaderRewritePane
+          run={rewriteRun}
+          onApplyToOriginal={() => void applyRewriteToOriginal()}
+        />
       ) : showFindPane ? (
         <div className="reader-search-pane">
           <ReaderFindBar />
@@ -428,6 +531,7 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
           onBack={goBack}
           onForward={goForward}
           preview={preview}
+          chunked={chunked}
           isMarkdown={!!isMarkdown}
           isMedia={!!isMedia}
           hasFile={hasFile}
@@ -447,7 +551,11 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
                   : t("reader.formatHintSpacing")
         }
           onPreview={() => setPreview(true)}
-          onSource={() => setPreview(false)}
+          onSource={() => {
+            setPreview(false);
+            setChunked(false);
+          }}
+          onChunked={() => setChunked(!chunked)}
           onIndent={onIndent}
           onMore={onMore}
           phoneOpen={phoneOpen}

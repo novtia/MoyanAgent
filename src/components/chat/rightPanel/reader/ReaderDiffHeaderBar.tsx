@@ -44,7 +44,14 @@ export function ReaderDiffHeaderBar({
   const safeIndex =
     hunkTotal > 0 ? Math.min(Math.max(activeIndex, -1), hunkTotal - 1) : -1;
 
+  const hasLocalOnly = tab.pendingDiffs.some((d) => d.id.startsWith("local-rewrite-"));
+
   const handleAcceptAll = async () => {
+    if (hasLocalOnly) {
+      confirmAllDiffs(tab.path);
+      onAcceptAll();
+      return;
+    }
     if (!sessionId) return;
     try {
       const dbPath = await resolveDbPath(sessionId, tab.path);
@@ -57,6 +64,24 @@ export function ReaderDiffHeaderBar({
   };
 
   const handleRejectAll = async () => {
+    if (hasLocalOnly) {
+      const result = rejectAllDiffs(tab.path);
+      if (result && sessionId) {
+        try {
+          await api.writeProjectFile(
+            sessionId,
+            tab.path,
+            result.revertText,
+            tab.encoding,
+            tab.hadBom,
+          );
+        } catch {
+          /* keep UI updated */
+        }
+      }
+      onRejectAll();
+      return;
+    }
     if (!sessionId) return;
     try {
       const dbPath = await resolveDbPath(sessionId, tab.path);

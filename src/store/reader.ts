@@ -372,7 +372,15 @@ const UNICODE_WHITESPACE = /^\p{White_Space}$/u;
 
 export function countWords(text: string): number {
   let n = 0;
-  for (const ch of text) {
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    // Fast ASCII / common CJK whitespace check before falling back to regex
+    if (code === 32 || code === 10 || code === 13 || code === 9 || code === 12288) continue;
+    if (code < 0x80) {
+      n += 1;
+      continue;
+    }
+    const ch = text[i];
     if (!UNICODE_WHITESPACE.test(ch)) n += 1;
   }
   return n;
@@ -568,12 +576,17 @@ export const useReader = create<ReaderStore>((set, get) => ({
     set((s) => {
       const idx = findTabIndex(s.tabs, path);
       if (idx < 0) return s;
+      const prev = s.tabs[idx];
+      const chars =
+        prev.chars != null && prev.text.length === text.length && prev.text === text
+          ? prev.chars
+          : undefined;
       const tabs = s.tabs.map((t, i) =>
         i === idx
           ? {
               ...t,
               text,
-              chars: countWords(text),
+              chars: chars ?? countWords(text),
               lines: text.split(/\n/).length,
               dirty: opts?.dirty ?? t.dirty,
               saveError: opts?.dirty ? false : t.saveError,
@@ -601,13 +614,22 @@ export const useReader = create<ReaderStore>((set, get) => ({
     set((s) => {
       const idx = s.tabs.findIndex((t) => normalizeReaderPath(t.path) === key);
       if (idx < 0) return s;
+      const prev = s.tabs[idx];
+      const deltaChars =
+        prev.chars != null && diff.before && diff.after
+          ? countWords(diff.after) - countWords(diff.before)
+          : null;
+      const nextChars =
+        deltaChars != null && prev.chars != null
+          ? Math.max(0, prev.chars + deltaChars)
+          : countWords(block.textAfter);
       const tabs = s.tabs.map((t, i) =>
         i === idx
           ? {
               ...t,
               pendingDiffs: [...t.pendingDiffs, block],
               text: block.textAfter,
-              chars: countWords(block.textAfter),
+              chars: nextChars,
               lines: block.textAfter.split(/\n/).length,
               dirty: false,
               saveError: false,

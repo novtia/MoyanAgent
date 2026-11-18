@@ -1,4 +1,4 @@
-import { diffChars, diffLines, type Change } from "diff";
+import { diffArrays, diffChars, diffLines, type Change } from "diff";
 import { formatParagraphNumber } from "../store/reader";
 
 /** Strip optional `[P123]` prefix from agent paragraph snippets. */
@@ -843,6 +843,117 @@ export function DiffRowView({
       insertParagraphLabel={insertParagraphLabel}
     />
   );
+}
+
+export interface InlineDiffAddedRange {
+  from: number;
+  to: number;
+}
+
+export interface InlineDiffRemovedSpan {
+  pos: number;
+  text: string;
+}
+
+export interface InlineWordDiffResult {
+  added: InlineDiffAddedRange[];
+  removed: InlineDiffRemovedSpan[];
+}
+
+type WordSegmenter = {
+  segment(input: string): Iterable<{ segment: string }>;
+};
+
+let zhWordSegmenter: WordSegmenter | null | undefined;
+
+function getWordSegmenter(): WordSegmenter | null {
+  if (zhWordSegmenter !== undefined) return zhWordSegmenter;
+  try {
+    const Seg = (Intl as unknown as { Segmenter?: new (loc: string, opts: { granularity: string }) => WordSegmenter }).Segmenter;
+    zhWordSegmenter = Seg ? new Seg("zh-CN", { granularity: "word" }) : null;
+  } catch {
+    zhWordSegmenter = null;
+  }
+  return zhWordSegmenter;
+}
+
+/** Tokenize text into word/punctuation/newline tokens so diff aligns on words/clauses rather than stray characters. */
+function tokenizeForWordDiff(text: string): string[] {
+  if (!text) return [];
+  const segmenter = getWordSegmenter();
+  if (!segmenter) {
+    // Fallback: group ASCII words/numbers, keep CJK chars & newlines separate.
+    return text.match(/\r\n|\n|[A-Za-z0-9_]+|[^\r\n]/g) ?? [];
+  }
+  const tokens: string[] = [];
+  for (const part of text.split(/(\n)/)) {
+    if (!part) continue;
+    if (part === "\n") {
+      tokens.push("\n");
+      continue;
+    }
+    for (const seg of segmenter.segment(part)) {
+      if (seg.segment) tokens.push(seg.segment);
+    }
+  }
+  return tokens;
+}
+
+const WORD_DIFF_CACHE_MAX = 200;
+const wordDiffCache = new Map<string, InlineWordDiffResult>();
+
+/**
+ * Compute word/sentence-level inline diff anchored to `newText` character offsets.
+ * Additions map to `[from, to)` ranges in `newText`; deletions map to `{ pos, text }`
+ * widgets placed at the corresponding offset in `newText`.
+ * Results are memoized by `(oldText, newText)` so unrelated re-renders skip diffing.
+ */
+export function buildInlineWordDiff(oldText: string, newText: string): InlineWordDiffResult {
+  if (oldText === newText) return { added: [], removed: [] };
+  const cacheKey = `${oldText}\u0000${newText}`;
+  const cached = wordDiffCache.get(cacheKey);
+  if (cached) return cached;
+
+  const oldTokens = tokenizeForWordDiff(oldText);
+  const newTokens = tokenizeForWordDiff(newText);
+  const changes = diffArrays(oldTokens, newTokens);
+
+  const added: InlineDiffAddedRange[] = [];
+  const removed: InlineDiffRemovedSpan[] = [];
+  let cursor = 0;
+
+  for (const part of changes) {
+    const text = part.value.join("");
+    if (!text) continue;
+    if (part.removed) {
+      const prev = removed[removed.length - 1];
+      if (prev && prev.pos === cursor) {
+        prev.text += text;
+      } else {
+        removed.push({ pos: cursor, text });
+      }
+    } else if (part.added) {
+      const from = cursor;
+      const to = cursor + text.length;
+      const prev = added[added.length - 1];
+      if (prev && prev.to === from) {
+        prev.to = to;
+      } else {
+        added.push({ from, to });
+      }
+      cursor = to;
+    } else {
+      cursor += text.length;
+    }
+  }
+
+  const result: InlineWordDiffResult = { added, removed };
+  if (wordDiffCache.size >= WORD_DIFF_CACHE_MAX) {
+    const firstKey = wordDiffCache.keys().next().value;
+    if (firstKey !== undefined) wordDiffCache.delete(firstKey);
+  }
+  wordDiffCache.set(cacheKey, result);
+  return result;
 }
 
 export function InlineDiffCode({

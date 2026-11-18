@@ -12,6 +12,7 @@ import { useContext, useEffect, useMemo, useRef } from "react";
 import { useFileExplorer } from "../../../../store/fileExplorer";
 import { formatParagraphNumber } from "../../../../store/reader";
 import type { TextRange } from "../../../../utils/readerFind";
+import type { InlineWordDiffResult } from "../../../../utils/inlineDiff";
 import {
   encodeReaderSelectionHtml,
   READER_SELECTION_MIME,
@@ -20,6 +21,10 @@ import {
 } from "../../../../utils/readerSelection";
 import { diffSignGutterExtension } from "./readerCodeMirror/diffSignGutter";
 import { applyFindHighlights, findHighlightField } from "./readerCodeMirror/findHighlights";
+import {
+  applyInlineDiffDecorations,
+  inlineDiffField,
+} from "./readerCodeMirror/inlineDiffDecorations";
 import { readerIndentKeymap } from "./readerCodeMirror/indentKeymap";
 import { ReaderEditorViewContext } from "./readerCodeMirror/editorViewContext";
 import { runRegisteredReaderSave } from "./hooks/useEditorSave";
@@ -35,6 +40,7 @@ import {
   rememberReaderLine,
   rememberReaderViewport,
 } from "../../../../utils/readerViewport";
+import { markReaderOpenFrontend } from "../../../../utils/readerPerf";
 
 export type ReaderCodeMirrorDiffVariant = "none" | "delete" | "insert";
 
@@ -59,8 +65,10 @@ export interface ReaderCodeMirrorProps {
   diffSignFirstLineOnly?: boolean;
   findRanges?: TextRange[];
   findActiveIndex?: number;
+  inlineDiff?: InlineWordDiffResult | null;
   scrollToIndex?: number | null;
   scrollTrigger?: number;
+  onFocusChange?: (focused: boolean) => void;
 }
 
 function buildLineNumbers(labels: (number | null)[] | undefined) {
@@ -109,8 +117,10 @@ export function ReaderCodeMirror({
   diffSignFirstLineOnly = false,
   findRanges = [],
   findActiveIndex = -1,
+  inlineDiff = null,
   scrollToIndex = null,
   scrollTrigger = -1,
+  onFocusChange,
 }: ReaderCodeMirrorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -118,12 +128,16 @@ export function ReaderCodeMirror({
   const editorViewSlotRef = useRef(editorViewSlot);
   editorViewSlotRef.current = editorViewSlot;
   const onChangeRef = useRef(onChange);
+  const onFocusChangeRef = useRef(onFocusChange);
+  onFocusChangeRef.current = onFocusChange;
   const filePathRef = useRef(filePath);
   const paragraphBaseRef = useRef(paragraphBase);
   const syncingRef = useRef(false);
   const lastEmittedRef = useRef<string | null>(null);
   const scrollToIndexRef = useRef(scrollToIndex);
   scrollToIndexRef.current = scrollToIndex;
+  const inlineDiffRef = useRef(inlineDiff);
+  inlineDiffRef.current = inlineDiff;
   filePathRef.current = filePath;
   paragraphBaseRef.current = paragraphBase;
 
@@ -141,6 +155,7 @@ export function ReaderCodeMirror({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    const cmInitStart = performance.now();
 
     const lineNumbersCompartment = new Compartment();
     lineNumbersCompartmentRef.current = lineNumbersCompartment;
@@ -150,6 +165,9 @@ export function ReaderCodeMirror({
     const showActiveLine = diffVariant !== "delete";
 
     const updateListener = EditorView.updateListener.of((update) => {
+      if (update.focusChanged) {
+        onFocusChangeRef.current?.(update.view.hasFocus);
+      }
       if (!update.docChanged || syncingRef.current || !onChangeRef.current) return;
       const next = update.state.doc.toString();
       lastEmittedRef.current = next;
@@ -203,6 +221,7 @@ export function ReaderCodeMirror({
         drawSelection(),
         ...(editable ? [history()] : []),
         findHighlightField,
+        inlineDiffField,
         createReaderCodeMirrorTheme(layout),
         updateListener,
         copyHandler,
@@ -226,8 +245,14 @@ export function ReaderCodeMirror({
 
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
+    if (inlineDiffRef.current) {
+      applyInlineDiffDecorations(view, inlineDiffRef.current);
+    }
     const slot = editorViewSlotRef.current;
     if (slot && layout === "document" && editable) slot.current = view;
+    if (layout === "document" && filePath) {
+      markReaderOpenFrontend(filePath, "frontendCmInitMs", performance.now() - cmInitStart);
+    }
 
     const destroy = () => {
       if (slot?.current === view) slot.current = null;
@@ -350,6 +375,12 @@ export function ReaderCodeMirror({
     if (!view) return;
     applyFindHighlights(view, findRanges, findActiveIndex);
   }, [findRanges, findActiveIndex]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    applyInlineDiffDecorations(view, inlineDiff ?? null);
+  }, [inlineDiff, value]);
 
   // Scroll only when the user navigates find matches (scrollTrigger), not on every
   // edit that shifts match offsets in the live document.
