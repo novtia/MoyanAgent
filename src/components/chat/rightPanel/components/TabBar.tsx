@@ -12,6 +12,7 @@ import {
   PlusIcon,
   ReaderIcon,
   RoleStateIcon,
+  TraceIcon,
 } from "./icons";
 
 export interface TabBarProps {
@@ -45,6 +46,8 @@ function tabLabel(
       return t("rightPanel.roleStateTab");
     case "reader":
       return t("rightPanel.readerTab");
+    case "trace":
+      return t("rightPanel.traceTab");
     default:
       return t("rightPanel.newTab");
   }
@@ -67,6 +70,8 @@ function tabIcon(tb: PanelTab) {
       return <RoleStateIcon />;
     case "reader":
       return <ReaderIcon />;
+    case "trace":
+      return <TraceIcon />;
     default:
       return <PlusIcon />;
   }

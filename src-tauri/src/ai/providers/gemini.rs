@@ -65,6 +65,27 @@ pub(crate) fn apply_google_auth(
     }
 }
 
+/// Priority PayGo headers for Vertex generateContent.
+///
+/// `priority` uses provisioned throughput first and spills over.
+/// `priority_only` skips provisioned throughput.
+/// See https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/priority-paygo
+fn apply_vertex_paygo(
+    req: reqwest::RequestBuilder,
+    request: &ChatRequest,
+) -> reqwest::RequestBuilder {
+    if crate::ai::providers::normalize_sdk(&request.provider.sdk) != VERTEX_SDK {
+        return req;
+    }
+    match request.provider.paygo.as_deref().map(str::trim) {
+        Some("priority") => req.header("X-Vertex-AI-LLM-Shared-Request-Type", "priority"),
+        Some("priority_only") => req
+            .header("X-Vertex-AI-LLM-Request-Type", "shared")
+            .header("X-Vertex-AI-LLM-Shared-Request-Type", "priority"),
+        _ => req,
+    }
+}
+
 pub struct GeminiProvider;
 
 impl GeminiProvider {
@@ -103,10 +124,13 @@ pub(crate) async fn generate_google(
 
     let client = crate::ai::providers::build_chat_client()?;
 
-    let resp = apply_google_auth(
-        client.post(&url).header("Content-Type", "application/json"),
-        &request.provider.api_key,
-        auth,
+    let resp = apply_vertex_paygo(
+        apply_google_auth(
+            client.post(&url).header("Content-Type", "application/json"),
+            &request.provider.api_key,
+            auth,
+        ),
+        &request,
     )
     .json(&body)
     .send()
@@ -646,10 +670,13 @@ pub(crate) async fn generate_google_stream(
         if attempt == 1 {
             debug_log_upstream_request(&provider_label, &url, &body);
         }
-        let resp = apply_google_auth(
-            client.post(&url).header("Content-Type", "application/json"),
-            &request.provider.api_key,
-            auth,
+        let resp = apply_vertex_paygo(
+            apply_google_auth(
+                client.post(&url).header("Content-Type", "application/json"),
+                &request.provider.api_key,
+                auth,
+            ),
+            &request,
         )
         .json(&body)
         .send()
@@ -1600,6 +1627,7 @@ mod tests {
                 api_key: "k".into(),
                 context_cache_enabled: false,
                 safety_threshold: None,
+                paygo: None,
             },
             model: "gemini-3.1-flash".into(),
             prompt: "hi".into(),
@@ -2226,6 +2254,62 @@ mod tests {
             strict["safetySettings"][0]["threshold"],
             "BLOCK_LOW_AND_ABOVE"
         );
+    }
+
+    #[test]
+    fn vertex_priority_paygo_sets_request_headers() {
+        let client = reqwest::Client::new();
+        let mut req = sample_request(false);
+        req.provider.sdk = VERTEX_SDK.into();
+
+        req.provider.paygo = Some("priority".into());
+        let spill = apply_vertex_paygo(client.post("https://example.com"), &req)
+            .build()
+            .unwrap();
+        assert_eq!(
+            spill.headers()
+                .get("X-Vertex-AI-LLM-Shared-Request-Type")
+                .unwrap(),
+            "priority"
+        );
+        assert!(spill
+            .headers()
+            .get("X-Vertex-AI-LLM-Request-Type")
+            .is_none());
+
+        req.provider.paygo = Some("priority_only".into());
+        let only = apply_vertex_paygo(client.post("https://example.com"), &req)
+            .build()
+            .unwrap();
+        assert_eq!(
+            only.headers().get("X-Vertex-AI-LLM-Request-Type").unwrap(),
+            "shared"
+        );
+        assert_eq!(
+            only.headers()
+                .get("X-Vertex-AI-LLM-Shared-Request-Type")
+                .unwrap(),
+            "priority"
+        );
+
+        req.provider.paygo = None;
+        let standard = apply_vertex_paygo(client.post("https://example.com"), &req)
+            .build()
+            .unwrap();
+        assert!(standard
+            .headers()
+            .get("X-Vertex-AI-LLM-Shared-Request-Type")
+            .is_none());
+
+        req.provider.sdk = GEMINI_SDK.into();
+        req.provider.paygo = Some("priority_only".into());
+        let studio = apply_vertex_paygo(client.post("https://example.com"), &req)
+            .build()
+            .unwrap();
+        assert!(studio
+            .headers()
+            .get("X-Vertex-AI-LLM-Shared-Request-Type")
+            .is_none());
     }
 
     #[test]

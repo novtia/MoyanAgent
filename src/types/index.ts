@@ -93,6 +93,11 @@ export interface ModelProvider {
    * `medium` / `low`. Empty / omitted uses Vertex's own default.
    */
   safety_threshold?: string | null;
+  /**
+   * Vertex PayGo tier: `priority` (provisioned throughput first) or
+   * `priority_only`. Empty / omitted is Standard PayGo.
+   */
+  paygo?: string | null;
   /** llama-server executable. Only used by the local SDK. */
   local_server_exe?: string;
   /** GGUF path the local start button loads. */
@@ -876,5 +881,31 @@ export interface SkillInfo {
   source: string;
   path: string;
   enabled: boolean;
+}
+
+export type SessionTraceKind =
+  | "session_settings"
+  | "context"
+  | "user_message"
+  | "assistant_turn"
+  | "tool_call"
+  | "turn_summary"
+  | "error"
+  | string;
+
+export interface SessionTraceEntry {
+  id: string;
+  ts: number;
+  kind: SessionTraceKind;
+  session_id: string;
+  correlation_id?: string | null;
+  message_id?: string | null;
+  agent_id?: string | null;
+  agent_type?: string | null;
+  turn_index?: number | null;
+  tool_name?: string | null;
+  started_at?: number | null;
+  duration_ms?: number | null;
+  data: Record<string, unknown>;
 }
 

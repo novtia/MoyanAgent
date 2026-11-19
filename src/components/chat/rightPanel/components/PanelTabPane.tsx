@@ -3,6 +3,7 @@ import { GalleryContent } from "../gallery";
 import { AgentFlowPanel } from "../agentFlow";
 import { RoleStatePanel } from "../roleState";
 import { ReaderWorkspace } from "../reader";
+import { TracePanel } from "../trace";
 import { TypePicker } from "./TypePicker";
 import type { ImageRefAbs } from "../../../../types";
 import type { PanelTab, PickerKind } from "../types";
@@ -44,6 +45,8 @@ export function PanelTabPane({
       return <AgentFlowPanel open={visible} />;
     case "reader":
       return <ReaderWorkspace path={tab.path ?? null} onOpenFile={onOpenFile} />;
+    case "trace":
+      return <TracePanel open={visible} />;
     default:
       return (
         <TypePicker tab={visible ? 0 : -1} showReader={showReader} onPick={onPickKind} />

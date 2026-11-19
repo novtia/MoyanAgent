@@ -409,6 +409,7 @@ async fn complete_stage(
             api_key: provider.api_key.clone(),
             context_cache_enabled: false,
             safety_threshold: None,
+            paygo: provider.vertex_paygo(),
         },
         model: model_id.to_string(),
         prompt,

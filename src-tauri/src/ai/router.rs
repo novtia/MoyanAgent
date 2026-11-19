@@ -51,6 +51,7 @@ pub fn build_chat_request(
             api_key: provider.api_key.clone(),
             context_cache_enabled,
             safety_threshold: provider.vertex_safety_threshold(),
+            paygo: provider.vertex_paygo(),
         },
         model: model.to_string(),
         prompt,

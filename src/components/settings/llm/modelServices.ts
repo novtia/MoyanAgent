@@ -615,6 +615,21 @@ export const VERTEX_SAFETY_LEVELS = [
   { value: "low", labelKey: "settings.llm.vertexSafetyLow" },
 ] as const;
 
+/** Vertex Priority PayGo modes persisted on the provider. */
+export const VERTEX_PAYGO_MODES = [
+  { value: "", labelKey: "settings.llm.vertexPaygoStandard" },
+  { value: "priority", labelKey: "settings.llm.vertexPaygoPriority" },
+  { value: "priority_only", labelKey: "settings.llm.vertexPaygoPriorityOnly" },
+] as const;
+
+export function normalizeVertexPaygo(raw?: string | null): string | undefined {
+  const t = (raw ?? "").trim().toLowerCase().replace(/-/g, "_");
+  if (!t || t === "default" || t === "standard" || t === "off") return undefined;
+  if (t === "priority" || t === "spillover") return "priority";
+  if (t === "priority_only" || t === "shared" || t === "only") return "priority_only";
+  return undefined;
+}
+
 export function normalizeVertexSafetyThreshold(
   raw?: string | null,
 ): string | undefined {
@@ -835,6 +850,7 @@ export function makeProvider(
     enabled: patch.enabled !== false,
     context_cache_enabled: patch.context_cache_enabled === true,
     safety_threshold: normalizeVertexSafetyThreshold(patch.safety_threshold) ?? null,
+    paygo: normalizeVertexPaygo(patch.paygo) ?? null,
     local_server_exe:
       patch.local_server_exe ??
       (sdk === "local" ? DEFAULT_LOCAL_SERVER_EXE : ""),
@@ -853,6 +869,7 @@ export function normalizeProviders(providers: ModelProvider[]) {
     enabled: provider.enabled !== false,
     context_cache_enabled: provider.context_cache_enabled === true,
     safety_threshold: normalizeVertexSafetyThreshold(provider.safety_threshold) ?? null,
+    paygo: normalizeVertexPaygo(provider.paygo) ?? null,
     id: provider.id || makeLocalId("provider"),
     name: provider.name || "未命名供应商",
     sdk: normalizeProviderSdk(provider.sdk),

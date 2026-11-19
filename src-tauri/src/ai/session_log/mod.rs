@@ -31,11 +31,14 @@ use crate::data::db::now_ms;
 use crate::data::token_log::{rollback_scope_for_message, TokenLogRollbackScope};
 
 pub const KIND_SETTINGS: &str = "session_settings";
+pub const KIND_CONTEXT: &str = "context";
 pub const KIND_USER_MESSAGE: &str = "user_message";
 pub const KIND_ASSISTANT_TURN: &str = "assistant_turn";
 pub const KIND_TOOL_CALL: &str = "tool_call";
 pub const KIND_TURN_SUMMARY: &str = "turn_summary";
 pub const KIND_ERROR: &str = "error";
+
+const MAX_LOG_CHARS: usize = 16_384;
 
 /// One element in a session log file. `data` carries the kind-specific payload;
 /// the flat fields exist so rollback can filter entries without parsing `data`.
@@ -58,6 +61,10 @@ pub struct SessionLogEntry {
     pub turn_index: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
     pub data: Value,
 }
 
@@ -82,6 +89,25 @@ impl SessionLogger {
         self.append(entry);
     }
 
+    /// Injected context for a turn (project rules, context summary, role board, etc.).
+    pub fn log_context(&self, ctx: &LogContext, source: &str, label: &str, content: &str) {
+        if content.trim().is_empty() {
+            return;
+        }
+        let mut entry = base_entry(KIND_CONTEXT, ctx);
+        let (preview, truncated) = truncate_str_chars(content, MAX_LOG_CHARS);
+        let mut data = json!({
+            "source": source,
+            "label": label,
+            "content": preview,
+        });
+        if truncated {
+            data["truncated"] = json!(true);
+        }
+        entry.data = data;
+        self.append(entry);
+    }
+
     /// A user message (prompt + attachment placeholders).
     pub fn log_user_message(&self, ctx: &LogContext, text: &str, attachments: Vec<Value>) {
         let mut entry = base_entry(KIND_USER_MESSAGE, ctx);
@@ -93,11 +119,10 @@ impl SessionLogger {
         self.append(entry);
     }
 
-    /// One model turn — only the *new* content the model produced (visible
-    /// text, reasoning, generated media). The full request (system prompt,
-    /// history, tool chain) is deliberately NOT logged here: it is redundant
-    /// with the `session_settings` / `user_message` / `tool_call` entries.
-    /// Turns that produced nothing (pure tool-call turns) are skipped.
+    /// One model turn — records visible text, reasoning, generated media,
+    /// tool call names, token usage, and timing. Pure tool-call turns are
+    /// included so the execution trace captures every model round-trip.
+    #[allow(clippy::too_many_arguments)]
     pub fn log_assistant_turn(
         &self,
         ctx: &LogContext,
@@ -105,24 +130,35 @@ impl SessionLogger {
         model: &str,
         provider: &str,
         response: &GenerateResponse,
+        started_at: i64,
+        duration_ms: i64,
     ) {
         let text = response.text.as_deref().unwrap_or("");
         let thinking = response.thinking_content.as_deref().unwrap_or("");
-        if text.trim().is_empty()
-            && thinking.trim().is_empty()
-            && response.images.is_empty()
-            && response.videos.is_empty()
-        {
-            return;
-        }
         let mut entry = base_entry(KIND_ASSISTANT_TURN, ctx);
         entry.turn_index = Some(turn_index as i64);
-        let mut data = json!({ "model": model, "provider": provider });
+        entry.started_at = Some(started_at);
+        entry.duration_ms = Some(duration_ms.max(0));
+        let mut data = json!({
+            "model": model,
+            "provider": provider,
+            "usage": {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens,
+                "cache_read_tokens": response.usage.cache_read_tokens,
+                "cache_write_tokens": response.usage.cache_write_tokens,
+            },
+        });
         if !text.is_empty() {
             data["text"] = json!(text);
         }
         if !thinking.is_empty() {
             data["thinking"] = json!(thinking);
+        }
+        if !response.tool_calls.is_empty() {
+            let names: Vec<&str> = response.tool_calls.iter().map(|c| c.name.as_str()).collect();
+            data["tool_calls"] = json!(names);
         }
         if !response.images.is_empty() {
             data["images"] = json!(response
@@ -142,23 +178,32 @@ impl SessionLogger {
         self.append(entry);
     }
 
-    /// One tool invocation. Logs the input, plus the result *only when it
-    /// fails* (that's what you need to debug). Successful results almost
-    /// always echo the input back (e.g. a state tool returning the object it
-    /// just created), so logging both would duplicate the same payload.
+    /// One tool invocation. Logs the input, timing, and output (truncated when
+    /// overly large) for both success and error outcomes.
     pub fn log_tool_call(
         &self,
         ctx: &LogContext,
         tool_name: &str,
         input: &Value,
         result: &ToolResult,
+        started_at: i64,
+        duration_ms: i64,
     ) {
         let mut entry = base_entry(KIND_TOOL_CALL, ctx);
         entry.tool_name = Some(tool_name.to_string());
-        let mut data = json!({ "input": input });
+        entry.started_at = Some(started_at);
+        entry.duration_ms = Some(duration_ms.max(0));
+        let (output_val, truncated) = truncate_value_for_log(&result.content, MAX_LOG_CHARS);
+        let mut data = json!({
+            "input": input,
+            "output": output_val,
+        });
+        if truncated {
+            data["truncated"] = json!(true);
+        }
         if result.is_error {
             data["is_error"] = json!(true);
-            data["error"] = result.content.clone();
+            data["error"] = data["output"].clone();
         }
         entry.data = data;
         self.append(entry);
@@ -229,6 +274,18 @@ impl SessionLogger {
         }
     }
 
+    /// Read every trace entry recorded for `session_id` in chronological order.
+    pub fn read_session(&self, session_id: &str) -> Vec<SessionLogEntry> {
+        if session_id.trim().is_empty() {
+            return Vec::new();
+        }
+        let _guard = match self.write_lock.lock() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        read_entries(&session_log_path(&self.logs_dir, session_id))
+    }
+
     fn append(&self, entry: SessionLogEntry) {
         if entry.session_id.is_empty() {
             eprintln!("[session_log] skipped write: missing session_id");
@@ -256,8 +313,27 @@ fn base_entry(kind: &str, ctx: &LogContext) -> SessionLogEntry {
         agent_type: ctx.agent_type.clone(),
         turn_index: None,
         tool_name: None,
+        started_at: None,
+        duration_ms: None,
         data: Value::Null,
     }
+}
+
+fn truncate_str_chars(s: &str, max_chars: usize) -> (String, bool) {
+    if s.chars().count() <= max_chars {
+        return (s.to_string(), false);
+    }
+    let truncated: String = s.chars().take(max_chars).collect();
+    (format!("{truncated}\n...[truncated]"), true)
+}
+
+fn truncate_value_for_log(val: &Value, max_chars: usize) -> (Value, bool) {
+    let serialized = serde_json::to_string_pretty(val).unwrap_or_default();
+    if serialized.chars().count() <= max_chars {
+        return (val.clone(), false);
+    }
+    let (preview, _) = truncate_str_chars(&serialized, max_chars);
+    (Value::String(preview), true)
 }
 
 fn session_log_path(logs_dir: &Path, session_id: &str) -> PathBuf {
@@ -372,5 +448,68 @@ mod tests {
         );
         entry.ts = 50;
         assert!(should_drop_entry(&entry, &scope));
+    }
+
+    #[test]
+    fn legacy_json_entry_without_timing_deserializes() {
+        let legacy = r#"[{
+            "id": "e1",
+            "ts": 1700000000000,
+            "kind": "assistant_turn",
+            "session_id": "s1",
+            "turn_index": 1,
+            "data": { "model": "gpt-4o", "provider": "openai", "text": "hello" }
+        }]"#;
+        let parsed: Vec<SessionLogEntry> = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].started_at, None);
+        assert_eq!(parsed[0].duration_ms, None);
+    }
+
+    #[test]
+    fn logger_records_and_reads_trace_with_timing_and_context() {
+        let dir = std::env::temp_dir().join(format!("moyan_trace_test_{}", Ulid::new()));
+        let logger = SessionLogger::new(dir.clone());
+        let ctx = LogContext {
+            session_id: Some("sess_1".into()),
+            correlation_id: Some("msg_u1".into()),
+            agent_id: Some("agent_1".into()),
+            agent_type: Some("main".into()),
+        };
+
+        logger.log_context(&ctx, "project_rules", "项目规则", "rule body");
+        logger.log_user_message(&ctx, "你好", vec![]);
+
+        let mut resp = GenerateResponse::default();
+        resp.tool_calls.push(crate::ai::chat::ProviderToolCall::new(
+            "tc1",
+            "Read",
+            json!({ "path": "a.md" }),
+        ));
+        resp.usage = TokenUsage {
+            prompt_tokens: Some(100),
+            completion_tokens: Some(20),
+            total_tokens: Some(120),
+            ..Default::default()
+        };
+        // Pure tool-call turn (empty text & thinking) must still be recorded.
+        logger.log_assistant_turn(&ctx, 1, "claude-3-7", "anthropic", &resp, 1000, 250);
+
+        let tool_res = ToolResult::ok(json!({ "content": "ok" }));
+        logger.log_tool_call(&ctx, "Read", &json!({ "path": "a.md" }), &tool_res, 1250, 40);
+
+        let entries = logger.read_session("sess_1");
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].kind, KIND_CONTEXT);
+        assert_eq!(entries[2].kind, KIND_ASSISTANT_TURN);
+        assert_eq!(entries[2].started_at, Some(1000));
+        assert_eq!(entries[2].duration_ms, Some(250));
+        assert_eq!(entries[2].data["usage"]["total_tokens"], json!(120));
+        assert_eq!(entries[2].data["tool_calls"], json!(["Read"]));
+        assert_eq!(entries[3].kind, KIND_TOOL_CALL);
+        assert_eq!(entries[3].duration_ms, Some(40));
+        assert_eq!(entries[3].data["output"]["content"], json!("ok"));
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

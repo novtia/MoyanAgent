@@ -30,6 +30,7 @@ import type {
   SessionSearchResult,
   SessionSearchHit,
   SessionSummary,
+  SessionTraceEntry,
   SessionWithMessagesAbs,
   MessageOutlineItem,
   DailyUsageRow,
@@ -620,6 +621,9 @@ export const api = {
         offset: args?.offset ?? null,
       },
     }),
+
+  getSessionTrace: (sessionId: string) =>
+    invoke<SessionTraceEntry[]>("get_session_trace", { sessionId }),
 
   // skills
   listSkills: () => invoke<SkillInfo[]>("list_skills"),

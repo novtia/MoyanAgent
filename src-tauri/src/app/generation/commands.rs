@@ -492,6 +492,7 @@ pub async fn generate_image(
                         api_key: provider.api_key.clone(),
                         context_cache_enabled: false,
                         safety_threshold: None,
+                        paygo: provider.vertex_paygo(),
                     };
                     tokio::spawn(title::generate_title_with_quick_model(
                         app.clone(),

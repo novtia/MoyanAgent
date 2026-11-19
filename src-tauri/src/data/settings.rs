@@ -234,6 +234,10 @@ pub struct ModelProvider {
     /// `medium` / `low`. `None` omits the field so Vertex uses its default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safety_threshold: Option<String>,
+    /// Vertex PayGo tier: `priority` (provisioned throughput first, spill over
+    /// to Priority PayGo) or `priority_only`. `None` is Standard PayGo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paygo: Option<String>,
     /// llama-server executable. Used by the local SDK start button.
     #[serde(default)]
     pub local_server_exe: String,
@@ -269,6 +273,14 @@ impl ModelProvider {
         }
         normalize_vertex_safety_threshold(self.safety_threshold.as_deref())
     }
+
+    /// Canonical Vertex PayGo mode, sent as `X-Vertex-AI-LLM-*` headers.
+    pub fn vertex_paygo(&self) -> Option<String> {
+        if crate::ai::providers::normalize_sdk(&self.sdk) != crate::ai::providers::VERTEX_SDK {
+            return None;
+        }
+        normalize_vertex_paygo(self.paygo.as_deref())
+    }
 }
 
 pub(crate) fn normalize_vertex_safety_threshold(raw: Option<&str>) -> Option<String> {
@@ -287,6 +299,42 @@ pub(crate) fn normalize_vertex_safety_threshold(raw: Option<&str>) -> Option<Str
         }
         .to_string(),
     )
+}
+
+pub(crate) fn normalize_vertex_paygo(raw: Option<&str>) -> Option<String> {
+    let t = raw?.trim().to_ascii_lowercase().replace('-', "_");
+    if t.is_empty() || t == "default" || t == "standard" || t == "off" {
+        return None;
+    }
+    Some(
+        match t.as_str() {
+            "priority" | "spillover" => "priority",
+            "priority_only" | "shared" | "only" => "priority_only",
+            _ => return None,
+        }
+        .to_string(),
+    )
+}
+
+#[cfg(test)]
+mod paygo_tests {
+    use super::normalize_vertex_paygo;
+
+    #[test]
+    fn vertex_paygo_aliases() {
+        assert_eq!(normalize_vertex_paygo(None), None);
+        assert_eq!(normalize_vertex_paygo(Some("")), None);
+        assert_eq!(normalize_vertex_paygo(Some("standard")), None);
+        assert_eq!(
+            normalize_vertex_paygo(Some("priority")).as_deref(),
+            Some("priority")
+        );
+        assert_eq!(
+            normalize_vertex_paygo(Some("Priority-Only")).as_deref(),
+            Some("priority_only")
+        );
+        assert_eq!(normalize_vertex_paygo(Some("nope")), None);
+    }
 }
 
 fn normalize_tool_names(raw: Vec<String>) -> Vec<String> {
@@ -1000,6 +1048,7 @@ fn normalize_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {
         }
         provider.safety_threshold =
             normalize_vertex_safety_threshold(provider.safety_threshold.as_deref());
+        provider.paygo = normalize_vertex_paygo(provider.paygo.as_deref());
         apply_local_server_defaults(provider);
     }
     services

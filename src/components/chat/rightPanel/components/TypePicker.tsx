@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { PickerKind } from "../types";
-import { FlowIcon, GalleryIcon, ReaderIcon, RoleStateIcon } from "./icons";
+import { FlowIcon, GalleryIcon, ReaderIcon, RoleStateIcon, TraceIcon } from "./icons";
 
 export interface TypePickerProps {
   tab: number;
@@ -71,6 +71,20 @@ export function TypePicker({ tab, showReader, onPick }: TypePickerProps) {
           </span>
         </button>
       )}
+      <button
+        type="button"
+        className="right-panel-picker-card"
+        tabIndex={tab}
+        onClick={() => onPick("trace")}
+      >
+        <span className="right-panel-picker-icon">
+          <TraceIcon />
+        </span>
+        <span className="right-panel-picker-text">
+          <span className="right-panel-picker-name">{t("rightPanel.createTrace")}</span>
+          <span className="right-panel-picker-desc">{t("rightPanel.createTraceDesc")}</span>
+        </span>
+      </button>
     </div>
   );
 }

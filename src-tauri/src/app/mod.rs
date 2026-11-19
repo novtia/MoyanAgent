@@ -289,6 +289,7 @@ pub fn run() {
             tokens::get_token_usage_daily,
             tokens::get_token_usage_by_tool,
             tokens::list_token_usage_events,
+            tokens::get_session_trace,
             generation::commands::generate_image,
             generation::commands::regenerate_image,
             generation::commands::save_cancelled_message,

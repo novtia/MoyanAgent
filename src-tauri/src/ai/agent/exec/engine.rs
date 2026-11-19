@@ -274,6 +274,8 @@ impl QueryEngine for ProviderQueryEngine {
                 // during the turn — we replay the response's
                 // text/thinking once afterwards so the host's block
                 // buffer still matches what the model produced.
+                let llm_started_at = now_epoch_ms();
+                let llm_timer = std::time::Instant::now();
                 let (turn_delta, tracker) = match on_text_delta.as_ref() {
                     Some(cb) => {
                         let (wrapped, t) = wrap_tracking_callback(cb.clone());
@@ -361,6 +363,8 @@ impl QueryEngine for ProviderQueryEngine {
                             &chat.model,
                             &chat.provider.id,
                             &response,
+                            llm_started_at,
+                            llm_timer.elapsed().as_millis() as i64,
                         );
                     }
                 }
@@ -435,6 +439,8 @@ impl QueryEngine for ProviderQueryEngine {
                         Some(Ok(resolved)) => (resolved.tool_name.as_str(), &resolved.input),
                         _ => (req.tool_name.as_str(), &req.input),
                     };
+                    let tool_started_at = now_epoch_ms();
+                    let tool_timer = std::time::Instant::now();
                     let mut result = if let Some(Err(message)) = &amendment {
                         ToolResult::error(message.clone())
                     } else {
@@ -498,7 +504,14 @@ impl QueryEngine for ProviderQueryEngine {
                             });
                         }
                         if let Some(logger) = context.session_logger.as_ref() {
-                            logger.log_tool_call(&ctx, &req.tool_name, &req.input, &result);
+                            logger.log_tool_call(
+                                &ctx,
+                                &req.tool_name,
+                                &req.input,
+                                &result,
+                                tool_started_at,
+                                tool_timer.elapsed().as_millis() as i64,
+                            );
                         }
                     }
 
@@ -539,6 +552,13 @@ fn fire_tool_event(cb: &Option<ToolEventCallback>, event: &MessageEvent) {
     if let Some(cb) = cb.as_ref() {
         cb(event);
     }
+}
+
+fn now_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn log_context(context: &ToolUseContext) -> LogContext {

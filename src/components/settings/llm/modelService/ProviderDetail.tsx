@@ -14,6 +14,7 @@ import {
   composeVertexEndpoint,
   isVertexSdk,
   parseVertexEndpoint,
+  VERTEX_PAYGO_MODES,
   VERTEX_SAFETY_LEVELS,
   providerSdkLabel,
   resolveModelBrandIconId,
@@ -212,6 +213,26 @@ export function ProviderDetail({
                     }
                   />
                   <div className="hint">{t("settings.llm.vertexLocationHint")}</div>
+                </div>
+                <div className="row">
+                  <label className="field-label">
+                    {t("settings.llm.vertexPaygoLabel")}
+                  </label>
+                  <select
+                    value={selectedProvider.paygo?.trim() || ""}
+                    onChange={(e) =>
+                      onPatchProvider(selectedProvider.id, {
+                        paygo: e.target.value || null,
+                      })
+                    }
+                  >
+                    {VERTEX_PAYGO_MODES.map((opt) => (
+                      <option key={opt.value || "standard"} value={opt.value}>
+                        {t(opt.labelKey)}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="hint">{t("settings.llm.vertexPaygoHint")}</div>
                 </div>
                 <div className="row">
                   <label className="field-label">

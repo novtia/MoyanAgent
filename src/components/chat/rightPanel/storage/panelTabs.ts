@@ -13,7 +13,7 @@ export interface StoredTabs {
 
 const EMPTY: StoredTabs = { tabs: [], activeId: null };
 
-const TAB_KINDS: TabKind[] = ["empty", "gallery", "agent-flow", "role-state", "reader"];
+const TAB_KINDS: TabKind[] = ["empty", "gallery", "agent-flow", "role-state", "reader", "trace"];
 
 function isTabKind(value: unknown): value is TabKind {
   return typeof value === "string" && TAB_KINDS.includes(value as TabKind);

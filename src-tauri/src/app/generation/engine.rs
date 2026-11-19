@@ -363,6 +363,47 @@ pub(crate) async fn run_generation_with_signal(
         append_role_state_history_tail(state, session_id, &mut request.history)?;
     }
 
+    // Record injected context blocks (project rules, context summary, role board)
+    // in the session trace so the trace panel shows what was actually fed in.
+    {
+        let ctx = crate::ai::token_log::LogContext {
+            session_id: Some(session_id.to_string()),
+            correlation_id: correlation_id.map(str::to_string),
+            agent_id: None,
+            agent_type: Some(agent_type.to_string()),
+        };
+        for turn in &request.history {
+            let Some(text) = turn.text.as_deref() else {
+                continue;
+            };
+            if text.contains("(project-rules):") {
+                state.session_logger.log_context(
+                    &ctx,
+                    "project_rules",
+                    "项目规则 (.moyan)",
+                    text,
+                );
+            } else if text.starts_with("<role-state>") {
+                state.session_logger.log_context(
+                    &ctx,
+                    "role_state",
+                    "角色状态板",
+                    text,
+                );
+            } else if let Some(start) = text.find("<context-summary>") {
+                if let Some(end) = text[start..].find("</context-summary>") {
+                    let summary_block = &text[start..start + end + "</context-summary>".len()];
+                    state.session_logger.log_context(
+                        &ctx,
+                        "context_summary",
+                        "上下文摘要",
+                        summary_block,
+                    );
+                }
+            }
+        }
+    }
+
     // Merge per-session system instructions into the definition body so
     // `compose_system_prompt` sees one cohesive instruction block.
     let session_sys = std::mem::take(&mut request.system_prompt);

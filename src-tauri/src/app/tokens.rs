@@ -78,3 +78,11 @@ pub fn list_token_usage_events(
         },
     )
 }
+
+#[tauri::command]
+pub fn get_session_trace(
+    state: tauri::State<Arc<AppState>>,
+    session_id: String,
+) -> Result<Vec<crate::ai::session_log::SessionLogEntry>, AppError> {
+    Ok(state.session_logger.read_session(&session_id))
+}

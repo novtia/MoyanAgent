@@ -1,6 +1,6 @@
 import type { ImageRefAbs } from "../../../types";
 
-export type TabKind = "empty" | "gallery" | "agent-flow" | "role-state" | "reader";
+export type TabKind = "empty" | "gallery" | "agent-flow" | "role-state" | "reader" | "trace";
 
 /** Right pane of a reader tab: project tree or find results. */
 export type ReaderRightView = "tree" | "search";
@@ -48,4 +48,4 @@ export interface RightPanelProps {
   onPreviewImage: (img: ImageRefAbs) => void;
 }
 
-export type PickerKind = "gallery" | "agent-flow" | "role-state" | "reader";
+export type PickerKind = "gallery" | "agent-flow" | "role-state" | "reader" | "trace";

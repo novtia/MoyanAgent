@@ -214,6 +214,8 @@ pub struct ProviderConfig {
     pub context_cache_enabled: bool,
     /// Vertex `safetySettings` threshold (`off`/`none`/`high`/`medium`/`low`).
     pub safety_threshold: Option<String>,
+    /// Vertex PayGo tier: `priority` or `priority_only`. `None` is Standard.
+    pub paygo: Option<String>,
 }
 
 /// Tool description exposed to the model. Provider-agnostic — each
