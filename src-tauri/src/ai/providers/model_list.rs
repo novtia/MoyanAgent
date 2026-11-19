@@ -208,7 +208,11 @@ fn vertex_models_list_url(endpoint: &str) -> String {
     let host = origin
         .trim_start_matches("https://")
         .trim_start_matches("http://");
-    let list_origin = if host.eq_ignore_ascii_case("aiplatform.googleapis.com") {
+    // Multi-region (`aiplatform.us.rep...` / `aiplatform.eu.rep...`) hosts also
+    // have no publisher-model list; fall back like `global`.
+    let is_multi_region = host.to_ascii_lowercase().ends_with(".rep.googleapis.com");
+    let list_origin = if host.eq_ignore_ascii_case("aiplatform.googleapis.com") || is_multi_region
+    {
         "https://us-central1-aiplatform.googleapis.com".to_string()
     } else {
         origin

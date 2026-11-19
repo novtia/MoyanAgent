@@ -149,7 +149,7 @@ pub(crate) async fn generate_google(
     parse_response(&txt)
 }
 
-fn provider_label(request: &ChatRequest) -> String {
+pub(crate) fn provider_label(request: &ChatRequest) -> String {
     if request.provider.name.trim().is_empty() {
         request.provider.id.clone()
     } else {
@@ -219,7 +219,7 @@ fn with_query_param(url: &str, key: &str, value: &str) -> String {
     }
 }
 
-fn build_body(request: &ChatRequest, stream_function_args: bool) -> Value {
+pub(crate) fn build_body(request: &ChatRequest, stream_function_args: bool) -> Value {
     use crate::ai::chat::TimelineSegment;
     let mut contents: Vec<Value> = Vec::new();
     for turn in &request.history {
@@ -1441,7 +1441,7 @@ fn json_escape_key(s: &str) -> String {
     json_escape_fragment(s)
 }
 
-fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
+pub(crate) fn parse_response(txt: &str) -> AppResult<GenerateResponse> {
     if txt.is_empty() {
         return Err(AppError::Upstream(
             "upstream returned an empty response body".into(),
@@ -1566,7 +1566,7 @@ fn usage(v: &Value) -> TokenUsage {
     }
 }
 
-fn upstream_error_message(txt: &str) -> String {
+pub(crate) fn upstream_error_message(txt: &str) -> String {
     match serde_json::from_str::<Value>(txt) {
         Ok(v) => v
             .pointer("/error/message")
@@ -1628,6 +1628,8 @@ mod tests {
                 context_cache_enabled: false,
                 safety_threshold: None,
                 paygo: None,
+                batch_mode: false,
+                batch_gcs_bucket: String::new(),
             },
             model: "gemini-3.1-flash".into(),
             prompt: "hi".into(),

@@ -238,6 +238,14 @@ pub struct ModelProvider {
     /// to Priority PayGo) or `priority_only`. `None` is Standard PayGo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paygo: Option<String>,
+    /// When true and SDK is `vertex`, route chat and agent calls through
+    /// Vertex AI Batch Prediction (`batchPredictionJobs`).
+    #[serde(default)]
+    pub batch_mode: bool,
+    /// GCS bucket / prefix used for Vertex batch input & output JSONL
+    /// (e.g. `gs://my-bucket/moyan-batch`).
+    #[serde(default)]
+    pub batch_gcs_bucket: String,
     /// llama-server executable. Used by the local SDK start button.
     #[serde(default)]
     pub local_server_exe: String,
@@ -280,6 +288,12 @@ impl ModelProvider {
             return None;
         }
         normalize_vertex_paygo(self.paygo.as_deref())
+    }
+
+    /// Whether Vertex AI Batch Prediction mode is enabled for this provider.
+    pub fn vertex_batch_mode(&self) -> bool {
+        crate::ai::providers::normalize_sdk(&self.sdk) == crate::ai::providers::VERTEX_SDK
+            && self.batch_mode
     }
 }
 
@@ -1049,6 +1063,7 @@ fn normalize_services(mut services: Vec<ModelProvider>) -> Vec<ModelProvider> {
         provider.safety_threshold =
             normalize_vertex_safety_threshold(provider.safety_threshold.as_deref());
         provider.paygo = normalize_vertex_paygo(provider.paygo.as_deref());
+        provider.batch_gcs_bucket = provider.batch_gcs_bucket.trim().to_string();
         apply_local_server_defaults(provider);
     }
     services

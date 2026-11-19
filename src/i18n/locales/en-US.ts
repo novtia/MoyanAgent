@@ -136,6 +136,8 @@ const enUS: Resource = {
     deleteSessionConfirm: "Delete this chat \"{{title}}\"?",
     statusGenerating: "Generating",
     statusPolling: "Generating video",
+    statusBatchQueued: "Batch queued {{elapsed}}",
+    statusBatchRunning: "Batch running {{elapsed}}",
     statusReady: "Ready",
     heroTitle: "What should we work on?",
     openMenu: "Menu",
@@ -1283,13 +1285,20 @@ const enUS: Resource = {
       vertexLocationLabel: "Location",
       vertexLocationPlaceholder: "global",
       vertexLocationHint:
-        "Use global for the worldwide endpoint, or a region such as us-central1 or europe-west1.",
+        "Only global and the multi-regions us / eu serve the newest models. Avoid single regions such as us-central1.",
       vertexPaygoLabel: "PayGo tier",
       vertexPaygoHint:
         "Sent as Vertex request headers. Standard is the default rate. Priority uses provisioned throughput first, then spills over to Priority PayGo. Priority only always bills at the higher Priority rate for steadier throughput. Usually global, us, or eu endpoints.",
       vertexPaygoStandard: "Standard PayGo",
       vertexPaygoPriority: "Priority (provisioned first)",
       vertexPaygoPriorityOnly: "Priority PayGo only",
+      vertexBatchModeLabel: "Async batch inference mode",
+      vertexBatchModeHint:
+        "Routes chat and agent calls through Vertex batchPredictionJobs (50% cost, avoids real-time 429 limits). Trade-off: minute-level latency per call with no live streaming; requires a GCS bucket and service account JSON or OAuth token.",
+      vertexBatchBucketLabel: "GCS bucket path",
+      vertexBatchBucketPlaceholder: "gs://my-bucket/moyan-batch",
+      vertexBatchBucketHint:
+        "Cloud Storage path for temporary batch input/output JSONL (service account needs storage.objects.create/get/delete and aiplatform.user).",
       vertexKeyHint:
         "Chat can use an API key. Listing models requires OAuth: run gcloud auth print-access-token and paste the token here. Or switch to a service account JSON.",
       vertexAuthLabel: "Credential",

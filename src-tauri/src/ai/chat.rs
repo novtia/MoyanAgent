@@ -216,6 +216,10 @@ pub struct ProviderConfig {
     pub safety_threshold: Option<String>,
     /// Vertex PayGo tier: `priority` or `priority_only`. `None` is Standard.
     pub paygo: Option<String>,
+    /// When true and SDK is `vertex`, use Vertex Batch Prediction jobs.
+    pub batch_mode: bool,
+    /// GCS bucket / prefix for Vertex batch input & output JSONL.
+    pub batch_gcs_bucket: String,
 }
 
 /// Tool description exposed to the model. Provider-agnostic — each

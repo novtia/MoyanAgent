@@ -206,7 +206,8 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
       });
   }, [t]);
   const formatEnabled = firstLineIndent || paragraphSpacing;
-  const canIndent = !!tab && !isMedia && !hasPendingDiff && formatEnabled;
+  const canEdit = !!tab && !isMedia && !hasPendingDiff;
+  const canIndent = canEdit && formatEnabled;
   const editorViewRef = useRef<EditorView | null>(null);
   const editorRootRef = useRef<HTMLDivElement | null>(null);
 
@@ -251,7 +252,7 @@ export function ReaderWorkspace({ path, onOpenFile }: ReaderWorkspaceProps) {
         },
       ]);
     },
-    [path, t, canIndent, isMarkdown, formatOptions],
+    [path, t, canIndent, canEdit, isMarkdown, formatOptions],
   );
 
   const settings = useSettings((s) => s.settings);

@@ -23,6 +23,30 @@ use super::streaming::{
 };
 use super::title;
 
+fn make_batch_status_emitter(
+    app: AppHandle,
+    session_id: String,
+    message_id: String,
+) -> crate::ai::providers::vertex_batch::StatusEmitter {
+    Arc::new(move |snap| {
+        let phase = match snap.state.as_str() {
+            "JOB_STATE_RUNNING" => "batch_running",
+            "JOB_STATE_SUCCEEDED" => "request",
+            _ => "batch_queued",
+        };
+        let _ = app.emit(
+            "gen://status",
+            serde_json::json!({
+                "phase": phase,
+                "session_id": &session_id,
+                "message_id": &message_id,
+                "elapsed_secs": snap.elapsed_secs,
+                "job_name": &snap.job_name,
+            }),
+        );
+    })
+}
+
 #[tauri::command]
 pub fn cancel_generation(
     state: tauri::State<Arc<AppState>>,
@@ -493,6 +517,8 @@ pub async fn generate_image(
                         context_cache_enabled: false,
                         safety_threshold: None,
                         paygo: provider.vertex_paygo(),
+                        batch_mode: provider.vertex_batch_mode(),
+                        batch_gcs_bucket: provider.batch_gcs_bucket.trim().to_string(),
                     };
                     tokio::spawn(title::generate_title_with_quick_model(
                         app.clone(),
@@ -528,6 +554,15 @@ pub async fn generate_image(
                 "message_id": &user_msg.id,
             }),
         );
+    } else if chat_request.provider.batch_mode {
+        let _ = app.emit(
+            "gen://status",
+            serde_json::json!({
+                "phase": "batch_queued",
+                "session_id": &req.session_id,
+                "message_id": &user_msg.id,
+            }),
+        );
     }
 
     // 3) call the unified chat router
@@ -546,47 +581,55 @@ pub async fn generate_image(
     );
     let log_model = chat_request.model.clone();
     let log_provider = chat_request.provider.id.clone();
-    let result = match agent_chain
-        .as_ref()
-        .filter(|chain| !is_video_generation && !chain.is_empty())
-    {
-        Some(chain) => {
-            run_agent_chain(
-                &state,
-                &app,
-                &req.session_id,
-                &user_msg.id,
-                chain,
-                generation_agent,
-                &req.prompt,
-                chat_request,
-                &resolved_provider,
-                &resolved_model,
-                &session_prompt,
-                &params,
-                project_cwd,
-                &stream_blocks,
-                on_text_delta,
-                on_tool_event,
-            )
-            .await
+    let batch_emitter = make_batch_status_emitter(
+        app.clone(),
+        req.session_id.clone(),
+        user_msg.id.clone(),
+    );
+    let result = crate::ai::providers::vertex_batch::with_status_emitter(batch_emitter, async {
+        match agent_chain
+            .as_ref()
+            .filter(|chain| !is_video_generation && !chain.is_empty())
+        {
+            Some(chain) => {
+                run_agent_chain(
+                    &state,
+                    &app,
+                    &req.session_id,
+                    &user_msg.id,
+                    chain,
+                    generation_agent,
+                    &req.prompt,
+                    chat_request,
+                    &resolved_provider,
+                    &resolved_model,
+                    &session_prompt,
+                    &params,
+                    project_cwd,
+                    &stream_blocks,
+                    on_text_delta,
+                    on_tool_event,
+                )
+                .await
+            }
+            None => {
+                run_cancellable_generation(
+                    &state,
+                    &req.session_id,
+                    generation_agent,
+                    req.prompt.clone(),
+                    chat_request,
+                    Some(on_text_delta),
+                    Some(on_tool_event),
+                    project_cwd,
+                    None,
+                    Some(&user_msg.id),
+                )
+                .await
+            }
         }
-        None => {
-            run_cancellable_generation(
-                &state,
-                &req.session_id,
-                generation_agent,
-                req.prompt.clone(),
-                chat_request,
-                Some(on_text_delta),
-                Some(on_tool_event),
-                project_cwd,
-                None,
-                Some(&user_msg.id),
-            )
-            .await
-        }
-    };
+    })
+    .await;
 
     let _ = app.emit(
         "gen://status",
@@ -958,6 +1001,15 @@ pub async fn regenerate_image(
                 "message_id": &req.user_message_id,
             }),
         );
+    } else if chat_request.provider.batch_mode {
+        let _ = app.emit(
+            "gen://status",
+            serde_json::json!({
+                "phase": "batch_queued",
+                "session_id": &req.session_id,
+                "message_id": &req.user_message_id,
+            }),
+        );
     }
 
     let stream_blocks = new_stream_blocks();
@@ -975,47 +1027,55 @@ pub async fn regenerate_image(
     );
     let log_model = chat_request.model.clone();
     let log_provider = chat_request.provider.id.clone();
-    let result = match agent_chain
-        .as_ref()
-        .filter(|chain| !is_video_generation && !chain.is_empty())
-    {
-        Some(chain) => {
-            run_agent_chain(
-                &state,
-                &app,
-                &req.session_id,
-                &req.user_message_id,
-                chain,
-                generation_agent,
-                prompt,
-                chat_request,
-                &resolved_provider,
-                &resolved_model,
-                &session_prompt,
-                &params,
-                project_cwd,
-                &stream_blocks,
-                on_text_delta,
-                on_tool_event,
-            )
-            .await
+    let batch_emitter = make_batch_status_emitter(
+        app.clone(),
+        req.session_id.clone(),
+        req.user_message_id.clone(),
+    );
+    let result = crate::ai::providers::vertex_batch::with_status_emitter(batch_emitter, async {
+        match agent_chain
+            .as_ref()
+            .filter(|chain| !is_video_generation && !chain.is_empty())
+        {
+            Some(chain) => {
+                run_agent_chain(
+                    &state,
+                    &app,
+                    &req.session_id,
+                    &req.user_message_id,
+                    chain,
+                    generation_agent,
+                    prompt,
+                    chat_request,
+                    &resolved_provider,
+                    &resolved_model,
+                    &session_prompt,
+                    &params,
+                    project_cwd,
+                    &stream_blocks,
+                    on_text_delta,
+                    on_tool_event,
+                )
+                .await
+            }
+            None => {
+                run_cancellable_generation(
+                    &state,
+                    &req.session_id,
+                    generation_agent,
+                    prompt.to_string(),
+                    chat_request,
+                    Some(on_text_delta),
+                    Some(on_tool_event),
+                    project_cwd,
+                    None,
+                    Some(&req.user_message_id),
+                )
+                .await
+            }
         }
-        None => {
-            run_cancellable_generation(
-                &state,
-                &req.session_id,
-                generation_agent,
-                prompt.to_string(),
-                chat_request,
-                Some(on_text_delta),
-                Some(on_tool_event),
-                project_cwd,
-                None,
-                Some(&req.user_message_id),
-            )
-            .await
-        }
-    };
+    })
+    .await;
 
     let _ = app.emit(
         "gen://status",

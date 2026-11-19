@@ -598,6 +598,9 @@ export function normalizeProviderSdk(sdk?: string | null): string {
 
 export const VERTEX_DEFAULT_LOCATION = "global";
 
+/** Only global and multi-region (us / eu) endpoints serve the newest models. */
+export const VERTEX_LOCATIONS = ["global", "us", "eu"] as const;
+
 const VERTEX_GENERATE_SUFFIX =
   "publishers/google/models/{model}:generateContent";
 
@@ -656,10 +659,13 @@ export function composeVertexEndpoint(project: string, location: string): string
     "",
   );
   const proj = project.trim() || "{project}";
+  const lower = loc.toLowerCase();
   const host =
-    loc.toLowerCase() === "global"
+    lower === "global"
       ? "https://aiplatform.googleapis.com"
-      : `https://${loc}-aiplatform.googleapis.com`;
+      : lower === "us" || lower === "eu"
+        ? `https://aiplatform.${lower}.rep.googleapis.com`
+        : `https://${loc}-aiplatform.googleapis.com`;
   return `${host}/v1/projects/${proj}/locations/${loc}/${VERTEX_GENERATE_SUFFIX}`;
 }
 
@@ -676,6 +682,10 @@ export function parseVertexEndpoint(endpoint?: string | null): {
   let location = path?.[2] ?? "";
   if (project === "{project}") project = "";
   if (location === "{location}") location = "";
+  const multiHost = e.match(
+    /^https?:\/\/aiplatform\.(us|eu)\.rep\.googleapis\.com/i,
+  );
+  if (!location && multiHost) location = multiHost[1].toLowerCase();
   if (!location && locHost) location = locHost[1];
   if (!location && /:\/\/aiplatform\.googleapis\.com/i.test(e)) {
     location = VERTEX_DEFAULT_LOCATION;
@@ -851,6 +861,8 @@ export function makeProvider(
     context_cache_enabled: patch.context_cache_enabled === true,
     safety_threshold: normalizeVertexSafetyThreshold(patch.safety_threshold) ?? null,
     paygo: normalizeVertexPaygo(patch.paygo) ?? null,
+    batch_mode: patch.batch_mode === true,
+    batch_gcs_bucket: patch.batch_gcs_bucket?.trim() ?? "",
     local_server_exe:
       patch.local_server_exe ??
       (sdk === "local" ? DEFAULT_LOCAL_SERVER_EXE : ""),
@@ -870,6 +882,8 @@ export function normalizeProviders(providers: ModelProvider[]) {
     context_cache_enabled: provider.context_cache_enabled === true,
     safety_threshold: normalizeVertexSafetyThreshold(provider.safety_threshold) ?? null,
     paygo: normalizeVertexPaygo(provider.paygo) ?? null,
+    batch_mode: provider.batch_mode === true,
+    batch_gcs_bucket: provider.batch_gcs_bucket?.trim() ?? "",
     id: provider.id || makeLocalId("provider"),
     name: provider.name || "未命名供应商",
     sdk: normalizeProviderSdk(provider.sdk),

@@ -12,6 +12,7 @@ mod grok;
 pub mod model_list;
 pub mod openai;
 mod vertex;
+pub(crate) mod vertex_batch;
 
 use crate::ai::chat::{ChatRequest, GenerateResponse, TextDeltaCallback};
 use crate::error::{AppError, AppResult};

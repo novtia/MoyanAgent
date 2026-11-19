@@ -410,6 +410,8 @@ async fn complete_stage(
             context_cache_enabled: false,
             safety_threshold: None,
             paygo: provider.vertex_paygo(),
+            batch_mode: provider.vertex_batch_mode(),
+            batch_gcs_bucket: provider.batch_gcs_bucket.trim().to_string(),
         },
         model: model_id.to_string(),
         prompt,

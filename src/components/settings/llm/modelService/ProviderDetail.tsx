@@ -12,6 +12,7 @@ import {
   manageGroupMark,
   normalizeProviderSdk,
   composeVertexEndpoint,
+  VERTEX_LOCATIONS,
   isVertexSdk,
   parseVertexEndpoint,
   VERTEX_PAYGO_MODES,
@@ -197,12 +198,8 @@ export function ProviderDetail({
                   <label className="field-label">
                     {t("settings.llm.vertexLocationLabel")}
                   </label>
-                  <input
-                    type="text"
+                  <select
                     value={parseVertexEndpoint(providerDraft.endpoint).location}
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder={t("settings.llm.vertexLocationPlaceholder")}
                     onChange={(e) =>
                       onDraftChange({
                         endpoint: composeVertexEndpoint(
@@ -211,7 +208,21 @@ export function ProviderDetail({
                         ),
                       })
                     }
-                  />
+                  >
+                    {[
+                      ...VERTEX_LOCATIONS,
+                      ...(VERTEX_LOCATIONS.includes(
+                        parseVertexEndpoint(providerDraft.endpoint)
+                          .location as (typeof VERTEX_LOCATIONS)[number],
+                      )
+                        ? []
+                        : [parseVertexEndpoint(providerDraft.endpoint).location]),
+                    ].map((loc) => (
+                      <option key={loc} value={loc}>
+                        {loc}
+                      </option>
+                    ))}
+                  </select>
                   <div className="hint">{t("settings.llm.vertexLocationHint")}</div>
                 </div>
                 <div className="row">
@@ -256,6 +267,42 @@ export function ProviderDetail({
                   </select>
                   <div className="hint">{t("settings.llm.vertexSafetyHint")}</div>
                 </div>
+                <div className="row model-provider-switch-row">
+                  <div className="model-provider-switch-head">
+                    <label className="field-label">
+                      {t("settings.llm.vertexBatchModeLabel")}
+                    </label>
+                    <ProviderEnableSwitch
+                      enabled={selectedProvider.batch_mode === true}
+                      onChange={(next) =>
+                        onPatchProvider(selectedProvider.id, {
+                          batch_mode: next,
+                        })
+                      }
+                      title={t("settings.llm.vertexBatchModeLabel")}
+                    />
+                  </div>
+                  <div className="hint">{t("settings.llm.vertexBatchModeHint")}</div>
+                </div>
+                {selectedProvider.batch_mode === true && (
+                  <div className="row">
+                    <label className="field-label">
+                      {t("settings.llm.vertexBatchBucketLabel")}
+                    </label>
+                    <input
+                      type="text"
+                      value={selectedProvider.batch_gcs_bucket ?? ""}
+                      spellCheck={false}
+                      placeholder={t("settings.llm.vertexBatchBucketPlaceholder")}
+                      onChange={(e) =>
+                        onPatchProvider(selectedProvider.id, {
+                          batch_gcs_bucket: e.target.value,
+                        })
+                      }
+                    />
+                    <div className="hint">{t("settings.llm.vertexBatchBucketHint")}</div>
+                  </div>
+                )}
               </>
             )}
             <div className="row">

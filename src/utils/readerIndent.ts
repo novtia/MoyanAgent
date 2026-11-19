@@ -224,6 +224,8 @@ export function applyDocumentFirstLineIndent(
   selectionEnd = 0,
   options: DocumentFormatOptions = DEFAULT_DOCUMENT_FORMAT,
 ): { text: string; selectionStart: number; selectionEnd: number } | null {
+  // Removing formatting ignores settings: always strip indent and paragraph blank lines.
+  if (outdent) options = DEFAULT_DOCUMENT_FORMAT;
   if (!options.firstLineIndent && !options.paragraphSpacing) return null;
 
   const lines = text.split("\n");
@@ -338,6 +340,7 @@ export function buildDocumentFirstLineIndentChanges(
   selectionStart: number;
   selectionEnd: number;
 } | null {
+  if (outdent) options = DEFAULT_DOCUMENT_FORMAT;
   const result = applyDocumentFirstLineIndent(
     text,
     outdent,

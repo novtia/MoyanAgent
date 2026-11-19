@@ -13,8 +13,9 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::gemini::{generate_google, generate_google_stream, GoogleAuthStyle};
+use super::vertex_batch::generate_vertex_batch;
 use super::{ChatProvider, ProviderFuture, VERTEX_SDK};
-use crate::ai::chat::{ChatRequest, TextDeltaCallback};
+use crate::ai::chat::{emit_text_deltas, emit_thinking_deltas, ChatRequest, TextDeltaCallback};
 use crate::error::{AppError, AppResult};
 
 const TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
@@ -38,7 +39,11 @@ impl ChatProvider for VertexProvider {
     fn chat<'a>(&'a self, request: ChatRequest) -> ProviderFuture<'a> {
         Box::pin(async move {
             let request = prepare_vertex_request(request).await?;
-            generate_google(request, GoogleAuthStyle::VertexAuto).await
+            if request.provider.batch_mode {
+                generate_vertex_batch(request).await
+            } else {
+                generate_google(request, GoogleAuthStyle::VertexAuto).await
+            }
         })
     }
 
@@ -49,7 +54,18 @@ impl ChatProvider for VertexProvider {
     ) -> ProviderFuture<'a> {
         Box::pin(async move {
             let request = prepare_vertex_request(request).await?;
-            generate_google_stream(request, on_text_delta, GoogleAuthStyle::VertexAuto).await
+            if request.provider.batch_mode {
+                let resp = generate_vertex_batch(request).await?;
+                if let Some(thinking) = resp.thinking_content.as_deref() {
+                    emit_thinking_deltas(&on_text_delta, thinking);
+                }
+                if let Some(text) = resp.text.as_deref() {
+                    emit_text_deltas(&on_text_delta, text);
+                }
+                Ok(resp)
+            } else {
+                generate_google_stream(request, on_text_delta, GoogleAuthStyle::VertexAuto).await
+            }
         })
     }
 }

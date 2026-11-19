@@ -209,6 +209,8 @@ fn provider_config_from(provider: &ModelProvider) -> ProviderConfig {
         context_cache_enabled,
         safety_threshold: provider.vertex_safety_threshold(),
         paygo: provider.vertex_paygo(),
+        batch_mode: provider.vertex_batch_mode(),
+        batch_gcs_bucket: provider.batch_gcs_bucket.trim().to_string(),
     }
 }
 

@@ -147,25 +147,33 @@ export function ChatView({
             )}
             {isEmpty || onOpenMenu ? null : <ChatSessionBreadcrumb />}
             {!onOpenMenu && moreMenu}
-            {!isEmpty && !onOpenMenu && (
-              <span
-                className={`chat-status ${busy ? "busy" : ""}`}
-                title={
-                  busy && generationPhase === "polling"
-                    ? t("chat.statusPolling")
-                    : busy
-                      ? t("chat.statusGenerating")
-                      : t("chat.statusReady")
-                }
-              >
-                <span className="dot" />
-                {busy && generationPhase === "polling"
+            {!isEmpty && !onOpenMenu && (() => {
+              const batchParts = generationPhase?.startsWith("batch_")
+                ? generationPhase.split(":")
+                : null;
+              const batchPhase = batchParts?.[0];
+              const batchElapsed = batchParts?.[1];
+              const statusLabel =
+                busy && generationPhase === "polling"
                   ? t("chat.statusPolling")
-                  : busy
-                    ? t("chat.statusGenerating")
-                    : t("chat.statusReady")}
-              </span>
-            )}
+                  : busy && batchPhase === "batch_running"
+                    ? t("chat.statusBatchRunning", {
+                        elapsed: batchElapsed ? `${batchElapsed}s` : "",
+                      }).trim()
+                    : busy && batchPhase === "batch_queued"
+                      ? t("chat.statusBatchQueued", {
+                          elapsed: batchElapsed ? `${batchElapsed}s` : "",
+                        }).trim()
+                      : busy
+                        ? t("chat.statusGenerating")
+                        : t("chat.statusReady");
+              return (
+                <span className={`chat-status ${busy ? "busy" : ""}`} title={statusLabel}>
+                  <span className="dot" />
+                  {statusLabel}
+                </span>
+              );
+            })()}
           </div>
           <span className="chat-topbar-session">{title}</span>
           <div className="chat-topbar-right">

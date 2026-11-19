@@ -133,6 +133,8 @@ const zhCN = {
     deleteSessionConfirm: "删除当前会话「{{title}}」？",
     statusGenerating: "生成中",
     statusPolling: "视频生成中",
+    statusBatchQueued: "批量排队中 {{elapsed}}",
+    statusBatchRunning: "批量运行中 {{elapsed}}",
     statusReady: "就绪",
     heroTitle: "今天想做什么？",
     openMenu: "菜单",
@@ -1253,13 +1255,20 @@ const zhCN = {
       vertexProjectHint: "Google Cloud 控制台中的项目 ID，会写入 Vertex 请求地址。",
       vertexLocationLabel: "区域",
       vertexLocationPlaceholder: "global",
-      vertexLocationHint: "global 走全球端点；也可用 us-central1、europe-west1 等区域。",
+      vertexLocationHint: "仅 global（全球）与多区域 us / eu 提供最新模型；不要使用 us-central1 等单区域。",
       vertexPaygoLabel: "计费档位",
       vertexPaygoHint:
         "写入 Vertex 请求头。标准为默认按量。Priority 先用预配吞吐，溢出再走 Priority PayGo。仅 Priority 始终按更高单价计费，吞吐更稳。一般用于 global、us、eu 端点。",
       vertexPaygoStandard: "标准 PayGo",
       vertexPaygoPriority: "Priority（预配优先）",
       vertexPaygoPriorityOnly: "仅 Priority PayGo",
+      vertexBatchModeLabel: "异步批量推理模式",
+      vertexBatchModeHint:
+        "开启后，聊天和 Agent 的每次模型调用都改走 Vertex batchPredictionJobs（半价、不受实时 429 限流）。代价：每次请求延迟通常为数分钟且无流式输出；需配置 GCS 存储桶并使用服务账号 JSON 或 OAuth 令牌。",
+      vertexBatchBucketLabel: "GCS 存储桶路径",
+      vertexBatchBucketPlaceholder: "gs://my-bucket/moyan-batch",
+      vertexBatchBucketHint:
+        "用于暂存批量请求与输出结果的 Cloud Storage 路径（服务账号需具备 storage.objects.create/get/delete 与 aiplatform.user 权限）。",
       vertexKeyHint:
         "对话可用 API Key。拉取模型列表必须用 OAuth：终端运行 gcloud auth print-access-token，把输出贴进密钥栏。也可以改用服务账号 JSON。",
       vertexAuthLabel: "认证方式",

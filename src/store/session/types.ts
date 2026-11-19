@@ -62,7 +62,8 @@ export interface GenerationStreamPayload {
 
 export interface GenerationStatusPayload {
   session_id: string;
-  phase: "request" | "polling" | "response" | string;
+  phase: "request" | "polling" | "batch_queued" | "batch_running" | "response" | string;
+  elapsed_secs?: number;
 }
 
 export interface SummarySessionPayload {

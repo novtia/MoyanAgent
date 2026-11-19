@@ -98,6 +98,10 @@ export interface ModelProvider {
    * `priority_only`. Empty / omitted is Standard PayGo.
    */
   paygo?: string | null;
+  /** When true and SDK is `vertex`, route calls through Vertex Batch Prediction. */
+  batch_mode?: boolean;
+  /** GCS bucket / prefix for Vertex batch input & output JSONL. */
+  batch_gcs_bucket?: string;
   /** llama-server executable. Only used by the local SDK. */
   local_server_exe?: string;
   /** GGUF path the local start button loads. */

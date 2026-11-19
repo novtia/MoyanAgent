@@ -37,7 +37,11 @@ export function ensureGenerationStreamListener() {
       const state = useSession.getState();
       const next = { ...state.generationPhaseBySession };
       if (phase === "response") delete next[sessionId];
-      else next[sessionId] = phase;
+      else if (event.payload?.elapsed_secs !== undefined && (phase === "batch_queued" || phase === "batch_running")) {
+        next[sessionId] = `${phase}:${event.payload.elapsed_secs}`;
+      } else {
+        next[sessionId] = phase;
+      }
       useSession.setState({ generationPhaseBySession: next });
     }).catch((error) => {
       generationStatusListenerStarted = false;
