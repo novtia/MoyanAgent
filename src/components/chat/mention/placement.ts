@@ -37,7 +37,8 @@ export function computeCaretMentionStyle(
   const shell =
     (document.querySelector(".chat-main") as HTMLElement | null) ??
     document.documentElement;
-  const bottomLimit = shell.getBoundingClientRect().bottom - GAP;
+  const shellRect = shell.getBoundingClientRect();
+  const bottomLimit = shellRect.bottom - GAP;
 
   const spaceBelow = Math.floor(bottomLimit - (anchor.bottom + GAP));
   const spaceAbove = Math.floor(anchor.top - GAP - topLimit);
@@ -49,13 +50,21 @@ export function computeCaretMentionStyle(
   const available = openBelow ? spaceBelow : spaceAbove;
   const maxHeight = Math.max(72, Math.min(MAX_HEIGHT, available));
 
+  const pad = 12;
+  const popoverWidth = Math.min(WIDTH, Math.max(200, shellRect.width - pad * 2));
+  const minViewportLeft = shellRect.left + pad;
+  const maxViewportLeft = Math.max(
+    minViewportLeft,
+    shellRect.right - popoverWidth - pad,
+  );
   const left =
-    Math.max(12, Math.min(anchor.left, window.innerWidth - WIDTH - 12)) -
+    Math.max(minViewportLeft, Math.min(anchor.left, maxViewportLeft)) -
     wrapLeft;
 
   if (openBelow) {
     return {
       left,
+      width: popoverWidth,
       top: anchor.bottom + GAP - wrapTop,
       bottom: "auto",
       maxHeight,
@@ -64,6 +73,7 @@ export function computeCaretMentionStyle(
 
   return {
     left,
+    width: popoverWidth,
     top: "auto",
     bottom: wrapBottom - (anchor.top - GAP),
     maxHeight,

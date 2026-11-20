@@ -170,7 +170,7 @@ export function ChatView({
               return (
                 <span className={`chat-status ${busy ? "busy" : ""}`} title={statusLabel}>
                   <span className="dot" />
-                  {statusLabel}
+                  <span className="chat-status-text">{statusLabel}</span>
                 </span>
               );
             })()}

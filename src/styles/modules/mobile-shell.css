@@ -340,6 +340,9 @@ html[data-shell="mobile"] .composer-context-ring {
 }
 
 /* Paperclip stays hidden on a narrow composer; keep the @ mention button. */
+html[data-shell="mobile"] .composer-add-btn {
+  display: none;
+}
 html[data-shell="mobile"] .composer-mention-btn {
   display: inline-flex;
 }

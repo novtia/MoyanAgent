@@ -50,6 +50,11 @@
 
 .messages-virtual {
   width: 100%;
+  min-width: 0;
+}
+.msg-virtual-row {
+  width: 100%;
+  min-width: 0;
 }
 .msg-virtual-row .msg {
   animation: none;
@@ -169,6 +174,11 @@
   border-top: 1px solid var(--line);
   color: var(--ink-mute);
   -webkit-line-clamp: 3;
+}
+
+.message-timeline.is-compact {
+  width: 28px;
+  margin-left: 14px;
 }
 
 @media (max-width: 900px) {
@@ -567,6 +577,7 @@ mark.chat-find-mark,
 }
 .bubble {
   max-width: min(var(--chat-content-width), 100%);
+  min-width: 0;
   padding: var(--msg-bubble-padding-y, 10px) var(--msg-bubble-padding-x, 14px);
   border-radius: var(--radius);
   font-family: var(--chat-font-family, inherit);
@@ -1040,7 +1051,6 @@ button.doc-row-head:disabled {
   text-overflow: ellipsis;
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 60%;
 }
 .doc-row-meta {
   font-size: 11.5px;
@@ -1048,9 +1058,8 @@ button.doc-row-head:disabled {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 0 1 auto;
+  flex: 0 3 auto;
   min-width: 0;
-  max-width: 40%;
 }
 .doc-row-tail {
   display: flex;
@@ -1180,6 +1189,7 @@ button.doc-row-head:disabled {
   margin: 4px 0;
   color: var(--ink-mute);
   font-size: 12.5px;
+  min-width: 0;
 }
 .del-line .ti {
   display: inline-flex;
@@ -1196,6 +1206,10 @@ button.doc-row-head:disabled {
   display: block;
 }
 .del-line .fname {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--rose-500) 60%, transparent);
 }
@@ -1224,6 +1238,7 @@ button.doc-row-head:disabled {
   display: block;
 }
 .rename-line .fname {
+  min-width: 0;
   color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1340,6 +1355,7 @@ button.doc-row-head:disabled {
   align-items: center;
   gap: 6px;
   width: 100%;
+  min-width: 0;
   padding: 4px 8px 6px;
   margin: 4px 0 0;
   border: none;
@@ -1370,6 +1386,8 @@ button.flow-head:disabled {
   font-size: 12.5px;
   font-weight: 550;
   color: var(--ink);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .flow-head .m {
   font-size: 11.5px;
@@ -1825,6 +1843,7 @@ button.flow-head:disabled {
   align-items: center;
   gap: 6px;
   width: 100%;
+  min-width: 0;
   padding: 4px 8px;
   border: none;
   border-radius: var(--radius-sm);
@@ -1841,11 +1860,14 @@ button.flow-head:disabled {
   font-weight: 550;
   font-family: "JetBrains Mono", monospace;
   color: var(--ink);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .generic .a {
   font-size: 11.5px;
   color: var(--ink-mute);
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2336,6 +2358,115 @@ button.flow-head:disabled {
   color: var(--ink-mute);
   font-style: italic;
   margin-top: 2px;
+}
+
+/* ───── narrow chat-main adaptive messages layout ───── */
+@container chat-main (max-width: 640px) {
+  .messages {
+    padding: 8px 16px 28px 16px;
+  }
+  .messages:not(.is-empty) {
+    /* Match compact timeline: 14px left inset + 28px rail */
+    padding-left: 42px;
+  }
+  .messages-inner,
+  .messages-shell > .messages-inner {
+    padding: 0 12px;
+  }
+  .empty-chat {
+    padding: 24px 16px 72px;
+  }
+}
+
+@container chat-main (max-width: 520px) {
+  .messages,
+  .messages:not(.is-empty) {
+    padding: 6px 12px 20px 12px;
+  }
+  .messages-inner,
+  .messages-shell > .messages-inner {
+    padding: 0 4px;
+  }
+  .empty-chat {
+    padding: 20px 12px 48px;
+  }
+  .empty-chat-inner {
+    gap: 28px;
+    transform: translateY(-6px);
+  }
+  .empty-chat-title {
+    font-size: 22px;
+  }
+  .msg {
+    margin-bottom: 14px;
+  }
+  .bubble {
+    padding: 10px 14px;
+  }
+  .msg.assistant .bubble {
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .msg.is-editing .bubble,
+  .msg.assistant.is-editing .bubble {
+    padding: 10px 12px;
+  }
+  .msg.assistant .bubble > .text {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .msg-thinking-header {
+    padding: 4px 6px;
+  }
+  .msg-thinking-content {
+    margin: 6px 0 10px 12px;
+    padding-left: 10px;
+  }
+  .doc-row,
+  .doc-row--bare {
+    padding: 4px 6px;
+  }
+  .doc-row-head {
+    gap: 5px;
+  }
+  .doc-row-body {
+    padding: 8px 0 4px 16px;
+  }
+  .doc-row-footer {
+    padding-left: 16px;
+  }
+  .doc-row-tail,
+  .tool-call-diff-chips {
+    gap: 4px;
+  }
+  .chip {
+    padding: 3px 6px;
+    font-size: 10.5px;
+  }
+  .flow-head {
+    padding: 4px 6px 6px;
+  }
+  .generic,
+  .del-line,
+  .rename-line {
+    padding: 4px 6px;
+  }
+  .msg-action {
+    padding: 4px 7px;
+    gap: 4px;
+    font-size: 11.5px;
+  }
+  .agent-card {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+  .summary-card-detail {
+    padding: 2px 12px 12px 12px;
+  }
+  .todo,
+  .ask-user-card {
+    padding: 10px 12px;
+  }
 }
 
 

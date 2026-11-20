@@ -358,3 +358,24 @@ mark.chat-find-mark {
   border-radius: 2px;
   padding: 0 1px;
 }
+
+@container chat-main (max-width: 640px) {
+  .chat-find-dock {
+    padding: 0 16px 8px;
+  }
+  .messages:not(.is-empty) ~ .chat-find-dock {
+    padding-left: 42px;
+  }
+}
+
+@container chat-main (max-width: 520px) {
+  .chat-find-dock,
+  .messages:not(.is-empty) ~ .chat-find-dock {
+    padding: 0 12px 8px;
+  }
+  .chat-find-bar-main {
+    padding: 6px 8px 6px 10px;
+    gap: 6px;
+    min-height: 36px;
+  }
+}

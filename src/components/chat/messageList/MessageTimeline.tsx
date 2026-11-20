@@ -14,12 +14,19 @@ import type { MessageOutlineItem } from "../../../types";
 
 const LEVEL_BASE = 10;
 const LEVEL_STEP = 6;
+const COMPACT_LEVEL_BASE = 8;
+const COMPACT_LEVEL_STEP = 5;
 const REPLY_PREVIEW_CHARS = 180;
 /** Breathing room so the rail never touches the viewport edges. */
 const RAIL_VERTICAL_INSET = 48;
+/** Match `@container chat-main` breakpoints so the portaled rail stays aligned. */
+const TIMELINE_HIDE_WIDTH = 520;
+const TIMELINE_COMPACT_WIDTH = 640;
 
-function widthForLevel(level: number): number {
-  return LEVEL_BASE + (level - 1) * LEVEL_STEP;
+function widthForLevel(level: number, compact: boolean): number {
+  const base = compact ? COMPACT_LEVEL_BASE : LEVEL_BASE;
+  const step = compact ? COMPACT_LEVEL_STEP : LEVEL_STEP;
+  return base + (level - 1) * step;
 }
 
 function focusMessage(messageId: string) {
@@ -75,6 +82,7 @@ function buildTurns(outline: MessageOutlineItem[]): TimelineTurn[] {
 
 interface RailBox {
   left: number;
+  width: number;
   centerY: number;
   maxHeight: number;
 }
@@ -104,12 +112,14 @@ function useRailBox(scrollRef: RefObject<HTMLElement | null>): RailBox | null {
       const r = el.getBoundingClientRect();
       const next: RailBox = {
         left: r.left,
+        width: r.width,
         centerY: r.top + r.height / 2,
         maxHeight: Math.max(0, r.height - RAIL_VERTICAL_INSET),
       };
       setBox((prev) =>
         prev &&
         Math.abs(prev.left - next.left) < 0.5 &&
+        Math.abs(prev.width - next.width) < 0.5 &&
         Math.abs(prev.centerY - next.centerY) < 0.5 &&
         Math.abs(prev.maxHeight - next.maxHeight) < 0.5
           ? prev
@@ -204,7 +214,11 @@ export function MessageTimeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hoverIndex, turns]);
 
-  if (turns.length === 0 || !rail) return null;
+  if (turns.length === 0 || !rail || rail.width <= TIMELINE_HIDE_WIDTH) {
+    return null;
+  }
+
+  const compact = rail.width <= TIMELINE_COMPACT_WIDTH;
 
   const nearestIndex = (clientY: number) => {
     const nodes = trackRef.current?.querySelectorAll<HTMLElement>(".tl-tick");
@@ -246,7 +260,7 @@ export function MessageTimeline({
   return createPortal(
     <>
       <aside
-        className="message-timeline"
+        className={`message-timeline${compact ? " is-compact" : ""}`}
         aria-label={t("chat.timelineLabel")}
         style={{ left: rail.left, top: rail.centerY, height: rail.maxHeight }}
         onPointerMove={onPointerMove}
@@ -268,7 +282,7 @@ export function MessageTimeline({
                 data-tl-message-id={turn.id}
                 data-active={isActive ? "1" : "0"}
                 aria-label={reply ? `${askOf(turn)} — ${reply}` : askOf(turn)}
-                style={{ width: widthForLevel(level) }}
+                style={{ width: widthForLevel(level, compact) }}
                 onClick={() => focusMessage(turn.id)}
               />
             );

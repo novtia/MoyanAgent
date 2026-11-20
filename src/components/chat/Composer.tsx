@@ -247,10 +247,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
     [settings?.model_services],
   );
   const modelName = shortModelName(session?.model ?? settings?.model);
-  const modelLabel =
-    !isMobileShell && modelName.length > 12
-      ? `${modelName.slice(0, 12)}…`
-      : modelName;
+  const modelLabel = modelName;
   const ratioLabel = aspectRatio === "auto" ? t("composer.ratioAuto") : aspectRatio;
   const sizeLabel = imageSize === "auto" ? t("composer.sizeAuto") : imageSize;
 
@@ -562,7 +559,9 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
         topbar ? topbarBottom + marginBelowTopbar : marginBelowTopbar,
       );
       const card = root.closest(".composer-card") as HTMLElement | null;
-      const r = (isMobile && card ? card : root).getBoundingClientRect();
+      const anchorToCard =
+        (isMobile || getComputedStyle(root).position === "static") && !!card;
+      const r = (anchorToCard && card ? card : root).getBoundingClientRect();
       const anchorTop = r.top;
       const popoverBottom = anchorTop - MODEL_POPOVER_GAP;
       const rawAbove = Math.floor(popoverBottom - topLimit);
@@ -1225,7 +1224,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                 <button
                   type="button"
                   className={`composer-pill ${thinkingEnabled ? "is-thinking" : ""} ${thinkingOpen ? "active" : ""}`}
-                  title={t("composer.thinkingTitle")}
+                  title={`${t("composer.thinkingTitle")} · ${thinkingLabel}`}
                   onClick={() => setThinkingOpen((v) => !v)}
                 >
                   <BrainIcon />
@@ -1274,6 +1273,11 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
               <button
                 type="button"
                 className={`composer-pill ${paramsOpen ? "active" : ""}`}
+                title={
+                  showVideoParams
+                    ? `${videoModeLabel} · ${videoDurationLabel} · ${videoResolution}`
+                    : `${ratioLabel} · ${sizeLabel}`
+                }
                 onClick={() => setParamsOpen((v) => !v)}
               >
                 <SlidersIcon />
@@ -1459,7 +1463,7 @@ export function Composer({ onEditAttachment, onOpenSettings, needsSetup }: Compo
                   type="button"
                   className={`composer-pill model ${modelOpen ? "active" : ""}`}
                   onClick={() => setModelOpen((v) => !v)}
-                  title={settings?.model || t("composer.modelPickerTitle")}
+                  title={session?.model || settings?.model || t("composer.modelPickerTitle")}
                 >
                   <span>{modelLabel}</span>
                   <CaretIcon />
