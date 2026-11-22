@@ -48,6 +48,13 @@ export interface GenerationStreamPayload {
   delta?: string;
   /** Agent flow chain stage boundary marker. */
   stage?: { agent_type: string; name?: string; index?: number };
+  /** Agent-loop HTTP 429 retry notice. */
+  retry?: {
+    attempt: number;
+    max_retries: number;
+    delay_ms?: number;
+    reason?: string;
+  } | null;
   /**
    * Live tool-call argument fragment (OpenAI-compatible streaming). `arguments`
    * is the slice received in this chunk, not the accumulated string. Keyed by
@@ -62,8 +69,18 @@ export interface GenerationStreamPayload {
 
 export interface GenerationStatusPayload {
   session_id: string;
-  phase: "request" | "polling" | "batch_queued" | "batch_running" | "response" | string;
+  phase:
+    | "request"
+    | "polling"
+    | "batch_queued"
+    | "batch_running"
+    | "retrying"
+    | "response"
+    | string;
   elapsed_secs?: number;
+  attempt?: number;
+  max_retries?: number;
+  delay_ms?: number;
 }
 
 export interface SummarySessionPayload {

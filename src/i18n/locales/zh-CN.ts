@@ -132,6 +132,7 @@ const zhCN = {
     deleteSession: "删除会话",
     deleteSessionConfirm: "删除当前会话「{{title}}」？",
     statusGenerating: "生成中",
+    statusRetrying: "429 重试中 {{attempt}}/{{max}}",
     statusPolling: "视频生成中",
     statusBatchQueued: "批量排队中 {{elapsed}}",
     statusBatchRunning: "批量运行中 {{elapsed}}",
@@ -747,6 +748,9 @@ const zhCN = {
     stampFailure: "失败 · {{time}}",
     stampGenerating: "生成中 · {{time}}",
     generatingText: "正在生成中，可能需要 30–120 秒…",
+    retryWaitingWithDelay: "遇到 429 限流，{{seconds}} 秒后进行第 {{attempt}} 次重试…",
+    retryWaiting: "遇到 429 限流，正在进行第 {{attempt}} 次重试…",
+    retryDone: "已触发 429 自动重试",
     actionCopy: "复制",
     actionEdit: "编辑",
     actionResend: "重发",
@@ -1299,6 +1303,9 @@ const zhCN = {
       vertexSafetyLow: "严格",
     },
     system: {
+      agentLoopMaxRetriesTitle: "Agent 循环 429 重试次数",
+      agentLoopMaxRetriesDesc:
+        "Agent 内部循环遇到 HTTP 429（限流 / Resource exhausted）时自动退避重试的最大次数（0–20，设为 0 关闭）",
       notifySoundTitle: "提示音",
       notifySoundDesc: "AI 回复完成时播放提示音",
       proxyTitle: "网络代理",

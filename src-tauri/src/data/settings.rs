@@ -46,6 +46,7 @@ pub const KEY_READER_FIRST_LINE_INDENT: &str = "reader_first_line_indent";
 pub const KEY_READER_PARAGRAPH_SPACING: &str = "reader_paragraph_spacing";
 pub const KEY_HTTP_PROXY_ENABLED: &str = "http_proxy_enabled";
 pub const KEY_HTTP_PROXY_URL: &str = "http_proxy_url";
+pub const KEY_AGENT_LOOP_MAX_RETRIES: &str = "agent_loop_max_retries";
 pub const KEY_NOVELAI: &str = "novelai";
 pub const KEY_REWRITE: &str = "rewrite";
 
@@ -73,6 +74,8 @@ pub const DEFAULT_TITLE_SYSTEM_PROMPT: &str = "\
 调用：SetSessionTitle(title = \"第二段口语化润色\")";
 
 pub const DEFAULT_HISTORY_TURNS: i64 = 10;
+pub const DEFAULT_AGENT_LOOP_MAX_RETRIES: i64 = 3;
+pub const MAX_AGENT_LOOP_MAX_RETRIES: i64 = 20;
 pub const DEFAULT_AUTO_BACKUP_CHAT_INTERVAL_MINUTES: i64 = 30;
 pub const DEFAULT_AUTO_BACKUP_CONFIG_KEEP: i64 = 14;
 pub const DEFAULT_AUTO_BACKUP_CHAT_KEEP: i64 = 48;
@@ -533,6 +536,10 @@ pub struct Settings {
     /// Proxy URL, e.g. `http://127.0.0.1:7890` or `socks5://127.0.0.1:7891`.
     #[serde(default)]
     pub http_proxy_url: String,
+    /// Maximum retries inside the agent loop when a turn hits HTTP 429 / rate-limit errors.
+    /// 0 disables agent-loop retries.
+    #[serde(default = "default_agent_loop_max_retries")]
+    pub agent_loop_max_retries: i64,
     /// NovelAI image-generation tool credentials and default parameters.
     #[serde(default)]
     pub novelai: crate::ai::nai::NovelAiSettings,
@@ -571,6 +578,10 @@ fn default_auto_backup_config_keep() -> i64 {
 
 fn default_auto_backup_chat_keep() -> i64 {
     DEFAULT_AUTO_BACKUP_CHAT_KEEP
+}
+
+fn default_agent_loop_max_retries() -> i64 {
+    DEFAULT_AGENT_LOOP_MAX_RETRIES
 }
 
 impl Default for Settings {
@@ -617,6 +628,7 @@ impl Default for Settings {
             reader_paragraph_spacing: true,
             http_proxy_enabled: false,
             http_proxy_url: String::new(),
+            agent_loop_max_retries: default_agent_loop_max_retries(),
             novelai: crate::ai::nai::NovelAiSettings::default(),
             rewrite: crate::ai::rewrite_config::RewriteSettings::default(),
         }
@@ -724,6 +736,8 @@ pub struct SettingsPatch {
     pub http_proxy_enabled: Option<bool>,
     #[serde(default)]
     pub http_proxy_url: Option<String>,
+    #[serde(default)]
+    pub agent_loop_max_retries: Option<i64>,
     #[serde(default)]
     pub novelai: Option<crate::ai::nai::NovelAiSettings>,
     #[serde(default)]
@@ -851,6 +865,11 @@ pub fn read(conn: &DbConn) -> AppResult<Settings> {
             KEY_READER_PARAGRAPH_SPACING => s.reader_paragraph_spacing = v == "true" || v == "1",
             KEY_HTTP_PROXY_ENABLED => s.http_proxy_enabled = v == "true" || v == "1",
             KEY_HTTP_PROXY_URL => s.http_proxy_url = v,
+            KEY_AGENT_LOOP_MAX_RETRIES => {
+                if let Some(n) = parse_optional_i64(&v) {
+                    s.agent_loop_max_retries = n.clamp(0, MAX_AGENT_LOOP_MAX_RETRIES);
+                }
+            }
             KEY_NOVELAI => {
                 if let Ok(cfg) = serde_json::from_str::<crate::ai::nai::NovelAiSettings>(&v) {
                     s.novelai = crate::ai::nai::normalize_settings(cfg);
@@ -1376,6 +1395,10 @@ pub fn apply_patch(conn: &DbConn, patch: SettingsPatch) -> AppResult<Settings> {
     }
     if let Some(v) = patch.http_proxy_url {
         write_kv(conn, KEY_HTTP_PROXY_URL, v.trim())?;
+    }
+    if let Some(n) = patch.agent_loop_max_retries {
+        let n = n.clamp(0, MAX_AGENT_LOOP_MAX_RETRIES);
+        write_kv(conn, KEY_AGENT_LOOP_MAX_RETRIES, &n.to_string())?;
     }
     if let Some(v) = patch.novelai {
         let cleaned = crate::ai::nai::normalize_settings(v);

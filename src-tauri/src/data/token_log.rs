@@ -389,9 +389,9 @@ pub fn rollback_scope_for_message(
     } else {
         conn.query_row(
             "SELECT created_at FROM messages
-             WHERE session_id = ?1 AND role = 'user' AND created_at < ?2
+             WHERE session_id = ?1 AND role = 'user' AND created_at <= ?2 AND id != ?3
              ORDER BY created_at DESC LIMIT 1",
-            params![session_id, target_created_at],
+            params![session_id, target_created_at, message_id],
             |r| r.get(0),
         )
         .unwrap_or(target_created_at)

@@ -294,6 +294,7 @@ async fn drive(
         chat: chat_request,
         source: context.query_source,
         max_turns,
+        max_retries: None,
         initial_attachments,
         tool_anchor,
         on_text_delta,

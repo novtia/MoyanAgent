@@ -23,6 +23,9 @@ pub fn update_settings(
     state.tools.set_global_deny(updated.disabled_tools.clone());
     crate::ai::agent::tools::set_tool_description_overrides(updated.tool_descriptions.clone());
     crate::ai::agent::tools::set_forced_tools(updated.forced_tools.clone());
+    crate::ai::agent::exec::engine::set_agent_loop_max_retries(
+        updated.agent_loop_max_retries.max(0) as u32,
+    );
     crate::ai::http_proxy::set_from_settings(&updated);
     super::agents::sync_agent_registry(&state.agent_registry, &conn)?;
     Ok(updated)

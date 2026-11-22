@@ -825,12 +825,17 @@ pub async fn regenerate_image(
         return Err(AppError::Invalid("用户消息没有提示词或媒体附件".into()));
     }
 
-    // Reclaim writes from a previous attempt at this same turn that never got
-    // an assistant message (cancelled, crashed, or errored before the partial
-    // snapshot could be saved). Deleting the later messages does not cover
-    // them because they are still bound only to this user message.
+    // Reclaim writes and trace entries from any previous attempt at this same
+    // turn (including cancelled / errored runs or resends where no assistant
+    // message was deleted). Deleting later messages alone does not cover them
+    // because they are bound to this user message.
     {
         let conn = state.conn()?;
+        state.session_logger.rollback_from_message(
+            &conn,
+            &req.session_id,
+            &req.user_message_id,
+        );
         crate::app::messages::rollback_workspace_from_message(
             &conn,
             &req.session_id,

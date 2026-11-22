@@ -46,14 +46,24 @@ export function SystemSection() {
   const [maxResults, setMaxResults] = useState(
     String(settings?.web_search_max_results ?? 5),
   );
+  const [agentLoopMaxRetries, setAgentLoopMaxRetries] = useState(
+    String(settings?.agent_loop_max_retries ?? 3),
+  );
   const [proxyUrl, setProxyUrl] = useState(settings?.http_proxy_url ?? "");
   const [proxyError, setProxyError] = useState<string | null>(null);
   const maxResultsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const agentLoopRetriesTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const proxyUrlTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setMaxResults(String(settings?.web_search_max_results ?? 5));
   }, [settings?.web_search_max_results]);
+
+  useEffect(() => {
+    setAgentLoopMaxRetries(String(settings?.agent_loop_max_retries ?? 3));
+  }, [settings?.agent_loop_max_retries]);
 
   useEffect(() => {
     setProxyUrl(settings?.http_proxy_url ?? "");
@@ -62,6 +72,9 @@ export function SystemSection() {
   useEffect(
     () => () => {
       if (maxResultsTimer.current) clearTimeout(maxResultsTimer.current);
+      if (agentLoopRetriesTimer.current) {
+        clearTimeout(agentLoopRetriesTimer.current);
+      }
       if (proxyUrlTimer.current) clearTimeout(proxyUrlTimer.current);
     },
     [],
@@ -75,6 +88,36 @@ export function SystemSection() {
     maxResultsTimer.current = setTimeout(() => {
       void update({ web_search_max_results: Math.min(n, 20) });
     }, SAVE_DEBOUNCE_MS);
+  };
+
+  const onAgentLoopMaxRetriesChange = (value: string) => {
+    setAgentLoopMaxRetries(value);
+    const n = Number.parseInt(value, 10);
+    if (!Number.isFinite(n) || n < 0) return;
+    const clamped = Math.min(n, 20);
+    if (agentLoopRetriesTimer.current) {
+      clearTimeout(agentLoopRetriesTimer.current);
+    }
+    agentLoopRetriesTimer.current = setTimeout(() => {
+      void update({ agent_loop_max_retries: clamped });
+    }, SAVE_DEBOUNCE_MS);
+  };
+
+  const onAgentLoopMaxRetriesBlur = () => {
+    const n = Number.parseInt(agentLoopMaxRetries, 10);
+    if (!Number.isFinite(n) || n < 0) {
+      setAgentLoopMaxRetries(String(settings?.agent_loop_max_retries ?? 3));
+      return;
+    }
+    const clamped = Math.min(n, 20);
+    setAgentLoopMaxRetries(String(clamped));
+    if (agentLoopRetriesTimer.current) {
+      clearTimeout(agentLoopRetriesTimer.current);
+      agentLoopRetriesTimer.current = null;
+    }
+    if (clamped !== (settings?.agent_loop_max_retries ?? 3)) {
+      void update({ agent_loop_max_retries: clamped });
+    }
   };
 
   const onProxyUrlChange = (value: string) => {
@@ -176,6 +219,31 @@ export function SystemSection() {
               className="settings-number"
               value={maxResults}
               onChange={(e) => onMaxResultsChange(e.target.value)}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="settings-card">
+        <div className="settings-row">
+          <div className="settings-row-main">
+            <div className="settings-row-title">
+              {t("settings.system.agentLoopMaxRetriesTitle")}
+            </div>
+            <div className="settings-row-desc">
+              {t("settings.system.agentLoopMaxRetriesDesc")}
+            </div>
+          </div>
+          <div className="settings-row-control">
+            <input
+              type="number"
+              min={0}
+              max={20}
+              className="settings-number"
+              aria-label={t("settings.system.agentLoopMaxRetriesTitle")}
+              value={agentLoopMaxRetries}
+              onChange={(e) => onAgentLoopMaxRetriesChange(e.target.value)}
+              onBlur={onAgentLoopMaxRetriesBlur}
             />
           </div>
         </div>

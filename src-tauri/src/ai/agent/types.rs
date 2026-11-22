@@ -137,6 +137,13 @@ pub enum MessageEvent {
         id: MessageId,
         note: String,
     },
+    Retry {
+        id: MessageId,
+        attempt: u32,
+        max_retries: u32,
+        delay_ms: u64,
+        reason: String,
+    },
 }
 
 /// Token accounting for one query / agent run.

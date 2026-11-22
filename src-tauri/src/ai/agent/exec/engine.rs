@@ -18,7 +18,7 @@
 //! [`ProviderEngine::run_turn`] return type is the single seam that
 //! needs to forward `tool_use` requests upward.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use crate::ai::agent::core::attachment::{Attachment, AttachmentKind};
@@ -129,6 +129,30 @@ impl ProviderEngine {
 /// re-sends the entire prompt.
 const DEFAULT_MAX_TURNS: u32 = 60;
 
+/// Live global retry limit for HTTP 429 / rate-limit errors inside the agent
+/// loop. Kept in sync with `Settings::agent_loop_max_retries`.
+static AGENT_LOOP_MAX_RETRIES: AtomicU32 =
+    AtomicU32::new(crate::data::settings::DEFAULT_AGENT_LOOP_MAX_RETRIES as u32);
+
+/// Update the live agent-loop 429 retry limit from Settings.
+pub fn set_agent_loop_max_retries(retries: u32) {
+    let clamped = retries.min(crate::data::settings::MAX_AGENT_LOOP_MAX_RETRIES as u32);
+    AGENT_LOOP_MAX_RETRIES.store(clamped, Ordering::Relaxed);
+}
+
+/// Current live agent-loop 429 retry limit.
+pub fn agent_loop_max_retries() -> u32 {
+    AGENT_LOOP_MAX_RETRIES.load(Ordering::Relaxed)
+}
+
+/// Exponential backoff for 429 / rate-limit retries inside the agent loop:
+/// 2s, 4s, 8s, 16s, 30s, 30s, …
+fn rate_limit_retry_delay(retry_attempt: u32) -> std::time::Duration {
+    let exp = retry_attempt.saturating_sub(1).min(4);
+    let ms = (2_000u64.saturating_mul(1u64 << exp)).min(30_000);
+    std::time::Duration::from_millis(ms)
+}
+
 /// Concrete [`QueryEngine`] backed by [`ProviderEngine`].
 #[derive(Clone)]
 pub struct ProviderQueryEngine {
@@ -175,6 +199,7 @@ impl QueryEngine for ProviderQueryEngine {
                 mut chat,
                 source: _,
                 max_turns,
+                max_retries,
                 initial_attachments,
                 tool_anchor,
                 on_text_delta,
@@ -274,25 +299,62 @@ impl QueryEngine for ProviderQueryEngine {
                 // during the turn — we replay the response's
                 // text/thinking once afterwards so the host's block
                 // buffer still matches what the model produced.
-                let llm_started_at = now_epoch_ms();
-                let llm_timer = std::time::Instant::now();
-                let (turn_delta, tracker) = match on_text_delta.as_ref() {
-                    Some(cb) => {
-                        let (wrapped, t) = wrap_tracking_callback(cb.clone());
-                        (Some(wrapped), Some(t))
-                    }
-                    None => (None, None),
-                };
+                let retry_limit = max_retries.unwrap_or_else(agent_loop_max_retries);
+                let mut retry_attempt: u32 = 0;
+                let (turn, tracker, llm_started_at, llm_timer) = loop {
+                    let llm_started_at = now_epoch_ms();
+                    let llm_timer = std::time::Instant::now();
+                    let (turn_delta, tracker) = match on_text_delta.as_ref() {
+                        Some(cb) => {
+                            let (wrapped, t) = wrap_tracking_callback(cb.clone());
+                            (Some(wrapped), Some(t))
+                        }
+                        None => (None, None),
+                    };
 
-                let turn_result = tokio::select! {
-                    t = self.provider.run_turn(chat.clone(), turn_delta) => t,
-                    _ = context.abort.wait_aborted() => {
-                        return Err(AppError::Canceled);
+                    let turn_result = tokio::select! {
+                        t = self.provider.run_turn(chat.clone(), turn_delta) => t,
+                        _ = context.abort.wait_aborted() => {
+                            return Err(AppError::Canceled);
+                        }
+                    };
+                    match turn_result {
+                        Ok(t) => break (t, tracker, llm_started_at, llm_timer),
+                        Err(e) => {
+                            let streamed_any = tracker.as_ref().is_some_and(|t| {
+                                t.text_chars.load(Ordering::Relaxed) > 0
+                                    || t.thinking_chars.load(Ordering::Relaxed) > 0
+                            });
+                            if !streamed_any
+                                && retry_attempt < retry_limit
+                                && crate::error::error_is_rate_limited(&e)
+                            {
+                                retry_attempt += 1;
+                                let delay = rate_limit_retry_delay(retry_attempt);
+                                eprintln!(
+                                    "[agent-loop] turn {turn_count} hit 429/rate-limit, retrying {retry_attempt}/{retry_limit} in {}ms: {e}",
+                                    delay.as_millis()
+                                );
+                                let retry_event = MessageEvent::Retry {
+                                    id: MessageId::new(),
+                                    attempt: retry_attempt,
+                                    max_retries: retry_limit,
+                                    delay_ms: delay.as_millis() as u64,
+                                    reason: e.to_string(),
+                                };
+                                fire_tool_event(&on_tool_event, &retry_event);
+                                events.push(retry_event);
+                                tokio::select! {
+                                    _ = tokio::time::sleep(delay) => {}
+                                    _ = context.abort.wait_aborted() => {
+                                        return Err(AppError::Canceled);
+                                    }
+                                }
+                                continue;
+                            }
+                            return Err(e);
+                        }
                     }
-                };
-                let turn = match turn_result {
-                    Ok(t) => t,
-                    Err(e) => return Err(e),
                 };
                 let EngineTurn {
                     response,
@@ -1123,5 +1185,34 @@ mod turn_limit_tests {
             turn_limit_notice(5, Some("   \n")),
             turn_limit_notice(5, None)
         );
+    }
+}
+
+#[cfg(test)]
+mod rate_limit_retry_tests {
+    use super::{agent_loop_max_retries, rate_limit_retry_delay, set_agent_loop_max_retries};
+    use std::time::Duration;
+
+    #[test]
+    fn backoff_grows_exponentially_and_caps_at_30s() {
+        assert_eq!(rate_limit_retry_delay(1), Duration::from_secs(2));
+        assert_eq!(rate_limit_retry_delay(2), Duration::from_secs(4));
+        assert_eq!(rate_limit_retry_delay(3), Duration::from_secs(8));
+        assert_eq!(rate_limit_retry_delay(4), Duration::from_secs(16));
+        assert_eq!(rate_limit_retry_delay(5), Duration::from_secs(30));
+        assert_eq!(rate_limit_retry_delay(10), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn setter_clamps_to_configured_max() {
+        let prev = agent_loop_max_retries();
+        set_agent_loop_max_retries(0);
+        assert_eq!(agent_loop_max_retries(), 0);
+        set_agent_loop_max_retries(999);
+        assert_eq!(
+            agent_loop_max_retries(),
+            crate::data::settings::MAX_AGENT_LOOP_MAX_RETRIES as u32
+        );
+        set_agent_loop_max_retries(prev);
     }
 }

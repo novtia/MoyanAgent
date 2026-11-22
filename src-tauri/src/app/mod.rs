@@ -177,6 +177,9 @@ pub fn run() {
                         s.tool_descriptions.clone(),
                     );
                     crate::ai::agent::tools::set_forced_tools(s.forced_tools.clone());
+                    crate::ai::agent::exec::engine::set_agent_loop_max_retries(
+                        s.agent_loop_max_retries.max(0) as u32,
+                    );
                     crate::ai::http_proxy::set_from_settings(&s);
                 }
                 let _ = agents::sync_agent_registry(&registry, &conn);

@@ -545,16 +545,97 @@ pub(crate) fn tool_event_callback(
                 }),
             );
         }
+        MessageEvent::Retry {
+            attempt,
+            max_retries,
+            delay_ms,
+            reason,
+            ..
+        } => {
+            if let Ok(mut g) = blocks.lock() {
+                upsert_retry_block(&mut g, *attempt, *max_retries, *delay_ms, reason);
+            }
+            let _ = app.emit(
+                "gen://stream",
+                serde_json::json!({
+                    "session_id": &session_id,
+                    "request_message_id": &request_message_id,
+                    "retry": {
+                        "attempt": attempt,
+                        "max_retries": max_retries,
+                        "delay_ms": delay_ms,
+                        "reason": reason,
+                    },
+                }),
+            );
+            let _ = app.emit(
+                "gen://status",
+                serde_json::json!({
+                    "session_id": &session_id,
+                    "phase": "retrying",
+                    "attempt": attempt,
+                    "max_retries": max_retries,
+                    "delay_ms": delay_ms,
+                }),
+            );
+        }
         // Other variants (Assistant text, User, Progress) aren't
         // structural tool events — ignore them here.
         _ => {}
     })
 }
 
+/// Insert or update the trailing `retry` block in the shared stream buffer so
+/// consecutive retries (1/3 -> 2/3 -> 3/3) update in place rather than stacking.
+fn upsert_retry_block(
+    blocks: &mut Vec<serde_json::Value>,
+    attempt: u32,
+    max_retries: u32,
+    delay_ms: u64,
+    reason: &str,
+) {
+    let entry = serde_json::json!({
+        "type": "retry",
+        "attempt": attempt,
+        "max_retries": max_retries,
+        "delay_ms": delay_ms,
+        "reason": reason,
+    });
+    if blocks
+        .last()
+        .and_then(|b| b.get("type"))
+        .and_then(|v| v.as_str())
+        == Some("retry")
+    {
+        if let Some(last) = blocks.last_mut() {
+            *last = entry;
+            return;
+        }
+    }
+    blocks.push(entry);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn upsert_retry_block_updates_consecutive_attempts_in_place() {
+        let mut blocks = vec![json!({ "type": "tool_use", "id": "t1" })];
+        upsert_retry_block(&mut blocks, 1, 3, 2000, "HTTP 429");
+        upsert_retry_block(&mut blocks, 2, 3, 4000, "HTTP 429");
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[1]["type"], "retry");
+        assert_eq!(blocks[1]["attempt"], 2);
+        assert_eq!(blocks[1]["max_retries"], 3);
+        assert_eq!(blocks[1]["delay_ms"], 4000);
+
+        blocks.push(json!({ "type": "text", "content": "ok" }));
+        upsert_retry_block(&mut blocks, 1, 3, 2000, "HTTP 429");
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks[3]["attempt"], 1);
+    }
 
     /// A tool call that was still running at the interrupt must be stored as
     /// finished-with-error; otherwise the reloaded session shows a card that

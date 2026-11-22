@@ -3,6 +3,7 @@ import type { AssistantBlock } from "../../../types";
 import { highlightQuery } from "../../../utils/highlightQuery";
 import { AgentStageDivider } from "./AgentStageDivider";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { RetryNoticeRow } from "./RetryNoticeRow";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { TodoMasterView } from "./TodoMasterView";
 import { resolveToolComponent } from "./registry";
@@ -85,6 +86,18 @@ export function AssistantContent({
             <AgentStageDivider
               key={`stage:${i}`}
               label={block.name || block.agent_type}
+            />
+          );
+        }
+        if (block.type === "retry") {
+          return (
+            <RetryNoticeRow
+              key={`retry:${i}`}
+              attempt={block.attempt}
+              maxRetries={block.max_retries}
+              delayMs={block.delay_ms}
+              reason={block.reason}
+              active={isStreaming && i === blocks.length - 1}
             />
           );
         }

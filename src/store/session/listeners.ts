@@ -37,7 +37,13 @@ export function ensureGenerationStreamListener() {
       const state = useSession.getState();
       const next = { ...state.generationPhaseBySession };
       if (phase === "response") delete next[sessionId];
-      else if (event.payload?.elapsed_secs !== undefined && (phase === "batch_queued" || phase === "batch_running")) {
+      else if (
+        phase === "retrying" &&
+        event.payload?.attempt !== undefined &&
+        event.payload?.max_retries !== undefined
+      ) {
+        next[sessionId] = `retrying:${event.payload.attempt}:${event.payload.max_retries}`;
+      } else if (event.payload?.elapsed_secs !== undefined && (phase === "batch_queued" || phase === "batch_running")) {
         next[sessionId] = `${phase}:${event.payload.elapsed_secs}`;
       } else {
         next[sessionId] = phase;
@@ -58,12 +64,22 @@ export function ensureGenerationStreamListener() {
       const textDelta = payload.text_delta ?? payload.delta ?? "";
       const thinkingDelta = payload.thinking_delta ?? "";
       const stage = payload.stage;
+      const retry = payload.retry ?? null;
       const toolCallDelta = payload.tool_call_delta ?? null;
       if (
         !sessionId ||
-        (!textDelta && !thinkingDelta && !stage && !toolCallDelta)
+        (!textDelta && !thinkingDelta && !stage && !retry && !toolCallDelta)
       )
         return;
+
+      if (textDelta || thinkingDelta || toolCallDelta) {
+        const curPhase = useSession.getState().generationPhaseBySession[sessionId];
+        if (curPhase?.startsWith("retrying:")) {
+          const nextPhase = { ...useSession.getState().generationPhaseBySession };
+          delete nextPhase[sessionId];
+          useSession.setState({ generationPhaseBySession: nextPhase });
+        }
+      }
 
       const requestId = payload.request_message_id || sessionId;
       // A buffer left over from a previous request (e.g. a generation that
@@ -83,6 +99,21 @@ export function ensureGenerationStreamListener() {
           name: stage.name,
           index: stage.index,
         });
+      }
+      if (retry) {
+        const retryBlock = {
+          type: "retry" as const,
+          attempt: retry.attempt,
+          max_retries: retry.max_retries,
+          delay_ms: retry.delay_ms,
+          reason: retry.reason,
+        };
+        const last = nextBlocks[nextBlocks.length - 1];
+        if (last && last.type === "retry") {
+          nextBlocks[nextBlocks.length - 1] = retryBlock;
+        } else {
+          nextBlocks.push(retryBlock);
+        }
       }
       if (thinkingDelta) appendDelta(nextBlocks, "thinking", thinkingDelta);
       if (textDelta) appendDelta(nextBlocks, "text", textDelta);
@@ -104,6 +135,12 @@ export function ensureGenerationStreamListener() {
       const sessionId = payload.session_id;
       if (!sessionId) return;
       if (cancellingSessions.has(sessionId)) return;
+      const curPhase = useSession.getState().generationPhaseBySession[sessionId];
+      if (curPhase?.startsWith("retrying:")) {
+        const nextPhase = { ...useSession.getState().generationPhaseBySession };
+        delete nextPhase[sessionId];
+        useSession.setState({ generationPhaseBySession: nextPhase });
+      }
       const requestId = payload.request_message_id || sessionId;
       // Same stale-buffer guard as the gen://stream listener above.
       const existing = streamingBuffers.get(sessionId);

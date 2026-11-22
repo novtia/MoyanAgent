@@ -153,20 +153,28 @@ export function ChatView({
                 : null;
               const batchPhase = batchParts?.[0];
               const batchElapsed = batchParts?.[1];
+              const retryParts = generationPhase?.startsWith("retrying:")
+                ? generationPhase.split(":")
+                : null;
               const statusLabel =
-                busy && generationPhase === "polling"
-                  ? t("chat.statusPolling")
-                  : busy && batchPhase === "batch_running"
-                    ? t("chat.statusBatchRunning", {
-                        elapsed: batchElapsed ? `${batchElapsed}s` : "",
-                      }).trim()
-                    : busy && batchPhase === "batch_queued"
-                      ? t("chat.statusBatchQueued", {
+                busy && retryParts
+                  ? t("chat.statusRetrying", {
+                      attempt: retryParts[1],
+                      max: retryParts[2],
+                    })
+                  : busy && generationPhase === "polling"
+                    ? t("chat.statusPolling")
+                    : busy && batchPhase === "batch_running"
+                      ? t("chat.statusBatchRunning", {
                           elapsed: batchElapsed ? `${batchElapsed}s` : "",
                         }).trim()
-                      : busy
-                        ? t("chat.statusGenerating")
-                        : t("chat.statusReady");
+                      : busy && batchPhase === "batch_queued"
+                        ? t("chat.statusBatchQueued", {
+                            elapsed: batchElapsed ? `${batchElapsed}s` : "",
+                          }).trim()
+                        : busy
+                          ? t("chat.statusGenerating")
+                          : t("chat.statusReady");
               return (
                 <span className={`chat-status ${busy ? "busy" : ""}`} title={statusLabel}>
                   <span className="dot" />

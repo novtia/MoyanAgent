@@ -800,6 +800,22 @@ export function providerSdkLabel(
   );
 }
 
+export function isProviderConfigured(
+  provider:
+    | Pick<ModelProvider, "enabled" | "sdk" | "endpoint" | "api_key" | "models">
+    | undefined,
+): boolean {
+  if (!provider || provider.enabled === false) return false;
+  if (!provider.endpoint?.trim()) return false;
+  if (
+    normalizeProviderSdk(provider.sdk) !== "local" &&
+    !provider.api_key?.trim()
+  ) {
+    return false;
+  }
+  return provider.models.length > 0;
+}
+
 export interface ProviderValidationErrors {
   sdk?: string;
   endpoint?: string;

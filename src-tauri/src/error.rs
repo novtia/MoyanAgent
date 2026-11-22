@@ -238,6 +238,76 @@ pub fn error_context_overflow_report(err: &AppError) -> Option<ContextOverflowRe
     parse_context_overflow(&err.to_string())
 }
 
+/// Substrings (matched case-insensitively) that identify an upstream HTTP 429 /
+/// rate-limit / resource-exhausted rejection.
+const RATE_LIMIT_MARKERS: &[&str] = &[
+    "http 429",
+    "status=429",
+    "error 429",
+    "too many requests",
+    "resource exhausted",
+    "resource_exhausted",
+    "rate limit",
+    "rate_limit",
+];
+
+/// Whether a rendered error message indicates an HTTP 429 / rate-limit failure.
+pub fn msg_indicates_rate_limit(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    RATE_LIMIT_MARKERS.iter().any(|marker| m.contains(marker))
+}
+
+/// Whether an [`AppError`] represents an upstream HTTP 429 / rate-limit error
+/// that is safe to retry inside the agent loop.
+pub fn error_is_rate_limited(err: &AppError) -> bool {
+    if !matches!(
+        err,
+        AppError::Upstream(_) | AppError::Http(_) | AppError::Other(_)
+    ) {
+        return false;
+    }
+    msg_indicates_rate_limit(&err.to_string())
+}
+
+#[cfg(test)]
+mod rate_limit_tests {
+    use super::*;
+
+    #[test]
+    fn vertex_429_is_detected() {
+        let err = AppError::Upstream(
+            "Vertex AI (vertex) HTTP 429 Too Many Requests: Resource exhausted. \
+             Please try again later. Please refer to \
+             https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429 \
+             for more details."
+                .into(),
+        );
+        assert!(error_is_rate_limited(&err));
+    }
+
+    #[test]
+    fn openrouter_and_http_429_are_detected() {
+        assert!(error_is_rate_limited(&AppError::Upstream(
+            "upstream error 429: rate limit exceeded".into()
+        )));
+        assert!(error_is_rate_limited(&AppError::Http(
+            "request failed [status=429]".into()
+        )));
+    }
+
+    #[test]
+    fn non_rate_limit_errors_are_not_detected() {
+        assert!(!error_is_rate_limited(&AppError::Canceled));
+        assert!(!error_is_rate_limited(&AppError::Invalid("429".into())));
+        assert!(!error_is_rate_limited(&AppError::Upstream(
+            "HTTP 401 Unauthorized: invalid api key".into()
+        )));
+        assert!(!error_is_rate_limited(&AppError::Upstream(
+            "HTTP 400 Bad Request: maximum context length exceeded".into()
+        )));
+    }
+}
+
 #[cfg(test)]
 mod context_overflow_tests {
     use super::*;

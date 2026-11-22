@@ -135,6 +135,7 @@ const enUS: Resource = {
     deleteSession: "Delete chat",
     deleteSessionConfirm: "Delete this chat \"{{title}}\"?",
     statusGenerating: "Generating",
+    statusRetrying: "Retrying 429 ({{attempt}}/{{max}})",
     statusPolling: "Generating video",
     statusBatchQueued: "Batch queued {{elapsed}}",
     statusBatchRunning: "Batch running {{elapsed}}",
@@ -763,6 +764,9 @@ const enUS: Resource = {
     stampFailure: "failure · {{time}}",
     stampGenerating: "generating · {{time}}",
     generatingText: "Generating — may take 30–120 seconds…",
+    retryWaitingWithDelay: "Hit HTTP 429 rate limit, retrying in {{seconds}}s (attempt {{attempt}})…",
+    retryWaiting: "Hit HTTP 429 rate limit, retrying (attempt {{attempt}})…",
+    retryDone: "Auto-retried after HTTP 429",
     actionCopy: "Copy",
     actionEdit: "Edit",
     actionResend: "Resend",
@@ -1329,6 +1333,9 @@ const enUS: Resource = {
       vertexSafetyLow: "Block most",
     },
     system: {
+      agentLoopMaxRetriesTitle: "Agent loop 429 retries",
+      agentLoopMaxRetriesDesc:
+        "Max automatic backoff retries when a turn inside the agent loop hits HTTP 429 / rate limits (0–20, 0 disables)",
       notifySoundTitle: "Notification sound",
       notifySoundDesc: "Play a chime when the assistant finishes replying",
       proxyTitle: "Network proxy",

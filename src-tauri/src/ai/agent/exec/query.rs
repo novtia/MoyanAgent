@@ -30,6 +30,9 @@ pub struct QueryRequest {
     pub chat: ChatRequest,
     pub source: QuerySource,
     pub max_turns: Option<u32>,
+    /// Optional per-request override for agent-loop 429 retries.
+    /// `None` uses the live value configured in Settings.
+    pub max_retries: Option<u32>,
     pub initial_attachments: Vec<Attachment>,
     /// Names from [`crate::ai::agent::config::definition::AgentDefinition::anchor_tools`].
     /// Non-empty ⇒ the first request advertises only these tools and the
@@ -51,6 +54,7 @@ impl QueryRequest {
             chat,
             source,
             max_turns: None,
+            max_retries: None,
             initial_attachments: Vec::new(),
             tool_anchor: Vec::new(),
             on_text_delta: None,

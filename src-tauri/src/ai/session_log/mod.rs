@@ -512,4 +512,48 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn rollback_by_user_correlation_id_clears_previous_retry_attempts() {
+        let dir = std::env::temp_dir().join(format!("moyan_trace_rollback_{}", Ulid::new()));
+        let logger = SessionLogger::new(dir.clone());
+        let turn1 = LogContext {
+            session_id: Some("sess_1".into()),
+            correlation_id: Some("u1".into()),
+            agent_id: None,
+            agent_type: Some("general-purpose".into()),
+        };
+        let turn2 = LogContext {
+            session_id: Some("sess_1".into()),
+            correlation_id: Some("u2".into()),
+            agent_id: None,
+            agent_type: Some("general-purpose".into()),
+        };
+
+        logger.log_settings(&turn1, json!({ "model": "m1" }));
+        logger.log_user_message(&turn1, "turn 1", vec![]);
+        logger.log_settings(&turn2, json!({ "model": "m1" }));
+        logger.log_user_message(&turn2, "turn 2 attempt 1", vec![]);
+        logger.log_error(&turn2, "HTTP 429");
+
+        let scope = TokenLogRollbackScope {
+            pivot_created_at: i64::MAX,
+            user_message_ids: HashSet::from(["u2".into()]),
+            assistant_message_ids: HashSet::new(),
+        };
+        rewrite_session_json(&dir, "sess_1", |entry| !should_drop_entry(entry, &scope)).unwrap();
+
+        logger.log_settings(&turn2, json!({ "model": "m1", "regenerate": true }));
+        logger.log_user_message(&turn2, "turn 2 attempt 2", vec![]);
+
+        let entries = logger.read_session("sess_1");
+        assert_eq!(entries.len(), 4);
+        assert_eq!(entries[0].correlation_id.as_deref(), Some("u1"));
+        assert_eq!(entries[1].correlation_id.as_deref(), Some("u1"));
+        assert_eq!(entries[2].correlation_id.as_deref(), Some("u2"));
+        assert_eq!(entries[3].correlation_id.as_deref(), Some("u2"));
+        assert_eq!(entries[3].data["text"], json!("turn 2 attempt 2"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

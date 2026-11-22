@@ -47,7 +47,7 @@ export function appendDelta(
     let segmentStart = 0;
     for (let i = blocks.length - 1; i >= 0; i--) {
       const t = blocks[i].type;
-      if (t === "tool_use" || t === "agent_stage") {
+      if (t === "tool_use" || t === "agent_stage" || t === "retry") {
         segmentStart = i + 1;
         break;
       }

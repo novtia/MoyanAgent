@@ -13,6 +13,7 @@ import { toast, dialog } from "../../../ui";
 import {
   getProviderSdkConfig,
   isBuiltinProvider,
+  isProviderConfigured,
   makeModel,
   makeProvider,
   normalizeProviderSdk,
@@ -207,10 +208,30 @@ export function useModelService() {
               }
             : provider,
         );
-        await useSettings.getState().update({
-          model_services: normalizeProviders(next),
-          active_provider_id: id,
-        });
+        const normalizedNext = normalizeProviders(next);
+        const updatedProvider = normalizedNext.find((p) => p.id === id);
+        const currentSettings = useSettings.getState().settings;
+        const currentActive = normalizedNext.find(
+          (p) => p.id === currentSettings?.active_provider_id,
+        );
+        const patch: {
+          model_services: ModelProvider[];
+          active_provider_id?: string;
+          model?: string;
+        } = {
+          model_services: normalizedNext,
+        };
+        if (
+          isProviderConfigured(updatedProvider) &&
+          !isProviderConfigured(currentActive)
+        ) {
+          patch.active_provider_id = id;
+          const curModel = currentSettings?.model ?? "";
+          patch.model = updatedProvider!.models.some((m) => m.id === curModel)
+            ? curModel
+            : updatedProvider!.models[0]?.id ?? "";
+        }
+        await useSettings.getState().update(patch);
       })();
     }, 480);
     return () => window.clearTimeout(timer);
@@ -238,7 +259,7 @@ export function useModelService() {
 
   const selectProvider = async (provider: ModelProvider) => {
     setSelectedProviderId(provider.id);
-    if (provider.enabled === false) return;
+    if (!isProviderConfigured(provider)) return;
     const curModel = settings?.model ?? "";
     const nextModel = provider.models.some((m) => m.id === curModel)
       ? curModel
@@ -288,6 +309,7 @@ export function useModelService() {
     const extra: { active_provider_id?: string; model?: string } = {};
     if (!enabled && providerId === activeProviderId) {
       const fallback =
+        next.find((p) => p.id !== providerId && isProviderConfigured(p)) ??
         next.find((p) => p.enabled !== false && p.id !== providerId) ??
         next.find((p) => p.enabled !== false);
       if (fallback) {
@@ -328,7 +350,10 @@ export function useModelService() {
     if (!ok) return;
 
     const next = providers.filter((item) => item.id !== provider.id);
-    const enabledFallback = next.find((item) => item.enabled !== false) ?? null;
+    const enabledFallback =
+      next.find((item) => isProviderConfigured(item)) ??
+      next.find((item) => item.enabled !== false) ??
+      null;
     const patch: { active_provider_id?: string; model?: string } = {};
 
     if (provider.id === activeProviderId) {
@@ -389,10 +414,14 @@ export function useModelService() {
       },
       sdkOptions,
     );
-    await persistProviders([...providers, provider], {
-      active_provider_id: provider.id,
-      model: provider.models[0]?.id ?? "",
-    });
+    const currentActive = providers.find((p) => p.id === activeProviderId);
+    const patch = isProviderConfigured(currentActive)
+      ? {}
+      : {
+          active_provider_id: provider.id,
+          model: provider.models[0]?.id ?? "",
+        };
+    await persistProviders([...providers, provider], patch);
     setSelectedProviderId(provider.id);
     setAddProviderOpen(false);
   };

@@ -201,6 +201,8 @@ export interface Settings {
   http_proxy_enabled: boolean;
   /** Proxy URL, e.g. `http://127.0.0.1:7890` or `socks5://127.0.0.1:7891`. */
   http_proxy_url: string;
+  /** Max retries inside the agent loop on HTTP 429 / rate-limit errors (0–20). */
+  agent_loop_max_retries: number;
   /** NovelAI image-generation tool credentials and default parameters. */
   novelai: NovelAiSettings;
   /** Reader rewrite / expand prompts and sampling parameters. */
@@ -325,6 +327,7 @@ export interface SettingsPatch {
   reader_paragraph_spacing?: boolean;
   http_proxy_enabled?: boolean;
   http_proxy_url?: string;
+  agent_loop_max_retries?: number;
   novelai?: NovelAiSettings;
   rewrite?: RewriteSettings;
 }
@@ -650,6 +653,17 @@ export type AssistantBlock =
       agent_type: string;
       name?: string;
       index?: number;
+    }
+  | {
+      /**
+       * Emitted when a turn inside the agent loop hits HTTP 429 / rate limits
+       * and automatically backs off to retry.
+       */
+      type: "retry";
+      attempt: number;
+      max_retries: number;
+      delay_ms?: number;
+      reason?: string;
     };
 
 export interface MessageAbs {

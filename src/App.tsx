@@ -7,6 +7,7 @@ import { ImagePreview } from "./components/media/ImagePreview";
 import { VideoPreview } from "./components/media/VideoPreview";
 import { SettingsView } from "./components/settings";
 import type { SettingsTab, ThemeMode } from "./components/settings";
+import { isProviderConfigured } from "./components/settings/llm/modelServices";
 import { UsageView } from "./components/usage";
 import { PluginsView } from "./components/plugins";
 import { ContextMenuHost } from "./components/context-menu";
@@ -157,19 +158,11 @@ export default function App() {
     // (see session store `switchTo`), not driven by the global default here.
   }, [settings, setAspectRatio, setImageSize]);
 
-  const activeProvider = settings?.model_services?.find(
-    (provider) => provider.id === settings.active_provider_id,
-  );
-  const activeModel =
-    activeProvider && activeProvider.enabled !== false
-      ? activeProvider.models.find((model) => model.id === settings?.model)
-      : undefined;
   const needsSetup =
-    !activeProvider ||
-    activeProvider.enabled === false ||
-    !activeProvider.api_key?.trim() ||
-    !activeProvider.endpoint?.trim() ||
-    !activeModel;
+    settings !== null &&
+    !(settings.model_services ?? []).some((provider) =>
+      isProviderConfigured(provider),
+    );
   const closeDrawer = () => setMobileDrawerOpen(false);
   const openChat = () => {
     window.location.hash = "#/";
