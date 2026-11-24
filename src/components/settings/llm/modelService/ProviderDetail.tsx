@@ -200,14 +200,16 @@ export function ProviderDetail({
                   </label>
                   <select
                     value={parseVertexEndpoint(providerDraft.endpoint).location}
-                    onChange={(e) =>
-                      onDraftChange({
-                        endpoint: composeVertexEndpoint(
-                          parseVertexEndpoint(providerDraft.endpoint).project,
-                          e.target.value,
-                        ),
-                      })
-                    }
+                    onChange={(e) => {
+                      const nextEndpoint = composeVertexEndpoint(
+                        parseVertexEndpoint(providerDraft.endpoint).project,
+                        e.target.value,
+                      );
+                      onDraftChange({ endpoint: nextEndpoint });
+                      onPatchProvider(selectedProvider.id, {
+                        endpoint: nextEndpoint,
+                      });
+                    }}
                   >
                     {[
                       ...VERTEX_LOCATIONS,

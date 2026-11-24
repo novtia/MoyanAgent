@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { openContextMenu } from "../../../context-menu";
 import { useSettings } from "../../../../store/settings";
@@ -23,6 +29,88 @@ import {
   validateProviderConfig,
 } from "../modelServices";
 import { EMPTY_PROVIDER_DRAFT, type ProviderDraft } from "./types";
+
+let providerWriteChain: Promise<void> = Promise.resolve();
+
+function enqueueProviderWrite(task: () => Promise<void>): Promise<void> {
+  const run = providerWriteChain.then(task, task);
+  providerWriteChain = run.catch(() => {});
+  return run;
+}
+
+function draftFromProvider(provider: ModelProvider): ProviderDraft {
+  return {
+    name: provider.name,
+    sdk: normalizeProviderSdk(provider.sdk),
+    avatar: provider.avatar ?? "",
+    endpoint: provider.endpoint,
+    api_key: provider.api_key,
+    local_server_exe: provider.local_server_exe ?? "",
+    local_model_path: provider.local_model_path ?? "",
+    local_context_size: provider.local_context_size ?? 0,
+  };
+}
+
+function isDraftDirty(provider: ModelProvider, draft: ProviderDraft): boolean {
+  const draftSdk = normalizeProviderSdk(draft.sdk);
+  return (
+    draft.name !== provider.name ||
+    draftSdk !== normalizeProviderSdk(provider.sdk) ||
+    draft.avatar !== (provider.avatar ?? "") ||
+    draft.endpoint !== provider.endpoint ||
+    draft.api_key !== provider.api_key ||
+    (draft.local_server_exe ?? "") !== (provider.local_server_exe ?? "") ||
+    (draft.local_model_path ?? "") !== (provider.local_model_path ?? "") ||
+    (draft.local_context_size ?? 0) !== (provider.local_context_size ?? 0)
+  );
+}
+
+function applyDraftToProvider(
+  provider: ModelProvider,
+  draft: ProviderDraft,
+): ModelProvider {
+  const nextName = draft.name.trim() || provider.name;
+  return {
+    ...provider,
+    name: nextName,
+    sdk: normalizeProviderSdk(draft.sdk),
+    avatar: providerAvatar({
+      name: nextName,
+      avatar: draft.avatar,
+    }),
+    endpoint: draft.endpoint.trim(),
+    api_key: draft.api_key,
+    local_server_exe: (draft.local_server_exe ?? "").trim(),
+    local_model_path: (draft.local_model_path ?? "").trim(),
+    local_context_size: draft.local_context_size ?? 0,
+  };
+}
+
+function withAutoActivationPatch(
+  normalizedNext: ModelProvider[],
+  updatedId: string,
+  extraPatch: { active_provider_id?: string; model?: string } = {},
+): { active_provider_id?: string; model?: string } {
+  if (extraPatch.active_provider_id !== undefined) return {};
+  const updatedProvider = normalizedNext.find((p) => p.id === updatedId);
+  const currentSettings = useSettings.getState().settings;
+  const currentActive = normalizedNext.find(
+    (p) => p.id === currentSettings?.active_provider_id,
+  );
+  if (
+    isProviderConfigured(updatedProvider) &&
+    !isProviderConfigured(currentActive)
+  ) {
+    const curModel = currentSettings?.model ?? "";
+    return {
+      active_provider_id: updatedId,
+      model: updatedProvider!.models.some((m) => m.id === curModel)
+        ? curModel
+        : updatedProvider!.models[0]?.id ?? "",
+    };
+  }
+  return {};
+}
 
 export function useModelService() {
   const { t } = useTranslation();
@@ -98,21 +186,57 @@ export function useModelService() {
     );
   }, [activeProviderId, providers, selectedProviderId]);
 
+  const draftProviderIdRef = useRef<string>("");
+  const providerDraftRef = useRef<ProviderDraft>(EMPTY_PROVIDER_DRAFT);
+  const pendingDraftRef = useRef<{ id: string; draft: ProviderDraft } | null>(
+    null,
+  );
+  const debounceTimerRef = useRef<number | null>(null);
+
+  const flushPendingDraft = () => {
+    if (debounceTimerRef.current !== null) {
+      window.clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    const pending = pendingDraftRef.current;
+    pendingDraftRef.current = null;
+    if (!pending) return Promise.resolve();
+    return enqueueProviderWrite(async () => {
+      const latest = normalizeProviders(
+        useSettings.getState().settings?.model_services ?? [],
+      );
+      const prov = latest.find((p) => p.id === pending.id);
+      if (!prov || !isDraftDirty(prov, pending.draft)) return;
+      const next = latest.map((provider) =>
+        provider.id === pending.id
+          ? applyDraftToProvider(provider, pending.draft)
+          : provider,
+      );
+      const normalizedNext = normalizeProviders(next);
+      await useSettings.getState().update({
+        model_services: normalizedNext,
+        ...withAutoActivationPatch(normalizedNext, pending.id),
+      });
+    });
+  };
+
   useEffect(() => {
-    if (!selectedProvider) {
-      setProviderDraft(EMPTY_PROVIDER_DRAFT);
+    const nextId = selectedProvider?.id ?? "";
+    if (nextId !== draftProviderIdRef.current) {
+      void flushPendingDraft();
+      draftProviderIdRef.current = nextId;
+      const nextDraft = selectedProvider
+        ? draftFromProvider(selectedProvider)
+        : EMPTY_PROVIDER_DRAFT;
+      providerDraftRef.current = nextDraft;
+      setProviderDraft(nextDraft);
       return;
     }
-    setProviderDraft({
-      name: selectedProvider.name,
-      sdk: normalizeProviderSdk(selectedProvider.sdk),
-      avatar: selectedProvider.avatar ?? "",
-      endpoint: selectedProvider.endpoint,
-      api_key: selectedProvider.api_key,
-      local_server_exe: selectedProvider.local_server_exe ?? "",
-      local_model_path: selectedProvider.local_model_path ?? "",
-      local_context_size: selectedProvider.local_context_size ?? 0,
-    });
+    if (selectedProvider && !pendingDraftRef.current) {
+      const nextDraft = draftFromProvider(selectedProvider);
+      providerDraftRef.current = nextDraft;
+      setProviderDraft(nextDraft);
+    }
   }, [
     selectedProvider?.id,
     selectedProvider?.name,
@@ -124,6 +248,12 @@ export function useModelService() {
     selectedProvider?.local_model_path,
     selectedProvider?.local_context_size,
   ]);
+
+  useEffect(() => {
+    return () => {
+      void flushPendingDraft();
+    };
+  }, []);
 
   useEffect(() => {
     setAddModelOpen(false);
@@ -145,115 +275,16 @@ export function useModelService() {
     provider.name.toLowerCase().includes(providerSearch.trim().toLowerCase()),
   );
 
-  useEffect(() => {
-    if (!selectedProvider) return;
-    const draftSdk = normalizeProviderSdk(providerDraft.sdk);
-    const dirty =
-      providerDraft.name !== selectedProvider.name ||
-      draftSdk !== normalizeProviderSdk(selectedProvider.sdk) ||
-      providerDraft.avatar !== (selectedProvider.avatar ?? "") ||
-      providerDraft.endpoint !== selectedProvider.endpoint ||
-      providerDraft.api_key !== selectedProvider.api_key ||
-      (providerDraft.local_server_exe ?? "") !== (selectedProvider.local_server_exe ?? "") ||
-      (providerDraft.local_model_path ?? "") !== (selectedProvider.local_model_path ?? "") ||
-      (providerDraft.local_context_size ?? 0) !== (selectedProvider.local_context_size ?? 0);
-    if (!dirty) return;
-
-    const id = selectedProvider.id;
-    const draftSnap = {
-      name: providerDraft.name,
-      sdk: draftSdk,
-      avatar: providerDraft.avatar,
-      endpoint: providerDraft.endpoint,
-      api_key: providerDraft.api_key,
-      local_server_exe: providerDraft.local_server_exe ?? "",
-      local_model_path: providerDraft.local_model_path ?? "",
-      local_context_size: providerDraft.local_context_size ?? 0,
-    };
-
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        const latest = normalizeProviders(
-          useSettings.getState().settings?.model_services ?? [],
-        );
-        const prov = latest.find((p) => p.id === id);
-        if (!prov) return;
-        if (
-          draftSnap.name === prov.name &&
-          draftSnap.sdk === normalizeProviderSdk(prov.sdk) &&
-          draftSnap.avatar === (prov.avatar ?? "") &&
-          draftSnap.endpoint === prov.endpoint &&
-          draftSnap.api_key === prov.api_key &&
-          draftSnap.local_server_exe === (prov.local_server_exe ?? "") &&
-          draftSnap.local_model_path === (prov.local_model_path ?? "") &&
-          draftSnap.local_context_size === (prov.local_context_size ?? 0)
-        ) {
-          return;
-        }
-        const next = latest.map((provider) =>
-          provider.id === id
-            ? {
-                ...provider,
-                name: draftSnap.name.trim() || provider.name,
-                sdk: draftSnap.sdk,
-                avatar: providerAvatar({
-                  name: draftSnap.name.trim() || provider.name,
-                  avatar: draftSnap.avatar,
-                }),
-                endpoint: draftSnap.endpoint.trim(),
-                api_key: draftSnap.api_key,
-                local_server_exe: draftSnap.local_server_exe.trim(),
-                local_model_path: draftSnap.local_model_path.trim(),
-                local_context_size: draftSnap.local_context_size,
-              }
-            : provider,
-        );
-        const normalizedNext = normalizeProviders(next);
-        const updatedProvider = normalizedNext.find((p) => p.id === id);
-        const currentSettings = useSettings.getState().settings;
-        const currentActive = normalizedNext.find(
-          (p) => p.id === currentSettings?.active_provider_id,
-        );
-        const patch: {
-          model_services: ModelProvider[];
-          active_provider_id?: string;
-          model?: string;
-        } = {
-          model_services: normalizedNext,
-        };
-        if (
-          isProviderConfigured(updatedProvider) &&
-          !isProviderConfigured(currentActive)
-        ) {
-          patch.active_provider_id = id;
-          const curModel = currentSettings?.model ?? "";
-          patch.model = updatedProvider!.models.some((m) => m.id === curModel)
-            ? curModel
-            : updatedProvider!.models[0]?.id ?? "";
-        }
-        await useSettings.getState().update(patch);
-      })();
-    }, 480);
-    return () => window.clearTimeout(timer);
-  }, [
-    providerDraft.name,
-    providerDraft.sdk,
-    providerDraft.avatar,
-    providerDraft.endpoint,
-    providerDraft.api_key,
-    providerDraft.local_server_exe,
-    providerDraft.local_model_path,
-    providerDraft.local_context_size,
-    selectedProvider,
-  ]);
-
   const persistProviders = async (
     nextProviders: ModelProvider[],
     patch: { active_provider_id?: string; model?: string } = {},
   ) => {
-    await update({
-      model_services: normalizeProviders(nextProviders),
-      ...patch,
+    await flushPendingDraft();
+    await enqueueProviderWrite(async () => {
+      await useSettings.getState().update({
+        model_services: normalizeProviders(nextProviders),
+        ...patch,
+      });
     });
   };
 
@@ -303,39 +334,48 @@ export function useModelService() {
   };
 
   const setProviderEnabled = async (providerId: string, enabled: boolean) => {
-    const next = providers.map((p) =>
-      p.id === providerId ? { ...p, enabled } : p,
-    );
-    const extra: { active_provider_id?: string; model?: string } = {};
-    if (!enabled && providerId === activeProviderId) {
-      const fallback =
-        next.find((p) => p.id !== providerId && isProviderConfigured(p)) ??
-        next.find((p) => p.enabled !== false && p.id !== providerId) ??
-        next.find((p) => p.enabled !== false);
-      if (fallback) {
-        extra.active_provider_id = fallback.id;
-        const cur = settings?.model ?? "";
-        extra.model = fallback.models.some((m) => m.id === cur)
-          ? cur
-          : fallback.models[0]?.id ?? "";
-      } else {
-        extra.active_provider_id = "";
-        extra.model = "";
-      }
-    }
-    if (enabled) {
-      const activeOk =
-        !!activeProviderId &&
-        next.some((p) => p.id === activeProviderId && p.enabled !== false);
-      if (!activeOk) {
-        const p = next.find((x) => x.id === providerId);
-        if (p) {
-          extra.active_provider_id = providerId;
-          extra.model = p.models[0]?.id ?? "";
+    await flushPendingDraft();
+    await enqueueProviderWrite(async () => {
+      const currentSettings = useSettings.getState().settings;
+      const latest = normalizeProviders(currentSettings?.model_services ?? []);
+      const currentActiveId = currentSettings?.active_provider_id || "";
+      const next = latest.map((p) =>
+        p.id === providerId ? { ...p, enabled } : p,
+      );
+      const extra: { active_provider_id?: string; model?: string } = {};
+      if (!enabled && providerId === currentActiveId) {
+        const fallback =
+          next.find((p) => p.id !== providerId && isProviderConfigured(p)) ??
+          next.find((p) => p.enabled !== false && p.id !== providerId) ??
+          next.find((p) => p.enabled !== false);
+        if (fallback) {
+          extra.active_provider_id = fallback.id;
+          const cur = currentSettings?.model ?? "";
+          extra.model = fallback.models.some((m) => m.id === cur)
+            ? cur
+            : fallback.models[0]?.id ?? "";
+        } else {
+          extra.active_provider_id = "";
+          extra.model = "";
         }
       }
-    }
-    await persistProviders(next, extra);
+      if (enabled) {
+        const activeOk =
+          !!currentActiveId &&
+          next.some((p) => p.id === currentActiveId && p.enabled !== false);
+        if (!activeOk) {
+          const p = next.find((x) => x.id === providerId);
+          if (p) {
+            extra.active_provider_id = providerId;
+            extra.model = p.models[0]?.id ?? "";
+          }
+        }
+      }
+      await useSettings.getState().update({
+        model_services: normalizeProviders(next),
+        ...extra,
+      });
+    });
   };
 
   const deleteProvider = async (provider: ModelProvider) => {
@@ -431,10 +471,35 @@ export function useModelService() {
     patch: Partial<ModelProvider>,
     extraPatch: { active_provider_id?: string; model?: string } = {},
   ) => {
-    const next = providers.map((provider) =>
-      provider.id === providerId ? { ...provider, ...patch } : provider,
-    );
-    await persistProviders(next, extraPatch);
+    let pending: { id: string; draft: ProviderDraft } | null = null;
+    if (pendingDraftRef.current?.id === providerId) {
+      if (debounceTimerRef.current !== null) {
+        window.clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
+      pending = pendingDraftRef.current;
+      pendingDraftRef.current = null;
+    } else if (pendingDraftRef.current) {
+      await flushPendingDraft();
+    }
+    await enqueueProviderWrite(async () => {
+      const latest = normalizeProviders(
+        useSettings.getState().settings?.model_services ?? [],
+      );
+      const next = latest.map((provider) => {
+        if (provider.id !== providerId) return provider;
+        const base = pending
+          ? applyDraftToProvider(provider, pending.draft)
+          : provider;
+        return { ...base, ...patch };
+      });
+      const normalizedNext = normalizeProviders(next);
+      await useSettings.getState().update({
+        model_services: normalizedNext,
+        ...withAutoActivationPatch(normalizedNext, providerId, extraPatch),
+        ...extraPatch,
+      });
+    });
   };
 
   const submitNewModel = async (model: ModelServiceModel) => {
@@ -514,7 +579,17 @@ export function useModelService() {
   }, [selectedProvider?.models]);
 
   const patchDraft = (patch: Partial<ProviderDraft>) => {
-    setProviderDraft((draft) => ({ ...draft, ...patch }));
+    const nextDraft = { ...providerDraftRef.current, ...patch };
+    providerDraftRef.current = nextDraft;
+    setProviderDraft(nextDraft);
+    if (!selectedProvider) return;
+    pendingDraftRef.current = { id: selectedProvider.id, draft: nextDraft };
+    if (debounceTimerRef.current !== null) {
+      window.clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = window.setTimeout(() => {
+      void flushPendingDraft();
+    }, 480);
   };
 
   return {

@@ -515,7 +515,7 @@ pub async fn generate_image(
                         endpoint: provider.endpoint.clone(),
                         api_key: provider.api_key.clone(),
                         context_cache_enabled: false,
-                        safety_threshold: None,
+                        safety_threshold: provider.vertex_safety_threshold(),
                         paygo: provider.vertex_paygo(),
                         batch_mode: provider.vertex_batch_mode(),
                         batch_gcs_bucket: provider.batch_gcs_bucket.trim().to_string(),
