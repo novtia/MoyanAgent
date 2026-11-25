@@ -18,7 +18,7 @@ use crate::error::{AppError, AppResult};
 use super::generation::commands::finalize_generate_assistant_message;
 use super::generation::streaming::{
     new_stream_blocks, persist_streamed_assistant_snapshot, snapshot_stream_blocks,
-    stream_text_callback, tool_event_callback, StreamBlocks,
+    stream_text_callback, tool_event_callback_with_owner, StreamBlocks,
 };
 
 pub(crate) struct SettingsChatFactory {
@@ -164,6 +164,8 @@ pub(crate) struct TauriSubagentHost {
     pub(crate) session_logger: Arc<session_log::SessionLogger>,
     /// Per-child stream block buffers drained at finalize.
     pub(crate) child_blocks: Mutex<HashMap<String, StreamBlocks>>,
+    /// Temp child session id -> parent session id for workspace sync routing.
+    pub(crate) child_parents: Mutex<HashMap<String, String>>,
 }
 
 impl TauriSubagentHost {
@@ -181,10 +183,14 @@ impl TauriSubagentHost {
             token_stats,
             session_logger,
             child_blocks: Mutex::new(HashMap::new()),
+            child_parents: Mutex::new(HashMap::new()),
         }
     }
 
     pub(crate) fn take_blocks(&self, child_session_id: &str) -> Vec<serde_json::Value> {
+        if let Ok(mut p) = self.child_parents.lock() {
+            p.remove(child_session_id);
+        }
         let blocks = self
             .child_blocks
             .lock()
@@ -208,6 +214,9 @@ impl SubagentSessionHost for TauriSubagentHost {
     ) -> AppResult<SpawnedTempSession> {
         let conn = self.pool.get()?;
         let child = session::create_temp(&conn, parent_session_id, title, None)?;
+        if let Ok(mut p) = self.child_parents.lock() {
+            p.insert(child.id.clone(), parent_session_id.to_string());
+        }
         let params = serde_json::json!({ "spawned_prompt": true }).to_string();
         let user_msg = session::insert_message(
             &conn,
@@ -262,6 +271,11 @@ impl SubagentSessionHost for TauriSubagentHost {
         if let Ok(mut g) = self.child_blocks.lock() {
             g.insert(child_session_id.to_string(), blocks.clone());
         }
+        let owner_session_id = self
+            .child_parents
+            .lock()
+            .ok()
+            .and_then(|g| g.get(child_session_id).cloned());
         ChildStreamHooks {
             on_text_delta: stream_text_callback(
                 self.app.clone(),
@@ -269,9 +283,10 @@ impl SubagentSessionHost for TauriSubagentHost {
                 request_message_id.to_string(),
                 blocks.clone(),
             ),
-            on_tool_event: tool_event_callback(
+            on_tool_event: tool_event_callback_with_owner(
                 self.app.clone(),
                 child_session_id.to_string(),
+                owner_session_id,
                 request_message_id.to_string(),
                 blocks,
             ),

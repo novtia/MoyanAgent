@@ -282,9 +282,6 @@ pub(crate) fn record_tool_use_block(
     blocks.push(block);
 }
 
-/// Tools whose arguments are shown live and must survive an interrupted turn.
-const STREAMING_INPUT_TOOLS: &[&str] = &["CreateDoc", "Edit", "Write"];
-
 /// Decode a string-valued field from a possibly incomplete JSON object text.
 /// Returns the partial value when the closing quote has not arrived yet.
 fn extract_json_string_field(raw: &str, key: &str) -> Option<String> {
@@ -332,16 +329,11 @@ fn extract_json_string_field(raw: &str, key: &str) -> Option<String> {
     Some(out)
 }
 
-fn partial_tool_input(tool: &str, raw: &str) -> serde_json::Value {
-    let fields: &[&str] = match tool {
-        "CreateDoc" => &["title", "doc_type", "content"],
-        "Edit" => &["path", "old_string", "new_string"],
-        _ => &["path", "content"],
-    };
+fn partial_tool_input(fields: &[String], raw: &str) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     for f in fields {
         if let Some(v) = extract_json_string_field(raw, f) {
-            map.insert((*f).into(), serde_json::Value::String(v));
+            map.insert(f.clone(), serde_json::Value::String(v));
         }
     }
     serde_json::Value::Object(map)
@@ -354,9 +346,10 @@ fn upsert_streaming_tool_block(
     blocks: &mut Vec<serde_json::Value>,
     id: &str,
     tool: &str,
+    fields: &[String],
     raw: &str,
 ) {
-    let input = partial_tool_input(tool, raw);
+    let input = partial_tool_input(fields, raw);
     for b in blocks.iter_mut().rev() {
         if b.get("type").and_then(|v| v.as_str()) == Some("tool_use")
             && b.get("id").and_then(|v| v.as_str()) == Some(id)
@@ -444,17 +437,22 @@ pub(crate) fn stream_text_callback(
                 append_text_delta_block(&mut g, t);
             }
         }
-        // Document tools stream their arguments live; mirror them into the
-        // block buffer so the partial card is persisted if the turn dies.
+        // Tools that declare `ui_meta.streaming_input_fields` stream their
+        // arguments live; mirror them into the block buffer so the partial
+        // card is persisted if the turn dies.
         if let Some(tc) = delta.tool_call.as_ref() {
-            if !tc.id.is_empty() && STREAMING_INPUT_TOOLS.contains(&tc.name.as_str()) {
-                let raw = tool_args.lock().ok().map(|mut m| {
-                    let e = m.entry(tc.id.clone()).or_default();
-                    e.push_str(&tc.arguments);
-                    e.clone()
-                });
-                if let (Some(raw), Ok(mut g)) = (raw, blocks.lock()) {
-                    upsert_streaming_tool_block(&mut g, &tc.id, &tc.name, &raw);
+            if !tc.id.is_empty() {
+                if let Some(fields) =
+                    crate::ai::agent::tools::streaming_input_fields_for(&tc.name)
+                {
+                    let raw = tool_args.lock().ok().map(|mut m| {
+                        let e = m.entry(tc.id.clone()).or_default();
+                        e.push_str(&tc.arguments);
+                        e.clone()
+                    });
+                    if let (Some(raw), Ok(mut g)) = (raw, blocks.lock()) {
+                        upsert_streaming_tool_block(&mut g, &tc.id, &tc.name, &fields, &raw);
+                    }
                 }
             }
         }
@@ -485,6 +483,28 @@ pub(crate) fn stream_text_callback(
     })
 }
 
+/// Broadcast structured workspace/right-panel sync effects to the frontend.
+pub(crate) fn emit_workspace_sync(
+    app: &AppHandle,
+    session_id: &str,
+    owner_session_id: Option<&str>,
+    source: &str,
+    effects: &[crate::ai::agent::tools::WorkspaceEffect],
+) {
+    if effects.is_empty() {
+        return;
+    }
+    let _ = app.emit(
+        "workspace://sync",
+        serde_json::json!({
+            "session_id": session_id,
+            "owner_session_id": owner_session_id.unwrap_or(session_id),
+            "source": source,
+            "effects": effects,
+        }),
+    );
+}
+
 /// Build the `gen://tool` callback. Mirrors [`stream_text_callback`]:
 /// updates the shared block buffer first, then forwards a structured
 /// payload to the renderer so the UI can render the tool card inline
@@ -492,6 +512,18 @@ pub(crate) fn stream_text_callback(
 pub(crate) fn tool_event_callback(
     app: AppHandle,
     session_id: String,
+    request_message_id: String,
+    blocks: StreamBlocks,
+) -> ToolEventCallback {
+    tool_event_callback_with_owner(app, session_id, None, request_message_id, blocks)
+}
+
+/// Variant of [`tool_event_callback`] for subagent child sessions that carry a
+/// distinct parent `owner_session_id` for workspace/panel sync routing.
+pub(crate) fn tool_event_callback_with_owner(
+    app: AppHandle,
+    session_id: String,
+    owner_session_id: Option<String>,
     request_message_id: String,
     blocks: StreamBlocks,
 ) -> ToolEventCallback {
@@ -528,6 +560,7 @@ pub(crate) fn tool_event_callback(
             tool,
             output,
             is_error,
+            effects,
         } => {
             if let Ok(mut g) = blocks.lock() {
                 record_tool_result_block(&mut g, id.as_str(), output, *is_error);
@@ -544,6 +577,15 @@ pub(crate) fn tool_event_callback(
                     "is_error": is_error,
                 }),
             );
+            if !is_error && !effects.is_empty() {
+                emit_workspace_sync(
+                    &app,
+                    &session_id,
+                    owner_session_id.as_deref(),
+                    tool,
+                    effects,
+                );
+            }
         }
         MessageEvent::Retry {
             attempt,

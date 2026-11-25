@@ -591,11 +591,17 @@ impl Tool for RoleStateTool {
                         .to_string();
                     let role = input.get("role").cloned().unwrap_or(Value::Null);
                     let role = store.create(&scope_id, &id, role)?;
-                    Ok(ToolResult::ok(json!({
+                    let body = json!({
                         "op": "create",
                         "id": id,
                         "role": role,
-                    })))
+                    });
+                    Ok(ToolResult::ok(body.clone()).with_effect(
+                        crate::ai::agent::tools::WorkspaceEffect::RoleStateOp {
+                            scope_id,
+                            op: body,
+                        },
+                    ))
                 }
                 "update" => {
                     let id = input
@@ -614,11 +620,17 @@ impl Tool for RoleStateTool {
                         })
                         .unwrap_or_default();
                     let role = store.update(&scope_id, &id, set, &unset)?;
-                    Ok(ToolResult::ok(json!({
+                    let body = json!({
                         "op": "update",
                         "id": id,
                         "role": role,
-                    })))
+                    });
+                    Ok(ToolResult::ok(body.clone()).with_effect(
+                        crate::ai::agent::tools::WorkspaceEffect::RoleStateOp {
+                            scope_id,
+                            op: body,
+                        },
+                    ))
                 }
                 "delete" => {
                     let id = input
@@ -627,11 +639,17 @@ impl Tool for RoleStateTool {
                         .unwrap_or("")
                         .to_string();
                     let removed = store.delete(&scope_id, &id)?;
-                    Ok(ToolResult::ok(json!({
+                    let body = json!({
                         "op": "delete",
                         "id": id,
                         "removed": removed,
-                    })))
+                    });
+                    Ok(ToolResult::ok(body.clone()).with_effect(
+                        crate::ai::agent::tools::WorkspaceEffect::RoleStateOp {
+                            scope_id,
+                            op: body,
+                        },
+                    ))
                 }
                 other => Err(AppError::Invalid(format!(
                     "RoleState: unknown action {other:?}"

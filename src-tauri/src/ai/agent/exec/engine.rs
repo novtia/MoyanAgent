@@ -577,11 +577,21 @@ impl QueryEngine for ProviderQueryEngine {
                         }
                     }
 
+                    if !result.is_error && result.effects.is_empty() {
+                        result.effects = synthesize_fallback_effects(
+                            tools.as_ref(),
+                            exec_name,
+                            exec_input,
+                            &result,
+                        );
+                    }
+
                     let result_event = MessageEvent::ToolResult {
                         id: req.id.clone(),
                         tool: req.tool_name.clone(),
                         output: result.content,
                         is_error: result.is_error,
+                        effects: result.effects,
                     };
                     fire_tool_event(&on_tool_event, &result_event);
                     events.push(result_event);
@@ -605,6 +615,55 @@ impl QueryEngine for ProviderQueryEngine {
             }
         })
     }
+}
+
+/// Safety net for mutating tools that did not attach explicit [`WorkspaceEffect`]s
+/// (e.g. newly added tools or MCP tools). Never runs for read-only tools, failed
+/// calls, or `dry_run: true` previews.
+fn synthesize_fallback_effects(
+    tools: &ToolPool,
+    exec_name: &str,
+    exec_input: &serde_json::Value,
+    result: &ToolResult,
+) -> Vec<crate::ai::agent::tools::WorkspaceEffect> {
+    let Some(tool) = tools.get(exec_name) else {
+        return Vec::new();
+    };
+    if tool.spec().read_only {
+        return Vec::new();
+    }
+    if result.content.get("dry_run").and_then(|v| v.as_bool()) == Some(true) {
+        return Vec::new();
+    }
+    // Non-filesystem meta/state tools manage their own effects explicitly.
+    if matches!(
+        exec_name,
+        "AskUser" | "TodoList" | "FixToolCall" | "Agent" | "ConsultRoles" | "RoleState"
+    ) {
+        return Vec::new();
+    }
+    let path = result
+        .content
+        .get("path")
+        .and_then(|v| v.as_str())
+        .or_else(|| exec_input.get("path").and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(path) = path {
+        let pending_diff_id = result
+            .content
+            .get("pending_diff_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let ensure_in_reader = pending_diff_id.is_some();
+        return vec![crate::ai::agent::tools::WorkspaceEffect::FileUpdated {
+            path,
+            pending_diff_id,
+            ensure_in_reader,
+        }];
+    }
+    vec![crate::ai::agent::tools::WorkspaceEffect::FsTreeDirty]
 }
 
 /// Helper: forward a structural tool event to the host's callback when
@@ -1214,5 +1273,79 @@ mod rate_limit_retry_tests {
             crate::data::settings::MAX_AGENT_LOOP_MAX_RETRIES as u32
         );
         set_agent_loop_max_retries(prev);
+    }
+}
+
+#[cfg(test)]
+mod fallback_effect_tests {
+    use super::synthesize_fallback_effects;
+    use crate::ai::agent::tools::{
+        Tool, ToolFuture, ToolInvocation, ToolPool, ToolResult, ToolSpec, WorkspaceEffect,
+    };
+    use serde_json::json;
+
+    struct StubTool(ToolSpec);
+
+    impl Tool for StubTool {
+        fn spec(&self) -> &ToolSpec {
+            &self.0
+        }
+        fn execute<'a>(&'a self, _invocation: ToolInvocation<'a>) -> ToolFuture<'a> {
+            Box::pin(async { Ok(ToolResult::ok(json!({}))) })
+        }
+    }
+
+    fn pool_with(name: &str, read_only: bool) -> ToolPool {
+        let pool = ToolPool::new();
+        pool.register(StubTool(ToolSpec {
+            name: name.into(),
+            description: String::new(),
+            schema: json!({}),
+            read_only,
+            concurrency_safe: read_only,
+        }));
+        pool
+    }
+
+    #[test]
+    fn read_only_tool_emits_no_fallback_effects() {
+        let pool = pool_with("CustomReader", true);
+        let res = ToolResult::ok(json!({ "path": "chapter1.txt" }));
+        assert!(synthesize_fallback_effects(&pool, "CustomReader", &json!({}), &res).is_empty());
+    }
+
+    #[test]
+    fn mutating_tool_with_path_synthesizes_file_updated() {
+        let pool = pool_with("FutureMutator", false);
+        let res = ToolResult::ok(json!({
+            "path": "chapters/ch1.txt",
+            "pending_diff_id": "diff-123"
+        }));
+        let effects = synthesize_fallback_effects(&pool, "FutureMutator", &json!({}), &res);
+        assert_eq!(
+            effects,
+            vec![WorkspaceEffect::FileUpdated {
+                path: "chapters/ch1.txt".into(),
+                pending_diff_id: Some("diff-123".into()),
+                ensure_in_reader: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn mutating_tool_dry_run_emits_no_fallback() {
+        let pool = pool_with("FutureMutator", false);
+        let res = ToolResult::ok(json!({ "path": "chapters/ch1.txt", "dry_run": true }));
+        assert!(synthesize_fallback_effects(&pool, "FutureMutator", &json!({}), &res).is_empty());
+    }
+
+    #[test]
+    fn mutating_tool_without_path_synthesizes_fs_tree_dirty() {
+        let pool = pool_with("FutureBulkTool", false);
+        let res = ToolResult::ok(json!({ "ok": true }));
+        assert_eq!(
+            synthesize_fallback_effects(&pool, "FutureBulkTool", &json!({}), &res),
+            vec![WorkspaceEffect::FsTreeDirty]
+        );
     }
 }

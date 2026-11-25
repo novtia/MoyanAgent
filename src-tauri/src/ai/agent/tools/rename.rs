@@ -212,12 +212,18 @@ impl Tool for RenameTool {
                 return Err(e);
             }
 
+            let from_display = display_path(&path);
+            let to_display = display_path(&canonical);
             Ok(ToolResult::ok(json!({
-                "from": display_path(&path),
-                "path": display_path(&canonical),
+                "from": from_display,
+                "path": to_display,
                 "name": file_name,
                 "renamed": true,
-            })))
+            }))
+            .with_effect(crate::ai::agent::tools::WorkspaceEffect::FileRenamed {
+                from: from_display,
+                to: to_display,
+            }))
         })
     }
 }

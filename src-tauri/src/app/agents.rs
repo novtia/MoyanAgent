@@ -136,17 +136,28 @@ pub fn list_agent_tools(state: tauri::State<Arc<AppState>>) -> Result<Vec<String
     Ok(names)
 }
 
+#[derive(Debug, Serialize)]
+pub(crate) struct ToolSpecInfo {
+    #[serde(flatten)]
+    pub(crate) spec: agent::ToolSpec,
+    #[serde(rename = "uiMeta")]
+    pub(crate) ui_meta: crate::ai::agent::tools::ToolUiMeta,
+}
+
 #[tauri::command]
 pub fn list_agent_tool_specs(
     state: tauri::State<Arc<AppState>>,
-) -> Result<Vec<agent::ToolSpec>, AppError> {
-    let mut specs: Vec<agent::ToolSpec> = state
+) -> Result<Vec<ToolSpecInfo>, AppError> {
+    let mut specs: Vec<ToolSpecInfo> = state
         .tools
         .all()
         .into_iter()
-        .map(|t| t.spec().clone())
+        .map(|t| ToolSpecInfo {
+            spec: t.spec().clone(),
+            ui_meta: t.ui_meta(),
+        })
         .collect();
-    specs.sort_by(|a, b| a.name.cmp(&b.name));
+    specs.sort_by(|a, b| a.spec.name.cmp(&b.spec.name));
     Ok(specs)
 }
 

@@ -511,6 +511,7 @@ impl AgentTool {
             content: serde_json::json!({ "agents": agents }),
             is_error: false,
             metadata: None,
+            effects: Vec::new(),
         }
     }
 
@@ -658,6 +659,7 @@ impl Tool for AgentTool {
                         content: v,
                         is_error,
                         metadata: None,
+                        effects: Vec::new(),
                     })
                 }
                 Err(e) => Ok(ToolResult::error(e.to_string())),

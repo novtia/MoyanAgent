@@ -1,6 +1,4 @@
 import { listen } from "@tauri-apps/api/event";
-import { useRoleState, type RoleStateOp } from "../roleState";
-import { roleStateScopeForSession } from "./drafts";
 import {
   appendDelta,
   applyStreamingToolCallDelta,
@@ -23,7 +21,6 @@ import { useSession } from "./store";
 let generationStreamListenerStarted = false;
 let generationStatusListenerStarted = false;
 let toolEventListenerStarted = false;
-let roleStateResetListenerStarted = false;
 let sessionTitleListenerStarted = false;
 let summarySessionListenerStarted = false;
 
@@ -150,49 +147,11 @@ export function ensureGenerationStreamListener() {
           : { blocks: [], requestId };
       const nextBlocks = prev.blocks.map((b) => ({ ...b }));
       applyToolEvent(nextBlocks, payload, sessionId);
-      // Incrementally drive the character state board off RoleState results.
-      if (
-        payload.type === "tool_result" &&
-        payload.tool === "RoleState" &&
-        !payload.is_error &&
-        payload.output &&
-        typeof payload.output === "object"
-      ) {
-        useRoleState
-          .getState()
-          .applyOp(roleStateScopeForSession(sessionId), payload.output as RoleStateOp);
-      }
       const next: StreamBuffer = { blocks: nextBlocks, requestId };
       streamingBuffers.set(sessionId, next);
       scheduleStreamingMessageSync(sessionId);
     }).catch((e) => {
       toolEventListenerStarted = false;
-      console.warn(e);
-    });
-  }
-
-  if (!roleStateResetListenerStarted) {
-    roleStateResetListenerStarted = true;
-    listen<{ scope_id?: string; session_id?: string }>("role-state://reset", (event) => {
-      const scopeId = event.payload?.scope_id;
-      const sessionId = event.payload?.session_id;
-      const state = useSession.getState();
-      const activeScope = state.active
-        ? roleStateScopeForSession(state.active.session.id)
-        : null;
-      if (scopeId && activeScope === scopeId && state.active) {
-        void useRoleState
-          .getState()
-          .loadLatest(state.active.session.id, scopeId);
-        return;
-      }
-      if (sessionId && state.activeId === sessionId) {
-        void useRoleState
-          .getState()
-          .loadLatest(sessionId, roleStateScopeForSession(sessionId));
-      }
-    }).catch((e) => {
-      roleStateResetListenerStarted = false;
       console.warn(e);
     });
   }

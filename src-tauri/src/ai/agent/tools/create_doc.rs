@@ -129,6 +129,10 @@ impl Tool for CreateDocTool {
         &self.spec
     }
 
+    fn ui_meta(&self) -> crate::ai::agent::tools::ToolUiMeta {
+        crate::ai::agent::tools::ToolUiMeta::streaming_fields(&["title", "doc_type", "content"])
+    }
+
     fn validate(&self, input: &Value) -> AppResult<()> {
         let title = input
             .get("title")
@@ -245,8 +249,9 @@ impl Tool for CreateDocTool {
             let echo = self.echo_content();
             // Never record a write receipt: a stub Read is why Edit then
             // reconstructs `old_string` from memory and misses.
+            let path_display = display_path(&canonical);
             let mut payload = json!({
-                "path": display_path(&canonical),
+                "path": path_display,
                 "title": title,
                 "doc_type": ext,
                 "folder": folder.map(str::trim).filter(|s| !s.is_empty()),
@@ -257,7 +262,19 @@ impl Tool for CreateDocTool {
             if echo {
                 payload["content"] = json!(content);
             }
-            Ok(ToolResult::ok(payload))
+            let effect = if created {
+                crate::ai::agent::tools::WorkspaceEffect::FileCreated {
+                    path: path_display,
+                    cache_in_reader: true,
+                }
+            } else {
+                crate::ai::agent::tools::WorkspaceEffect::FileUpdated {
+                    path: path_display,
+                    pending_diff_id: None,
+                    ensure_in_reader: true,
+                }
+            };
+            Ok(ToolResult::ok(payload).with_effect(effect))
         })
     }
 }

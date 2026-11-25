@@ -1,24 +1,11 @@
 import { startTransition } from "react";
 import { api } from "../../api/tauri";
-import { cancelReaderSave } from "../../components/chat/rightPanel/reader/hooks/useEditorSave";
 import type { AssistantBlock, MessageAbs } from "../../types";
 import {
   type PendingAskUser,
   parseAskUserInput,
 } from "../../components/chat/askUser";
-import { normalizeDiffText } from "../../utils/inlineDiff";
-import { normalizeToolContent } from "../../utils/normalizeToolContent";
-import {
-  useReader,
-  readerDocFromToolOutput,
-  stripParagraphLabels,
-  resolveToolFilePath,
-  revertStringEdit,
-  inferFileType,
-  syncPendingDiffsForPath,
-} from "../reader";
-import { useFileExplorer } from "../fileExplorer";
-import { FS_TREE_TOOLS, STREAMING_INPUT_TOOLS } from "./constants";
+import { getStreamingInputFields } from "../toolRegistry";
 import { askUserPendingBySession } from "./drafts";
 import type { StreamBuffer, ToolEventPayload } from "./types";
 import { useSession } from "./store";
@@ -159,41 +146,22 @@ function extractJsonStringField(raw: string, key: string): string | undefined {
 
 /** Build a partial tool input object from the buffered arguments string. */
 function buildStreamingToolInput(
-  tool: string,
+  fields: readonly string[],
   raw: string,
 ): Record<string, unknown> {
-  if (tool === "CreateDoc") {
-    return {
-      title: extractJsonStringField(raw, "title"),
-      doc_type: extractJsonStringField(raw, "doc_type"),
-      content: extractJsonStringField(raw, "content"),
-    };
+  const out: Record<string, unknown> = {};
+  for (const field of fields) {
+    out[field] = extractJsonStringField(raw, field);
   }
-  if (tool === "Edit") {
-    return {
-      path: extractJsonStringField(raw, "path"),
-      old_string: extractJsonStringField(raw, "old_string"),
-      new_string: extractJsonStringField(raw, "new_string"),
-    };
-  }
-  if (tool === "Write") {
-    return {
-      path: extractJsonStringField(raw, "path"),
-      content: extractJsonStringField(raw, "content"),
-    };
-  }
-  try {
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
+  return out;
 }
 
 /**
  * Apply a live tool-call argument fragment to the block list. Creates a pending
  * `tool_use` block on first sight (keyed by id) and refreshes its partial input
- * on every subsequent fragment. Only document tools are rendered live; others
- * are ignored here and surface via the terminal `gen://tool` event.
+ * on every subsequent fragment. Only tools that declare `streamingInputFields`
+ * in backend `ToolSpec.uiMeta` are rendered live; others surface via the
+ * terminal `gen://tool` event.
  */
 export function applyStreamingToolCallDelta(
   blocks: AssistantBlock[],
@@ -201,13 +169,15 @@ export function applyStreamingToolCallDelta(
   delta: { id: string; name: string; arguments: string },
 ) {
   const { id, name, arguments: fragment } = delta;
-  if (!id || !name || !STREAMING_INPUT_TOOLS.has(name)) return;
+  if (!id || !name) return;
+  const fields = getStreamingInputFields(name);
+  if (!fields || fields.length === 0) return;
 
   const key = toolCallArgKey(sessionId, id);
   const raw = (toolCallArgBuffers.get(key) ?? "") + (fragment ?? "");
   toolCallArgBuffers.set(key, raw);
 
-  const input = buildStreamingToolInput(name, raw);
+  const input = buildStreamingToolInput(fields, raw);
 
   for (let i = blocks.length - 1; i >= 0; i--) {
     const b = blocks[i];
@@ -227,290 +197,6 @@ export function applyStreamingToolCallDelta(
     status: "pending",
     streaming: true,
   });
-}
-
-/**
- * Temp subagent session -> the parent session the user actually sees. A child
- * emits tool events under its own id, but its files belong to the parent's view.
- */
-const childSessionParents = new Map<string, string>();
-
-/** True when the event comes from the session currently on screen (or its child). */
-function isEventForActiveView(sessionId?: string): boolean {
-  if (!sessionId) return false;
-  const activeId = useSession.getState().activeId;
-  if (!activeId) return false;
-  return sessionId === activeId || childSessionParents.get(sessionId) === activeId;
-}
-
-/**
- * True when the event touches the project whose file tree is on screen. Wider
- * than [`isEventForActiveView`]: a sibling session writing into the same
- * project changes the tree the user is looking at.
- */
-function isEventForActiveProject(sessionId?: string): boolean {
-  if (isEventForActiveView(sessionId)) return true;
-  if (!sessionId) return false;
-  const state = useSession.getState();
-  if (!state.activeId) return false;
-  // Temp child sessions are hidden from the summary list; use their parent.
-  const owner = state.sessions.some((s) => s.id === sessionId)
-    ? sessionId
-    : childSessionParents.get(sessionId);
-  const project = owner
-    ? (state.sessions.find((s) => s.id === owner)?.project_id ?? null)
-    : null;
-  if (!project) return false;
-  const activeProject =
-    state.active?.session.project_id ??
-    state.sessions.find((s) => s.id === state.activeId)?.project_id ??
-    null;
-  return project === activeProject;
-}
-
-async function handleReaderToolComplete(
-  tool: string,
-  input: unknown,
-  output: unknown,
-  isError: boolean | undefined,
-  sessionId?: string,
-) {
-  if (isError) return;
-  // A later FixToolCall re-runs the failed tool. Its result is that tool's
-  // result, but the card name stays FixToolCall, so the open reader would
-  // keep the pre-edit text and could autosave it back over the write.
-  if (tool === "FixToolCall") {
-    const out =
-      output && typeof output === "object"
-        ? (output as Record<string, unknown>)
-        : {};
-    const amended =
-      typeof out.amended_tool === "string" ? out.amended_tool.trim() : "";
-    if (amended && amended !== "FixToolCall") {
-      await handleReaderToolComplete(amended, input, output, false, sessionId);
-    }
-    return;
-  }
-  if (FS_TREE_TOOLS.has(tool) && isEventForActiveProject(sessionId)) {
-    useFileExplorer.getState().bumpTree();
-  }
-  // Reader tabs belong to the session in view; a background session (often in
-  // another project) must not open, close, or rewrite them.
-  if (!isEventForActiveView(sessionId)) return;
-  const o = (output && typeof output === "object" ? output : {}) as Record<string, unknown>;
-  const path = resolveToolFilePath(input, output);
-
-  if (tool === "CreateDoc") {
-    const reader = useReader.getState();
-    // Cache the new file's content only. Tabs and focus belong to the panel
-    // store — the user may be mid-read in another document.
-    const activeSession = useSession.getState().activeId;
-    if (path && activeSession) {
-      try {
-        const disk = await api.readProjectFile(activeSession, path);
-        reader.openDoc({
-          path,
-          text: disk.text,
-          fileType: inferFileType(path),
-          encoding: disk.encoding,
-          hadBom: disk.hadBom,
-        });
-        return;
-      } catch (e) {
-        console.warn("CreateDoc: failed to cache reader doc from disk", e);
-      }
-    }
-    const inp =
-      input && typeof input === "object"
-        ? (input as Record<string, unknown>)
-        : {};
-    if (path && typeof inp.content === "string") {
-      reader.openDoc({
-        path,
-        text: stripParagraphLabels(inp.content),
-        fileType: inferFileType(path),
-      });
-      return;
-    }
-    // Legacy CreateDoc results still carried `text`.
-    const doc = readerDocFromToolOutput(output);
-    if (doc) reader.openDoc(doc);
-    return;
-  }
-
-  if (tool === "Delete" && path) {
-    useReader.getState().closeByPaths([path]);
-    return;
-  }
-
-  if (tool === "Rename") {
-    const from = typeof o.from === "string" ? o.from.trim() : "";
-    const to = typeof o.path === "string" ? o.path.trim() : "";
-    if (from && to) {
-      useReader.getState().remapPath(from, to);
-      useFileExplorer.getState().noteRename(from, to);
-    }
-    return;
-  }
-
-  if (tool === "SplitDoc") {
-    const activeSession = useSession.getState().activeId;
-    if (path && activeSession) {
-      cancelReaderSave(path);
-      try {
-        const disk = await api.readProjectFile(activeSession, path);
-        const reader = useReader.getState();
-        if (reader.getTabByPath(path)) {
-          reader.updateTabText(path, disk.text, { dirty: false });
-        }
-      } catch (e) {
-        console.warn("SplitDoc: failed to refresh reader", e);
-      }
-    }
-    return;
-  }
-
-  if (!path) return;
-  const reader = useReader.getState();
-  let existing = reader.getTabByPath(path);
-
-  if (tool === "Edit") {
-    const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-    const out = (output && typeof output === "object" ? output : {}) as Record<string, unknown>;
-
-    // Backend returns the exact strings it matched/replaced (already
-    // normalized) and the match offset. Pre/post document text is read
-    // from disk (or reconstructed) so the tool result does not echo the
-    // whole file. A `pending_diff_id` means the backend recorded a
-    // reviewable hunk.
-    const pendingDiffId =
-      typeof out.pending_diff_id === "string" ? out.pending_diff_id : null;
-    if (!pendingDiffId) {
-      // Edit applied but too large (or failed) to record — refresh tab text only.
-      const sessionId = useSession.getState().activeId;
-      if (sessionId) {
-        cancelReaderSave(path);
-        try {
-          const disk = await api.readProjectFile(sessionId, path);
-          if (!existing) {
-            reader.openDoc({
-              path,
-              text: disk.text,
-              fileType: inferFileType(path),
-              encoding: disk.encoding,
-              hadBom: disk.hadBom,
-            });
-          } else {
-            reader.updateTabText(path, disk.text, { dirty: false });
-          }
-        } catch (e) {
-          console.warn("Edit: failed to refresh reader after non-reviewable edit", e);
-        }
-      }
-      return;
-    }
-
-    const oldString = normalizeToolContent(
-      typeof out.old_string === "string"
-        ? out.old_string
-        : typeof inp.old_string === "string"
-          ? inp.old_string
-          : "",
-    );
-    const newString = normalizeToolContent(
-      typeof out.new_string === "string"
-        ? out.new_string
-        : typeof inp.new_string === "string"
-          ? inp.new_string
-          : "",
-    );
-    const replaceAll =
-      out.replace_all === true || inp.replace_all === true;
-    const matchStart =
-      typeof out.match_start === "number" ? out.match_start : 0;
-
-    const sessionId = useSession.getState().activeId;
-    if (!sessionId) return;
-    cancelReaderSave(path);
-
-    // The backend already wrote the edit; read the file back so the reader's
-    // after-text is authoritative (never a stale in-memory replay that could
-    // be auto-saved back over a correct on-disk edit).
-    let diskText: string;
-    let diskEncoding: string | undefined;
-    let diskHadBom: boolean | undefined;
-    try {
-      const disk = await api.readProjectFile(sessionId, path);
-      diskText = disk.text;
-      diskEncoding = disk.encoding;
-      diskHadBom = disk.hadBom;
-    } catch (e) {
-      console.warn("Edit: failed to load file for reader diff", e);
-      return;
-    }
-
-    const textAfter = diskText;
-    // Prefer the backend's authoritative pre-edit snapshot; fall back to
-    // reconstructing it from the disk text and the applied replacement.
-    const textBefore =
-      typeof out.text_before === "string"
-        ? out.text_before
-        : revertStringEdit(diskText, oldString, newString, matchStart, replaceAll);
-
-    if (!existing) {
-      reader.openDoc({
-        path,
-        text: diskText,
-        fileType: inferFileType(path),
-        encoding: diskEncoding,
-        hadBom: diskHadBom,
-      });
-      existing = reader.getTabByPath(path);
-    }
-
-    // Overlapping Edits are merged by the backend (the row set may have been
-    // rewritten), so take the rows from the data layer instead of appending a
-    // locally-built hunk.
-    await syncPendingDiffsForPath(sessionId, path);
-    const synced = useReader.getState().getTabByPath(path);
-    if (!synced?.pendingDiffs.some((d) => d.id === pendingDiffId)) {
-      // Backend listing unavailable: fall back to a local hunk.
-      reader.appendPendingDiff(path, {
-        id: pendingDiffId,
-        before: normalizeDiffText(oldString),
-        after: normalizeDiffText(newString),
-        textBefore,
-        textAfter,
-      });
-    }
-    return;
-  }
-
-  if (tool === "Write") {
-    if (!existing) return;
-    const activeSession = useSession.getState().activeId;
-    if (activeSession) {
-      cancelReaderSave(path);
-      try {
-        const disk = await api.readProjectFile(activeSession, path);
-        reader.updateTabText(path, disk.text, { dirty: false });
-        return;
-      } catch (e) {
-        console.warn("Write: failed to refresh reader from disk", e);
-      }
-    }
-    const inp =
-      input && typeof input === "object"
-        ? (input as Record<string, unknown>)
-        : {};
-    const text =
-      typeof o.text === "string"
-        ? stripParagraphLabels(o.text)
-        : typeof inp.content === "string"
-          ? stripParagraphLabels(inp.content)
-          : null;
-    if (text != null) reader.updateTabText(path, text, { dirty: false });
-  }
 }
 
 function activatePendingAskUser(
@@ -647,7 +333,6 @@ export function applyToolEvent(
             ? outObj.child_session_id
             : null;
         if (childId) {
-          if (sessionId) childSessionParents.set(childId, sessionId);
           markChildSessionBusy(childId, true);
         }
         return;
@@ -658,15 +343,6 @@ export function applyToolEvent(
         output: event.output,
         is_error: event.is_error || undefined,
       };
-      if (!event.is_error) {
-        void handleReaderToolComplete(
-          b.tool,
-          b.input,
-          event.output,
-          event.is_error,
-          sessionId,
-        );
-      }
       if (b.tool === "Agent") {
         const prevOut =
           b.output && typeof b.output === "object"
@@ -680,7 +356,6 @@ export function applyToolEvent(
             ? prevOut.child_session_id
             : null);
         if (childId) {
-          if (sessionId) childSessionParents.set(childId, sessionId);
           // Preserve child_session_id on error payloads so the card stays openable.
           const cur = blocks[i];
           if (

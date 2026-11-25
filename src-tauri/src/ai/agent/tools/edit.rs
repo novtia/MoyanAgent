@@ -84,6 +84,10 @@ impl Tool for FileWriteTool {
         &self.spec
     }
 
+    fn ui_meta(&self) -> crate::ai::agent::tools::ToolUiMeta {
+        crate::ai::agent::tools::ToolUiMeta::streaming_fields(&["path", "content"])
+    }
+
     fn validate(&self, input: &Value) -> AppResult<()> {
         require_nonempty_string(input, "path", WRITE_TOOL)?;
         require_string(input, "content", WRITE_TOOL)?;
@@ -159,14 +163,29 @@ impl Tool for FileWriteTool {
                 content.lines().count()
             };
 
+            let path_display = display_path(&path);
+            let effect = if exists {
+                crate::ai::agent::tools::WorkspaceEffect::FileUpdated {
+                    path: path_display.clone(),
+                    pending_diff_id: None,
+                    ensure_in_reader: false,
+                }
+            } else {
+                crate::ai::agent::tools::WorkspaceEffect::FileCreated {
+                    path: path_display.clone(),
+                    cache_in_reader: false,
+                }
+            };
+
             Ok(ToolResult::ok(json!({
-                "path": display_path(&path),
+                "path": path_display,
                 "bytes": content.len(),
                 "created": !exists,
                 "chars": chars,
                 "lines": lines,
                 "note": DO_NOT_REREAD_NOTE,
-            })))
+            }))
+            .with_effect(effect))
         })
     }
 }
@@ -265,6 +284,10 @@ impl FileEditTool {
 impl Tool for FileEditTool {
     fn spec(&self) -> &ToolSpec {
         &self.spec
+    }
+
+    fn ui_meta(&self) -> crate::ai::agent::tools::ToolUiMeta {
+        crate::ai::agent::tools::ToolUiMeta::streaming_fields(&["path", "old_string", "new_string"])
     }
 
     fn validate(&self, input: &Value) -> AppResult<()> {
@@ -407,11 +430,17 @@ impl Tool for FileEditTool {
                 "match_start": match_start,
                 "chars": chars,
             });
-            if let Some(id) = pending_diff_id {
+            if let Some(id) = pending_diff_id.as_ref() {
                 body["pending_diff_id"] = json!(id);
             }
 
-            Ok(ToolResult::ok(body))
+            Ok(ToolResult::ok(body).with_effect(
+                crate::ai::agent::tools::WorkspaceEffect::FileUpdated {
+                    path: path_str,
+                    pending_diff_id,
+                    ensure_in_reader: true,
+                },
+            ))
         })
     }
 }

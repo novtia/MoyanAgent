@@ -364,6 +364,9 @@ export interface AgentToolSpec {
   schema: unknown;
   read_only: boolean;
   concurrency_safe: boolean;
+  uiMeta?: {
+    streamingInputFields?: string[];
+  };
 }
 
 export interface Session {

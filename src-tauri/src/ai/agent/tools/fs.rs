@@ -518,6 +518,7 @@ impl Tool for FileReadTool {
                     content: body,
                     is_error: true,
                     metadata: None,
+                    effects: Vec::new(),
                 });
             }
             Ok(ToolResult::ok(body))

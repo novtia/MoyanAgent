@@ -132,6 +132,8 @@ pub enum MessageEvent {
         tool: String,
         output: serde_json::Value,
         is_error: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        effects: Vec<crate::ai::agent::tools::WorkspaceEffect>,
     },
     Progress {
         id: MessageId,

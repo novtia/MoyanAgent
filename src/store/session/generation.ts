@@ -1,8 +1,7 @@
 import type { AssistantBlock, MessageAbs, SessionWithMessagesAbs } from "../../types";
 import { api } from "../../api/tauri";
+import { dispatchWorkspaceSync } from "../panelSync";
 import { useProject } from "../project";
-import { useReader, syncPendingDiffsForSession } from "../reader";
-import { useFileExplorer } from "../fileExplorer";
 import {
   cancelStreamFlushRaf,
   streamingBuffers,
@@ -114,17 +113,12 @@ export async function persistPartialStreamIfAny(sessionId: string) {
 }
 
 export async function refreshReaderAfterFileRollback(sessionId: string) {
-  await syncPendingDiffsForSession(sessionId);
-  const reader = useReader.getState();
-  for (const tab of reader.tabs) {
-    try {
-      const disk = await api.readProjectFile(sessionId, tab.path);
-      reader.updateTabText(tab.path, disk.text, { dirty: false });
-    } catch (e) {
-      console.warn("refreshReaderAfterFileRollback: read failed", tab.path, e);
-    }
-  }
-  useFileExplorer.getState().bumpTree();
+  await dispatchWorkspaceSync({
+    session_id: sessionId,
+    owner_session_id: sessionId,
+    source: "rollback",
+    effects: [{ kind: "workspace_rolled_back", paths: [] }],
+  });
 }
 
 /**

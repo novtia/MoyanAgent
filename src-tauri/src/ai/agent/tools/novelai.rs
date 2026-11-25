@@ -273,7 +273,15 @@ impl Tool for NovelAITool {
                 "prompt": meta.prompt,
                 "uc": meta.uc,
             });
-            let mut result = ToolResult::ok(content);
+            let effects: Vec<_> = saved
+                .iter()
+                .filter_map(|item| item.get("path").and_then(Value::as_str))
+                .map(|p| crate::ai::agent::tools::WorkspaceEffect::FileCreated {
+                    path: p.to_string(),
+                    cache_in_reader: false,
+                })
+                .collect();
+            let mut result = ToolResult::ok(content).with_effects(effects);
             result.metadata = Some(json!({
                 "kind": "novelai",
                 "count": saved.len(),

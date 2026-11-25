@@ -24,6 +24,7 @@ pub mod consult_roles;
 pub mod create_doc;
 pub mod delete;
 pub mod edit;
+pub mod effects;
 pub mod fix_tool_call;
 pub mod fs;
 pub mod grep;
@@ -78,6 +79,8 @@ pub struct ToolInvocation<'a> {
     pub context: &'a ToolUseContext,
 }
 
+pub use effects::{ToolUiMeta, WorkspaceEffect};
+
 /// Result returned by a tool. Mirrors `{ content, is_error, metadata }`
 /// shapes used in the TS executor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +91,10 @@ pub struct ToolResult {
     pub is_error: bool,
     /// Side-channel metadata used by the UI and telemetry, not sent to the model.
     pub metadata: Option<serde_json::Value>,
+    /// Structured workspace/panel sync effects emitted to the frontend via
+    /// `workspace://sync`, never sent to the model.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<WorkspaceEffect>,
 }
 
 impl ToolResult {
@@ -96,6 +103,7 @@ impl ToolResult {
             content,
             is_error: false,
             metadata: None,
+            effects: Vec::new(),
         }
     }
 
@@ -104,7 +112,18 @@ impl ToolResult {
             content: serde_json::json!({ "error": message.into() }),
             is_error: true,
             metadata: None,
+            effects: Vec::new(),
         }
+    }
+
+    pub fn with_effect(mut self, effect: WorkspaceEffect) -> Self {
+        self.effects.push(effect);
+        self
+    }
+
+    pub fn with_effects(mut self, effects: impl IntoIterator<Item = WorkspaceEffect>) -> Self {
+        self.effects.extend(effects);
+        self
     }
 }
 
@@ -128,6 +147,29 @@ pub fn resolved_tool_description(name: &str, builtin: &str) -> String {
         .and_then(|g| g.get(name).cloned())
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| builtin.to_string())
+}
+
+fn streaming_fields_store() -> &'static Mutex<BTreeMap<String, Vec<String>>> {
+    static MAP: OnceLock<Mutex<BTreeMap<String, Vec<String>>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn record_tool_ui_meta(name: &str, meta: &ToolUiMeta) {
+    if meta.streaming_input_fields.is_empty() {
+        return;
+    }
+    if let Ok(mut g) = streaming_fields_store().lock() {
+        g.insert(name.to_string(), meta.streaming_input_fields.clone());
+    }
+}
+
+/// Streaming input field names declared by `name` via [`Tool::ui_meta`], or
+/// `None` when the tool does not stream partial arguments.
+pub fn streaming_input_fields_for(name: &str) -> Option<Vec<String>> {
+    streaming_fields_store()
+        .lock()
+        .ok()
+        .and_then(|g| g.get(name).cloned())
 }
 
 fn forced_tools_store() -> &'static Mutex<Vec<String>> {
@@ -157,6 +199,12 @@ pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = AppResult<ToolResult>> + S
 /// Core tool trait. Implementations must be `Send + Sync` to fit the executor.
 pub trait Tool: Send + Sync {
     fn spec(&self) -> &ToolSpec;
+
+    /// Static UI metadata synced to the frontend on startup (e.g. streaming
+    /// input fields). Defaults to empty.
+    fn ui_meta(&self) -> ToolUiMeta {
+        ToolUiMeta::default()
+    }
 
     /// Validate the raw input *before* permission resolution. Cheap, sync.
     fn validate(&self, _input: &serde_json::Value) -> AppResult<()> {
@@ -197,6 +245,7 @@ impl ToolPool {
 
     pub fn register<T: Tool + 'static>(&self, tool: T) {
         let name = tool.spec().name.clone();
+        record_tool_ui_meta(&name, &tool.ui_meta());
         if let Ok(mut g) = self.tools.lock() {
             g.insert(name, Arc::new(tool));
         }
@@ -216,6 +265,7 @@ impl ToolPool {
 
     pub fn register_arc(&self, tool: Arc<dyn Tool>) {
         let name = tool.spec().name.clone();
+        record_tool_ui_meta(&name, &tool.ui_meta());
         if let Ok(mut g) = self.tools.lock() {
             g.insert(name, tool);
         }

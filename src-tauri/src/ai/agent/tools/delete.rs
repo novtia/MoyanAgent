@@ -117,11 +117,15 @@ impl Tool for DeleteTool {
             std::fs::remove_file(&path)
                 .map_err(|e| AppError::Other(format!("{TOOL_NAME}: remove {:?}: {e}", path)))?;
 
+            let path_display = display_path(&path);
             Ok(ToolResult::ok(json!({
-                "path": display_path(&path),
+                "path": path_display,
                 "name": name,
                 "deleted": true,
-            })))
+            }))
+            .with_effect(crate::ai::agent::tools::WorkspaceEffect::FileDeleted {
+                path: path_display,
+            }))
         })
     }
 }

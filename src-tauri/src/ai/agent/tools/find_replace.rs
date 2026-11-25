@@ -581,10 +581,16 @@ impl Tool for FindReplaceTool {
             if let Some(pr) = per_rule {
                 body["per_rule"] = json!(pr);
             }
-            if let Some(id) = pending_diff_id {
+            if let Some(id) = pending_diff_id.as_ref() {
                 body["pending_diff_id"] = json!(id);
             }
-            Ok(ToolResult::ok(body))
+            Ok(ToolResult::ok(body).with_effect(
+                crate::ai::agent::tools::WorkspaceEffect::FileUpdated {
+                    path: path_str,
+                    pending_diff_id,
+                    ensure_in_reader: true,
+                },
+            ))
         })
     }
 }
@@ -1266,5 +1272,39 @@ mod tests {
         .await;
         assert!(res.is_error);
         assert_eq!(disk(&ctx, &name), "abc");
+    }
+
+    #[tokio::test]
+    async fn dry_run_emits_no_workspace_effects_and_replace_emits_file_updated() {
+        let (ctx, name) = seed("hello world");
+        let preview = run(
+            &ctx,
+            json!({ "path": name, "find": "world", "replace": "rust", "dry_run": true }),
+        )
+        .await;
+        assert!(!preview.is_error);
+        assert!(
+            preview.effects.is_empty(),
+            "dry_run must not emit workspace sync effects"
+        );
+
+        let applied = run(
+            &ctx,
+            json!({ "path": name, "find": "world", "replace": "rust" }),
+        )
+        .await;
+        assert!(!applied.is_error);
+        assert_eq!(applied.effects.len(), 1);
+        match &applied.effects[0] {
+            crate::ai::agent::tools::WorkspaceEffect::FileUpdated {
+                path,
+                ensure_in_reader,
+                ..
+            } => {
+                assert!(path.ends_with(&name));
+                assert!(*ensure_in_reader);
+            }
+            other => panic!("expected FileUpdated effect, got {other:?}"),
+        }
     }
 }

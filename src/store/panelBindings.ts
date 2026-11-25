@@ -1,10 +1,15 @@
 import { clearRememberedReaderSelection } from "../utils/readerSelection";
 import { useFileExplorer } from "./fileExplorer";
+import { initPanelSync } from "./panelSync";
 import { useProject } from "./project";
 import { useReader } from "./reader";
 import { useReaderFind } from "./readerFind";
 import { useRightPanel } from "./rightPanel";
 import { useSession } from "./session";
+import { initToolRegistry } from "./toolRegistry";
+
+initPanelSync();
+void initToolRegistry();
 
 /**
  * Single place where right-panel state is bound to a session.

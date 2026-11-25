@@ -213,10 +213,16 @@ impl Tool for BashTool {
             }
 
             let is_error = !status.success();
+            let effects = if is_error {
+                Vec::new()
+            } else {
+                vec![crate::ai::agent::tools::WorkspaceEffect::FsTreeDirty]
+            };
             Ok(ToolResult {
                 content,
                 is_error,
                 metadata: None,
+                effects,
             })
         })
     }

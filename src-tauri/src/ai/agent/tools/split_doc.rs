@@ -271,13 +271,28 @@ impl Tool for SplitDocTool {
                 })
                 .collect();
             let canonical_src = std::fs::canonicalize(&path).unwrap_or(path);
+            let src_display = display_path(&canonical_src);
+            let mut effects = vec![crate::ai::agent::tools::WorkspaceEffect::FileUpdated {
+                path: src_display.clone(),
+                pending_diff_id: None,
+                ensure_in_reader: false,
+            }];
+            for part in parts.iter().skip(1) {
+                let canonical_part =
+                    std::fs::canonicalize(&part.path).unwrap_or_else(|_| part.path.clone());
+                effects.push(crate::ai::agent::tools::WorkspaceEffect::FileCreated {
+                    path: display_path(&canonical_part),
+                    cache_in_reader: false,
+                });
+            }
             Ok(ToolResult::ok(json!({
-                "path": display_path(&canonical_src),
+                "path": src_display,
                 "paragraphs": paragraphs,
                 "parts": part_json,
                 "note": "The original file keeps the paragraphs before the first cut. \
                     Rename a part to change its title. Read a part before Edit.",
-            })))
+            }))
+            .with_effects(effects))
         })
     }
 }

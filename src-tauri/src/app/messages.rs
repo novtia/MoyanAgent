@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::ai::agent::tools::text_decode::{write_text_file_labeled, TextEncoding};
 use crate::data::{db, paths, session};
@@ -200,12 +200,14 @@ pub(crate) fn apply_file_restore(
 /// Tell the UI to discard its in-memory role board for a scope and re-fetch
 /// the persisted truth (used after a rollback / message deletion).
 pub(crate) fn emit_role_state_reset(app: &AppHandle, scope_id: &str, session_id: &str) {
-    let _ = app.emit(
-        "role-state://reset",
-        serde_json::json!({
-            "scope_id": scope_id,
-            "session_id": session_id,
-        }),
+    crate::app::generation::streaming::emit_workspace_sync(
+        app,
+        session_id,
+        None,
+        "rollback",
+        &[crate::ai::agent::tools::WorkspaceEffect::RoleStateReset {
+            scope_id: scope_id.to_string(),
+        }],
     );
 }
 
