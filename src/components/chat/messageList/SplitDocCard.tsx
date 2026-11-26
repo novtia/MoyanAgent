@@ -37,8 +37,12 @@ export function SplitDocCard({
         ? t("message.splitDocFailed")
         : t("message.splitDocSplit");
 
+  const amended = block.amended && status !== "error";
+
   return (
-    <div className={`rename-line split-line${status === "error" ? " is-error" : ""}`}>
+    <div
+      className={`rename-line split-line${status === "error" ? " is-error" : ""}${amended ? " is-amended" : ""}`}
+    >
       <span className="ti">
         <ToolGlyph tool="SplitDoc" />
       </span>

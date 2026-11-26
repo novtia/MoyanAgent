@@ -44,8 +44,13 @@ export function RoleStateChip({
   }
   const summary = changeBits.join(" · ");
 
+  const errored = block.status === "error";
+  const amended = block.amended && !errored;
+
   return (
-    <div className="rs-inline-chip">
+    <div
+      className={`rs-inline-chip${errored ? " is-error" : ""}${amended ? " is-amended" : ""}`}
+    >
       <span className="ti" aria-hidden>
         <ToolGlyph tool="RoleState" />
       </span>

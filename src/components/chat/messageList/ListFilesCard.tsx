@@ -83,11 +83,11 @@ export function ListFilesCard({
       name={baseName.endsWith("/") || baseName.includes(".") ? baseName : `${baseName}/`}
       meta={metaParts.join(" · ")}
       status={status}
+      amended={block.amended}
       open={open && hasDetail}
       expandable={hasDetail}
       onToggle={() => setOpen((v) => !v)}
       errorMessage={errorMessage || undefined}
-      errorLabel={t("message.toolCallErrorReason")}
     >
       <div className="tree">
         <div className="dir">{root.endsWith("/") || root.endsWith("\\") ? root : `${root}/`}</div>

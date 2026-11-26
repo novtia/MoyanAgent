@@ -187,12 +187,12 @@ export function StreamingDocCard({
       name={name}
       meta={meta}
       status={status}
+      amended={block.amended}
       streaming={streaming}
       open={open && hasContent}
       expandable={hasContent}
       onToggle={() => setOpen((v) => !v)}
       errorMessage={errorMessage || undefined}
-      errorLabel={t("message.toolCallErrorReason")}
       footer={
         showExpandBtn ? (
           <button

@@ -7,7 +7,7 @@ import { RetryNoticeRow } from "./RetryNoticeRow";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { TodoMasterView } from "./TodoMasterView";
 import { resolveToolComponent } from "./registry";
-import type { TodoBlock } from "./utils";
+import { foldFixToolCalls, type TodoBlock } from "./utils";
 
 export function AssistantContent({
   blocks,
@@ -26,35 +26,42 @@ export function AssistantContent({
   suppressText?: boolean;
   highlightQuery?: string;
 }) {
+  const displayBlocks = useMemo(() => foldFixToolCalls(blocks), [blocks]);
+
   const lastThinkingIdx = useMemo(() => {
-    for (let i = blocks.length - 1; i >= 0; i--) {
-      if (blocks[i].type === "thinking") return i;
+    for (let i = displayBlocks.length - 1; i >= 0; i--) {
+      if (displayBlocks[i].type === "thinking") return i;
     }
     return -1;
-  }, [blocks]);
+  }, [displayBlocks]);
   // Only the trailing thinking block that is still the tip of the stream
   // should show the live "thinking…" state. Once a tool_use / text block
   // follows, prior thinking collapses to the static toggle.
   const liveThinkingIdx = useMemo(() => {
-    if (blocks.length === 0) return -1;
-    return blocks[blocks.length - 1].type === "thinking" ? lastThinkingIdx : -1;
-  }, [blocks, lastThinkingIdx]);
+    if (displayBlocks.length === 0) return -1;
+    return displayBlocks[displayBlocks.length - 1].type === "thinking"
+      ? lastThinkingIdx
+      : -1;
+  }, [displayBlocks, lastThinkingIdx]);
 
   const firstTodoIdx = useMemo(
-    () => blocks.findIndex((b) => b.type === "tool_use" && b.tool === "TodoList"),
-    [blocks],
+    () =>
+      displayBlocks.findIndex(
+        (b) => b.type === "tool_use" && b.tool === "TodoList",
+      ),
+    [displayBlocks],
   );
   const toolBlocks = useMemo(
     () =>
-      blocks.filter(
+      displayBlocks.filter(
         (b): b is TodoBlock => b.type === "tool_use",
       ),
-    [blocks],
+    [displayBlocks],
   );
 
   return (
     <>
-      {blocks.map((block, i) => {
+      {displayBlocks.map((block, i) => {
         if (block.type === "thinking") {
           const live = i === liveThinkingIdx;
           if (!block.content && !live) return null;
@@ -97,7 +104,7 @@ export function AssistantContent({
               maxRetries={block.max_retries}
               delayMs={block.delay_ms}
               reason={block.reason}
-              active={isStreaming && i === blocks.length - 1}
+              active={isStreaming && i === displayBlocks.length - 1}
             />
           );
         }

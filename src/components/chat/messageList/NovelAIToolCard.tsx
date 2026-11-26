@@ -35,16 +35,26 @@ export function NovelAIToolCard({
   const errorMessage =
     status === "error" ? extractToolErrorMessage(block.output) : "";
   const images = parsed?.images ?? [];
-  const hasDetail =
-    !!errorMessage || images.length > 0 || (status === "success" && !!prompt);
+  const hasDetail = images.length > 0 || (status === "success" && !!prompt);
+
+  const rootClass = [
+    "nai-tool",
+    open ? "is-open" : "",
+    status === "error" ? "is-error" : "",
+    block.amended && status !== "error" ? "is-amended" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <div className={`nai-tool${open ? " is-open" : ""}`}>
+    <div className={rootClass}>
       <button
         type="button"
         className="flow-head"
         aria-expanded={hasDetail ? open : undefined}
-        title={hasDetail ? t("message.toolCallToggle") : undefined}
+        title={
+          errorMessage || (hasDetail ? t("message.toolCallToggle") : undefined)
+        }
         onClick={() => hasDetail && setOpen((v) => !v)}
         disabled={!hasDetail}
       >
@@ -56,11 +66,6 @@ export function NovelAIToolCard({
       </button>
       {open && hasDetail && (
         <div className="nai-tool-body">
-          {errorMessage && (
-            <div className="tool-call-error-detail" role="alert">
-              <span className="tool-call-error-detail-text">{errorMessage}</span>
-            </div>
-          )}
           {images.length > 0 && (
             <div className="nai-tool-thumbs">
               {images.map((img) => (

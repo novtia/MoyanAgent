@@ -68,12 +68,12 @@ export function ReadToolCard({
       name={title || t("message.readToolUntitled")}
       meta={meta}
       status={status}
+      amended={block.amended}
       bare
       open={open && hasDetail}
       expandable={hasDetail}
       onToggle={() => setOpen((v) => !v)}
       errorMessage={errorMessage || undefined}
-      errorLabel={t("message.toolCallErrorReason")}
     >
       <pre className="doc-prose doc-prose--scroll">{bodyText}</pre>
     </ToolHeaderRow>

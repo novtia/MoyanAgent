@@ -48,9 +48,11 @@ export function ConsultRolesChip({
     choices.length ||
     (Array.isArray(input.role_ids) ? input.role_ids.length : 0);
 
+  const amended = block.amended && !errored;
+
   return (
     <div
-      className={`consult-roles-card${pending ? " is-pending" : ""}${errored ? " is-error" : ""}`}
+      className={`consult-roles-card${pending ? " is-pending" : ""}${errored ? " is-error" : ""}${amended ? " is-amended" : ""}`}
     >
       <button
         type="button"

@@ -70,9 +70,9 @@ export function FixToolCallCard({
       name={headline}
       meta={metaParts.join(" · ")}
       status={status}
+      amended={block.amended}
       streaming={block.streaming === true}
       errorMessage={errorMessage || undefined}
-      errorLabel={t("message.toolCallErrorReason")}
     />
   );
 }

@@ -8,6 +8,7 @@ type Props = {
   name?: string;
   meta?: ReactNode;
   status: ToolStatus;
+  amended?: boolean;
   streaming?: boolean;
   open?: boolean;
   expandable?: boolean;
@@ -29,6 +30,7 @@ export function ToolHeaderRow({
   name,
   meta,
   status,
+  amended,
   streaming,
   open,
   expandable,
@@ -38,7 +40,6 @@ export function ToolHeaderRow({
   children,
   footer,
   errorMessage,
-  errorLabel,
 }: Props) {
   const interactive = Boolean(expandable && onToggle);
   const className = [
@@ -47,6 +48,7 @@ export function ToolHeaderRow({
     open ? "is-open" : "",
     streaming ? "is-streaming" : "",
     status === "error" ? "is-error" : "",
+    amended && status !== "error" ? "is-amended" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -80,26 +82,21 @@ export function ToolHeaderRow({
           type="button"
           className="doc-row-head"
           aria-expanded={!!open}
+          title={errorMessage || undefined}
           onClick={onToggle}
         >
           {head}
         </button>
       ) : (
-        <div className="doc-row-head">{head}</div>
+        <div className="doc-row-head" title={errorMessage || undefined}>
+          {head}
+        </div>
       )}
       {open && children != null && (
         <div className="doc-row-body">{children}</div>
       )}
       {open && footer != null && footer !== false ? (
         <div className="doc-row-footer">{footer}</div>
-      ) : null}
-      {errorMessage ? (
-        <div className="tool-call-error-detail" role="alert">
-          {errorLabel ? (
-            <span className="tool-call-error-detail-label">{errorLabel}</span>
-          ) : null}
-          <span className="tool-call-error-detail-text">{errorMessage}</span>
-        </div>
       ) : null}
     </div>
   );

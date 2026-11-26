@@ -62,10 +62,12 @@ export function AgentToolCard({
     void switchTo(childSessionId);
   };
 
+  const amended = block.amended && !failed;
+
   return (
     <button
       type="button"
-      className={`agent-card${running ? " is-running" : ""}${failed ? " is-error" : ""}`}
+      className={`agent-card${running ? " is-running" : ""}${failed ? " is-error" : ""}${amended ? " is-amended" : ""}`}
       onClick={onOpen}
       disabled={!canOpen}
       title={canOpen ? t("message.agentCardOpenHint") : undefined}

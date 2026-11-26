@@ -32,9 +32,11 @@ export function AskUserChip({
   const pending = block.status === "pending" || block.streaming;
   const errored = block.status === "error";
 
+  const amended = block.amended && !errored;
+
   return (
     <div
-      className={`ask-user-card${block.status === "success" ? " is-answered" : ""}${pending ? " is-pending" : ""}`}
+      className={`ask-user-card${block.status === "success" ? " is-answered" : ""}${pending ? " is-pending" : ""}${errored ? " is-error" : ""}${amended ? " is-amended" : ""}`}
     >
       {Array.from({ length: total }, (_, i) => {
         const question = questions[i];

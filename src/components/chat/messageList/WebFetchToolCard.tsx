@@ -34,16 +34,26 @@ export function WebFetchToolCard({
     .join(" · ");
   const errorMessage =
     status === "error" ? extractToolErrorMessage(block.output) : "";
-  const hasDetail =
-    !!errorMessage || !!parsed?.text || (!!url && status === "success");
+  const hasDetail = !!parsed?.text || (!!url && status === "success");
+
+  const rootClass = [
+    "web-fetch-tool",
+    open ? "is-open" : "",
+    status === "error" ? "is-error" : "",
+    block.amended && status !== "error" ? "is-amended" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <div className={`web-fetch-tool${open ? " is-open" : ""}`}>
+    <div className={rootClass}>
       <button
         type="button"
         className="flow-head"
         aria-expanded={hasDetail ? open : undefined}
-        title={hasDetail ? t("message.toolCallToggle") : undefined}
+        title={
+          errorMessage || (hasDetail ? t("message.toolCallToggle") : undefined)
+        }
         onClick={() => hasDetail && setOpen((v) => !v)}
         disabled={!hasDetail}
       >
@@ -69,11 +79,6 @@ export function WebFetchToolCard({
         >
           {url.replace(/^https?:\/\//, "")}
         </button>
-      )}
-      {open && errorMessage && (
-        <div className="tool-call-error-detail" role="alert">
-          <span className="tool-call-error-detail-text">{errorMessage}</span>
-        </div>
       )}
       {open && parsed?.text && (
         <div className="fetch-body">{parsed.text}</div>

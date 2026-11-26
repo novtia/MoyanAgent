@@ -645,6 +645,11 @@ export type AssistantBlock =
        * to defer side-effects (e.g. opening the reader) until input is final.
        */
       streaming?: boolean;
+      /**
+       * Frontend-only display flag set when a `FixToolCall` successfully
+       * amended this failed tool call in place.
+       */
+      amended?: boolean;
     }
   | {
       /**

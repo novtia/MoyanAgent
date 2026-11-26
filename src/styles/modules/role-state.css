@@ -1150,6 +1150,44 @@ body.is-arc-dragging {
   max-width: 360px;
 }
 
+.rs-inline-chip.is-error {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--rose-500) 7%, transparent);
+  color: var(--rose-500);
+}
+.rs-inline-chip.is-error .ti,
+.rs-inline-chip.is-error b {
+  color: var(--rose-500);
+}
+.rs-inline-chip.is-error .op {
+  color: var(--rose-500);
+  border-color: color-mix(in srgb, var(--rose-500) 35%, transparent);
+  background: color-mix(in srgb, var(--rose-500) 10%, transparent);
+}
+.rs-inline-chip.is-error .rs-inline-chip-summary {
+  color: color-mix(in srgb, var(--rose-500) 78%, transparent);
+}
+
+.rs-inline-chip.is-amended {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 7%, transparent);
+  color: var(--tool-amended, var(--blue-500));
+}
+.rs-inline-chip.is-amended .ti,
+.rs-inline-chip.is-amended b {
+  color: var(--tool-amended, var(--blue-500));
+}
+.rs-inline-chip.is-amended .op {
+  color: var(--tool-amended, var(--blue-500));
+  border-color: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 35%, transparent);
+  background: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 10%, transparent);
+}
+.rs-inline-chip.is-amended .rs-inline-chip-summary {
+  color: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 78%, transparent);
+}
+
 /* ?? edit modal ?? */
 .rs-edit-modal {
   width: min(560px, 94vw);

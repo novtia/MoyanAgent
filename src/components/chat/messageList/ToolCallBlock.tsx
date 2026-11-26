@@ -24,8 +24,13 @@ export function ToolCallBlock({
     [block.output],
   );
 
+  const errored = block.status === "error";
+  const amended = block.amended && !errored;
+
   return (
-    <div className={`generic-tool${open ? " is-open" : ""}`}>
+    <div
+      className={`generic-tool${open ? " is-open" : ""}${errored ? " is-error" : ""}${amended ? " is-amended" : ""}`}
+    >
       <button
         type="button"
         className="generic"

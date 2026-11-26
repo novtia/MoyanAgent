@@ -1322,30 +1322,163 @@ button.doc-row-head:disabled {
   border-color: var(--line-strong);
 }
 
-.tool-call-error-detail {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-top: 6px;
-  padding: 7px 10px;
+/* ── tool call status states: red on failure, blue when amended ── */
+.doc-row.is-error,
+.del-line.is-error,
+.rename-line.is-error,
+.generic-tool.is-error,
+.bash-tool.is-error,
+.grep-tool.is-error,
+.web-search-tool.is-error,
+.web-fetch-tool.is-error,
+.nai-tool.is-error {
   border-radius: var(--radius-sm);
-  background: var(--rose-50);
-  border: 1px solid color-mix(in srgb, var(--rose-500) 28%, var(--line));
-}
-.tool-call-error-detail-label {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  background: color-mix(in srgb, var(--rose-500) 7%, transparent);
   color: var(--rose-500);
-  flex-shrink: 0;
 }
-.tool-call-error-detail-text {
-  font-size: 12px;
-  line-height: 1.5;
+.doc-row.is-error:not(.doc-row--bare):hover,
+.doc-row.is-error.doc-row--bare:hover,
+.generic-tool.is-error .generic:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--rose-500) 11%, transparent);
+}
+.doc-row.is-error .doc-row-head .ti,
+.doc-row.is-error .doc-row-name,
+.del-line.is-error .ti,
+.del-line.is-error .fname,
+.del-line.is-error .kv,
+.rename-line.is-error .ti,
+.rename-line.is-error .fname,
+.rename-line.is-error .arrow,
+.rename-line.is-error .kv,
+.generic-tool.is-error .generic .n,
+.bash-tool.is-error .flow-head .ti,
+.bash-tool.is-error .flow-head .t,
+.grep-tool.is-error .flow-head .ti,
+.grep-tool.is-error .flow-head .t,
+.web-search-tool.is-error .flow-head .ti,
+.web-search-tool.is-error .flow-head .t,
+.web-fetch-tool.is-error .flow-head .ti,
+.web-fetch-tool.is-error .flow-head .t,
+.nai-tool.is-error .flow-head .ti,
+.nai-tool.is-error .flow-head .t {
   color: var(--rose-500);
-  white-space: pre-wrap;
-  word-break: break-word;
+}
+.doc-row.is-error .doc-row-meta,
+.generic-tool.is-error .generic .a,
+.bash-tool.is-error .flow-head .m,
+.grep-tool.is-error .flow-head .m,
+.web-search-tool.is-error .flow-head .m,
+.web-fetch-tool.is-error .flow-head .m,
+.nai-tool.is-error .flow-head .m {
+  color: color-mix(in srgb, var(--rose-500) 78%, transparent);
+}
+.bash-tool.is-error .term {
+  border-color: color-mix(in srgb, var(--rose-500) 35%, var(--line));
+}
+.agent-card.is-error {
+  border-color: color-mix(in srgb, var(--rose-500) 38%, var(--line));
+  background: color-mix(in srgb, var(--rose-500) 7%, transparent);
+}
+.agent-card.is-error .agent-card-icon,
+.agent-card.is-error .agent-card-title,
+.agent-card.is-error .agent-card-type,
+.agent-card.is-error .agent-card-status {
+  color: var(--rose-500);
+}
+.consult-roles-card.is-error .ti,
+.consult-roles-card.is-error .consult-roles-title,
+.consult-roles-card.is-error .consult-roles-meta {
+  color: var(--rose-500);
+}
+.ask-user-card.is-error {
+  border-color: color-mix(in srgb, var(--rose-500) 38%, var(--line));
+  background: color-mix(in srgb, var(--rose-500) 7%, transparent);
+}
+.ask-user-card.is-error .ask-user-card-prompt,
+.ask-user-card.is-error .ask-user-card-answer-text,
+.ask-user-card.is-error .ask-user-card-answer-mark {
+  color: var(--rose-500);
+}
+
+.doc-row.is-amended,
+.del-line.is-amended,
+.rename-line.is-amended,
+.generic-tool.is-amended,
+.bash-tool.is-amended,
+.grep-tool.is-amended,
+.web-search-tool.is-amended,
+.web-fetch-tool.is-amended,
+.nai-tool.is-amended {
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 7%, transparent);
+  color: var(--tool-amended, var(--blue-500));
+}
+.doc-row.is-amended:not(.doc-row--bare):hover,
+.doc-row.is-amended.doc-row--bare:hover,
+.generic-tool.is-amended .generic:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 11%, transparent);
+}
+.doc-row.is-amended .doc-row-head .ti,
+.doc-row.is-amended .doc-row-name,
+.del-line.is-amended .ti,
+.del-line.is-amended .fname,
+.del-line.is-amended .kv,
+.rename-line.is-amended .ti,
+.rename-line.is-amended .fname,
+.rename-line.is-amended .arrow,
+.rename-line.is-amended .kv,
+.generic-tool.is-amended .generic .n,
+.bash-tool.is-amended .flow-head .ti,
+.bash-tool.is-amended .flow-head .t,
+.grep-tool.is-amended .flow-head .ti,
+.grep-tool.is-amended .flow-head .t,
+.web-search-tool.is-amended .flow-head .ti,
+.web-search-tool.is-amended .flow-head .t,
+.web-fetch-tool.is-amended .flow-head .ti,
+.web-fetch-tool.is-amended .flow-head .t,
+.nai-tool.is-amended .flow-head .ti,
+.nai-tool.is-amended .flow-head .t {
+  color: var(--tool-amended, var(--blue-500));
+}
+.doc-row.is-amended .doc-row-meta,
+.generic-tool.is-amended .generic .a,
+.bash-tool.is-amended .flow-head .m,
+.grep-tool.is-amended .flow-head .m,
+.web-search-tool.is-amended .flow-head .m,
+.web-fetch-tool.is-amended .flow-head .m,
+.nai-tool.is-amended .flow-head .m {
+  color: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 78%, transparent);
+}
+.bash-tool.is-amended .term {
+  border-color: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 35%, var(--line));
+}
+.agent-card.is-amended {
+  border-color: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 38%, var(--line));
+  background: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 7%, transparent);
+}
+.agent-card.is-amended .agent-card-icon,
+.agent-card.is-amended .agent-card-title,
+.agent-card.is-amended .agent-card-type,
+.agent-card.is-amended .agent-card-status {
+  color: var(--tool-amended, var(--blue-500));
+}
+.consult-roles-card.is-amended {
+  border-color: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 38%, var(--line));
+  background: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 7%, transparent);
+}
+.consult-roles-card.is-amended .ti,
+.consult-roles-card.is-amended .consult-roles-title,
+.consult-roles-card.is-amended .consult-roles-meta {
+  color: var(--tool-amended, var(--blue-500));
+}
+.ask-user-card.is-amended {
+  border-color: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 38%, var(--line));
+  background: color-mix(in srgb, var(--tool-amended, var(--blue-500)) 7%, transparent);
+}
+.ask-user-card.is-amended .ask-user-card-prompt,
+.ask-user-card.is-amended .ask-user-card-answer-text,
+.ask-user-card.is-amended .ask-user-card-answer-mark {
+  color: var(--tool-amended, var(--blue-500));
 }
 
 /* ── flow head + terminal / search ── */

@@ -33,8 +33,12 @@ export function RenameDocCard({
         ? t("message.renameDocFailed")
         : t("message.renameDocRenamed");
 
+  const amended = block.amended && status !== "error";
+
   return (
-    <div className={`rename-line${status === "error" ? " is-error" : ""}`}>
+    <div
+      className={`rename-line${status === "error" ? " is-error" : ""}${amended ? " is-amended" : ""}`}
+    >
       <span className="ti">
         <ToolGlyph tool="Rename" />
       </span>

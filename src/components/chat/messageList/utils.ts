@@ -234,3 +234,129 @@ export function replayTodoBlocks(blocks: TodoBlock[]): {
 } {
   return replayTodoState(blocks);
 }
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Mirrors backend `fix_tool_call::deep_merge`: objects merge recursively,
+ * arrays and scalars (including null) replace.
+ */
+function deepMergeToolInput(base: unknown, patch: unknown): unknown {
+  if (isPlainObject(base) && isPlainObject(patch)) {
+    const out: Record<string, unknown> = { ...base };
+    for (const [k, v] of Object.entries(patch)) {
+      out[k] = k in out ? deepMergeToolInput(out[k], v) : v;
+    }
+    return out;
+  }
+  return patch;
+}
+
+/**
+ * Fold `FixToolCall` blocks directly into the prior failed `tool_use` block
+ * they amend so the UI updates the original tool call in place rather than
+ * rendering a separate FixToolCall row.
+ *
+ * - Failed calls stay `status: "error"` (rendered red).
+ * - Successfully amended calls take the merged input, new output,
+ *   `status: "success"`, and `amended: true` (rendered blue).
+ * - If a `FixToolCall` has no matching target in `blocks` (e.g. amending an
+ *   earlier message or an unresolvable FixToolCall error), it is kept as-is.
+ */
+export function foldFixToolCalls(blocks: AssistantBlock[]): AssistantBlock[] {
+  const hasFix = blocks.some(
+    (b) => b.type === "tool_use" && b.tool === "FixToolCall",
+  );
+  if (!hasFix) return blocks;
+
+  const result: AssistantBlock[] = [];
+
+  const findTargetIndex = (
+    targetId: string | null,
+    amendedTool: string | null,
+  ): number => {
+    if (targetId) {
+      // Prefer a matching error/amended-candidate block searching backwards
+      // (handles providers like Gemini that reuse call ids across rounds).
+      for (let i = result.length - 1; i >= 0; i--) {
+        const b = result[i];
+        if (b.type !== "tool_use" || b.tool === "FixToolCall") continue;
+        if (b.id !== targetId) continue;
+        if (amendedTool && b.tool !== amendedTool) continue;
+        if (b.status === "error" || b.status === "pending") return i;
+      }
+      for (let i = result.length - 1; i >= 0; i--) {
+        const b = result[i];
+        if (b.type !== "tool_use" || b.tool === "FixToolCall") continue;
+        if (b.id !== targetId) continue;
+        if (amendedTool && b.tool !== amendedTool) continue;
+        return i;
+      }
+      return -1;
+    }
+    // No explicit target id (typically while FixToolCall is still pending):
+    // match the latest un-amended failed tool call, mirroring resolve_amendment.
+    for (let i = result.length - 1; i >= 0; i--) {
+      const b = result[i];
+      if (b.type !== "tool_use" || b.tool === "FixToolCall") continue;
+      if (b.status === "error") return i;
+    }
+    return -1;
+  };
+
+  for (const block of blocks) {
+    if (block.type !== "tool_use" || block.tool !== "FixToolCall") {
+      result.push(block);
+      continue;
+    }
+
+    const inputObj = isPlainObject(block.input) ? block.input : null;
+    const outputObj = isPlainObject(block.output) ? block.output : null;
+    const rawTargetId =
+      (typeof outputObj?.target_call_id === "string" &&
+        outputObj.target_call_id.trim()) ||
+      (typeof inputObj?.call_id === "string" && inputObj.call_id.trim()) ||
+      null;
+    const amendedTool =
+      typeof outputObj?.amended_tool === "string" &&
+      outputObj.amended_tool.trim()
+        ? outputObj.amended_tool.trim()
+        : null;
+
+    // Only infer the latest error target when pending or when backend stamped
+    // target_call_id. If FixToolCall errored before resolving a target (no
+    // target_call_id and no explicit call_id), keep it visible as an error row.
+    const canInferLatest = block.status === "pending";
+    const targetIdx =
+      rawTargetId || canInferLatest
+        ? findTargetIndex(rawTargetId, amendedTool)
+        : -1;
+
+    if (targetIdx < 0) {
+      result.push(
+        block.status === "success" ? { ...block, amended: true } : block,
+      );
+      continue;
+    }
+
+    const target = result[targetIdx] as TodoBlock;
+    const patchSet = isPlainObject(inputObj?.set) ? inputObj.set : null;
+    const mergedInput = patchSet
+      ? deepMergeToolInput(target.input, patchSet)
+      : target.input;
+
+    result[targetIdx] = {
+      ...target,
+      input: mergedInput,
+      status: block.status,
+      output: block.output !== undefined ? block.output : undefined,
+      is_error: block.status === "error" ? true : undefined,
+      streaming: block.streaming,
+      amended: block.status === "success",
+    };
+  }
+
+  return result;
+}

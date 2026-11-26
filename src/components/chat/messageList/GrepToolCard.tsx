@@ -104,17 +104,27 @@ export function GrepToolCard({
   const errorMessage =
     status === "error" ? extractToolErrorMessage(block.output) : "";
   const hasDetail =
-    !!errorMessage ||
     (!!parsed && parsed.files.length > 0) ||
     (status === "success" && !!parsed && total === 0);
 
+  const rootClass = [
+    "grep-tool",
+    open ? "is-open" : "",
+    status === "error" ? "is-error" : "",
+    block.amended && status !== "error" ? "is-amended" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className={`grep-tool${open ? " is-open" : ""}`}>
+    <div className={rootClass}>
       <button
         type="button"
         className="flow-head"
         aria-expanded={hasDetail ? open : undefined}
-        title={hasDetail ? t("message.toolCallToggle") : undefined}
+        title={
+          errorMessage || (hasDetail ? t("message.toolCallToggle") : undefined)
+        }
         onClick={() => hasDetail && setOpen((v) => !v)}
         disabled={!hasDetail}
       >
@@ -124,11 +134,6 @@ export function GrepToolCard({
         <span className="t">Grep</span>
         {meta && <span className="m">{meta}</span>}
       </button>
-      {open && errorMessage && (
-        <div className="tool-call-error-detail" role="alert">
-          <span className="tool-call-error-detail-text">{errorMessage}</span>
-        </div>
-      )}
       {open && parsed && parsed.files.length > 0 && (
         <div className="grep">
           {parsed.files.map((file) => {

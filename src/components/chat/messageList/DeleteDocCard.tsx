@@ -26,8 +26,12 @@ export function DeleteDocCard({
         ? t("message.deleteDocFailed")
         : t("message.deleteDocDeleted");
 
+  const amended = block.amended && status !== "error";
+
   return (
-    <div className={`del-line${status === "error" ? " is-error" : ""}`}>
+    <div
+      className={`del-line${status === "error" ? " is-error" : ""}${amended ? " is-amended" : ""}`}
+    >
       <span className="ti">
         <ToolGlyph tool="Delete" />
       </span>

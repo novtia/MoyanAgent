@@ -29,8 +29,16 @@ export function BashToolCard({
       ? t("message.toolOutputTruncated")
       : "";
 
+  const rootClass = [
+    "bash-tool",
+    status === "error" ? "is-error" : "",
+    block.amended && status !== "error" ? "is-amended" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className="bash-tool">
+    <div className={rootClass}>
       <FlowHead
         tool="Bash"
         name="Bash"
